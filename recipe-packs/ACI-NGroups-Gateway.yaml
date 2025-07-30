@@ -1,0 +1,535 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "apiVersion": {
+      "type": "string",
+      "defaultValue": "2024-09-01-preview",
+      "maxLength": 32
+    },
+    "nGroupsNameParam": {
+      "type": "string",
+      "defaultValue": "nGroups_lin100_regional_ag",
+      "maxLength": 64
+    },
+    "containerGroupProfileName": {
+      "type": "string",
+      "defaultValue": "cgp",
+      "maxLength": 64
+    },
+    "applicationGatewayName": {
+      "type": "string",
+      "defaultValue": "agw1",
+      "maxLength": 64
+    },
+    "publicIPName": {
+      "type": "string",
+      "defaultValue": "publicIP",
+      "maxLength": 64
+    },
+    "backendAddressPoolName": {
+      "type": "string",
+      "defaultValue": "bepool",
+      "maxLength": 64
+    },
+    "vnetName": {
+      "type": "string",
+      "defaultValue": "vnet1",
+      "maxLength": 64
+    },
+    "networkSecurityGroupName": {
+      "type": "string",
+      "defaultValue": "nsg1",
+      "maxLength": 64
+    },
+    "desiredCount": {
+      "type": "int",
+      "defaultValue": 100
+    },
+    "maintainDesiredCount": {
+      "type": "bool",
+      "defaultValue": true
+    },
+    "zones": {
+      "type": "array",
+      "defaultValue": []
+    },
+    "vnetAddressPrefix": {
+      "type": "string",
+      "defaultValue": "172.16.0.0/23",
+      "maxLength": 64
+    },
+    "aciSubnetAddressPrefix": {
+      "type": "string",
+      "defaultValue": "172.16.0.0/25",
+      "maxLength": 64
+    },
+    "appGatewaySubnetAddressPrefix": {
+      "type": "string",
+      "defaultValue": "172.16.1.0/25",
+      "maxLength": 64
+    },
+    "aciSubnetName": {
+      "type": "string", 
+      "defaultValue": "aciSubnet",
+      "maxLength": 64
+    },
+    "appGatewaySubnetName": {
+      "type": "string", 
+      "defaultValue": "appgatewaySubnet",
+      "maxLength": 64
+    },
+    "ddosProtectionPlanName": {
+      "type": "string", 
+      "defaultValue": "ddosProtectionPlan",
+      "maxLength": 64
+    }
+  },
+  "variables": {
+    "description": "This ARM template is an example template of using an App Gateway with a NGroup.",
+    "resourcePrefix": "[concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/')]",
+    "applicationGatewayApiVersion": "2022-09-01",
+    "prefixCG": "cg-lin100-regional-ag-"
+  },
+  "resources": [
+    {
+      "apiVersion": "[parameters('apiVersion')]",
+      "type": "Microsoft.ContainerInstance/containerGroupProfiles",
+      "name": "[parameters('containerGroupProfileName')]",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "sku": "Standard",
+        "containers": [
+          {
+            "name": "web",
+            "properties": {
+              "image": "mcr.microsoft.com/azuredocs/aci-helloworld@sha256:565dba8ce20ca1a311c2d9485089d7ddc935dd50140510050345a1b0ea4ffa6e",
+              "ports": [
+                {
+                  "protocol": "TCP",
+                  "port": 80
+                }
+              ],
+              "resources": {
+                "requests": {
+                  "memoryInGB": 1.0,
+                  "cpu": 1.0
+                }
+              }
+            }
+          }
+        ],
+        "restartPolicy": "Always",
+        "ipAddress": {
+          "ports": [
+            {
+              "protocol": "TCP",
+              "port": 80
+            }
+          ],
+          "type": "Private"
+        },
+        "osType": "Linux"
+      }
+    },
+    {
+      "apiVersion": "[parameters('apiVersion')]",
+      "type": "Microsoft.ContainerInstance/NGroups",
+      "name": "[parameters('nGroupsNameParam)]",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[concat('Microsoft.ContainerInstance/containerGroupProfiles/', parameters('containerGroupProfileName'))]",
+        "[resourceId('Microsoft.Network/applicationGateways', parameters('applicationGatewayName'))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+      ],
+      "properties": {
+        "elasticProfile": {
+          "desiredCount": "[parameters('desiredCount')]",
+          "maintainDesiredCount": "[parameters('maintainDesiredCount')]",
+          "containerGroupNamingPolicy": {
+            "guidNamingPolicy":{
+              "prefix":"[variables('prefixCG')]"
+           }
+          }     
+        },
+        "containerGroupProfiles": [
+          {
+            "resource": {
+              "id": "[concat(variables('resourcePrefix'), 'Microsoft.ContainerInstance/containerGroupProfiles/', parameters('containerGroupProfileName'))]"
+            },
+            "containerGroupProperties": {
+              "subnetIds": [
+                {
+                  "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('aciSubnetName'))]",
+                  "name": "[parameters('aciSubnetName')]"
+                }
+              ]
+            },
+            "networkProfile": {
+              "applicationGateway": {
+                "resource": {
+                  "id": "[resourceId('Microsoft.Network/applicationGateways', parameters('applicationGatewayName'))]"
+                },
+                "backendAddressPools": [
+                  {
+                    "resource": {
+                      "id": "[resourceId('Microsoft.Network/applicationGateways/backendAddressPools', parameters('applicationGatewayName'), parameters('backendAddressPoolName'))]"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "zones": "[parameters('zones')]",
+      "tags": {
+        "cirrusTestScenario": "lin-100.regional.appgateway", 
+        "reprovision.enabled": true
+      }
+    },
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "apiVersion": "[variables('applicationGatewayApiVersion')]",
+      "name": "[parameters('publicIPName')]",
+      "location": "[resourceGroup().location]",
+      "sku": {
+        "name": "Standard",
+        "tier": "Regional"
+      },
+      "properties": {
+        "publicIPAddressVersion": "IPv4",
+        "publicIPAllocationMethod": "Static",
+        "idleTimeoutInMinutes": 5,
+        "ipTags": [],
+        "ddosSettings": {
+          "protectionMode": "VirtualNetworkInherited"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Network/applicationGateways",
+      "apiVersion": "[variables('applicationGatewayApiVersion')]",
+      "name": "[parameters('applicationGatewayName')]",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('appGatewaySubnetName'))]",
+        "[resourceId('Microsoft.Network/publicIPAddresses', parameters('publicIPName'))]"
+      ],
+      "properties": {
+        "sku": {
+          "name": "Standard_v2",
+          "tier": "Standard_v2"
+        },
+        "gatewayIPConfigurations": [
+          {
+            "name": "appGatewayIpConfig",
+            "id": "[concat(resourceId('Microsoft.Network/applicationGateways', parameters('applicationGatewayName')), '/gatewayIPConfigurations/appGatewayIpConfig')]",
+            "properties": {
+              "subnet": {
+                "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('appGatewaySubnetName'))]"
+              }
+            }
+          }
+        ],
+        "sslCertificates": [],
+        "trustedRootCertificates": [],
+        "trustedClientCertificates": [],
+        "sslProfiles": [],
+        "frontendIPConfigurations": [
+          {
+            "name": "appGwPublicFrontendIpIPv4",
+            "id": "[concat(resourceId('Microsoft.Network/applicationGateways', parameters('applicationGatewayName')), '/frontendIPConfigurations/appGwPublicFrontendIpIPv4')]",
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses', parameters('publicIPName'))]"
+              }
+            }
+          }
+        ],
+        "frontendPorts": [
+          {
+            "name": "port_80",
+            "id": "[concat(resourceId('Microsoft.Network/applicationGateways', parameters('applicationGatewayName')), '/frontendPorts/port_80')]",
+            "properties": {
+              "port": 80
+            }
+          }
+        ],
+        "backendAddressPools": [
+          {
+            "name": "[parameters('backendAddressPoolName')]",
+            "id": "[concat(resourceId('Microsoft.Network/applicationGateways', parameters('applicationGatewayName')), concat('/backendAddressPools/', parameters('backendAddressPoolName')))]",
+            "properties": {
+              "backendAddresses": []
+            }
+          }
+        ],
+        "loadDistributionPolicies": [],
+        "backendHttpSettingsCollection": [
+          {
+            "name": "[concat(parameters('applicationGatewayName'), '-be-settings')]",
+            "id": "[concat(resourceId('Microsoft.Network/applicationGateways', parameters('applicationGatewayName')), concat('/backendHttpSettingsCollection/', parameters('applicationGatewayName'), '-be-settings'))]",
+            "properties": {
+              "port": 80,
+              "protocol": "Http",
+              "cookieBasedAffinity": "Disabled",
+              "pickHostNameFromBackendAddress": false,
+              "requestTimeout": 60,
+              "probe": {
+                "id": "[concat(resourceId('Microsoft.Network/applicationGateways', parameters('applicationGatewayName')), '/probes/healthprobe')]"
+              }
+            }
+          }
+        ],
+        "backendSettingsCollection": [],
+        "httpListeners": [
+          {
+            "name": "[concat(parameters('applicationGatewayName'), '-listener')]",
+            "id": "[concat(resourceId('Microsoft.Network/applicationGateways', parameters('applicationGatewayName')), concat('/httpListeners/', parameters('applicationGatewayName'), '-listener'))]",
+            "properties": {
+              "frontendIPConfiguration": {
+                "id": "[concat(resourceId('Microsoft.Network/applicationGateways', parameters('applicationGatewayName')), '/frontendIPConfigurations/appGwPublicFrontendIpIPv4')]"
+              },
+              "frontendPort": {
+                "id": "[concat(resourceId('Microsoft.Network/applicationGateways', parameters('applicationGatewayName')), '/frontendPorts/port_80')]"
+              },
+              "protocol": "Http",
+              "hostNames": [],
+              "requireServerNameIndication": false,
+              "customErrorConfigurations": []
+            }
+          }
+        ],
+        "listeners": [],
+        "urlPathMaps": [],
+        "requestRoutingRules": [
+          {
+            "name": "[concat(parameters('applicationGatewayName'), '-routerule')]",
+            "id": "[concat(resourceId('Microsoft.Network/applicationGateways', parameters('applicationGatewayName')), concat('/requestRoutingRules/', parameters('applicationGatewayName'), '-routerule'))]",
+            "properties": {
+              "ruleType": "Basic",
+              "priority": 1,
+              "httpListener": {
+                "id": "[concat(resourceId('Microsoft.Network/applicationGateways', parameters('applicationGatewayName')), concat('/httpListeners/', parameters('applicationGatewayName'), '-listener'))]"
+              },
+              "backendAddressPool": {
+                "id": "[concat(resourceId('Microsoft.Network/applicationGateways', parameters('applicationGatewayName')), concat('/backendAddressPools/', parameters('backendAddressPoolName')))]"
+              },
+              "backendHttpSettings": {
+                "id": "[concat(resourceId('Microsoft.Network/applicationGateways', parameters('applicationGatewayName')), concat('/backendHttpSettingsCollection/', parameters('applicationGatewayName'), '-be-settings'))]"
+              }
+            }
+          }
+        ],
+        "routingRules": [],
+        "probes": [
+          {
+            "name": "healthprobe",
+            "id": "[concat(resourceId('Microsoft.Network/applicationGateways', parameters('applicationGatewayName')), '/probes/healthprobe')]",
+            "properties": {
+              "protocol": "Http",
+              "host": "127.0.0.1",
+              "path": "/",
+              "interval": 3600,
+              "timeout": 3600,
+              "unhealthyThreshold": 3,
+              "pickHostNameFromBackendHttpSettings": false,
+              "minServers": 0,
+              "match": {}
+            }
+          }
+        ],
+        "rewriteRuleSets": [],
+        "redirectConfigurations": [],
+        "privateLinkConfigurations": [],
+        "enableHttp2": false,
+        "autoscaleConfiguration": {
+          "minCapacity": 0,
+          "maxCapacity": 3
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks/subnets",
+      "apiVersion": "[variables('applicationGatewayApiVersion')]",
+      "name": "[concat(parameters('vnetName'), '/', parameters('aciSubnetName'))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+      ],
+      "properties": {
+        "addressPrefix": "[parameters('aciSubnetAddressPrefix')]",
+        "serviceEndpoints": [],
+        "delegations": [
+          {
+            "name": "ACIDelegationService",
+            "id": "[concat(resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('aciSubnetName')), '/delegations/ACIDelegationService')]",
+            "properties": {
+              "serviceName": "Microsoft.ContainerInstance/containerGroups"
+            },
+            "type": "Microsoft.Network/virtualNetworks/subnets/delegations"
+          }
+        ],
+        "networkSecurityGroup": {
+          "id": "[resourceId('Microsoft.Network/networkSecurityGroups/', parameters('networkSecurityGroupName'))]"
+        },
+        "privateEndpointNetworkPolicies": "Disabled",
+        "privateLinkServiceNetworkPolicies": "Enabled"
+      }
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks/subnets",
+      "apiVersion": "[variables('applicationGatewayApiVersion')]",
+      "name": "[concat(parameters('vnetName'), '/', parameters('appGatewaySubnetName'))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+      ],
+      "properties": {
+        "addressPrefix":"[parameters('appGatewaySubnetAddressPrefix')]",
+        "applicationGatewayIPConfigurations": [
+          {
+            "id": "[concat(resourceId('Microsoft.Network/applicationGateways', parameters('applicationGatewayName')), '/gatewayIPConfigurations/appGatewayIpConfig')]"
+          }
+        ],
+        "serviceEndpoints": [],
+        "delegations": [],
+        "networkSecurityGroup": {
+          "id": "[resourceId('Microsoft.Network/networkSecurityGroups/', parameters('networkSecurityGroupName'))]"
+        },
+        "privateEndpointNetworkPolicies": "Disabled",
+        "privateLinkServiceNetworkPolicies": "Enabled"
+      }
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "[variables('applicationGatewayApiVersion')]",
+      "name": "[parameters('vnetName')]",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "[parameters('vnetAddressPrefix')]"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "[parameters('appGatewaySubnetName')]",
+            "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('appGatewaySubnetName'))]",
+            "properties": {
+              "addressPrefix":"[parameters('appGatewaySubnetAddressPrefix')]",
+              "applicationGatewayIPConfigurations": [
+                {
+                  "id": "[concat(resourceId('Microsoft.Network/applicationGateways', parameters('applicationGatewayName')), '/gatewayIPConfigurations/appGatewayIpConfig')]"
+                }
+              ],
+              "serviceEndpoints": [],
+              "delegations": [],
+              "networkSecurityGroup": {
+                "id": "[resourceId('Microsoft.Network/networkSecurityGroups/', parameters('networkSecurityGroupName'))]"
+              },
+              "privateEndpointNetworkPolicies": "Disabled",
+              "privateLinkServiceNetworkPolicies": "Enabled"
+            },
+            "type": "Microsoft.Network/virtualNetworks/subnets"
+          },
+          {
+            "name": "[parameters('aciSubnetName')]",
+            "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('aciSubnetName'))]",
+            "properties": {
+              "addressPrefix": "[parameters('aciSubnetAddressPrefix')]",
+              "serviceEndpoints": [],
+              "delegations": [
+                {
+                  "name": "ACIDelegationService",
+                  "id": "[concat(resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('aciSubnetName')), '/delegations/ACIDelegationService')]",
+                  "properties": {
+                    "serviceName": "Microsoft.ContainerInstance/containerGroups"
+                  },
+                  "type": "Microsoft.Network/virtualNetworks/subnets/delegations"
+                }
+              ],
+              "networkSecurityGroup": {
+                "id": "[resourceId('Microsoft.Network/networkSecurityGroups/', parameters('networkSecurityGroupName'))]"
+              },
+              "privateEndpointNetworkPolicies": "Disabled",
+              "privateLinkServiceNetworkPolicies": "Enabled"
+            },
+            "type": "Microsoft.Network/virtualNetworks/subnets"
+          }
+        ],
+        "virtualNetworkPeerings": [],
+        "enableDdosProtection": false
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkSecurityGroups', parameters('networkSecurityGroupName'))]"
+      ]
+    }, 
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "[variables('applicationGatewayApiVersion')]",
+      "name": "[parameters('networkSecurityGroupName')]",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "securityRules": [
+          {
+            "name": "AppGatewayV2ProbeInbound",
+            "properties": {
+                "access": "Allow",
+                "description": "Allow traffic from GatewayManager. This rule is needed for application gateway probes to work.",
+                "destinationAddressPrefix": "*",
+                "destinationPortRange": "65200-65535",
+                "direction": "Inbound",
+                "protocol": "Tcp",
+                "priority": 100,
+                "sourceAddressPrefix": "GatewayManager",
+                "sourcePortRange": "*"
+            }
+          },
+          {
+            "name": "AllowHTTPInbound",
+            "properties": {
+                "access": "Allow",
+                "description": "Allow Internet traffic on port 80",
+                "destinationAddressPrefix": "*",
+                "destinationPortRange": "80",
+                "direction": "Inbound",
+                "protocol": "Tcp",
+                "priority": 110,
+                "sourceAddressPrefix": "Internet",
+                "sourcePortRange": "*"
+            }
+          },
+          {
+            "name": "AllowPublicIPAddress",
+            "properties": {
+                "access": "Allow",
+                "description": "Allow traffic from public ip address",
+                "destinationAddressPrefix": "[reference(parameters('publicIPName')).IpAddress]",
+                "destinationPortRange": "80",
+                "direction": "Inbound",
+                "protocol": "Tcp",
+                "priority": 111,
+                "sourceAddressPrefix": "Internet",
+                "sourcePortRange": "*"
+            }
+          },
+          {
+            "name": "AllowVirtualNetworkInbound",
+            "properties": {
+                "access": "Allow",
+                "description": "Allow Internet traffic to Virtual network",
+                "destinationAddressPrefix": "VirtualNetwork",
+                "destinationPortRange": "80",
+                "direction": "Inbound",
+                "protocol": "*",
+                "priority": 112,
+                "sourceAddressPrefix": "*",
+                "sourcePortRange": "*"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

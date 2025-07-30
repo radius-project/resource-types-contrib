@@ -1,0 +1,21 @@
+# Example Terraform variables file
+# Copy this file to terraform.tfvars and modify the values as needed
+
+# Required variables
+resource_group_name = "my-resource-group"
+
+# Optional variables (defaults will be used if not specified)
+# location = "East US"
+# cg_profile_name = "cgp_1"
+# ngroups_name = "ngroup_lin1_basic"
+# desired_count = 1
+# prefix_cg = "cg-lin1-basic-"
+# container_port = 80
+# memory_gb = 1.0
+# cpu_cores = 1.0
+
+# tags = {
+#   cirrusTestScenario = "lin-1.basic"
+#   environment        = "development"
+#   project           = "my-project"
+# }
