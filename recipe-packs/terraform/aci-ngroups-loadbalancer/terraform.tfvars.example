@@ -1,0 +1,48 @@
+# Example Terraform variables file for ACI NGroups LoadBalancer configuration
+# Copy this file to terraform.tfvars and modify the values as needed
+
+# Required variables
+resource_group_name = "my-ngroups-loadbalancer-rg"
+
+# Optional variables (defaults will be used if not specified)
+# api_version = "2024-09-01-preview"
+# ngroups_param_name = "nGroups_lin100_reg_lb"
+# container_group_profile_name = "cgp_1"
+# load_balancer_name = "slb_1"
+# backend_address_pool_name = "bepool_1"
+# vnet_name = "vnet_1"
+# subnet_name = "subnet_1"
+# network_security_group_name = "nsg_1"
+# inbound_public_ip_name = "inboundPublicIP"
+# outbound_public_ip_name = "outboundPublicIP"
+# nat_gateway_name = "natGateway1"
+# frontend_ip_name = "loadBalancerFrontend"
+# http_rule_name = "httpRule"
+# health_probe_name = "healthProbe"
+# inbound_nat_rule_name = "inboundNatRule"
+
+# Network configuration
+# vnet_address_prefix = "172.19.0.0/16"
+# subnet_address_prefix = "172.19.1.0/24"
+
+# Scaling configuration
+# desired_count = 100
+# maintain_desired_count = true
+# zones = []
+
+# Public IP configuration
+# domain_name_label = "ngroupsdemo"
+
+# Container configuration
+# container_image = "mcr.microsoft.com/azuredocs/aci-helloworld@sha256:565dba8ce20ca1a311c2d9485089d7ddc935dd50140510050345a1b0ea4ffa6e"
+# container_port = 80
+# memory_gb = 1.0
+# cpu_cores = 1.0
+
+# Tags
+# tags = {
+#   cirrusTestScenario    = "lin-100.regional.loadbalancer"
+#   "reprovision.enabled" = "true"
+#   environment          = "development"
+#   project              = "my-project"
+# }
