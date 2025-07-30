@@ -1,0 +1,23 @@
+# Example terraform.tfvars file
+# Copy this file to terraform.tfvars and update the values
+
+# Required: Resource group name where resources will be deployed
+resource_group_name = "your-resource-group-name"
+
+# Optional: Override default values if needed
+# api_version                   = "2024-09-01-preview"
+# container_group_profile_name  = "cgp_1"
+# ngroups_name                 = "ngroup_confidential_basic"
+# desired_count                = 1
+# prefix_cg                    = "cg-confidential-"
+
+# Optional: Custom container image
+# container_image = "mcr.microsoft.com/azuredocs/aci-helloworld@sha256:565dba8ce20ca1a311c2d9485089d7ddc935dd50140510050345a1b0ea4ffa6e"
+
+# Optional: Custom tags
+# tags = {
+#   scenario    = "confidential-computing"
+#   purpose     = "demo"
+#   environment = "test"
+#   owner       = "your-name"
+# }
