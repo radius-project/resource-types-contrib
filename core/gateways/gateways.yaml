@@ -1,0 +1,73 @@
+name: Applications.Core
+types:
+  gateways:
+    # This will not be required in the future since it is the default.
+    capabilities: ["SupportsRecipes"]
+    apiVersions:
+      # The only API version supported is 2023-10-01-preview. See https://github.com/radius-project/radius/issues/9357
+      '2023-10-01-preview':
+        schema: 
+          type: object
+          properties:
+            application:
+              type: string
+              description: "Optional: The application which the resource is associated with"
+            hostname:
+              type: object
+              description: "Optional: The hostname information for this gateway"
+              properties:
+                prefix: 
+                  type: string
+                  description: "Optional: A custom DNS prefix for the generated hostname"
+                fullyQualifiedHostname:
+                  type: string
+                  description: "Optional: A fully-qualified domain name to use for the gateway"
+            # Should be an array 
+            routes:
+              type: object
+              description: "Required: The routes for the gateway"
+              properties:
+                path: 
+                  type: string
+                  description: "Required: The path to match the incoming request path on. Not required when tls.sslPassthrough is set to 'true''"
+                destination:
+                  type: string
+                  description: "Required: The service to route traffic to, in the form '[scheme]://[serviceName]:[port]'"
+                replacePrefix:
+                  type: string
+                  description: "Optional: The prefix to replace in the incoming request path that is sent to the destination route"
+                enableWebsockets:
+                  type: boolean
+                  description: "Optional: Enables websocket support for the route. Defaults to false."
+                timeoutPolicy:
+                  type: object
+                  description: "Optional: The timeout policy for the route"
+                  properties:
+                    request:
+                      type: string
+                      description: "Optional: The timeout for the request in seconds. Defaults to 15 seconds"
+                    backendRequest:
+                      type: string
+                      description: "Optional: The timeout for the backend request in seconds. Defaults to 15 seconds"
+              required: 
+              - path
+              - destination   
+            tls:
+              type: object
+              description: "Optional: TLS configuration for the route"
+              properties:
+                sslPassthrough:
+                  type: boolean
+                  description: "Optional: Configures the gateway to passthrough encrypted SSL traffic to an HTTP route and container"
+                hostname:
+                  type: string
+                  description: "Optional: The hostname for TLS termination"
+                certificateFrom:
+                  type: string
+                  description: "Optional: The Radius Secret Store resource ID that holds the TLS certificate data for TLS termination"
+                minimumProtocolVersion:
+                  type: string
+                  description: "Optional: The minimum TLS protocol to support for TLS termination"
+          required:
+          - routes
+          - application
