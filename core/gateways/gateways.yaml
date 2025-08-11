@@ -1,8 +1,6 @@
-name: Applications.Core
+name: Radius.Compute
 types:
   gateways:
-    # This will not be required in the future since it is the default.
-    capabilities: ["SupportsRecipes"]
     apiVersions:
       # The only API version supported is 2023-10-01-preview. See https://github.com/radius-project/radius/issues/9357
       '2023-10-01-preview':
