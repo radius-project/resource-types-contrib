@@ -1,8 +1,8 @@
-`Applications.Core/Container` provides a way to route requests to different resources. 
+`Radius.Compute/gateways` provides a way to route requests to different resources. 
 
 ## Set Up
 
-Create the Applications.Core/gateways resource type.
+Create the Radius.Compute/gateways resource type.
 ```
 rad resource-type create gateways -f gateways.yaml
 ```
