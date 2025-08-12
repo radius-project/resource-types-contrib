@@ -1,0 +1,39 @@
+# Example Terraform variables file for NGroups Gateway configuration
+# Copy this file to ngroups-gateway.tfvars and modify the values as needed
+
+# Required variables
+resource_group_name = "my-ngroups-gateway-rg"
+
+# Optional variables (defaults will be used if not specified)
+# api_version = "2024-09-01-preview"
+# ngroups_name_param = "nGroups_lin100_regional_ag"
+# container_group_profile_name = "cgp"
+# application_gateway_name = "agw1"
+# public_ip_name = "publicIP"
+# backend_address_pool_name = "bepool"
+# vnet_name = "vnet1"
+# network_security_group_name = "nsg1"
+# desired_count = 100
+# maintain_desired_count = true
+# zones = []
+
+# Network configuration
+# vnet_address_prefix = "172.16.0.0/23"
+# aci_subnet_address_prefix = "172.16.0.0/25"
+# app_gateway_subnet_address_prefix = "172.16.1.0/25"
+# aci_subnet_name = "aciSubnet"
+# app_gateway_subnet_name = "appgatewaySubnet"
+
+# Container configuration
+# container_image = "mcr.microsoft.com/azuredocs/aci-helloworld@sha256:565dba8ce20ca1a311c2d9485089d7ddc935dd50140510050345a1b0ea4ffa6e"
+# container_port = 80
+# memory_gb = 1.0
+# cpu_cores = 1.0
+
+# Tags
+# tags = {
+#   cirrusTestScenario    = "lin-100.regional.appgateway"
+#   "reprovision.enabled" = "true"
+#   environment          = "development"
+#   project              = "my-project"
+# }
