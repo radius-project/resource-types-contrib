@@ -34,14 +34,16 @@ jobs:
         run: |
           helm repo add dapr https://dapr.github.io/helm-charts/
           helm install dapr dapr/dapr --version=1.12 --namespace dapr-system --create-namespace --wait
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@v1
+        with:
+          version: '1.2.0'
+      - name: Verify ORAS installation
+        run: oras version
       - name: Download rad CLI
         run: |
-          RADIUS_VERSION="${{ inputs.version }}"
-          if [[ -z "${{ inputs.version }}" ]]; then
-              RADIUS_VERSION=edge
-          fi
-          chmod +x ./.github/scripts/install-radius.sh
-          ./.github/scripts/install-radius.sh $RADIUS_VERSION
+          echo "Downloading latest rad CLI"
+          wget -q "${{ env.RAD_CLI_URL }}" -O - | /bin/bash -s edge
       # - name: Publish Recipes
       #   run: |
       #     files_list=$(ls "local-dev" | grep '\.bicep$')
