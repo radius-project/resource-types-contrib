@@ -1,0 +1,168 @@
+name: Validate Resource Types
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Radius version number to use (e.g. 0.1.0, 0.1.0-rc1, edge). Defaults to edge.'
+        required: false
+        default: 'edge'
+        type: string
+
+jobs:
+  validate-resource-types:
+    runs-on: ubuntu-latest
+    name: Validate Resource Type Schemas
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 16
+      - name: Download k3d
+        run: wget -q -O - https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+      - name: Create k3d cluster
+        # Map localhost port 80 on the external load balancer, and disable traefik and the internal load balancer.
+        run: k3d cluster create --agents 2 -p "80:80@loadbalancer" --k3s-arg "--disable=traefik@server:*" --k3s-arg "--disable=servicelb@server:*" --registry-create reciperegistry:51351
+      - name: Install Dapr
+        run: |
+          helm repo add dapr https://dapr.github.io/helm-charts/
+          helm install dapr dapr/dapr --version=1.12 --namespace dapr-system --create-namespace --wait
+      - name: Download rad CLI
+        run: |
+          RADIUS_VERSION="${{ inputs.version }}"
+          if [[ -z "${{ inputs.version }}" ]]; then
+              RADIUS_VERSION=edge
+          fi
+          chmod +x ./.github/scripts/install-radius.sh
+          ./.github/scripts/install-radius.sh $RADIUS_VERSION
+      # - name: Publish Recipes
+      #   run: |
+      #     files_list=$(ls "local-dev" | grep '\.bicep$')
+      #     for file in $files_list; do
+      #       echo "Publishing recipe: local-dev/$file"
+      #       recipeName="${file%.*}"
+      #       rad bicep publish --file local-dev/$file --target br:localhost:51351/recipes/local-dev/$recipeName:latest --plain-http
+      #     done
+      - name: Initialize default environment
+        run: |
+          rad install kubernetes --set rp.publicEndpointOverride=localhost
+          rad group create default
+          rad workspace create kubernetes default --group default
+          rad group switch default
+          rad env create default
+          rad env switch default
+
+      - name: Create resource types from core folder
+        run: |
+          echo "Finding YAML files in core folder..."
+          core_yaml_files=$(find ./core -name "*.yaml" -type f)
+          
+          if [[ -z "$core_yaml_files" ]]; then
+            echo "No YAML files found in core folder"
+            exit 0
+          fi
+          
+          echo "Found YAML files:"
+          echo "$core_yaml_files"
+          
+          echo "Creating resource types..."
+          for yaml_file in $core_yaml_files; do
+            echo "Processing $yaml_file..."
+            
+            # Extract resource type name from the file path for naming
+            # e.g., ./core/containers/containers.yaml -> containers
+            resource_name=$(basename "$yaml_file" .yaml)
+            
+            echo "Creating resource type '$resource_name' from $yaml_file..."
+            if rad resource-type create "$resource_name" -f "$yaml_file"; then
+              echo "✅ Successfully created resource type: $resource_name"
+            else
+              echo "❌ Failed to create resource type: $resource_name"
+              exit 1
+            fi
+          done
+          
+          echo "✅ All resource types created successfully"
+
+      - name: Verify expected resource types are present
+        run: |
+          echo "Listing all resource types..."
+          rad resource-type list
+          
+          echo "Verifying expected resource types..."
+          
+          # Define expected resource types
+          expected_resource_types=(
+            "Radius.Compute/containers"
+            "Radius.Networking/gateways"
+          )
+          
+          # Get the list of resource types
+          resource_type_list=$(rad resource-type list)
+          
+          verification_failed=false
+          
+          for expected_type in "${expected_resource_types[@]}"; do
+            echo "Checking for resource type: $expected_type"
+            
+            if echo "$resource_type_list" | grep -q "$expected_type"; then
+              echo "✅ Found resource type: $expected_type"
+            else
+              echo "❌ Missing resource type: $expected_type"
+              verification_failed=true
+            fi
+          done
+          
+          if [[ "$verification_failed" == "true" ]]; then
+            echo "❌ Resource type verification failed"
+            echo "Expected resource types not found in the list"
+            exit 1
+          else
+            echo "✅ All expected resource types are present"
+          fi
+
+      - name: Cleanup resources
+        if: always()
+        run: |
+          echo "Cleaning up created resource types..."
+          
+          # List of resource types to clean up (same as what we created)
+          resource_types_to_cleanup=(
+            "Radius.Compute/containers"
+            "Radius.Networking/gateways"
+          )
+          
+          for resource_type in "${resource_types_to_cleanup[@]}"; do
+            echo "Attempting to delete resource type: $resource_type"
+            
+            # Extract just the type name (e.g., "containers" from "Radius.Compute/containers")
+            type_name=$(echo "$resource_type" | cut -d'/' -f2)
+            
+            if rad resource-type delete "$type_name" --yes 2>/dev/null; then
+              echo "✅ Deleted resource type: $resource_type"
+            else
+              echo "⚠️  Could not delete resource type: $resource_type (may not exist)"
+            fi
+          done
+          
+          echo "Cleaning up generated files..."
+          
+          # Remove any generated .tgz files
+          if ls *.tgz >/dev/null 2>&1; then
+            echo "Removing generated .tgz files..."
+            rm -f *.tgz
+            echo "✅ Removed .tgz files"
+          else
+            echo "No .tgz files to clean up"
+          fi
+          
+          echo "✅ Cleanup completed"
+
+
