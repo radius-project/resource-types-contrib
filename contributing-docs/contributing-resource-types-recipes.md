@@ -105,7 +105,7 @@ resource-types-contrib/
 For eg: if you are contributing to a `redisCaches` resource type, create a `redis.yaml` file that defines your resource type schema:
 
 ```yaml
-name: Radius.Data
+namespace: Radius.Data
 types:
   redisCaches:
     apiVersions:
@@ -153,7 +153,7 @@ types:
 
 The following guidelines should be followed when contributing resource types:
 
-- The `name` field follows the format `Radius.<Category>`, where `<Category>` is a high-level grouping (e.g., Data, Dapr, AI). Some examples might be `Radius.Data/*` or `Radius.Security/*`.
+- The `namespace` field follows the format `Radius.<Category>`, where `<Category>` is a high-level grouping (e.g., Data, Dapr, AI). Some examples might be `Radius.Data/*` or `Radius.Security/*`.
 
 - The resource type name follows the camelCase convention and is in plural form, such as `redisCaches`, `sqlDatabases`, or `rabbitMQQueues`.
 
