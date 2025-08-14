@@ -41,7 +41,7 @@ jobs:
       - name: Verify ORAS installation
         run: oras version
       - name: Download rad CLI
-        # TODO: remove URL for environment variable
+        # TODO: remove URL and use environment variable
         run: |
           echo "Downloading latest rad CLI"
           wget -q "https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh" -O - | /bin/bash -s edge
