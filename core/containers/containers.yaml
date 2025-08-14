@@ -1,4 +1,4 @@
-name: Radius.Compute
+namespace: Radius.Compute
 types:
   containers:
     apiVersions:
