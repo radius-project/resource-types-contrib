@@ -45,14 +45,6 @@ jobs:
         run: |
           echo "Downloading latest rad CLI"
           wget -q "https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh" -O - | /bin/bash -s edge
-      # - name: Publish Recipes
-      #   run: |
-      #     files_list=$(ls "local-dev" | grep '\.bicep$')
-      #     for file in $files_list; do
-      #       echo "Publishing recipe: local-dev/$file"
-      #       recipeName="${file%.*}"
-      #       rad bicep publish --file local-dev/$file --target br:localhost:51351/recipes/local-dev/$recipeName:latest --plain-http
-      #     done
       - name: Initialize default environment
         run: |
           rad install kubernetes --set rp.publicEndpointOverride=localhost
@@ -129,41 +121,3 @@ jobs:
           else
             echo "✅ All expected resource types are present"
           fi
-
-      - name: Cleanup resources
-        if: always()
-        run: |
-          echo "Cleaning up created resource types..."
-          
-          # List of resource types to clean up (same as what we created)
-          resource_types_to_cleanup=(
-            "Radius.Compute/containers"
-          )
-          
-          for resource_type in "${resource_types_to_cleanup[@]}"; do
-            echo "Attempting to delete resource type: $resource_type"
-            
-            # Extract just the type name (e.g., "containers" from "Radius.Compute/containers")
-            type_name=$(echo "$resource_type" | cut -d'/' -f2)
-            
-            if rad resource-type delete "$type_name" --yes 2>/dev/null; then
-              echo "✅ Deleted resource type: $resource_type"
-            else
-              echo "⚠️  Could not delete resource type: $resource_type (may not exist)"
-            fi
-          done
-          
-          echo "Cleaning up generated files..."
-          
-          # Remove any generated .tgz files
-          if ls *.tgz >/dev/null 2>&1; then
-            echo "Removing generated .tgz files..."
-            rm -f *.tgz
-            echo "✅ Removed .tgz files"
-          else
-            echo "No .tgz files to clean up"
-          fi
-          
-          echo "✅ Cleanup completed"
-
-
