@@ -41,9 +41,10 @@ jobs:
       - name: Verify ORAS installation
         run: oras version
       - name: Download rad CLI
+        # TODO: remove URL for environment variable
         run: |
           echo "Downloading latest rad CLI"
-          wget -q "${{ env.RAD_CLI_URL }}" -O - | /bin/bash -s edge
+          wget -q "https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh" -O - | /bin/bash -s edge
       # - name: Publish Recipes
       #   run: |
       #     files_list=$(ls "local-dev" | grep '\.bicep$')
@@ -103,7 +104,6 @@ jobs:
           # Define expected resource types
           expected_resource_types=(
             "Radius.Compute/containers"
-            "Radius.Networking/gateways"
           )
           
           # Get the list of resource types
@@ -138,7 +138,6 @@ jobs:
           # List of resource types to clean up (same as what we created)
           resource_types_to_cleanup=(
             "Radius.Compute/containers"
-            "Radius.Networking/gateways"
           )
           
           for resource_type in "${resource_types_to_cleanup[@]}"; do
