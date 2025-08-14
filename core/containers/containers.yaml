@@ -3,7 +3,7 @@ types:
   containers:
     apiVersions:
       # TODO: update the API version once the official build is ready. The only API version supported is 2023-10-01-preview. See https://github.com/radius-project/radius/issues/9357
-      '2023-10-01-preview':
+      "2023-10-01-preview":
         schema: 
           type: object
           properties:
@@ -16,9 +16,8 @@ types:
             connections:
               type: object
               additionalProperties:
-                source:
-                  type: string
-                  description: The resourceID of the source of the connection.
+                type: string
+                description: The resourceID of the source of the connection.
             container:
               type: object
               properties:
@@ -29,8 +28,7 @@ types:
                   type: object
                   description: "Optional: Environment variables injected into the application container; for example 'ENV_VAR': { value: 'myvalue' }"
                   additionalProperties:
-                    value:
-                      type: string
+                    type: string
                 # Should be an array of strings but Radius does not suport arrays yet.
                 # See https://github.com/radius-project/radius/issues/9365
                 # Should be:
