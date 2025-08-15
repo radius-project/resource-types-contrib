@@ -117,3 +117,32 @@ jobs:
           else
             echo "✅ All expected resource types are present"
           fi
+
+      - name: Publish Bicep extensions
+        run: |
+          echo "Publishing Bicep extensions for all YAML files..."
+          core_yaml_files=$(find ./core -name "*.yaml" -type f)
+          
+          if [[ -z "$core_yaml_files" ]]; then
+            echo "No YAML files found in core folder"
+            exit 0
+          fi
+          
+          for yaml_file in $core_yaml_files; do
+            echo "Publishing extension for $yaml_file..."
+            
+            # Extract resource type name from the file path for naming
+            # e.g., ./core/containers/containers.yaml -> containers
+            resource_name=$(basename "$yaml_file" .yaml)
+            extension_name="${resource_name}-extension"
+            
+            echo "Publishing extension '$extension_name.tgz' from $yaml_file..."
+            if rad bicep publish-extension -f "$yaml_file" --target "$extension_name.tgz"; then
+              echo "✅ Successfully published extension: $extension_name.tgz"
+            else
+              echo "❌ Failed to publish extension: $extension_name.tgz"
+              exit 1
+            fi
+          done
+          
+          echo "✅ All Bicep extensions published successfully"
