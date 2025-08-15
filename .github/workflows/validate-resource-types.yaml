@@ -146,3 +146,109 @@ jobs:
           done
           
           echo "✅ All Bicep extensions published successfully"
+
+      - name: Update bicepconfig.json with published extensions
+        run: |
+          echo "Updating bicepconfig.json with published extensions..."
+          
+          # Find all published .tgz files and add them to bicepconfig.json
+          tgz_files=$(find . -name "*-extension.tgz" -type f)
+          
+          if [[ -n "$tgz_files" ]]; then
+            echo "Found extension files to add to bicepconfig.json:"
+            echo "$tgz_files"
+            
+            # Use jq to add each extension to the config
+            for tgz_file in $tgz_files; do
+              # Extract resource name from filename (e.g., "./containers-extension.tgz" -> "containers")
+              resource_name=$(basename "$tgz_file" -extension.tgz)
+              
+              echo "Adding extension '$resource_name' with file '$tgz_file' to bicepconfig.json..."
+              
+              # Update bicepconfig.json using jq
+              jq --arg name "$resource_name" --arg path "$tgz_file" \
+                '.extensions[$name] = $path' bicepconfig.json > bicepconfig.tmp && \
+                mv bicepconfig.tmp bicepconfig.json
+            done
+            
+            echo "✅ Successfully updated bicepconfig.json with extensions"
+          else
+            echo "No extension .tgz files found to add to bicepconfig.json"
+          fi
+          
+          echo "Final bicepconfig.json content:"
+          cat bicepconfig.json
+
+      - name: Deploy and validate recipes
+        run: |
+          echo "Finding and deploying recipe files..."
+          
+          # Find all Bicep files in recipes folders
+          bicep_recipes=$(find . -path "*/recipes/*" -name "*.bicep" -type f)
+          
+          # Find all Terraform files in recipes folders
+          terraform_recipes=$(find . -path "*/recipes/*" -name "*.tf" -type f)
+          
+          deployment_failed=false
+          
+          # Deploy Bicep recipes
+          if [[ -n "$bicep_recipes" ]]; then
+            echo "Found Bicep recipe files:"
+            echo "$bicep_recipes"
+            
+            for bicep_file in $bicep_recipes; do
+              echo "Deploying Bicep recipe: $bicep_file"
+              
+              # Extract recipe name from file path for deployment naming
+              recipe_name=$(basename "$bicep_file" .bicep)
+              deployment_name="recipe-test-${recipe_name}-$(date +%s)"
+              
+              if rad deploy "$bicep_file" --application "$deployment_name"; then
+                echo "✅ Successfully deployed Bicep recipe: $bicep_file"
+                
+                # Clean up the deployment
+                echo "Cleaning up deployment: $deployment_name"
+                rad app delete "$deployment_name" --yes || echo "⚠️ Failed to clean up deployment: $deployment_name"
+              else
+                echo "❌ Failed to deploy Bicep recipe: $bicep_file"
+                deployment_failed=true
+              fi
+            done
+          else
+            echo "No Bicep recipe files found in recipes folders"
+          fi
+          
+          # Deploy Terraform recipes
+          if [[ -n "$terraform_recipes" ]]; then
+            echo "Found Terraform recipe files:"
+            echo "$terraform_recipes"
+            
+            for tf_file in $terraform_recipes; do
+              echo "Validating Terraform recipe: $tf_file"
+              
+              # Get directory containing the Terraform file
+              tf_dir=$(dirname "$tf_file")
+              
+              # Basic Terraform validation
+              cd "$tf_dir"
+              
+              if terraform init && terraform validate; then
+                echo "✅ Successfully validated Terraform recipe: $tf_file"
+              else
+                echo "❌ Failed to validate Terraform recipe: $tf_file"
+                deployment_failed=true
+              fi
+              
+              # Return to repository root
+              cd - > /dev/null
+            done
+          else
+            echo "No Terraform recipe files found in recipes folders"
+          fi
+          
+          if [[ "$deployment_failed" == "true" ]]; then
+            echo "❌ Recipe deployment/validation failed"
+            exit 1
+          else
+            echo "✅ All recipes deployed/validated successfully"
+          fi
