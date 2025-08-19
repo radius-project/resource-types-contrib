@@ -253,8 +253,6 @@ resource appGatewaySubnet 'Microsoft.Network/virtualNetworks/subnets@2022-09-01'
         id: '${applicationGateway.id}/gatewayIPConfigurations/appGatewayIpConfig'
       }
     ]
-    serviceEndpoints: []
-    delegations: []
     networkSecurityGroup: {
       id: networkSecurityGroup.id
     }
