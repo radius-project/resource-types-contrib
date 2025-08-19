@@ -81,3 +81,12 @@ resource nGroups 'Microsoft.ContainerInstance/NGroups@2024-09-01-preview' = {
 // Outputs
 output containerGroupProfileId string = containerGroupProfile.id
 output nGroupId string = nGroups.id
+
+output result object = {
+  values: {
+    containerGroupProfileId: containerGroupProfile.id
+    nGroupsId: nGroups.id
+    location: resourceGroup().location
+    desiredCount: desiredCount
+  }
+}
