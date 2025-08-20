@@ -1,0 +1,189 @@
+name: Test Compute Folder
+
+on:
+  push:
+    branches: [ main ]
+    paths: 
+      - 'compute/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'compute/**'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Radius version number to use (e.g. 0.1.0, 0.1.0-rc1, edge). Defaults to edge.'
+        required: false
+        default: 'edge'
+        type: string
+
+env:
+  # Server where terraform test modules are deployed
+  TF_RECIPE_MODULE_SERVER_URL: "http://tf-module-server.radius-test-tf-module-server.svc.cluster.local"
+  # Private Git repository where terraform module for testing is stored.
+  TF_RECIPE_PRIVATE_GIT_SOURCE: "git::https://github.com/radius-project/terraform-private-modules//kubernetes-redis"
+  # Local Docker registry name
+  LOCAL_REGISTRY_NAME: "radius-registry"
+  # Local Docker registry server
+  LOCAL_REGISTRY_SERVER: "localhost"
+  # Local Docker registry port
+  LOCAL_REGISTRY_PORT: "51351"
+
+jobs:
+  test-compute-folder:
+    runs-on: ubuntu-latest
+    name: Test Compute Platform - ${{ matrix.platform }}
+    strategy:
+      matrix:
+        platform: [aws, azure, kubernetes]
+        include:
+          - platform: aws
+            environment: aws-env
+            provider: aws
+          - platform: azure
+            environment: azure-env
+            provider: azure
+          - platform: kubernetes
+            environment: kubernetes-env
+            provider: kubernetes
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 16
+      - name: Download k3d
+        run: wget -q -O - https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+      - name: Create k3d cluster
+        # Map localhost port 80 on the external load balancer, and disable traefik and the internal load balancer.
+        run: k3d cluster create --agents 2 -p "80:80@loadbalancer" --k3s-arg "--disable=traefik@server:*" --k3s-arg "--disable=servicelb@server:*" --registry-create reciperegistry:51351
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@v1
+        with:
+          version: '1.2.0'
+      - name: Verify ORAS installation
+        run: oras version
+      - name: Download rad CLI
+        run: |
+          echo "Downloading latest rad CLI"
+          wget -q "https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh" -O - | /bin/bash -s edge
+      
+      - name: Publish Bicep Test Recipes
+        run: |
+          export PATH=$GITHUB_WORKSPACE/bin:$PATH
+          which rad || { echo "cannot find rad"; exit 1; }
+          make publish-test-bicep-recipes
+        env:
+          BICEP_RECIPE_REGISTRY: "${{ env.LOCAL_REGISTRY_SERVER }}:${{ env.LOCAL_REGISTRY_PORT }}"
+          BICEP_RECIPE_TAG_VERSION: ${{ env.REL_VERSION }}
+          TEMP_CERT_DIR: ${{ steps.create-local-registry.outputs.temp-cert-dir }}
+          SSL_CERT_FILE: ${{ steps.create-local-registry.outputs.temp-cert-dir }}/certs/${{ env.LOCAL_REGISTRY_SERVER }}/client.crt
+      - name: Publish Terraform test recipes
+        run: |
+          make publish-test-terraform-recipes
+
+      - name: Initialize default environment
+        run: |
+          rad install kubernetes --set rp.publicEndpointOverride=localhost
+          rad group create default
+          rad workspace create kubernetes default --group default
+          rad group switch default
+          rad env create default
+          rad env switch default
+      - name: Create platform-specific environment
+        run: |
+          echo "Creating Radius environment for ${{ matrix.platform }} platform..."
+          
+          # Create environment for this matrix platform
+          echo "Creating ${{ matrix.environment }} with provider ${{ matrix.provider }}..."
+          rad env create ${{ matrix.environment }} --provider ${{ matrix.provider }}
+          echo "✅ Created environment: ${{ matrix.environment }}"
+          
+          # Switch to the new environment
+          rad env switch ${{ matrix.environment }}
+          echo "✅ Switched to environment: ${{ matrix.environment }}"
+          
+          # List all environments to verify
+          echo "Listing all environments:"
+          rad env list
+      - name: Register recipes for platform
+        run: |
+          echo "Registering published recipes for ${{ matrix.platform }} in environment ${{ matrix.environment }}..."
+          
+          # Find all sub-platforms for this provider
+          sub_platforms=$(find ./compute -path "*/recipes/${{ matrix.platform }}/*" -type d -mindepth 1 -maxdepth 1 | sort)
+          
+          if [[ -z "$sub_platforms" ]]; then
+            echo "No sub-platforms found for ${{ matrix.platform }}"
+            exit 0
+          fi
+          
+          echo "Found sub-platforms for ${{ matrix.platform }}:"
+          echo "$sub_platforms"
+          
+          # Register recipes for each sub-platform
+          for sub_platform in $sub_platforms; do
+            sub_platform_name=$(basename "$sub_platform")
+            resource_type=$(basename "$(dirname "$(dirname "$(dirname "$sub_platform")")")")
+            
+            echo ""
+            echo "Registering recipes for sub-platform: $sub_platform_name (resource type: $resource_type)"
+            
+            # Register Bicep recipes
+            bicep_files=$(find "$sub_platform" -name "*.bicep" -type f)
+            if [[ -n "$bicep_files" ]]; then
+              for bicep_file in $bicep_files; do
+                recipe_name=$(basename "$bicep_file" .bicep)
+                registry_path="localhost:51351/recipes/compute/$resource_type/${{ matrix.platform }}/$sub_platform_name/$recipe_name:latest"
+                
+                echo "Registering Bicep recipe: $recipe_name"
+                echo "Registry path: br:$registry_path"
+                
+                if rad recipe register "$recipe_name-bicep" --environment "${{ matrix.environment }}" --resource-type "Radius.Compute/$resource_type" --template-kind bicep --template-path "br:$registry_path"; then
+                  echo "✅ Successfully registered Bicep recipe: $recipe_name-bicep"
+                else
+                  echo "❌ Failed to register Bicep recipe: $recipe_name-bicep"
+                  exit 1
+                fi
+              done
+            else
+              echo "No Bicep recipes found in $sub_platform_name"
+            fi
+            
+            # Register Terraform recipes
+            tf_dirs=$(find "$sub_platform" -name "terraform" -type d)
+            if [[ -n "$tf_dirs" ]]; then
+              for tf_dir in $tf_dirs; do
+                recipe_name="$sub_platform_name-terraform"
+                # For Terraform, use the URL from the published step
+                terraform_url="${{ env.TF_RECIPE_MODULE_SERVER_URL }}/$recipe_name.zip"
+                
+                echo "Registering Terraform recipe: $recipe_name"
+                echo "Template path: $terraform_url"
+                
+                if rad recipe register "$recipe_name" --environment "${{ matrix.environment }}" --resource-type "Radius.Compute/$resource_type" --template-kind terraform --template-path "$terraform_url"; then
+                  echo "✅ Successfully registered Terraform recipe: $recipe_name"
+                else
+                  echo "❌ Failed to register Terraform recipe: $recipe_name"
+                  exit 1
+                fi
+              done
+            else
+              echo "No Terraform recipes found in $sub_platform_name"
+            fi
+          done
+          
+          echo ""
+          echo "✅ Completed registering all recipes for ${{ matrix.platform }}"
+      - name: List registered recipes for environment
+        run: |
+          echo "Listing all recipes registered in environment ${{ matrix.environment }}..."
+          
+          if rad recipe list --environment ${{ matrix.environment }}; then
+            echo "✅ Successfully listed recipes for ${{ matrix.environment }}"
+          else
+            echo "❌ Failed to list recipes for ${{ matrix.environment }}"
+            exit 1
+          fi
