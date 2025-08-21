@@ -12,11 +12,9 @@ Input properties include:
 - size (string, required): Size of the persistent volume. For example 1Gi. Valid suffixes are Ki, Mi, Gi, Ti, Pi, Ei, K, M, G, T, P, E. 
 
 Output properties include:
+
 - hostPath (string): An absolute path on the Kubernetes node (the host filesystem).
 - accessMode (enum): Access mode for the volume. Controls how a persistent volume can be mounted by pods (e.g., ReadWriteOnce = single node R/W, ReadOnlyMany = many nodes R/O, ReadWriteMany = many nodes R/W).
-
-Notes:
-- The given recipe is suitable for simple setups. Switch to NFS/CSI/Azure Files if you need RWX or multi-node sharing in production. 
 
 ## Examples
 
@@ -55,6 +53,5 @@ Below is a summary of the available Recipes for the Redis Resource Type, categor
 | Kubernetes | Terraform | kubernetes/main.tf | Alpha |
 
 ## Guidance
-- Prefer external references (URIs) for secrets requiring rotation or auditing.
-- format should reflect the predominant encoding of literal content.
-- Avoid committing real secret values (especially literal values) to version control.
+
+- The given recipe is suitable for simple setups. Switch to NFS/CSI/Azure Files if you need RWX or multi-node sharing in production. 
