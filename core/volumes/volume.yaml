@@ -1,0 +1,37 @@
+name: Radius.Storage
+types:
+  volumes:
+    apiVersions:
+      '2025-05-01-preview':
+        schema: 
+          type: object
+          properties:
+            environment:
+              type: string
+              description: The Radius environment ID to which the resource belongs to
+            application:
+              type: string
+              description: The Radius application ID to which the resource belongs to
+            size:
+              type: string
+              description: The size of the peristent volume. 
+            hostPath:
+              readOnly: true
+              type: string
+              description: An absolute path on the Kubernetes node (the host filesystem).
+            accessMode:
+              readOnly: true
+              type: enum
+              description: The access mode for the volume.
+              values:
+                - ReadWriteOnce
+                - ReadOnlyMany
+                - ReadWriteMany
+                - ReadWriteOncePod
+            storageClass:
+              readOnly: true
+              type: string
+              description: The storage class for the volume.
+          required:
+              - environment
+              - size
