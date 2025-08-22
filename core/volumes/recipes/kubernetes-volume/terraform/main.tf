@@ -2,16 +2,19 @@ terraform {
   required_providers {
     kubernetes = {
       source  = "hashicorp/kubernetes"
-      version = "~> 2.0"
+      version = ">= 2.0"
     }
   }
 }
+locals {
+  uniqueName = var.context.resource.name
+  namespace = var.context.runtime.kubernetes.namespace
+}
 
-resource "kubernetes_persistent_volume" "this" {
+resource "kubernetes_persistent_volume" "pv" {
   metadata {
     name = var.context.resource.name
     labels = {
-      app      = "redis"
       resource = var.context.resource.name
       # Label pods with the application name so `rad run` can find the logs.
       "radapp.io/application" = var.context.application != null ? var.context.application.name : ""
@@ -19,19 +22,35 @@ resource "kubernetes_persistent_volume" "this" {
   }
 
   spec {
-    storage_class_name = "manual"
-    
+    storage_class_name = var.storage_class
+
     capacity = {
       storage = var.context.resource.properties.size
     }
-    
-    access_modes = ["ReadWriteOnce"]
-    
+
+    access_modes = [var.access_mode]
+
     persistent_volume_source {
       host_path {
         path = var.host_path
         type = "DirectoryOrCreate"
       }
+    }
+  }
+}
+
+output "result" {
+  value = {
+    resources = [
+      "/planes/kubernetes/local/providers/core/PersistentVolume/${var.context.resource.name}"
+    ]
+    values = {
+      kind         = "persistent"
+      name         = var.context.resource.name
+      size         = var.context.resource.properties.size
+      host_path    = var.host_path
+      storage_class_name = var.storage_class
+      access_modes = var.access_mode
     }
   }
 }
