@@ -1,4 +1,4 @@
-name: Radius.Storage
+namespace: Radius.Storage
 types:
   volumes:
     apiVersions:
@@ -20,14 +20,9 @@ types:
               type: string
               description: An absolute path on the Kubernetes node (the host filesystem).
             accessMode:
-              readOnly: true
-              type: enum
+              type: string
               description: The access mode for the volume.
-              values:
-                - ReadWriteOnce
-                - ReadOnlyMany
-                - ReadWriteMany
-                - ReadWriteOncePod
+              enum: ['ReadWriteOnce', 'ReadOnlyMany', 'ReadWriteMany', 'ReadWriteOncePod']
             storageClass:
               readOnly: true
               type: string

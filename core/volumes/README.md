@@ -23,6 +23,7 @@ extension radius
 extension radiusResources
 
 param environment string
+param location string = 'global'
 
 resource app 'Applications.Core/applications@2023-10-01-preview' = {
   name: 'corerp-resources-app'
@@ -32,14 +33,15 @@ resource app 'Applications.Core/applications@2023-10-01-preview' = {
   }
 }
 
-resource volume 'Radius.Resources/volume1@2023-10-01-preview' = {
+resource volume 'Radius.Storage/volumes@2025-05-01-preview' = {
   name: 'corerp-resources-volume'
   properties: {
-    application: app3.id
+    application: app.id
     environment: environment
     size: '1Gi'
   }
 }
+
 
 ```
 
