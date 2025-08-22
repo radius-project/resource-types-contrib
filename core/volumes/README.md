@@ -7,14 +7,15 @@ The Resource Type schema for Redis is defined in the `volume.yaml` file.
 
 Input properties include:
 
-- environment (string, required): Resource ID of the target environment.
-- application (string, optional): Resource ID of the application.
+- environment: Resource ID of the target environment.
+- application: Resource ID of the application.
 - size (string, required): Size of the persistent volume. For example 1Gi. Valid suffixes are Ki, Mi, Gi, Ti, Pi, Ei, K, M, G, T, P, E. 
 
 Output properties include:
 
-- hostPath (string): An absolute path on the Kubernetes node (the host filesystem).
-- accessMode (enum): Access mode for the volume. Controls how a persistent volume can be mounted by pods (e.g., ReadWriteOnce = single node R/W, ReadOnlyMany = many nodes R/O, ReadWriteMany = many nodes R/W).
+- hostPath: An absolute path on the Kubernetes node (the host filesystem).
+- accessMode: Access mode for the volume. Controls how a persistent volume can be mounted by pods (e.g., ReadWriteOnce = single node R/W, ReadOnlyMany = many nodes R/O, ReadWriteMany = many nodes R/W).
+- storageClass: StorageClass of the volume
 
 ## Examples
 
