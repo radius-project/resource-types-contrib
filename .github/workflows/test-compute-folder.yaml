@@ -1,0 +1,339 @@
+name: Test Compute Folder
+
+on:
+  push:
+    branches: [ main ]
+    paths: 
+      - 'compute/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'compute/**'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Radius version number to use (e.g. 0.1.0, 0.1.0-rc1, edge). Defaults to edge.'
+        required: false
+        default: 'edge'
+        type: string
+
+env:
+  # Server where terraform test modules are deployed
+  TF_RECIPE_MODULE_SERVER_URL: "http://tf-module-server.radius-test-tf-module-server.svc.cluster.local"
+  # Private Git repository where terraform module for testing is stored.
+  TF_RECIPE_PRIVATE_GIT_SOURCE: "git::https://github.com/radius-project/terraform-private-modules//kubernetes-redis"
+  # Local Docker registry name
+  LOCAL_REGISTRY_NAME: "radius-registry"
+  # Local Docker registry server
+  LOCAL_REGISTRY_SERVER: "localhost"
+  # Local Docker registry port
+  LOCAL_REGISTRY_PORT: "51351"
+  # TODO: remove in favor of GH env variables
+  REL_VERSION: "latest"
+
+jobs:
+  test-compute-folder:
+    runs-on: ubuntu-latest
+    name: Test Compute Platform - ${{ matrix.platform }}
+    strategy:
+      matrix:
+        platform: [aws, azure, kubernetes]
+        include:
+          - platform: aws
+            environment: aws-env
+          - platform: azure
+            environment: azure-env
+          - platform: kubernetes
+            environment: kubernetes-env
+    env:
+      BICEP_RECIPE_TAG_VERSION: "latest"
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 16
+      - name: Download k3d
+        run: wget -q -O - https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+      - name: Create k3d cluster
+        # Map localhost port 80 on the external load balancer, and disable traefik and the internal load balancer.
+        run: k3d cluster create --agents 2 -p "80:80@loadbalancer" --k3s-arg "--disable=traefik@server:*" --k3s-arg "--disable=servicelb@server:*" --registry-create reciperegistry:51351
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@v1
+        with:
+          version: '1.2.0'
+      - name: Verify ORAS installation
+        run: oras version
+      - name: Download rad CLI
+        run: |
+          echo "Downloading latest rad CLI"
+          wget -q "https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh" -O - | /bin/bash -s edge
+      
+      - name: Publish Bicep Test Recipes
+        run: |
+          export PATH=$GITHUB_WORKSPACE/bin:$PATH
+          which rad || { echo "cannot find rad"; exit 1; }
+          make publish-test-bicep-recipes
+        env:
+          BICEP_RECIPE_REGISTRY: "${{ env.LOCAL_REGISTRY_SERVER }}:${{ env.LOCAL_REGISTRY_PORT }}"
+          BICEP_RECIPE_TAG_VERSION: ${{ env.REL_VERSION }}
+          PLATFORM: ${{ matrix.platform }}
+          TEMP_CERT_DIR: ${{ steps.create-local-registry.outputs.temp-cert-dir }}
+          SSL_CERT_FILE: ${{ steps.create-local-registry.outputs.temp-cert-dir }}/certs/${{ env.LOCAL_REGISTRY_SERVER }}/client.crt
+      # - name: Publish Terraform test recipes
+      #   run: |
+      #     make publish-test-terraform-recipes
+
+      - name: Initialize default environment
+        run: |
+          rad install kubernetes --set rp.publicEndpointOverride=localhost
+          rad group create default
+          rad workspace create kubernetes default --group default
+          rad group switch default
+          rad env create ${{ matrix.environment }}
+          rad env switch ${{ matrix.environment }}
+          
+      - name: Verify manifests are registered
+        if: env.SKIP_BUILD != 'true'
+        run: |
+          rm -f registermanifest_logs.txt
+          # Find the pod with container "ucp"
+          POD_NAME=$(
+            kubectl get pods -n radius-system \
+              -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.containers[*].name}{"\n"}{end}' \
+            | grep "ucp" \
+            | head -n1 \
+            | cut -d" " -f1
+          )
+          echo "Found ucp pod: $POD_NAME"
+
+          if [ -z "$POD_NAME" ]; then
+            echo "No pod with container 'ucp' found in namespace radius-system."
+            exit 1
+          fi
+
+          # Poll logs for up to 20 iterations, 30 seconds each (up to 10 minutes total)
+          for i in {1..20}; do
+            kubectl logs "$POD_NAME" -n radius-system | tee registermanifest_logs.txt > /dev/null
+
+            # Exit on error
+            if grep -qi "Service initializer terminated with error" registermanifest_logs.txt; then
+              echo "Error found in ucp logs."
+              grep -i "Service initializer terminated with error" registermanifest_logs.txt
+              exit 1
+            fi
+
+            # Check for success
+            if grep -q "Successfully registered manifests" registermanifest_logs.txt; then
+              echo "Successfully registered manifests - message found."
+              break
+            fi
+
+            echo "Logs not ready, waiting 30 seconds..."
+            sleep 30
+          done
+
+          # Final check to ensure success message was found
+          if ! grep -q "Successfully registered manifests" registermanifest_logs.txt; then
+            echo "Manifests not registered after 10 minutes."
+            exit 1
+          fi
+      - name: Register Bicep recipes for platform
+        run: |
+          echo "Registering published Bicep recipes for ${{ matrix.platform }} in environment ${{ matrix.environment }}..."
+          
+          # Find all sub-platforms for this provider (both patterns)
+          sub_platforms_nested=$(find ./compute -path "*/recipes/${{ matrix.platform }}/*" -type d | grep -v "/bicep$" | grep -v "/terraform$" | sort)
+          sub_platforms_direct=$(find ./compute -path "*/recipes/${{ matrix.platform }}" -type d | sort)
+          
+          # For direct pattern (like kubernetes), we need to treat the platform itself as the sub-platform
+          all_sub_platforms=""
+          if [[ -n "$sub_platforms_nested" ]]; then
+            all_sub_platforms="$sub_platforms_nested"
+          fi
+          if [[ -n "$sub_platforms_direct" ]]; then
+            for direct_platform in $sub_platforms_direct; do
+              if [[ -d "$direct_platform/bicep" ]] || [[ -d "$direct_platform/terraform" ]]; then
+                all_sub_platforms="$all_sub_platforms $direct_platform"
+              fi
+            done
+          fi
+          
+          if [[ -z "$all_sub_platforms" ]]; then
+            echo "No sub-platforms found for ${{ matrix.platform }}"
+            exit 0
+          fi
+          
+          echo "Found sub-platforms for ${{ matrix.platform }}:"
+          echo "$all_sub_platforms"
+          
+          # Register Bicep recipes for each sub-platform
+          bicep_recipes_registered=false
+          for sub_platform in $all_sub_platforms; do
+            # Determine if this is direct pattern (kubernetes) or nested pattern (azure/aci)
+            if echo "$sub_platform" | grep -q "/recipes/${{ matrix.platform }}$"; then
+              # Direct pattern: kubernetes
+              sub_platform_name="${{ matrix.platform }}"
+              resource_type=$(basename "$(dirname "$(dirname "$sub_platform")")")
+              bicep_search_path="$sub_platform/bicep"
+            else
+              # Nested pattern: azure/aci
+              sub_platform_name=$(basename "$sub_platform")
+              resource_type=$(basename "$(dirname "$(dirname "$(dirname "$sub_platform")")")")
+              bicep_search_path="$sub_platform"
+            fi
+            
+            echo ""
+            echo "Registering Bicep recipes for sub-platform: $sub_platform_name (resource type: $resource_type)"
+            
+            # Register Bicep recipes
+            bicep_files=$(find "$bicep_search_path" -name "*.bicep" -type f 2>/dev/null)
+            if [[ -n "$bicep_files" ]]; then
+              for bicep_file in $bicep_files; do
+                registry_path="localhost:51351/compute/$resource_type/${{ matrix.platform }}/$sub_platform_name/$(basename "$bicep_file" .bicep):latest"
+
+                echo "Registering Bicep recipe: $(basename "$bicep_file" .bicep)"
+                echo "Registry path: br:$registry_path"
+                
+                if rad recipe register default --environment "${{ matrix.environment }}" --resource-type "Radius.Compute/$resource_type" --template-kind bicep --template-path "br:$registry_path"; then
+                  echo "✅ Successfully registered Bicep recipe: $(basename "$bicep_file" .bicep)"
+                  bicep_recipes_registered=true
+                else
+                  echo "❌ Failed to register Bicep recipe: $recipe_name-bicep"
+                  exit 1
+                fi
+              done
+            else
+              echo "No Bicep recipes found in $sub_platform_name"
+            fi
+          done
+          
+          if [[ "$bicep_recipes_registered" == "true" ]]; then
+            echo ""
+            echo "✅ Completed registering Bicep recipes for ${{ matrix.platform }}"
+          else
+            echo ""
+            echo "ℹ️ No Bicep recipes found to register for ${{ matrix.platform }}"
+          fi
+
+      - name: Deploy test application
+        run: |
+          echo "Deploying test application to validate Bicep recipes..."
+          
+          # Deploy the test app.bicep file
+          if rad deploy ./test/app/app.bicep --environment ${{ matrix.environment }}; then
+            echo "✅ Successfully deployed test application"
+            
+            # List applications to verify deployment
+            echo "Listing deployed applications:"
+            rad app list --environment ${{ matrix.environment }}
+          else
+            echo "❌ Failed to deploy test application"
+            exit 1
+          fi
+
+      - name: Register Terraform recipes for platform  
+        run: |
+          echo "Registering published Terraform recipes for ${{ matrix.platform }} in environment ${{ matrix.environment }}..."
+          
+          # Find all sub-platforms for this provider (both patterns)
+          sub_platforms_nested=$(find ./compute -path "*/recipes/${{ matrix.platform }}/*" -type d | grep -v "/bicep$" | grep -v "/terraform$" | sort)
+          sub_platforms_direct=$(find ./compute -path "*/recipes/${{ matrix.platform }}" -type d | sort)
+          
+          # For direct pattern (like kubernetes), we need to treat the platform itself as the sub-platform
+          all_sub_platforms=""
+          if [[ -n "$sub_platforms_nested" ]]; then
+            all_sub_platforms="$sub_platforms_nested"
+          fi
+          if [[ -n "$sub_platforms_direct" ]]; then
+            for direct_platform in $sub_platforms_direct; do
+              if [[ -d "$direct_platform/bicep" ]] || [[ -d "$direct_platform/terraform" ]]; then
+                all_sub_platforms="$all_sub_platforms $direct_platform"
+              fi
+            done
+          fi
+          
+          if [[ -z "$all_sub_platforms" ]]; then
+            echo "No sub-platforms found for ${{ matrix.platform }}"
+            exit 0
+          fi
+          
+          echo "Found sub-platforms for ${{ matrix.platform }}:"
+          echo "$all_sub_platforms"
+          
+          # Register Terraform recipes for each sub-platform
+          terraform_recipes_registered=false
+          for sub_platform in $all_sub_platforms; do
+            # Determine if this is direct pattern (kubernetes) or nested pattern (azure/aci)
+            if echo "$sub_platform" | grep -q "/recipes/${{ matrix.platform }}$"; then
+              # Direct pattern: kubernetes
+              sub_platform_name="${{ matrix.platform }}"
+              resource_type=$(basename "$(dirname "$(dirname "$sub_platform")")")
+            else
+              # Nested pattern: azure/aci
+              sub_platform_name=$(basename "$sub_platform")
+              resource_type=$(basename "$(dirname "$(dirname "$(dirname "$sub_platform")")")")
+            fi
+            
+            echo ""
+            echo "Registering Terraform recipes for sub-platform: $sub_platform_name (resource type: $resource_type)"
+            
+            # Register Terraform recipes
+            tf_dirs=$(find "$sub_platform" -name "terraform" -type d)
+            if [[ -n "$tf_dirs" ]]; then
+              for tf_dir in $tf_dirs; do
+                # For Terraform, use the URL from the published step
+                terraform_url="${{ env.TF_RECIPE_MODULE_SERVER_URL }}/$recipe_name.zip"
+                
+                echo "Registering Terraform recipe: $recipe_name"
+                echo "Template path: $terraform_url"
+                
+                if rad recipe register default --environment "${{ matrix.environment }}" --resource-type "Radius.Compute/$resource_type" --template-kind terraform --template-path "$terraform_url"; then
+                  echo "✅ Successfully registered Terraform recipe: $recipe_name"
+                  terraform_recipes_registered=true
+                else
+                  echo "❌ Failed to register Terraform recipe: $recipe_name"
+                  exit 1
+                fi
+              done
+            else
+              echo "No Terraform recipes found in $sub_platform_name"
+            fi
+          done
+          
+          if [[ "$terraform_recipes_registered" == "true" ]]; then
+            echo ""
+            echo "✅ Completed registering Terraform recipes for ${{ matrix.platform }}"
+          else
+            echo ""
+            echo "ℹ️ No Terraform recipes found to register for ${{ matrix.platform }}"
+          fi
+
+      - name: Deploy test application with Terraform recipes
+        run: |
+          echo "Deploying test application to validate Terraform recipes..."
+          
+          # Deploy the test app.bicep file
+          if rad deploy ./test/app/app.bicep --environment ${{ matrix.environment }}; then
+            echo "✅ Successfully deployed test application"
+            
+            # List applications to verify deployment
+            echo "Listing deployed applications:"
+            rad app list --environment ${{ matrix.environment }}
+          else
+            echo "❌ Failed to deploy test application"
+            exit 1
+          fi
+
+      - name: List registered recipes for environment
+        run: |
+          echo "Listing all recipes registered in environment ${{ matrix.environment }}..."
+          
+          if rad recipe list --environment ${{ matrix.environment }}; then
+            echo "✅ Successfully listed recipes for ${{ matrix.environment }}"
+          else
+            echo "❌ Failed to list recipes for ${{ matrix.environment }}"
+            exit 1
+          fi
