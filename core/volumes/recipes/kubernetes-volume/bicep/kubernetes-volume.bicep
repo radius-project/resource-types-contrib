@@ -14,7 +14,6 @@ resource persistentVolume 'core/PersistentVolume@v1' = {
   metadata: {
    name: context.resource.name
     labels: {
-      app: 'redis'
       resource: context.resource.name
       // Label pods with the application name so `rad run` can find the logs.
       'radapp.io/application': context.application == null ? '' : context.application.name
