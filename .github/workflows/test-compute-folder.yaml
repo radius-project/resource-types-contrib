@@ -215,6 +215,10 @@ jobs:
         run: |
           echo "Deploying test application to validate registered recipes..."
           
+          # Verify environment configuration
+          echo "Verifying environment configuration..."
+          rad env show ${{ env.ENVIRONMENT }}
+          
           # Deploy the test app.bicep file
           if rad deploy ./test/app/app.bicep --environment ${{ env.ENVIRONMENT }}; then
             echo "✅ Successfully deployed test application"
