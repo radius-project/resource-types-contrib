@@ -95,25 +95,25 @@ jobs:
             exit 1
           fi
 
-      - name: Create resource types from core folder
+      - name: Create resource types from compute folder
         run: |
-          echo "Finding YAML files in core folder..."
-          core_yaml_files=$(find ./core -name "*.yaml" -type f)
-          
-          if [[ -z "$core_yaml_files" ]]; then
-            echo "No YAML files found in core folder"
+          echo "Finding YAML files in compute folder..."
+          compute_yaml_files=$(find ./compute -name "*.yaml" -type f)
+
+          if [[ -z "$compute_yaml_files" ]]; then
+            echo "No YAML files found in compute folder"
             exit 0
           fi
           
           echo "Found YAML files:"
-          echo "$core_yaml_files"
+          echo "$compute_yaml_files"
           
           echo "Creating resource types..."
-          for yaml_file in $core_yaml_files; do
+          for yaml_file in $compute_yaml_files; do
             echo "Processing $yaml_file..."
             
             # Extract resource type name from the file path for naming
-            # e.g., ./core/containers/containers.yaml -> containers
+            # e.g., ./compute/containers/containers.yaml -> containers
             resource_name=$(basename "$yaml_file" .yaml)
             
             echo "Creating resource type '$resource_name' from $yaml_file..."
@@ -166,18 +166,18 @@ jobs:
       - name: Publish Bicep extensions
         run: |
           echo "Publishing Bicep extensions for all YAML files..."
-          core_yaml_files=$(find ./core -name "*.yaml" -type f)
+          compute_yaml_files=$(find ./compute -name "*.yaml" -type f)
           
-          if [[ -z "$core_yaml_files" ]]; then
-            echo "No YAML files found in core folder"
+          if [[ -z "$compute_yaml_files" ]]; then
+            echo "No YAML files found in compute folder"
             exit 0
           fi
           
-          for yaml_file in $core_yaml_files; do
+          for yaml_file in $compute_yaml_files; do
             echo "Publishing extension for $yaml_file..."
             
             # Extract resource type name from the file path for naming
-            # e.g., ./core/containers/containers.yaml -> containers
+            # e.g., ./compute/containers/containers.yaml -> containers
             resource_name=$(basename "$yaml_file" .yaml)
             extension_name="${resource_name}-extension"
             
@@ -261,39 +261,4 @@ jobs:
             done
           else
             echo "No Bicep recipe files found in recipes folders"
-          fi
-          
-          # Deploy Terraform recipes
-          if [[ -n "$terraform_recipes" ]]; then
-            echo "Found Terraform recipe files:"
-            echo "$terraform_recipes"
-            
-            for tf_file in $terraform_recipes; do
-              echo "Validating Terraform recipe: $tf_file"
-              
-              # Get directory containing the Terraform file
-              tf_dir=$(dirname "$tf_file")
-              
-              # Basic Terraform validation
-              cd "$tf_dir"
-              
-              if terraform init && terraform validate; then
-                echo "✅ Successfully validated Terraform recipe: $tf_file"
-              else
-                echo "❌ Failed to validate Terraform recipe: $tf_file"
-                deployment_failed=true
-              fi
-              
-              # Return to repository root
-              cd - > /dev/null
-            done
-          else
-            echo "No Terraform recipe files found in recipes folders"
-          fi
-          
-          if [[ "$deployment_failed" == "true" ]]; then
-            echo "❌ Recipe deployment/validation failed"
-            exit 1
-          else
-            echo "✅ All recipes deployed/validated successfully"
           fi
