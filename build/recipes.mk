@@ -26,22 +26,57 @@ TERRAFORM_MODULE_CONFIGMAP_NAME=tf-module-server-content
 publish-test-bicep-recipes: ## Publishes test recipes to <BICEP_RECIPE_REGISTRY> with version <BICEP_RECIPE_TAG_VERSION>
 	@if [ -z "$(BICEP_RECIPE_REGISTRY)" ]; then echo "Error: BICEP_RECIPE_REGISTRY must be set to a valid OCI registry"; exit 1; fi
 	
-	@echo "$(ARROW) Publishing Bicep test recipes from ./test/testrecipes/test-bicep-recipes..."
-	./.github/scripts/publish-recipes.sh \
-		./test/testrecipes/test-bicep-recipes \
-		${BICEP_RECIPE_REGISTRY}/test/testrecipes/test-bicep-recipes \
-		${BICEP_RECIPE_TAG_VERSION}
+	@echo "$(ARROW) Publishing Bicep recipes for platform $(PLATFORM)..."
+	@if [ -n "$(PLATFORM)" ]; then \
+		bicep_dirs=$$(find ./compute -path "*/recipes/$(PLATFORM)/*/bicep" -type d); \
+		bicep_dirs_direct=$$(find ./compute -path "*/recipes/$(PLATFORM)/bicep" -type d); \
+		all_bicep_dirs="$$bicep_dirs $$bicep_dirs_direct"; \
+		if [ -n "$$all_bicep_dirs" ] && [ "$$all_bicep_dirs" != "  " ]; then \
+			for bicep_dir in $$all_bicep_dirs; do \
+				if [ -d "$$bicep_dir" ]; then \
+					if echo "$$bicep_dir" | grep -q "/recipes/$(PLATFORM)/bicep$$"; then \
+						sub_platform="$(PLATFORM)"; \
+						resource_type=$$(basename $$(dirname $$(dirname $$(dirname $$bicep_dir)))); \
+					else \
+						sub_platform=$$(basename $$(dirname $$bicep_dir)); \
+						resource_type=$$(basename $$(dirname $$(dirname $$(dirname $$(dirname $$bicep_dir))))); \
+					fi; \
+					echo "$(ARROW) Publishing from $$bicep_dir ($$resource_type/$(PLATFORM)/$$sub_platform)..."; \
+					./.github/scripts/publish-recipes.sh \
+						$$bicep_dir \
+						${BICEP_RECIPE_REGISTRY}/compute/$$resource_type/$(PLATFORM)/$$sub_platform \
+						${BICEP_RECIPE_TAG_VERSION}; \
+				fi; \
+			done; \
+		else \
+			echo "$(ARROW) No Bicep recipes found for platform $(PLATFORM), skipping..."; \
+		fi; \
+	else \
+		echo "$(ARROW) PLATFORM not specified, publishing from default location..."; \
+		./.github/scripts/publish-recipes.sh \
+			./test/testrecipes/test-bicep-recipes \
+			${BICEP_RECIPE_REGISTRY}/test/testrecipes/test-bicep-recipes \
+			${BICEP_RECIPE_TAG_VERSION}; \
+	fi
 
 .PHONY: publish-test-terraform-recipes
 publish-test-terraform-recipes: ## Publishes test terraform recipes to the current Kubernetes cluster
 	@echo "$(ARROW) Creating Kubernetes namespace $(TERRAFORM_MODULE_SERVER_NAMESPACE)..."
 	kubectl create namespace $(TERRAFORM_MODULE_SERVER_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
 
-	@echo "$(ARROW) Publishing Terraform test recipes from ./test/testrecipes/test-terraform-recipes..."
-	./.github/scripts/publish-test-terraform-recipes.py \
-		./test/testrecipes/test-terraform-recipes \
-		$(TERRAFORM_MODULE_SERVER_NAMESPACE) \
-		$(TERRAFORM_MODULE_CONFIGMAP_NAME)
+	@echo "$(ARROW) Publishing Terraform recipes from all ./terraform directories..."
+	@terraform_dirs=$$(find . -name "terraform" -type d); \
+	if [ -n "$$terraform_dirs" ]; then \
+		for tf_dir in $$terraform_dirs; do \
+			echo "$(ARROW) Publishing from $$tf_dir..."; \
+			./.github/scripts/publish-test-terraform-recipes.py \
+				$$tf_dir \
+				$(TERRAFORM_MODULE_SERVER_NAMESPACE) \
+				$(TERRAFORM_MODULE_CONFIGMAP_NAME); \
+		done; \
+	else \
+		echo "$(ARROW) No terraform directories found, skipping terraform recipe publishing"; \
+	fi
 	
 	@echo "$(ARROW) Deploying web server..."
 	kubectl apply -f ./deploy/tf-module-server/resources.yaml -n $(TERRAFORM_MODULE_SERVER_NAMESPACE)
