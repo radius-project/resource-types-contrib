@@ -153,21 +153,21 @@ jobs:
           # Define the resource type folders to process
           resource_folders=("compute" "security")
           
+          # Define folder to namespace mapping
+          declare -A folder_to_namespace=(
+            ["compute"]="Radius.Compute"
+            ["security"]="Radius.Security"
+          )
+          
           # Build expected resource types list dynamically
           expected_resource_types=()
           for folder in "${resource_folders[@]}"; do
             if [[ -d "./$folder" ]]; then
               folder_yaml_files=$(find "./$folder" -name "*.yaml" -type f)
+              radius_namespace="${folder_to_namespace[$folder]}"
               for yaml_file in $folder_yaml_files; do
                 resource_name=$(basename "$yaml_file" .yaml)
-                case $folder in
-                  "compute")
-                    expected_resource_types+=("Radius.Compute/$resource_name")
-                    ;;
-                  "security")
-                    expected_resource_types+=("Radius.Security/$resource_name")
-                    ;;
-                esac
+                expected_resource_types+=("$radius_namespace/$resource_name")
               done
             fi
           done
@@ -307,6 +307,12 @@ jobs:
           # Define the resource type folders to process
           resource_folders=("compute" "security")
           
+          # Define folder to namespace mapping
+          declare -A folder_to_namespace=(
+            ["compute"]="Radius.Compute"
+            ["security"]="Radius.Security"
+          )
+          
           # Find all Bicep files in kubernetes recipe folders across all resource type folders
           k8s_recipes=""
           for folder in "${resource_folders[@]}"; do
@@ -334,10 +340,18 @@ jobs:
           for recipe_file in $k8s_recipes; do
             echo "Processing recipe: $recipe_file"
             
-            # Extract resource type from path (e.g., ./compute/containers/recipes/kubernetes/basic.bicep -> containers)
+            # Extract root folder and resource type from path (e.g., ./compute/containers/recipes/kubernetes/basic.bicep -> compute, containers)
+            root_folder=$(echo "$recipe_file" | sed 's|^./||' | cut -d'/' -f1)
             resource_type=$(echo "$recipe_file" | sed 's|^./||' | cut -d'/' -f2)
             recipe_name=$(basename "$recipe_file" .bicep)
             registry_path="localhost:51351/recipes/$resource_type/$recipe_name:latest"
+            
+            # Get the Radius namespace for this folder
+            radius_namespace="${folder_to_namespace[$root_folder]}"
+            if [[ -z "$radius_namespace" ]]; then
+              echo "❌ Unknown root folder: $root_folder"
+              exit 1
+            fi
             
             echo "Publishing recipe '$recipe_name' to registry: $registry_path"
             if rad bicep publish --file "$recipe_file" --target "br:$registry_path" --plain-http; then
@@ -347,9 +361,9 @@ jobs:
               exit 1
             fi
             
-            echo "Registering recipe '$recipe_name' for resource type '$resource_type'"
+            echo "Registering recipe '$recipe_name' for resource type '$radius_namespace/$resource_type'"
             internal_registry_path="reciperegistry:5000/recipes/$resource_type/$recipe_name:latest"
-            if rad recipe register default --environment default --resource-type "Radius.Compute/$resource_type" --template-kind bicep --template-path "$internal_registry_path" --plain-http; then
+            if rad recipe register default --environment default --resource-type "$radius_namespace/$resource_type" --template-kind bicep --template-path "$internal_registry_path" --plain-http; then
               echo "✅ Successfully registered recipe: $recipe_name"
             else
               echo "❌ Failed to register recipe: $recipe_name"
