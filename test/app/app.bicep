@@ -1,4 +1,5 @@
 extension radius
+extension containers
 
 param environment string
 

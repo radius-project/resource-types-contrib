@@ -224,41 +224,127 @@ jobs:
           echo "Final bicepconfig.json content:"
           cat bicepconfig.json
 
-      - name: Deploy and validate recipes
+      - name: Register Kubernetes recipes
         run: |
-          echo "Finding and deploying recipe files..."
+          echo "Waiting for registry to be ready..."
           
-          # Find all Bicep files in recipes folders
-          bicep_recipes=$(find . -path "*/recipes/*" -name "*.bicep" -type f)
+          # Wait for the registry to respond
+          for i in {1..15}; do
+            if curl -fsS http://localhost:51351/v2/_catalog >/dev/null 2>&1; then
+              echo "✅ Registry is ready"
+              break
+            fi
+            echo "Waiting for registry to be ready... ($i/15)"
+            sleep 2
+          done
           
-          # Find all Terraform files in recipes folders
-          terraform_recipes=$(find . -path "*/recipes/*" -name "*.tf" -type f)
-          
-          deployment_failed=false
-          
-          # Deploy Bicep recipes
-          if [[ -n "$bicep_recipes" ]]; then
-            echo "Found Bicep recipe files:"
-            echo "$bicep_recipes"
-            
-            for bicep_file in $bicep_recipes; do
-              echo "Deploying Bicep recipe: $bicep_file"
-              
-              # Extract recipe name from file path for deployment naming
-              recipe_name=$(basename "$bicep_file" .bicep)
-              deployment_name="recipe-test-${recipe_name}-$(date +%s)"
-              
-              if rad deploy "$bicep_file" --application "$deployment_name"; then
-                echo "✅ Successfully deployed Bicep recipe: $bicep_file"
-                
-                # Clean up the deployment
-                echo "Cleaning up deployment: $deployment_name"
-                rad app delete "$deployment_name" --yes || echo "⚠️ Failed to clean up deployment: $deployment_name"
-              else
-                echo "❌ Failed to deploy Bicep recipe: $bicep_file"
-                deployment_failed=true
-              fi
-            done
-          else
-            echo "No Bicep recipe files found in recipes folders"
+          # Final check
+          if ! curl -fsS http://localhost:51351/v2/_catalog >/dev/null 2>&1; then
+            echo "❌ Registry is not ready after 30 seconds"
+            exit 1
           fi
+          
+          echo "Finding and registering Kubernetes recipes..."
+          
+          # Find all Bicep files in kubernetes recipe folders
+          k8s_recipes=$(find . -path "*/recipes/kubernetes/*.bicep" -type f)
+          
+          if [[ -z "$k8s_recipes" ]]; then
+            echo "No Kubernetes recipe files found"
+            exit 0
+          fi
+          
+          echo "Found Kubernetes recipe files:"
+          echo "$k8s_recipes"
+          
+          for recipe_file in $k8s_recipes; do
+            echo "Processing recipe: $recipe_file"
+            
+            # Extract resource type from path (e.g., ./compute/containers/recipes/kubernetes/basic.bicep -> containers)
+            resource_type=$(echo "$recipe_file" | sed 's|^./||' | cut -d'/' -f2)
+            recipe_name=$(basename "$recipe_file" .bicep)
+            registry_path="localhost:51351/recipes/$resource_type/$recipe_name:latest"
+            
+            echo "Publishing recipe '$recipe_name' to registry: $registry_path"
+            if rad bicep publish --file "$recipe_file" --target "br:$registry_path" --plain-http; then
+              echo "✅ Successfully published recipe to registry: $registry_path"
+            else
+              echo "❌ Failed to publish recipe to registry: $recipe_name"
+              exit 1
+            fi
+            
+            echo "Registering recipe '$recipe_name' for resource type '$resource_type'"
+            internal_registry_path="reciperegistry:5000/recipes/$resource_type/$recipe_name:latest"
+            if rad recipe register default --environment default --resource-type "Radius.Compute/$resource_type" --template-kind bicep --template-path "$internal_registry_path" --plain-http; then
+              echo "✅ Successfully registered recipe: $recipe_name"
+            else
+              echo "❌ Failed to register recipe: $recipe_name"
+              exit 1
+            fi
+          done
+          
+          echo "✅ All Kubernetes recipes published and registered successfully"
+          
+          echo "Listing all registered recipes..."
+          rad recipe list --environment default
+
+      - name: Deploy test application
+        run: |
+          echo "Deploying test application..."
+          
+          if [[ ! -f "test/app/app.bicep" ]]; then
+            echo "No test application found at test/app/app.bicep"
+            exit 0
+          fi
+          
+          deployment_name="test-app-$(date +%s)"
+          
+          if rad deploy test/app/app.bicep --application "$deployment_name"; then
+            echo "✅ Successfully deployed test application"
+            
+            # Clean up the deployment
+            echo "Cleaning up deployment: $deployment_name"
+            rad app delete "$deployment_name" --yes || echo "⚠️ Failed to clean up deployment: $deployment_name"
+          else
+            echo "❌ Failed to deploy test application"
+            exit 1
+          fi
+
+      # - name: Deploy and validate recipes
+      #   run: |
+      #     echo "Finding and deploying recipe files..."
+          
+      #     # Find all Bicep files in recipes folders
+      #     bicep_recipes=$(find . -path "*/recipes/*" -name "*.bicep" -type f)
+          
+      #     # Find all Terraform files in recipes folders
+      #     terraform_recipes=$(find . -path "*/recipes/*" -name "*.tf" -type f)
+          
+      #     deployment_failed=false
+          
+      #     # Deploy Bicep recipes
+      #     if [[ -n "$bicep_recipes" ]]; then
+      #       echo "Found Bicep recipe files:"
+      #       echo "$bicep_recipes"
+            
+      #       for bicep_file in $bicep_recipes; do
+      #         echo "Deploying Bicep recipe: $bicep_file"
+              
+      #         # Extract recipe name from file path for deployment naming
+      #         recipe_name=$(basename "$bicep_file" .bicep)
+      #         deployment_name="recipe-test-${recipe_name}-$(date +%s)"
+              
+      #         if rad deploy "$bicep_file" --application "$deployment_name"; then
+      #           echo "✅ Successfully deployed Bicep recipe: $bicep_file"
+                
+      #           # Clean up the deployment
+      #           echo "Cleaning up deployment: $deployment_name"
+      #           rad app delete "$deployment_name" --yes || echo "⚠️ Failed to clean up deployment: $deployment_name"
+      #         else
+      #           echo "❌ Failed to deploy Bicep recipe: $bicep_file"
+      #           deployment_failed=true
+      #         fi
+      #       done
+      #     else
+      #       echo "No Bicep recipe files found in recipes folders"
+      #     fi
