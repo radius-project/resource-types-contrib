@@ -95,21 +95,37 @@ jobs:
             exit 1
           fi
 
-      - name: Create resource types from compute folder
+      - name: Create resource types from resource folders
         run: |
-          echo "Finding YAML files in compute folder..."
-          compute_yaml_files=$(find ./compute -name "*.yaml" -type f)
+          echo "Finding YAML files in resource type folders..."
+          
+          # Define the resource type folders to process
+          resource_folders=("compute" "security")
+          
+          all_yaml_files=""
+          for folder in "${resource_folders[@]}"; do
+            if [[ -d "./$folder" ]]; then
+              echo "Searching in $folder folder..."
+              folder_yaml_files=$(find "./$folder" -name "*.yaml" -type f)
+              if [[ -n "$folder_yaml_files" ]]; then
+                all_yaml_files="$all_yaml_files $folder_yaml_files"
+                echo "Found YAML files in $folder:"
+                echo "$folder_yaml_files"
+              else
+                echo "No YAML files found in $folder folder"
+              fi
+            else
+              echo "Folder $folder does not exist, skipping..."
+            fi
+          done
 
-          if [[ -z "$compute_yaml_files" ]]; then
-            echo "No YAML files found in compute folder"
+          if [[ -z "$all_yaml_files" ]]; then
+            echo "No YAML files found in any resource type folders"
             exit 0
           fi
           
-          echo "Found YAML files:"
-          echo "$compute_yaml_files"
-          
           echo "Creating resource types..."
-          for yaml_file in $compute_yaml_files; do
+          for yaml_file in $all_yaml_files; do
             echo "Processing $yaml_file..."
             
             # Extract resource type name from the file path for naming
@@ -166,14 +182,31 @@ jobs:
       - name: Publish Bicep extensions
         run: |
           echo "Publishing Bicep extensions for all YAML files..."
-          compute_yaml_files=$(find ./compute -name "*.yaml" -type f)
           
-          if [[ -z "$compute_yaml_files" ]]; then
-            echo "No YAML files found in compute folder"
+          # Define the resource type folders to process
+          resource_folders=("compute" "security")
+          
+          all_yaml_files=""
+          for folder in "${resource_folders[@]}"; do
+            if [[ -d "./$folder" ]]; then
+              echo "Searching for YAML files in $folder folder..."
+              folder_yaml_files=$(find "./$folder" -name "*.yaml" -type f)
+              if [[ -n "$folder_yaml_files" ]]; then
+                all_yaml_files="$all_yaml_files $folder_yaml_files"
+                echo "Found YAML files in $folder:"
+                echo "$folder_yaml_files"
+              else
+                echo "No YAML files found in $folder folder"
+              fi
+            fi
+          done
+          
+          if [[ -z "$all_yaml_files" ]]; then
+            echo "No YAML files found in resource type folders"
             exit 0
           fi
           
-          for yaml_file in $compute_yaml_files; do
+          for yaml_file in $all_yaml_files; do
             echo "Publishing extension for $yaml_file..."
             
             # Extract resource type name from the file path for naming
@@ -246,8 +279,24 @@ jobs:
           
           echo "Finding and registering Kubernetes recipes..."
           
-          # Find all Bicep files in kubernetes recipe folders
-          k8s_recipes=$(find . -path "*/recipes/kubernetes/*.bicep" -type f)
+          # Define the resource type folders to process
+          resource_folders=("compute" "security")
+          
+          # Find all Bicep files in kubernetes recipe folders across all resource type folders
+          k8s_recipes=""
+          for folder in "${resource_folders[@]}"; do
+            if [[ -d "./$folder" ]]; then
+              echo "Searching for Kubernetes recipes in $folder folder..."
+              folder_recipes=$(find "./$folder" -path "*/recipes/kubernetes/*.bicep" -type f)
+              if [[ -n "$folder_recipes" ]]; then
+                k8s_recipes="$k8s_recipes $folder_recipes"
+                echo "Found Kubernetes recipes in $folder:"
+                echo "$folder_recipes"
+              else
+                echo "No Kubernetes recipes found in $folder folder"
+              fi
+            fi
+          done
           
           if [[ -z "$k8s_recipes" ]]; then
             echo "No Kubernetes recipe files found"
