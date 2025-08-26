@@ -150,10 +150,35 @@ jobs:
           
           echo "Verifying expected resource types..."
           
-          # Define expected resource types
-          expected_resource_types=(
-            "Radius.Compute/containers"
-          )
+          # Define the resource type folders to process
+          resource_folders=("compute" "security")
+          
+          # Build expected resource types list dynamically
+          expected_resource_types=()
+          for folder in "${resource_folders[@]}"; do
+            if [[ -d "./$folder" ]]; then
+              folder_yaml_files=$(find "./$folder" -name "*.yaml" -type f)
+              for yaml_file in $folder_yaml_files; do
+                resource_name=$(basename "$yaml_file" .yaml)
+                case $folder in
+                  "compute")
+                    expected_resource_types+=("Radius.Compute/$resource_name")
+                    ;;
+                  "security")
+                    expected_resource_types+=("Radius.Security/$resource_name")
+                    ;;
+                esac
+              done
+            fi
+          done
+          
+          if [[ ${#expected_resource_types[@]} -eq 0 ]]; then
+            echo "No expected resource types found"
+            exit 0
+          fi
+          
+          echo "Expected resource types:"
+          printf '%s\n' "${expected_resource_types[@]}"
           
           # Get the list of resource types
           resource_type_list=$(rad resource-type list)
@@ -358,42 +383,3 @@ jobs:
             echo "❌ Failed to deploy test application"
             exit 1
           fi
-
-      # - name: Deploy and validate recipes
-      #   run: |
-      #     echo "Finding and deploying recipe files..."
-          
-      #     # Find all Bicep files in recipes folders
-      #     bicep_recipes=$(find . -path "*/recipes/*" -name "*.bicep" -type f)
-          
-      #     # Find all Terraform files in recipes folders
-      #     terraform_recipes=$(find . -path "*/recipes/*" -name "*.tf" -type f)
-          
-      #     deployment_failed=false
-          
-      #     # Deploy Bicep recipes
-      #     if [[ -n "$bicep_recipes" ]]; then
-      #       echo "Found Bicep recipe files:"
-      #       echo "$bicep_recipes"
-            
-      #       for bicep_file in $bicep_recipes; do
-      #         echo "Deploying Bicep recipe: $bicep_file"
-              
-      #         # Extract recipe name from file path for deployment naming
-      #         recipe_name=$(basename "$bicep_file" .bicep)
-      #         deployment_name="recipe-test-${recipe_name}-$(date +%s)"
-              
-      #         if rad deploy "$bicep_file" --application "$deployment_name"; then
-      #           echo "✅ Successfully deployed Bicep recipe: $bicep_file"
-                
-      #           # Clean up the deployment
-      #           echo "Cleaning up deployment: $deployment_name"
-      #           rad app delete "$deployment_name" --yes || echo "⚠️ Failed to clean up deployment: $deployment_name"
-      #         else
-      #           echo "❌ Failed to deploy Bicep recipe: $bicep_file"
-      #           deployment_failed=true
-      #         fi
-      #       done
-      #     else
-      #       echo "No Bicep recipe files found in recipes folders"
-      #     fi
