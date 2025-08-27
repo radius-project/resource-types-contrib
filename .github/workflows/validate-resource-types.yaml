@@ -97,27 +97,41 @@ jobs:
 
       - name: Create resource types from resource folders
         run: |
+          # Define common configuration
+          setup_config() {
+            resource_folders=("Compute" "Security")
+            declare -g -A folder_to_namespace=(
+              ["Compute"]="Radius.Compute"
+              ["Security"]="Radius.Security"
+            )
+          }
+          
+          # Function to find files by pattern across resource folders
+          find_files_in_folders() {
+            local pattern="$1"
+            local found_files=""
+            for folder in "${resource_folders[@]}"; do
+              if [[ -d "./$folder" ]]; then
+                echo "Searching for $pattern in $folder folder..."
+                local folder_files=$(find "./$folder" -name "$pattern" -type f)
+                if [[ -n "$folder_files" ]]; then
+                  found_files="$found_files $folder_files"
+                  echo "Found files in $folder:"
+                  echo "$folder_files"
+                else
+                  echo "No $pattern files found in $folder folder"
+                fi
+              else
+                echo "Folder $folder does not exist, skipping..."
+              fi
+            done
+            echo "$found_files"
+          }
+          
+          setup_config
           echo "Finding YAML files in resource type folders..."
           
-          # Define the resource type folders to process
-          resource_folders=("compute" "security")
-          
-          all_yaml_files=""
-          for folder in "${resource_folders[@]}"; do
-            if [[ -d "./$folder" ]]; then
-              echo "Searching in $folder folder..."
-              folder_yaml_files=$(find "./$folder" -name "*.yaml" -type f)
-              if [[ -n "$folder_yaml_files" ]]; then
-                all_yaml_files="$all_yaml_files $folder_yaml_files"
-                echo "Found YAML files in $folder:"
-                echo "$folder_yaml_files"
-              else
-                echo "No YAML files found in $folder folder"
-              fi
-            else
-              echo "Folder $folder does not exist, skipping..."
-            fi
-          done
+          all_yaml_files=$(find_files_in_folders "*.yaml")
 
           if [[ -z "$all_yaml_files" ]]; then
             echo "No YAML files found in any resource type folders"
@@ -145,19 +159,20 @@ jobs:
 
       - name: Verify expected resource types are present
         run: |
+          # Define common configuration
+          setup_config() {
+            resource_folders=("Compute" "Security")
+            declare -g -A folder_to_namespace=(
+              ["Compute"]="Radius.Compute"
+              ["Security"]="Radius.Security"
+            )
+          }
+          
+          setup_config
           echo "Listing all resource types..."
           rad resource-type list
           
           echo "Verifying expected resource types..."
-          
-          # Define the resource type folders to process
-          resource_folders=("compute" "security")
-          
-          # Define folder to namespace mapping
-          declare -A folder_to_namespace=(
-            ["compute"]="Radius.Compute"
-            ["security"]="Radius.Security"
-          )
           
           # Build expected resource types list dynamically
           expected_resource_types=()
@@ -206,25 +221,39 @@ jobs:
 
       - name: Publish Bicep extensions
         run: |
+          # Define common configuration
+          setup_config() {
+            resource_folders=("Compute" "Security")
+            declare -g -A folder_to_namespace=(
+              ["Compute"]="Radius.Compute"
+              ["Security"]="Radius.Security"
+            )
+          }
+          
+          # Function to find files by pattern across resource folders
+          find_files_in_folders() {
+            local pattern="$1"
+            local found_files=""
+            for folder in "${resource_folders[@]}"; do
+              if [[ -d "./$folder" ]]; then
+                echo "Searching for $pattern in $folder folder..."
+                local folder_files=$(find "./$folder" -name "$pattern" -type f)
+                if [[ -n "$folder_files" ]]; then
+                  found_files="$found_files $folder_files"
+                  echo "Found files in $folder:"
+                  echo "$folder_files"
+                else
+                  echo "No $pattern files found in $folder folder"
+                fi
+              fi
+            done
+            echo "$found_files"
+          }
+          
+          setup_config
           echo "Publishing Bicep extensions for all YAML files..."
           
-          # Define the resource type folders to process
-          resource_folders=("compute" "security")
-          
-          all_yaml_files=""
-          for folder in "${resource_folders[@]}"; do
-            if [[ -d "./$folder" ]]; then
-              echo "Searching for YAML files in $folder folder..."
-              folder_yaml_files=$(find "./$folder" -name "*.yaml" -type f)
-              if [[ -n "$folder_yaml_files" ]]; then
-                all_yaml_files="$all_yaml_files $folder_yaml_files"
-                echo "Found YAML files in $folder:"
-                echo "$folder_yaml_files"
-              else
-                echo "No YAML files found in $folder folder"
-              fi
-            fi
-          done
+          all_yaml_files=$(find_files_in_folders "*.yaml")
           
           if [[ -z "$all_yaml_files" ]]; then
             echo "No YAML files found in resource type folders"
@@ -284,6 +313,46 @@ jobs:
 
       - name: Register Kubernetes recipes
         run: |
+          # Define common configuration
+          setup_config() {
+            resource_folders=("Compute" "Security")
+            declare -g -A folder_to_namespace=(
+              ["Compute"]="Radius.Compute"
+              ["Security"]="Radius.Security"
+            )
+          }
+          
+          # Function to find recipe files by pattern across resource folders
+          find_recipe_files() {
+            local path_pattern="$1"
+            local found_files=""
+            for folder in "${resource_folders[@]}"; do
+              if [[ -d "./$folder" ]]; then
+                echo "Searching for recipes in $folder folder..."
+                local folder_files=$(find "./$folder" -path "$path_pattern" -type f)
+                if [[ -n "$folder_files" ]]; then
+                  found_files="$found_files $folder_files"
+                  echo "Found recipe files in $folder:"
+                  echo "$folder_files"
+                else
+                  echo "No recipe files found in $folder folder"
+                fi
+              fi
+            done
+            echo "$found_files"
+          }
+          
+          # Function to extract path components
+          extract_path_info() {
+            local file_path="$1"
+            local root_folder=$(echo "$file_path" | sed 's|^./||' | cut -d'/' -f1)
+            local resource_type=$(echo "$file_path" | sed 's|^./||' | cut -d'/' -f2)
+            local platform_service=$(echo "$file_path" | sed 's|^./||' | cut -d'/' -f4)  # e.g., kubernetes-basic
+            local file_name=$(basename "$file_path")
+            echo "$root_folder $resource_type $platform_service $file_name"
+          }
+          
+          setup_config
           echo "Waiting for registry to be ready..."
           
           # Wait for the registry to respond
@@ -302,49 +371,24 @@ jobs:
             exit 1
           fi
           
-          echo "Finding and registering Kubernetes recipes..."
+          echo "Finding and registering Kubernetes Bicep recipes..."
           
-          # Define the resource type folders to process
-          resource_folders=("compute" "security")
-          
-          # Define folder to namespace mapping
-          declare -A folder_to_namespace=(
-            ["compute"]="Radius.Compute"
-            ["security"]="Radius.Security"
-          )
-          
-          # Find all Bicep files in kubernetes recipe folders across all resource type folders
-          k8s_recipes=""
-          for folder in "${resource_folders[@]}"; do
-            if [[ -d "./$folder" ]]; then
-              echo "Searching for Kubernetes recipes in $folder folder..."
-              folder_recipes=$(find "./$folder" -path "*/recipes/kubernetes/*.bicep" -type f)
-              if [[ -n "$folder_recipes" ]]; then
-                k8s_recipes="$k8s_recipes $folder_recipes"
-                echo "Found Kubernetes recipes in $folder:"
-                echo "$folder_recipes"
-              else
-                echo "No Kubernetes recipes found in $folder folder"
-              fi
-            fi
-          done
+          k8s_recipes=$(find_recipe_files "*/recipes/kubernetes-*/*.bicep")
           
           if [[ -z "$k8s_recipes" ]]; then
             echo "No Kubernetes recipe files found"
             exit 0
           fi
           
-          echo "Found Kubernetes recipe files:"
-          echo "$k8s_recipes"
-          
           for recipe_file in $k8s_recipes; do
             echo "Processing recipe: $recipe_file"
             
-            # Extract root folder and resource type from path (e.g., ./compute/containers/recipes/kubernetes/basic.bicep -> compute, containers)
-            root_folder=$(echo "$recipe_file" | sed 's|^./||' | cut -d'/' -f1)
-            resource_type=$(echo "$recipe_file" | sed 's|^./||' | cut -d'/' -f2)
+            # Extract path components
+            read -r root_folder resource_type platform_service file_name <<< $(extract_path_info "$recipe_file")
             recipe_name=$(basename "$recipe_file" .bicep)
-            registry_path="localhost:51351/recipes/$resource_type/$recipe_name:latest"
+            
+            # Use platform_service as part of the registry path for uniqueness
+            registry_path="localhost:51351/recipes/$resource_type/$platform_service/$recipe_name:latest"
             
             # Get the Radius namespace for this folder
             radius_namespace="${folder_to_namespace[$root_folder]}"
@@ -353,7 +397,7 @@ jobs:
               exit 1
             fi
             
-            echo "Publishing recipe '$recipe_name' to registry: $registry_path"
+            echo "Publishing recipe '$recipe_name' from '$platform_service' to registry: $registry_path"
             if rad bicep publish --file "$recipe_file" --target "br:$registry_path" --plain-http; then
               echo "✅ Successfully published recipe to registry: $registry_path"
             else
@@ -361,12 +405,12 @@ jobs:
               exit 1
             fi
             
-            echo "Registering recipe '$recipe_name' for resource type '$radius_namespace/$resource_type'"
-            internal_registry_path="reciperegistry:5000/recipes/$resource_type/$recipe_name:latest"
+            echo "Registering recipe 'default' for resource type '$radius_namespace/$resource_type'"
+            internal_registry_path="reciperegistry:5000/recipes/$resource_type/$platform_service/$recipe_name:latest"
             if rad recipe register default --environment default --resource-type "$radius_namespace/$resource_type" --template-kind bicep --template-path "$internal_registry_path" --plain-http; then
-              echo "✅ Successfully registered recipe: $recipe_name"
+              echo "✅ Successfully registered recipe: default"
             else
-              echo "❌ Failed to register recipe: $recipe_name"
+              echo "❌ Failed to register recipe: default"
               exit 1
             fi
           done
