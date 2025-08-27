@@ -16,7 +16,7 @@ Notes:
 - kind + encoding inform downstream tooling how to package or deliver the data (e.g., kubernetes Secret type, certificate assembly).
 
 ## Required Fields by Kind
-Certain secret kinds have required keys in the `data` object to ensure compatibility with existing functionality (e.g., private Bicep registry support):
+Certain secret kinds have required keys in the `data` object to ensure compatibility with existing functionality (e.g., [private Bicep registry](https://docs.radapp.io/guides/recipes/howto-private-bicep-registry/) support):
 
 - **basicAuthentication**: Requires `username` and `password` keys
 - **certificate-pem**: Requires `tls.crt` and `tls.key` keys
