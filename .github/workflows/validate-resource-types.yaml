@@ -105,47 +105,35 @@ jobs:
               ["Security"]="Radius.Security"
             )
           }
-          
-          # Function to find files by pattern across resource folders
-          find_files_in_folders() {
-            local pattern="$1"
-            local found_files=""
-            for folder in "${resource_folders[@]}"; do
-              if [[ -d "./$folder" ]]; then
-                echo "Searching for $pattern in $folder folder..."
-                local folder_files=$(find "./$folder" -name "$pattern" -type f)
-                if [[ -n "$folder_files" ]]; then
-                  found_files="$found_files $folder_files"
-                  echo "Found files in $folder:"
-                  echo "$folder_files"
-                else
-                  echo "No $pattern files found in $folder folder"
-                fi
-              else
-                echo "Folder $folder does not exist, skipping..."
-              fi
-            done
-            echo "$found_files"
-          }
-          
-          setup_config
-          echo "Finding YAML files in resource type folders..."
-          
-          all_yaml_files=$(find_files_in_folders "*.yaml")
 
-          if [[ -z "$all_yaml_files" ]]; then
+          setup_config
+          echo "Finding YAML files in resource type folders (safe handling of filenames)..."
+
+          # Collect YAML files into a bash array safely (handles spaces/newlines)
+          all_yaml_files=()
+          for folder in "${resource_folders[@]}"; do
+            if [[ -d "./$folder" ]]; then
+              echo "Searching in folder: $folder"
+              while IFS= read -r -d '' file; do
+                all_yaml_files+=("$file")
+              done < <(find "./$folder" -name "*.yaml" -type f -print0)
+            else
+              echo "Folder $folder does not exist, skipping..."
+            fi
+          done
+
+          if [[ ${#all_yaml_files[@]} -eq 0 ]]; then
             echo "No YAML files found in any resource type folders"
             exit 0
           fi
-          
+
           echo "Creating resource types..."
-          for yaml_file in $all_yaml_files; do
-            echo "Processing $yaml_file..."
-            
-            # Extract resource type name from the file path for naming
-            # e.g., ./compute/containers/containers.yaml -> containers
+          for yaml_file in "${all_yaml_files[@]}"; do
+            echo "Processing: $yaml_file"
+
+            # Extract resource type name from the file path
             resource_name=$(basename "$yaml_file" .yaml)
-            
+
             echo "Creating resource type '$resource_name' from $yaml_file..."
             if rad resource-type create "$resource_name" -f "$yaml_file"; then
               echo "✅ Successfully created resource type: $resource_name"
@@ -154,7 +142,7 @@ jobs:
               exit 1
             fi
           done
-          
+
           echo "✅ All resource types created successfully"
 
       - name: Verify expected resource types are present
@@ -229,45 +217,30 @@ jobs:
               ["Security"]="Radius.Security"
             )
           }
-          
-          # Function to find files by pattern across resource folders
-          find_files_in_folders() {
-            local pattern="$1"
-            local found_files=""
-            for folder in "${resource_folders[@]}"; do
-              if [[ -d "./$folder" ]]; then
-                echo "Searching for $pattern in $folder folder..."
-                local folder_files=$(find "./$folder" -name "$pattern" -type f)
-                if [[ -n "$folder_files" ]]; then
-                  found_files="$found_files $folder_files"
-                  echo "Found files in $folder:"
-                  echo "$folder_files"
-                else
-                  echo "No $pattern files found in $folder folder"
-                fi
-              fi
-            done
-            echo "$found_files"
-          }
-          
+
           setup_config
-          echo "Publishing Bicep extensions for all YAML files..."
-          
-          all_yaml_files=$(find_files_in_folders "*.yaml")
-          
-          if [[ -z "$all_yaml_files" ]]; then
+          echo "Publishing Bicep extensions for all YAML files (safe handling of filenames)..."
+
+          all_yaml_files=()
+          for folder in "${resource_folders[@]}"; do
+            if [[ -d "./$folder" ]]; then
+              while IFS= read -r -d '' file; do
+                all_yaml_files+=("$file")
+              done < <(find "./$folder" -name "*.yaml" -type f -print0)
+            fi
+          done
+
+          if [[ ${#all_yaml_files[@]} -eq 0 ]]; then
             echo "No YAML files found in resource type folders"
             exit 0
           fi
-          
-          for yaml_file in $all_yaml_files; do
+
+          for yaml_file in "${all_yaml_files[@]}"; do
             echo "Publishing extension for $yaml_file..."
-            
-            # Extract resource type name from the file path for naming
-            # e.g., ./compute/containers/containers.yaml -> containers
+
             resource_name=$(basename "$yaml_file" .yaml)
             extension_name="${resource_name}-extension"
-            
+
             echo "Publishing extension '$extension_name.tgz' from $yaml_file..."
             if rad bicep publish-extension -f "$yaml_file" --target "$extension_name.tgz"; then
               echo "✅ Successfully published extension: $extension_name.tgz"
@@ -276,38 +249,41 @@ jobs:
               exit 1
             fi
           done
-          
+
           echo "✅ All Bicep extensions published successfully"
 
       - name: Update bicepconfig.json with published extensions
         run: |
           echo "Updating bicepconfig.json with published extensions..."
           
-          # Find all published .tgz files and add them to bicepconfig.json
-          tgz_files=$(find . -name "*-extension.tgz" -type f)
-          
-          if [[ -n "$tgz_files" ]]; then
+          # Find all published .tgz files and add them to bicepconfig.json (safe handling)
+          tgz_files=()
+          while IFS= read -r -d '' f; do
+            tgz_files+=("$f")
+          done < <(find . -name "*-extension.tgz" -type f -print0)
+
+          if [[ ${#tgz_files[@]} -gt 0 ]]; then
             echo "Found extension files to add to bicepconfig.json:"
-            echo "$tgz_files"
-            
-            # Use jq to add each extension to the config
-            for tgz_file in $tgz_files; do
+            printf '%s\n' "${tgz_files[@]}"
+
+            for tgz_file in "${tgz_files[@]}"; do
               # Extract resource name from filename (e.g., "./containers-extension.tgz" -> "containers")
-              resource_name=$(basename "$tgz_file" -extension.tgz)
-              
+              filename=$(basename "$tgz_file")
+              resource_name=${filename%-extension.tgz}
+
               echo "Adding extension '$resource_name' with file '$tgz_file' to bicepconfig.json..."
-              
+
               # Update bicepconfig.json using jq
               jq --arg name "$resource_name" --arg path "$tgz_file" \
                 '.extensions[$name] = $path' bicepconfig.json > bicepconfig.tmp && \
                 mv bicepconfig.tmp bicepconfig.json
             done
-            
+
             echo "✅ Successfully updated bicepconfig.json with extensions"
           else
             echo "No extension .tgz files found to add to bicepconfig.json"
           fi
-          
+
           echo "Final bicepconfig.json content:"
           cat bicepconfig.json
 
@@ -373,30 +349,41 @@ jobs:
           
           echo "Finding and registering Kubernetes Bicep recipes..."
           
-          k8s_recipes=$(find_recipe_files "*/recipes/kubernetes-*/*.bicep")
-          
-          if [[ -z "$k8s_recipes" ]]; then
+          # Find recipe files safely into an array
+          k8s_recipes=()
+          while IFS= read -r -d '' f; do
+            k8s_recipes+=("$f")
+          done < <(find . -path "*/recipes/kubernetes-*/*.bicep" -type f -print0)
+
+          if [[ ${#k8s_recipes[@]} -eq 0 ]]; then
             echo "No Kubernetes recipe files found"
             exit 0
           fi
-          
-          for recipe_file in $k8s_recipes; do
+
+          for recipe_file in "${k8s_recipes[@]}"; do
             echo "Processing recipe: $recipe_file"
-            
-            # Extract path components
-            read -r root_folder resource_type platform_service file_name <<< $(extract_path_info "$recipe_file")
+
+            # Extract path components robustly
+            # Expecting: ./<root_folder>/<resource_type>/recipes/<platform_service>/<file>
+            relpath="${recipe_file#./}"
+            IFS='/' read -r root_folder resource_type _recipes_dir platform_service file_name <<< "$relpath"
             recipe_name=$(basename "$recipe_file" .bicep)
-            
+
+            if [[ -z "$root_folder" || -z "$resource_type" || -z "$platform_service" ]]; then
+              echo "❌ Unexpected recipe path structure: $recipe_file"
+              exit 1
+            fi
+
             # Use platform_service as part of the registry path for uniqueness
             registry_path="localhost:51351/recipes/$resource_type/$platform_service/$recipe_name:latest"
-            
+
             # Get the Radius namespace for this folder
             radius_namespace="${folder_to_namespace[$root_folder]}"
             if [[ -z "$radius_namespace" ]]; then
               echo "❌ Unknown root folder: $root_folder"
               exit 1
             fi
-            
+
             echo "Publishing recipe '$recipe_name' from '$platform_service' to registry: $registry_path"
             if rad bicep publish --file "$recipe_file" --target "br:$registry_path" --plain-http; then
               echo "✅ Successfully published recipe to registry: $registry_path"
@@ -404,7 +391,7 @@ jobs:
               echo "❌ Failed to publish recipe to registry: $recipe_name"
               exit 1
             fi
-            
+
             echo "Registering recipe 'default' for resource type '$radius_namespace/$resource_type'"
             internal_registry_path="reciperegistry:5000/recipes/$resource_type/$platform_service/$recipe_name:latest"
             if rad recipe register default --environment default --resource-type "$radius_namespace/$resource_type" --template-kind bicep --template-path "$internal_registry_path" --plain-http; then
@@ -414,9 +401,9 @@ jobs:
               exit 1
             fi
           done
-          
+
           echo "✅ All Kubernetes recipes published and registered successfully"
-          
+
           echo "Listing all registered recipes..."
           rad recipe list --environment default
 
