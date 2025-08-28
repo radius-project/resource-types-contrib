@@ -1,0 +1,42 @@
+name: Radius.Data
+types:
+  redisCaches:
+    apiVersions:
+      '2025-08-06-preview':
+        schema: 
+          type: object
+          properties:
+            environment:
+              type: string
+              description: The Radius environment ID to which the resource belongs to
+            application:
+              type: string
+              description: The Radius application ID to which the resource belongs to
+            capacity:
+              type: string
+              description: The size of the Redis Cache instance. Valid values are S, M
+            host:
+              type: string
+              description: The Redis host name.
+              readOnly: true
+            port:
+              type: string
+              description: The Redis port
+              readOnly: true
+            username:
+              type: string
+              description: The username for the Redis cache.
+              readOnly: true
+            secrets:
+              type: object
+              properties:
+                connectionString:
+                  type: string
+                  description: The connection string for the Redis cache
+                  readOnly: true
+                password:
+                  type: string
+                  description: The password for the Redis cache.
+                  readOnly: true
+          required:
+              - environment
