@@ -97,35 +97,11 @@ jobs:
 
       - name: Create resource types from resource folders
         run: |
-          # Define common configuration
-          setup_config() {
-            resource_folders=("Compute" "Security")
-            declare -g -A folder_to_namespace=(
-              ["Compute"]="Radius.Compute"
-              ["Security"]="Radius.Security"
-            )
-          }
-
+          source .github/scripts/validate-common.sh
           setup_config
-          echo "Finding YAML files in resource type folders (safe handling of filenames)..."
-
-          # Collect YAML files into a bash array safely (handles spaces/newlines)
-          all_yaml_files=()
-          for folder in "${resource_folders[@]}"; do
-            if [[ -d "./$folder" ]]; then
-              echo "Searching in folder: $folder"
-              while IFS= read -r -d '' file; do
-                all_yaml_files+=("$file")
-              done < <(find "./$folder" -name "*.yaml" -type f -print0)
-            else
-              echo "Folder $folder does not exist, skipping..."
-            fi
-          done
-
-          if [[ ${#all_yaml_files[@]} -eq 0 ]]; then
-            echo "No YAML files found in any resource type folders"
-            exit 0
-          fi
+          
+          echo "Finding YAML files in resource type folders..."
+          readarray -t all_yaml_files < <(find_yaml_files)
 
           echo "Creating resource types..."
           for yaml_file in "${all_yaml_files[@]}"; do
@@ -147,15 +123,7 @@ jobs:
 
       - name: Verify expected resource types are present
         run: |
-          # Define common configuration
-          setup_config() {
-            resource_folders=("Compute" "Security")
-            declare -g -A folder_to_namespace=(
-              ["Compute"]="Radius.Compute"
-              ["Security"]="Radius.Security"
-            )
-          }
-          
+          source .github/scripts/validate-common.sh
           setup_config
           echo "Listing all resource types..."
           rad resource-type list
@@ -209,31 +177,11 @@ jobs:
 
       - name: Publish Bicep extensions
         run: |
-          # Define common configuration
-          setup_config() {
-            resource_folders=("Compute" "Security")
-            declare -g -A folder_to_namespace=(
-              ["Compute"]="Radius.Compute"
-              ["Security"]="Radius.Security"
-            )
-          }
-
+          source .github/scripts/validate-common.sh
           setup_config
-          echo "Publishing Bicep extensions for all YAML files (safe handling of filenames)..."
-
-          all_yaml_files=()
-          for folder in "${resource_folders[@]}"; do
-            if [[ -d "./$folder" ]]; then
-              while IFS= read -r -d '' file; do
-                all_yaml_files+=("$file")
-              done < <(find "./$folder" -name "*.yaml" -type f -print0)
-            fi
-          done
-
-          if [[ ${#all_yaml_files[@]} -eq 0 ]]; then
-            echo "No YAML files found in resource type folders"
-            exit 0
-          fi
+          
+          echo "Publishing Bicep extensions for all YAML files..."
+          readarray -t all_yaml_files < <(find_yaml_files)
 
           for yaml_file in "${all_yaml_files[@]}"; do
             echo "Publishing extension for $yaml_file..."
@@ -287,79 +235,48 @@ jobs:
           echo "Final bicepconfig.json content:"
           cat bicepconfig.json
 
-      - name: Register Kubernetes recipes
+      - name: Publish all Bicep recipes to registry
         run: |
-          # Define common configuration
-          setup_config() {
-            resource_folders=("Compute" "Security")
-            declare -g -A folder_to_namespace=(
-              ["Compute"]="Radius.Compute"
-              ["Security"]="Radius.Security"
-            )
-          }
-          
-          # Function to find recipe files by pattern across resource folders
-          find_recipe_files() {
-            local path_pattern="$1"
-            local found_files=""
-            for folder in "${resource_folders[@]}"; do
-              if [[ -d "./$folder" ]]; then
-                echo "Searching for recipes in $folder folder..."
-                local folder_files=$(find "./$folder" -path "$path_pattern" -type f)
-                if [[ -n "$folder_files" ]]; then
-                  found_files="$found_files $folder_files"
-                  echo "Found recipe files in $folder:"
-                  echo "$folder_files"
-                else
-                  echo "No recipe files found in $folder folder"
-                fi
-              fi
-            done
-            echo "$found_files"
-          }
-          
-          # Function to extract path components
-          extract_path_info() {
-            local file_path="$1"
-            local root_folder=$(echo "$file_path" | sed 's|^./||' | cut -d'/' -f1)
-            local resource_type=$(echo "$file_path" | sed 's|^./||' | cut -d'/' -f2)
-            local platform_service=$(echo "$file_path" | sed 's|^./||' | cut -d'/' -f4)  # e.g., kubernetes
-            local file_name=$(basename "$file_path")
-            echo "$root_folder $resource_type $platform_service $file_name"
-          }
-          
+          source .github/scripts/validate-common.sh
           setup_config
-          echo "Waiting for registry to be ready..."
           
-          # Wait for the registry to respond
-          for i in {1..15}; do
-            if curl -fsS http://localhost:51351/v2/_catalog >/dev/null 2>&1; then
-              echo "✅ Registry is ready"
-              break
-            fi
-            echo "Waiting for registry to be ready... ($i/15)"
-            sleep 2
-          done
-          
-          # Final check
-          if ! curl -fsS http://localhost:51351/v2/_catalog >/dev/null 2>&1; then
-            echo "❌ Registry is not ready after 30 seconds"
-            exit 1
-          fi
-          
-          echo "Finding and testing Kubernetes recipes (Bicep and Terraform)..."
-          
-          # Find Bicep recipe files
-          bicep_recipes=()
-          while IFS= read -r -d '' f; do
-            bicep_recipes+=("$f")
-          done < <(find . -path "*/recipes/kubernetes/*.bicep" -type f -print0)
+          echo "Finding and publishing all Bicep recipes..."
+          readarray -t bicep_recipes < <(find_recipe_files "*/recipes/*/*.bicep")
 
-          # Find Terraform recipe files (main.tf)
-          terraform_recipes=()
-          while IFS= read -r -d '' f; do
-            terraform_recipes+=("$f")
-          done < <(find . -path "*/recipes/kubernetes/main.tf" -type f -print0)
+          if [[ ${#bicep_recipes[@]} -eq 0 ]]; then
+            echo "No Bicep recipe files found"
+            exit 0
+          fi
+
+          echo "Found ${#bicep_recipes[@]} Bicep recipes"
+
+          # Publish all Bicep recipes
+          for recipe_file in "${bicep_recipes[@]}"; do
+            read -r root_folder resource_type platform_service file_name <<< "$(extract_recipe_info "$recipe_file")"
+            
+            recipe_name=$(basename "$recipe_file" .bicep)
+            registry_path="localhost:51351/recipes/$resource_type/$platform_service/$recipe_name:latest"
+            
+            echo "Publishing Bicep recipe '$recipe_name' from $platform_service to registry: $registry_path"
+            if rad bicep publish --file "$recipe_file" --target "br:$registry_path" --plain-http; then
+              echo "✅ Successfully published Bicep recipe to registry"
+            else
+              echo "❌ Failed to publish Bicep recipe to registry"
+              exit 1
+            fi
+          done
+
+          echo "✅ All Bicep recipes published successfully"
+
+      - name: Register and test recipes
+        run: |
+          source .github/scripts/validate-common.sh
+          setup_config
+          
+          echo "Finding and testing recipes (Bicep and Terraform)..."
+          
+          readarray -t bicep_recipes < <(find_recipe_files "*/recipes/kubernetes/*.bicep")
+          readarray -t terraform_recipes < <(find_recipe_files "*/recipes/kubernetes/main.tf")
 
           if [[ ${#bicep_recipes[@]} -eq 0 && ${#terraform_recipes[@]} -eq 0 ]]; then
             echo "No Kubernetes recipe files found"
@@ -367,121 +284,6 @@ jobs:
           fi
 
           echo "Found ${#bicep_recipes[@]} Bicep recipes and ${#terraform_recipes[@]} Terraform recipes"
-
-          # Function to test a recipe type
-          test_recipe_type() {
-            local template_kind="$1"
-            shift
-            local recipes=("$@")
-            
-            if [[ ${#recipes[@]} -eq 0 ]]; then
-              echo "No $template_kind recipes to test"
-              return 0
-            fi
-            
-            echo ""
-            echo "🔄 Testing $template_kind recipes..."
-            
-            # Group recipes by platform service
-            declare -A platform_recipes
-            for recipe_file in "${recipes[@]}"; do
-              relpath="${recipe_file#./}"
-              IFS='/' read -r root_folder resource_type _recipes_dir platform_service file_name <<< "$relpath"
-              
-              if [[ -z "$root_folder" || -z "$resource_type" || -z "$platform_service" ]]; then
-                echo "❌ Unexpected recipe path structure: $recipe_file"
-                exit 1
-              fi
-              
-              platform_key="$root_folder/$resource_type/$platform_service"
-              if [[ -z "${platform_recipes[$platform_key]}" ]]; then
-                platform_recipes[$platform_key]="$recipe_file"
-              else
-                platform_recipes[$platform_key]="${platform_recipes[$platform_key]} $recipe_file"
-              fi
-            done
-
-            # Process each platform service
-            for platform_key in "${!platform_recipes[@]}"; do
-              IFS='/' read -r root_folder resource_type platform_service <<< "$platform_key"
-              echo ""
-              echo "🔄 Processing $template_kind recipe for: $platform_service ($root_folder/$resource_type)"
-              
-              # Get the Radius namespace
-              radius_namespace="${folder_to_namespace[$root_folder]}"
-              if [[ -z "$radius_namespace" ]]; then
-                echo "❌ Unknown root folder: $root_folder"
-                exit 1
-              fi
-
-              # Unregister any existing default recipe for this resource type
-              echo "Unregistering any existing default recipe for $radius_namespace/$resource_type"
-              rad recipe unregister default --environment default --resource-type "$radius_namespace/$resource_type" || echo "No existing default recipe to unregister"
-
-              # Process recipes for this platform service
-              for recipe_file in ${platform_recipes[$platform_key]}; do
-                if [[ "$template_kind" == "bicep" ]]; then
-                  recipe_name=$(basename "$recipe_file" .bicep)
-                  registry_path="localhost:51351/recipes/$resource_type/$platform_service/$recipe_name:latest"
-                  
-                  echo "Publishing Bicep recipe '$recipe_name' to registry: $registry_path"
-                  if rad bicep publish --file "$recipe_file" --target "br:$registry_path" --plain-http; then
-                    echo "✅ Successfully published Bicep recipe to registry"
-                  else
-                    echo "❌ Failed to publish Bicep recipe to registry"
-                    exit 1
-                  fi
-                  
-                  internal_registry_path="reciperegistry:5000/recipes/$resource_type/$platform_service/$recipe_name:latest"
-                  echo "Registering Bicep recipe 'default' for resource type '$radius_namespace/$resource_type'"
-                  if rad recipe register default --environment default --resource-type "$radius_namespace/$resource_type" --template-kind bicep --template-path "$internal_registry_path" --plain-http; then
-                    echo "✅ Successfully registered Bicep recipe as default"
-                  else
-                    echo "❌ Failed to register Bicep recipe as default"
-                    exit 1
-                  fi
-                  
-                elif [[ "$template_kind" == "terraform" ]]; then
-                  # For Terraform, use the directory path
-                  recipe_dir=$(dirname "$recipe_file")
-                  echo "Registering Terraform recipe 'default' for resource type '$radius_namespace/$resource_type'"
-                  if rad recipe register default --environment default --resource-type "$radius_namespace/$resource_type" --template-kind terraform --template-path "$recipe_dir"; then
-                    echo "✅ Successfully registered Terraform recipe as default"
-                  else
-                    echo "❌ Failed to register Terraform recipe as default"
-                    exit 1
-                  fi
-                fi
-              done
-              
-              # Deploy test application for this resource type
-              test_app_path="$root_folder/$resource_type/app.bicep"
-              
-              if [[ -f "$test_app_path" ]]; then
-                echo ""
-                echo "🚀 Deploying test application for $platform_service ($template_kind recipe)..."
-                
-                deployment_name="test-${root_folder,,}-${platform_service}-${template_kind}-$(date +%s)"
-                
-                echo "Deploying $test_app_path as application: $deployment_name"
-                if rad deploy "$test_app_path" --application "$deployment_name"; then
-                  echo "✅ Successfully deployed test application using $template_kind recipe"
-                  
-                  # Clean up immediately
-                  echo "Cleaning up deployment: $deployment_name"
-                  rad app delete "$deployment_name" --yes || echo "⚠️ Failed to clean up deployment: $deployment_name"
-                  echo "✅ Cleaned up test deployment"
-                else
-                  echo "❌ Failed to deploy test application using $template_kind recipe"
-                  exit 1
-                fi
-              else
-                echo "ℹ️ No test application found at $test_app_path, skipping deployment test..."
-              fi
-              
-              echo "✅ Completed testing $template_kind recipe for $platform_service"
-            done
-          }
 
           # Test Bicep recipes first
           test_recipe_type "bicep" "${bicep_recipes[@]}"
