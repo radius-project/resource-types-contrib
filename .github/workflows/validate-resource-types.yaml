@@ -347,108 +347,150 @@ jobs:
             exit 1
           fi
           
-          echo "Finding and registering Kubernetes Bicep recipes..."
+          echo "Finding and testing Kubernetes recipes (Bicep and Terraform)..."
           
-          # Find recipe files safely into an array
-          k8s_recipes=()
+          # Find Bicep recipe files
+          bicep_recipes=()
           while IFS= read -r -d '' f; do
-            k8s_recipes+=("$f")
+            bicep_recipes+=("$f")
           done < <(find . -path "*/recipes/kubernetes-*/*.bicep" -type f -print0)
 
-          if [[ ${#k8s_recipes[@]} -eq 0 ]]; then
+          # Find Terraform recipe files (main.tf)
+          terraform_recipes=()
+          while IFS= read -r -d '' f; do
+            terraform_recipes+=("$f")
+          done < <(find . -path "*/recipes/kubernetes-*/main.tf" -type f -print0)
+
+          if [[ ${#bicep_recipes[@]} -eq 0 && ${#terraform_recipes[@]} -eq 0 ]]; then
             echo "No Kubernetes recipe files found"
             exit 0
           fi
 
-          # Group recipes by platform service for separate processing
-          declare -A platform_recipes
-          for recipe_file in "${k8s_recipes[@]}"; do
-            # Extract path components robustly
-            # Expecting: ./<root_folder>/<resource_type>/recipes/<platform_service>/<file>
-            relpath="${recipe_file#./}"
-            IFS='/' read -r root_folder resource_type _recipes_dir platform_service file_name <<< "$relpath"
+          echo "Found ${#bicep_recipes[@]} Bicep recipes and ${#terraform_recipes[@]} Terraform recipes"
 
-            if [[ -z "$root_folder" || -z "$resource_type" || -z "$platform_service" ]]; then
-              echo "❌ Unexpected recipe path structure: $recipe_file"
-              exit 1
-            fi
-
-            # Group by platform service (e.g., kubernetes-container, kubernetes-secret)
-            platform_key="$root_folder/$resource_type/$platform_service"
-            if [[ -z "${platform_recipes[$platform_key]}" ]]; then
-              platform_recipes[$platform_key]="$recipe_file"
-            else
-              platform_recipes[$platform_key]="${platform_recipes[$platform_key]} $recipe_file"
-            fi
-          done
-
-          # Process each platform service group separately with immediate testing
-          for platform_key in "${!platform_recipes[@]}"; do
-            IFS='/' read -r root_folder resource_type platform_service <<< "$platform_key"
-            echo ""
-            echo "🔄 Processing platform service: $platform_service for $root_folder/$resource_type"
+          # Function to test a recipe type
+          test_recipe_type() {
+            local template_kind="$1"
+            shift
+            local recipes=("$@")
             
-            # Get the Radius namespace for this folder
-            radius_namespace="${folder_to_namespace[$root_folder]}"
-            if [[ -z "$radius_namespace" ]]; then
-              echo "❌ Unknown root folder: $root_folder"
-              exit 1
+            if [[ ${#recipes[@]} -eq 0 ]]; then
+              echo "No $template_kind recipes to test"
+              return 0
             fi
-
-            # Process all recipes for this platform service
-            for recipe_file in ${platform_recipes[$platform_key]}; do
-              recipe_name=$(basename "$recipe_file" .bicep)
+            
+            echo ""
+            echo "🔄 Testing $template_kind recipes..."
+            
+            # Group recipes by platform service
+            declare -A platform_recipes
+            for recipe_file in "${recipes[@]}"; do
+              relpath="${recipe_file#./}"
+              IFS='/' read -r root_folder resource_type _recipes_dir platform_service file_name <<< "$relpath"
               
-              # Use platform_service as part of the registry path for uniqueness
-              registry_path="localhost:51351/recipes/$resource_type/$platform_service/$recipe_name:latest"
-
-              echo "Publishing recipe '$recipe_name' from '$platform_service' to registry: $registry_path"
-              if rad bicep publish --file "$recipe_file" --target "br:$registry_path" --plain-http; then
-                echo "✅ Successfully published recipe to registry: $registry_path"
-              else
-                echo "❌ Failed to publish recipe to registry: $recipe_name"
+              if [[ -z "$root_folder" || -z "$resource_type" || -z "$platform_service" ]]; then
+                echo "❌ Unexpected recipe path structure: $recipe_file"
                 exit 1
               fi
-
-              echo "Registering recipe 'default' for resource type '$radius_namespace/$resource_type'"
-              internal_registry_path="reciperegistry:5000/recipes/$resource_type/$platform_service/$recipe_name:latest"
-              if rad recipe register default --environment default --resource-type "$radius_namespace/$resource_type" --template-kind bicep --template-path "$internal_registry_path" --plain-http; then
-                echo "✅ Successfully registered recipe: default for $platform_service"
+              
+              platform_key="$root_folder/$resource_type/$platform_service"
+              if [[ -z "${platform_recipes[$platform_key]}" ]]; then
+                platform_recipes[$platform_key]="$recipe_file"
               else
-                echo "❌ Failed to register recipe: default for $platform_service"
-                exit 1
+                platform_recipes[$platform_key]="${platform_recipes[$platform_key]} $recipe_file"
               fi
             done
-            
-            # Deploy test application for this resource type immediately after registration
-            test_app_path="$root_folder/$resource_type/app.bicep"
-            
-            if [[ -f "$test_app_path" ]]; then
+
+            # Process each platform service
+            for platform_key in "${!platform_recipes[@]}"; do
+              IFS='/' read -r root_folder resource_type platform_service <<< "$platform_key"
               echo ""
-              echo "🚀 Deploying test application for $platform_service..."
+              echo "🔄 Processing $template_kind recipe for: $platform_service ($root_folder/$resource_type)"
               
-              deployment_name="test-${root_folder,,}-${platform_service}-$(date +%s)"
-              
-              echo "Deploying $test_app_path as application: $deployment_name"
-              if rad deploy "$test_app_path" --application "$deployment_name"; then
-                echo "✅ Successfully deployed test application for $platform_service"
-                
-                # Clean up the deployment immediately
-                echo "Cleaning up deployment: $deployment_name"
-                rad app delete "$deployment_name" --yes || echo "⚠️ Failed to clean up deployment: $deployment_name"
-                echo "✅ Cleaned up test deployment for $platform_service"
-              else
-                echo "❌ Failed to deploy test application for $platform_service"
+              # Get the Radius namespace
+              radius_namespace="${folder_to_namespace[$root_folder]}"
+              if [[ -z "$radius_namespace" ]]; then
+                echo "❌ Unknown root folder: $root_folder"
                 exit 1
               fi
-            else
-              echo "ℹ️ No test application found for $platform_service at $test_app_path, skipping deployment test..."
-            fi
-            
-            echo "✅ Completed processing platform service: $platform_service"
-          done
 
-          echo "✅ All Kubernetes recipes published, registered, and tested successfully"
+              # Unregister any existing default recipe for this resource type
+              echo "Unregistering any existing default recipe for $radius_namespace/$resource_type"
+              rad recipe unregister default --environment default --resource-type "$radius_namespace/$resource_type" || echo "No existing default recipe to unregister"
+
+              # Process recipes for this platform service
+              for recipe_file in ${platform_recipes[$platform_key]}; do
+                if [[ "$template_kind" == "bicep" ]]; then
+                  recipe_name=$(basename "$recipe_file" .bicep)
+                  registry_path="localhost:51351/recipes/$resource_type/$platform_service/$recipe_name:latest"
+                  
+                  echo "Publishing Bicep recipe '$recipe_name' to registry: $registry_path"
+                  if rad bicep publish --file "$recipe_file" --target "br:$registry_path" --plain-http; then
+                    echo "✅ Successfully published Bicep recipe to registry"
+                  else
+                    echo "❌ Failed to publish Bicep recipe to registry"
+                    exit 1
+                  fi
+                  
+                  internal_registry_path="reciperegistry:5000/recipes/$resource_type/$platform_service/$recipe_name:latest"
+                  echo "Registering Bicep recipe 'default' for resource type '$radius_namespace/$resource_type'"
+                  if rad recipe register default --environment default --resource-type "$radius_namespace/$resource_type" --template-kind bicep --template-path "$internal_registry_path" --plain-http; then
+                    echo "✅ Successfully registered Bicep recipe as default"
+                  else
+                    echo "❌ Failed to register Bicep recipe as default"
+                    exit 1
+                  fi
+                  
+                elif [[ "$template_kind" == "terraform" ]]; then
+                  # For Terraform, use the directory path
+                  recipe_dir=$(dirname "$recipe_file")
+                  echo "Registering Terraform recipe 'default' for resource type '$radius_namespace/$resource_type'"
+                  if rad recipe register default --environment default --resource-type "$radius_namespace/$resource_type" --template-kind terraform --template-path "$recipe_dir"; then
+                    echo "✅ Successfully registered Terraform recipe as default"
+                  else
+                    echo "❌ Failed to register Terraform recipe as default"
+                    exit 1
+                  fi
+                fi
+              done
+              
+              # Deploy test application for this resource type
+              test_app_path="$root_folder/$resource_type/app.bicep"
+              
+              if [[ -f "$test_app_path" ]]; then
+                echo ""
+                echo "🚀 Deploying test application for $platform_service ($template_kind recipe)..."
+                
+                deployment_name="test-${root_folder,,}-${platform_service}-${template_kind}-$(date +%s)"
+                
+                echo "Deploying $test_app_path as application: $deployment_name"
+                if rad deploy "$test_app_path" --application "$deployment_name"; then
+                  echo "✅ Successfully deployed test application using $template_kind recipe"
+                  
+                  # Clean up immediately
+                  echo "Cleaning up deployment: $deployment_name"
+                  rad app delete "$deployment_name" --yes || echo "⚠️ Failed to clean up deployment: $deployment_name"
+                  echo "✅ Cleaned up test deployment"
+                else
+                  echo "❌ Failed to deploy test application using $template_kind recipe"
+                  exit 1
+                fi
+              else
+                echo "ℹ️ No test application found at $test_app_path, skipping deployment test..."
+              fi
+              
+              echo "✅ Completed testing $template_kind recipe for $platform_service"
+            done
+          }
+
+          # Test Bicep recipes first
+          test_recipe_type "bicep" "${bicep_recipes[@]}"
+          
+          # Then test Terraform recipes
+          test_recipe_type "terraform" "${terraform_recipes[@]}"
+
+          echo ""
+          echo "✅ All Kubernetes recipes (Bicep and Terraform) tested successfully"
 
           echo "Listing all registered recipes..."
           rad recipe list --environment default
