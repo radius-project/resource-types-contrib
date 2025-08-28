@@ -323,7 +323,7 @@ jobs:
             local file_path="$1"
             local root_folder=$(echo "$file_path" | sed 's|^./||' | cut -d'/' -f1)
             local resource_type=$(echo "$file_path" | sed 's|^./||' | cut -d'/' -f2)
-            local platform_service=$(echo "$file_path" | sed 's|^./||' | cut -d'/' -f4)  # e.g., kubernetes-basic
+            local platform_service=$(echo "$file_path" | sed 's|^./||' | cut -d'/' -f4)  # e.g., kubernetes
             local file_name=$(basename "$file_path")
             echo "$root_folder $resource_type $platform_service $file_name"
           }
@@ -353,13 +353,13 @@ jobs:
           bicep_recipes=()
           while IFS= read -r -d '' f; do
             bicep_recipes+=("$f")
-          done < <(find . -path "*/recipes/kubernetes-*/*.bicep" -type f -print0)
+          done < <(find . -path "*/recipes/kubernetes/*.bicep" -type f -print0)
 
           # Find Terraform recipe files (main.tf)
           terraform_recipes=()
           while IFS= read -r -d '' f; do
             terraform_recipes+=("$f")
-          done < <(find . -path "*/recipes/kubernetes-*/main.tf" -type f -print0)
+          done < <(find . -path "*/recipes/kubernetes/main.tf" -type f -print0)
 
           if [[ ${#bicep_recipes[@]} -eq 0 && ${#terraform_recipes[@]} -eq 0 ]]; then
             echo "No Kubernetes recipe files found"
