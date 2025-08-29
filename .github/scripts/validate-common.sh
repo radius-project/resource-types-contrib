@@ -103,8 +103,22 @@ deploy_and_cleanup_test_app() {
       
       # Clean up immediately
       echo "Cleaning up deployment: $deployment_name"
-      rad app delete "$deployment_name" --yes || echo "⚠️ Failed to clean up deployment: $deployment_name"
-      echo "✅ Cleaned up test deployment"
+      
+      # Show resources before cleanup
+      echo "Resources before cleanup:"
+      kubectl get secrets,deployments,services,pods --all-namespaces | grep -E "(app-secrets|$deployment_name)" || echo "No matching resources found"
+      
+      if rad app delete "$deployment_name" --yes; then
+        echo "✅ rad app delete succeeded"
+      else
+        echo "⚠️ rad app delete failed with exit code $?"
+      fi
+      
+      # Show resources after cleanup to see what's left
+      echo "Resources after cleanup:"
+      kubectl get secrets,deployments,services,pods --all-namespaces | grep -E "(app-secrets|$deployment_name)" || echo "No matching resources found"
+      
+      echo "✅ Cleanup attempt completed"
     else
       echo "❌ Failed to deploy test application $description"
       exit 1
