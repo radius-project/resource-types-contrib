@@ -52,11 +52,11 @@ find_and_validate_recipes() {
   readarray -t recipes < <(find_recipe_files "$pattern")
   
   if [[ ${#recipes[@]} -eq 0 ]]; then
-    echo "No $recipe_type recipe files found"
+    echo "No $recipe_type recipe files found" >&2
     exit 0
   fi
   
-  echo "Found ${#recipes[@]} $recipe_type recipes"
+  echo "Found ${#recipes[@]} $recipe_type recipes" >&2
   printf '%s\n' "${recipes[@]}"
 }
 
