@@ -40,7 +40,7 @@ jobs:
         # TODO: remove URL and use environment variable
         run: |
           echo "Downloading latest rad CLI"
-          wget -q "https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh" -O - | /bin/bash -s edge
+          wget -q "https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh" -O - | /bin/bash -s "${{ inputs.version || 'edge' }}"
       - name: Initialize default environment
         run: |
           rad install kubernetes --set rp.publicEndpointOverride=localhost
@@ -268,31 +268,70 @@ jobs:
 
           echo "✅ All Bicep recipes published successfully"
 
-      - name: Register and test recipes
+      - name: Register and test Bicep recipes
         run: |
           source .github/scripts/validate-common.sh
           setup_config
           
-          echo "Finding and testing recipes (Bicep and Terraform)..."
-          
-          readarray -t bicep_recipes < <(find_recipe_files "*/recipes/kubernetes/*.bicep")
-          readarray -t terraform_recipes < <(find_recipe_files "*/recipes/kubernetes/main.tf")
+          echo "Finding and testing Bicep recipes..."
+          readarray -t bicep_recipes < <(find_and_validate_recipes "*/recipes/kubernetes/bicep/*.bicep" "Kubernetes Bicep")
 
-          if [[ ${#bicep_recipes[@]} -eq 0 && ${#terraform_recipes[@]} -eq 0 ]]; then
-            echo "No Kubernetes recipe files found"
-            exit 0
-          fi
-
-          echo "Found ${#bicep_recipes[@]} Bicep recipes and ${#terraform_recipes[@]} Terraform recipes"
-
-          # Test Bicep recipes first
-          test_recipe_type "bicep" "${bicep_recipes[@]}"
-          
-          # Then test Terraform recipes
-          test_recipe_type "terraform" "${terraform_recipes[@]}"
+          # Test Bicep recipes
+          test_recipes "bicep" "${bicep_recipes[@]}"
 
           echo ""
-          echo "✅ All Kubernetes recipes (Bicep and Terraform) tested successfully"
+          echo "✅ All Kubernetes Bicep recipes tested successfully"
+
+          echo "Listing all registered recipes..."
+          rad recipe list --environment default
+
+      - name: Publish Terraform recipes to module server
+        run: |
+          source .github/scripts/validate-common.sh
+          setup_config
+          
+          echo "Finding and publishing Terraform recipes..."
+          readarray -t terraform_recipes < <(find_and_validate_recipes "*/recipes/kubernetes/terraform/main.tf" "Terraform")
+
+          # Set up the module server
+          read -r tf_namespace tf_deployment tf_configmap <<< "$(setup_terraform_module_server)"
+
+          # Create a temporary directory structure for publishing
+          temp_recipes_dir=$(mktemp -d)
+          echo "Using temporary directory: $temp_recipes_dir"
+
+          # Copy each Terraform recipe to the temp directory with proper naming
+          for recipe_file in "${terraform_recipes[@]}"; do
+            read -r root_folder resource_type platform_service file_name <<< "$(extract_recipe_info "$recipe_file")"
+            recipe_dir=$(dirname "$recipe_file")
+            recipe_name="$resource_type-$platform_service"
+            
+            echo "Copying recipe from $recipe_dir to $temp_recipes_dir/$recipe_name"
+            cp -r "$recipe_dir" "$temp_recipes_dir/$recipe_name"
+          done
+
+          # Publish all recipes to the module server
+          publish_terraform_recipes "$temp_recipes_dir" "$tf_namespace" "$tf_configmap"
+          wait_for_terraform_server "$tf_namespace" "$tf_deployment"
+
+          # Clean up temp directory
+          rm -rf "$temp_recipes_dir"
+          
+          echo "✅ All Terraform recipes published and server ready"
+
+      - name: Register and test Terraform recipes
+        run: |
+          source .github/scripts/validate-common.sh
+          setup_config
+          
+          echo "Finding and testing Terraform recipes..."
+          readarray -t terraform_recipes < <(find_and_validate_recipes "*/recipes/kubernetes/terraform/main.tf" "Terraform")
+
+          # Test Terraform recipes
+          test_recipes "terraform" "${terraform_recipes[@]}"
+
+          echo ""
+          echo "✅ All Terraform recipes tested successfully"
 
           echo "Listing all registered recipes..."
           rad recipe list --environment default

@@ -15,17 +15,17 @@ find_yaml_files() {
   local yaml_files=()
   for folder in "${resource_folders[@]}"; do
     if [[ -d "./$folder" ]]; then
-      echo "Searching in folder: $folder"
+      echo "Searching in folder: $folder" >&2
       while IFS= read -r -d '' file; do
         yaml_files+=("$file")
       done < <(find "./$folder" -name "*.yaml" -type f -print0)
     else
-      echo "Folder $folder does not exist, skipping..."
+      echo "Folder $folder does not exist, skipping..." >&2
     fi
   done
   
   if [[ ${#yaml_files[@]} -eq 0 ]]; then
-    echo "No YAML files found in any resource type folders"
+    echo "No YAML files found in any resource type folders" >&2
     exit 0
   fi
   
@@ -42,6 +42,22 @@ find_recipe_files() {
   done < <(find . -path "$pattern" -type f -print0)
   
   printf '%s\n' "${recipe_files[@]}"
+}
+
+# Find and validate recipes (common pattern)
+find_and_validate_recipes() {
+  local pattern="$1"
+  local recipe_type="$2"
+  
+  readarray -t recipes < <(find_recipe_files "$pattern")
+  
+  if [[ ${#recipes[@]} -eq 0 ]]; then
+    echo "No $recipe_type recipe files found"
+    exit 0
+  fi
+  
+  echo "Found ${#recipes[@]} $recipe_type recipes"
+  printf '%s\n' "${recipes[@]}"
 }
 
 # Extract path components from recipe file
@@ -98,8 +114,63 @@ deploy_and_cleanup_test_app() {
   fi
 }
 
-# Register and test a recipe type (Bicep or Terraform)
-test_recipe_type() {
+# Setup Terraform module server for publishing recipes
+setup_terraform_module_server() {
+  local namespace="radius-test-tf-module-server"
+  local deployment_name="tf-module-server"
+  local configmap_name="tf-module-server-content"
+  
+  echo "Setting up Terraform module server..."
+  
+  # Create namespace
+  echo "Creating Kubernetes namespace $namespace..."
+  kubectl create namespace "$namespace" --dry-run=client -o yaml | kubectl apply -f -
+  
+  echo "$namespace $deployment_name $configmap_name"
+}
+
+# Publish Terraform recipes using the Python script
+publish_terraform_recipes() {
+  local recipe_dir="$1"
+  local namespace="$2" 
+  local configmap_name="$3"
+  
+  if [[ ! -d "$recipe_dir" ]]; then
+    echo "❌ Recipe directory not found: $recipe_dir"
+    exit 1
+  fi
+  
+  echo "Publishing Terraform recipes from $recipe_dir..."
+  if python3 .github/scripts/publish-test-terraform-recipes.py "$recipe_dir" "$namespace" "$configmap_name"; then
+    echo "✅ Successfully published Terraform recipes to ConfigMap"
+    
+    # Deploy the tf-module-server
+    echo "Deploying Terraform module server..."
+    kubectl apply -f ./deploy/tf-module-server/resources.yaml -n "$namespace"
+    
+    echo "✅ Terraform module server deployed"
+  else
+    echo "❌ Failed to publish Terraform recipes"
+    exit 1
+  fi
+}
+
+# Wait for Terraform module server to be ready
+wait_for_terraform_server() {
+  local namespace="$1"
+  local deployment_name="$2"
+  
+  echo "Waiting for Terraform module server to be ready..."
+  if kubectl rollout status deployment.apps/"$deployment_name" -n "$namespace" --timeout=600s; then
+    echo "✅ Terraform module server is ready"
+  else
+    echo "❌ Terraform module server failed to start"
+    exit 1
+  fi
+}
+
+# Register and test recipes (unified function for Bicep and Terraform)
+test_recipes() {
   local template_kind="$1"
   shift
   local recipes=("$@")
@@ -118,10 +189,18 @@ test_recipe_type() {
     read -r root_folder resource_type platform_service file_name <<< "$(extract_recipe_info "$recipe_file")"
     
     platform_key="$root_folder/$resource_type/$platform_service"
-    if [[ -z "${platform_recipes[$platform_key]}" ]]; then
-      platform_recipes[$platform_key]="$recipe_file"
+    if [[ "$template_kind" == "terraform" ]]; then
+      # For Terraform, use the directory path
+      recipe_path=$(dirname "$recipe_file")
     else
-      platform_recipes[$platform_key]="${platform_recipes[$platform_key]} $recipe_file"
+      # For Bicep, use the file path
+      recipe_path="$recipe_file"
+    fi
+    
+    if [[ -z "${platform_recipes[$platform_key]}" ]]; then
+      platform_recipes[$platform_key]="$recipe_path"
+    else
+      platform_recipes[$platform_key]="${platform_recipes[$platform_key]} $recipe_path"
     fi
   done
 
@@ -138,14 +217,15 @@ test_recipe_type() {
     echo "Unregistering any existing default recipe for $radius_namespace/$resource_type"
     rad recipe unregister default --environment default --resource-type "$radius_namespace/$resource_type" || echo "No existing default recipe to unregister"
 
-    # Process recipes for this platform service
-    for recipe_file in ${platform_recipes[$platform_key]}; do
+    # Register recipes based on type
+    for recipe_path in ${platform_recipes[$platform_key]}; do
       if [[ "$template_kind" == "bicep" ]]; then
-        recipe_name=$(basename "$recipe_file" .bicep)
+        # Bicep recipe registration
+        recipe_name=$(basename "$recipe_path" .bicep)
         registry_path="localhost:51351/recipes/$resource_type/$platform_service/$recipe_name:latest"
         
         echo "Publishing Bicep recipe '$recipe_name' to registry: $registry_path"
-        if rad bicep publish --file "$recipe_file" --target "br:$registry_path" --plain-http; then
+        if rad bicep publish --file "$recipe_path" --target "br:$registry_path" --plain-http; then
           echo "✅ Successfully published Bicep recipe to registry"
         else
           echo "❌ Failed to publish Bicep recipe to registry"
@@ -154,23 +234,26 @@ test_recipe_type() {
         
         internal_registry_path="reciperegistry:5000/recipes/$resource_type/$platform_service/$recipe_name:latest"
         echo "Registering Bicep recipe 'default' for resource type '$radius_namespace/$resource_type'"
-        if rad recipe register default --environment default --resource-type "$radius_namespace/$resource_type" --template-kind bicep --template-path "$internal_registry_path" --plain-http; then
-          echo "✅ Successfully registered Bicep recipe as default"
-        else
-          echo "❌ Failed to register Bicep recipe as default"
-          exit 1
-        fi
+        template_path="$internal_registry_path"
         
       elif [[ "$template_kind" == "terraform" ]]; then
-        # For Terraform, use the directory path
-        recipe_dir=$(dirname "$recipe_file")
+        # Terraform recipe registration
+        recipe_name=$(basename "$recipe_path")
+        tf_namespace="radius-test-tf-module-server"
+        deployment_name="tf-module-server"
+        module_server_url="http://$deployment_name.$tf_namespace.svc.cluster.local/$recipe_name.zip"
+        
         echo "Registering Terraform recipe 'default' for resource type '$radius_namespace/$resource_type'"
-        if rad recipe register default --environment default --resource-type "$radius_namespace/$resource_type" --template-kind terraform --template-path "$recipe_dir"; then
-          echo "✅ Successfully registered Terraform recipe as default"
-        else
-          echo "❌ Failed to register Terraform recipe as default"
-          exit 1
-        fi
+        echo "Using module URL: $module_server_url"
+        template_path="$module_server_url"
+      fi
+      
+      # Register the recipe
+      if rad recipe register default --environment default --resource-type "$radius_namespace/$resource_type" --template-kind "$template_kind" --template-path "$template_path" --plain-http; then
+        echo "✅ Successfully registered $template_kind recipe as default"
+      else
+        echo "❌ Failed to register $template_kind recipe as default"
+        exit 1
       fi
     done
     
