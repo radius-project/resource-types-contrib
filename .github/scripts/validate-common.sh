@@ -238,7 +238,8 @@ test_recipes() {
         
       elif [[ "$template_kind" == "terraform" ]]; then
         # Terraform recipe registration
-        recipe_name=$(basename "$recipe_path")
+        # Use the same naming convention as the publishing step: resource_type-platform_service
+        recipe_name="$resource_type-$platform_service"
         tf_namespace="radius-test-tf-module-server"
         deployment_name="tf-module-server"
         module_server_url="http://$deployment_name.$tf_namespace.svc.cluster.local/$recipe_name.zip"
