@@ -120,11 +120,11 @@ setup_terraform_module_server() {
   local deployment_name="tf-module-server"
   local configmap_name="tf-module-server-content"
   
-  echo "Setting up Terraform module server..."
+  echo "Setting up Terraform module server..." >&2
   
   # Create namespace
-  echo "Creating Kubernetes namespace $namespace..."
-  kubectl create namespace "$namespace" --dry-run=client -o yaml | kubectl apply -f -
+  echo "Creating Kubernetes namespace $namespace..." >&2
+  kubectl create namespace "$namespace" --dry-run=client -o yaml | kubectl apply -f - >&2
   
   echo "$namespace $deployment_name $configmap_name"
 }
@@ -136,21 +136,21 @@ publish_terraform_recipes() {
   local configmap_name="$3"
   
   if [[ ! -d "$recipe_dir" ]]; then
-    echo "❌ Recipe directory not found: $recipe_dir"
+    echo "❌ Recipe directory not found: $recipe_dir" >&2
     exit 1
   fi
   
-  echo "Publishing Terraform recipes from $recipe_dir..."
+  echo "Publishing Terraform recipes from $recipe_dir..." >&2
   if python3 .github/scripts/publish-test-terraform-recipes.py "$recipe_dir" "$namespace" "$configmap_name"; then
-    echo "✅ Successfully published Terraform recipes to ConfigMap"
+    echo "✅ Successfully published Terraform recipes to ConfigMap" >&2
     
     # Deploy the tf-module-server
-    echo "Deploying Terraform module server..."
-    kubectl apply -f ./deploy/tf-module-server/resources.yaml -n "$namespace"
+    echo "Deploying Terraform module server..." >&2
+    kubectl apply -f ./deploy/tf-module-server/resources.yaml -n "$namespace" >&2
     
-    echo "✅ Terraform module server deployed"
+    echo "✅ Terraform module server deployed" >&2
   else
-    echo "❌ Failed to publish Terraform recipes"
+    echo "❌ Failed to publish Terraform recipes" >&2
     exit 1
   fi
 }
@@ -160,11 +160,11 @@ wait_for_terraform_server() {
   local namespace="$1"
   local deployment_name="$2"
   
-  echo "Waiting for Terraform module server to be ready..."
-  if kubectl rollout status deployment.apps/"$deployment_name" -n "$namespace" --timeout=600s; then
-    echo "✅ Terraform module server is ready"
+  echo "Waiting for Terraform module server to be ready..." >&2
+  if kubectl rollout status deployment.apps/"$deployment_name" -n "$namespace" --timeout=600s >&2; then
+    echo "✅ Terraform module server is ready" >&2
   else
-    echo "❌ Terraform module server failed to start"
+    echo "❌ Terraform module server failed to start" >&2
     exit 1
   fi
 }
