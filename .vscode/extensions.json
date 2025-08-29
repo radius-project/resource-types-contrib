@@ -1,50 +1,15 @@
 {
   "recommendations": [
-    // Bicep and Azure Resource Manager support
-    "ms-azuretools.vscode-bicep",
-    "ms-vscode.azure-account",
-    "ms-azuretools.vscode-azureresourcegroups",
-    
-    // Terraform support
-    "hashicorp.terraform",
-    "ms-vscode.vscode-json",
-    
-    // Kubernetes support
-    "ms-kubernetes-tools.vscode-kubernetes-tools",
-    "redhat.vscode-yaml",
-    
-    // YAML and JSON support
-    "redhat.vscode-yaml",
-    "ms-vscode.vscode-json",
-    
-    // Git and version control
-    "eamodio.gitlens",
-    "github.vscode-pull-request-github",
-    
-    // Markdown documentation
-    "yzhang.markdown-all-in-one",
     "davidanson.vscode-markdownlint",
-    
-    // Shell scripting support
-    "timonwong.shellcheck",
-    "mads-hartmann.bash-ide-vscode",
-    
-    // General development utilities
-    "ms-vscode.vscode-typescript-next",
-    "ms-vscode-remote.remote-containers",
-    "ms-vscode-remote.remote-ssh",
-    "ms-vscode.remote-explorer",
-    
-    // Code formatting and linting
-    "esbenp.prettier-vscode",
-    "ms-vscode.vscode-eslint",
-    
-    // File management and utilities
-    "ms-vscode.vscode-file-utils",
-    "alefragnani.project-manager"
+    "github.vscode-pull-request-github",
+    "github.vscode-github-actions",
+    "hashicorp.terraform",
+    "ms-azuretools.vscode-azureterraform",
+    "ms-azuretools.vscode-bicep",
+    "ms-vscode.makefile-tools",
+    "redhat.vscode-yaml",
+    "timonwong.shellcheck"
   ],
   "unwantedRecommendations": [
-    // Avoid conflicting extensions
-    "ms-vscode.powershell"
   ]
 }
