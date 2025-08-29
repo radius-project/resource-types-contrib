@@ -1,0 +1,15 @@
+{
+  "recommendations": [
+    "davidanson.vscode-markdownlint",
+    "github.vscode-pull-request-github",
+    "github.vscode-github-actions",
+    "hashicorp.terraform",
+    "ms-azuretools.vscode-azureterraform",
+    "ms-azuretools.vscode-bicep",
+    "ms-vscode.makefile-tools",
+    "redhat.vscode-yaml",
+    "timonwong.shellcheck"
+  ],
+  "unwantedRecommendations": [
+  ]
+}
