@@ -138,7 +138,7 @@ types:
                           description: (Optional) Requests define the minimum amount of CPU or memory that is required by the container.
                           properties:
                             cpu:
-                              # TODO: Should be float or number
+                              # TODO: Should be float or number https://github.com/radius-project/radius/issues/10279
                               type: string
                               description: (Optional) The minimum number of vCPUs required by the container. `0.1` results in one tenth of a vCPU being reserved.
                             memoryInMib:
@@ -152,7 +152,7 @@ types:
                               # TODO: Should be float or number
                               type: string
                               description: (Optional) The maximum number of vCPUs which can be used by the container.
-                            memoryInMiB:
+                            memoryInMib:
                               type: integer
                               description: (Optional) The maximum amount of memory which can be used by the container in MiB.
                     ports:
