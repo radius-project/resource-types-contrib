@@ -81,7 +81,7 @@ types:
                 properties:
                   source:
                     type: string
-                    description: (Required) The resource ID of the resource this container is dependent upon.]
+                    description: (Required) The resource ID of the resource this container is dependent upon.
                   disableDefaultEnvVars:
                     type: boolean
                     description: (Optional) Disables the automatic injection of environment variables from connected resource properties.
@@ -237,7 +237,7 @@ types:
                           description: (Optional) Number of seconds after the container has started before probes are initiated.
                         terminationGracePeriodSeconds:
                           type: integer
-                          description: (Optional) Number of seconds the container needs to terminate gracefully upon probe failure. The grace period amount of tie between when a container is sent a termination signal and the time when the processes are forcibly halted with a kill signal. 
+                          description: (Optional) Number of seconds the container needs to terminate gracefully upon probe failure. The grace period amount of time between when a container is sent a termination signal and the time when the processes are forcibly halted with a kill signal. 
                         periodSeconds:
                           type: integer
                           description: (Optional) How often to perform the probe. Assumed to be 10 seconds if not specified.
@@ -267,7 +267,7 @@ types:
             #       # Confirmed with @lakshmimsft that Radius Resource Type definitions do not support object references
             volumes:
               type: object
-              description: XXX
+              description: (Optional) List of volumes that can be mounted by a container. 
               additionalProperties:
                 type: object
                 properties:
@@ -356,4 +356,4 @@ types:
                   description: (Optional) If enabled by the platform engineer, additional ACI Container Group properties can be specified.
                   additionalProperties:
                     type: object     
-          required: [environment, application, containers, connections]
+          required: [environment, application, containers]
