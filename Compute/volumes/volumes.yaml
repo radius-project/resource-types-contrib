@@ -1,0 +1,54 @@
+namespace: Radius.Compute
+types:
+  persistentVolumes:
+    description: |
+      The  Radius.Compute/volumes Resource Type represents a persistent storage volume that can be mounted to compute instances or containers.
+      To use a persistent volume in your application, 
+      
+      1.define a Radius.Compute/volumes@2025-05-01-preview resource and specify its environment and size as below
+
+      resource myVolume 'Radius.Compute/volumes@2025-05-01-preview' = {
+        name: 'corerp-resources-volume'
+        properties: {
+          environment: environment
+          sizeInGiB: 1
+        }
+      }
+
+      2. Create a new compute instance and mount the persistent volume to it.
+
+      resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
+          name: 'myContainer'
+          properties: {
+            ...
+            container: {
+              ...
+              volumes: 
+                myVolume: {
+                  kind: 'persistent'
+                  mountPath: '/mnt/data'
+                  source: myVolume.id
+                }
+              }
+            }
+          }
+        }
+      
+      There may be existing volumes. These can be referenced by name using the `existing` Bicep keyword. For example:
+
+      resource existingVolume 'Radius.Compute/volumes@2025-08-01-preview' existing = {
+        name: 'existingVolume'
+      }
+
+    apiVersions:
+      '2025-08-01-preview':
+        schema: 
+          type: object
+          properties:
+            environment:
+              type: string
+            application:
+              type: string
+            sizeInGiB:
+              type: integer
+          required: [environment, sizeInGib]
