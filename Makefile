@@ -14,6 +14,7 @@
 # limitations under the License.
 # ------------------------------------------------------------
 
+SHELL := /bin/bash
 ARROW := \033[34;1m=>\033[0m
 
 # order matters for these
