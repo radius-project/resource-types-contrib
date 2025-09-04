@@ -87,193 +87,479 @@ types:
                     description: (Optional) Disables the automatic injection of environment variables from connected resource properties.
                 required: [source]
             containers:
+              type: object
+              additionalProperties:
                 type: object
-                additionalProperties:
-                  type: object
-                  properties:
-                    image:
+                properties:
+                  image:
+                    type: string
+                    description: (Required) The container image. `ghcr.io/radius-project/samples/demo:latest` for example.
+                  command:
+                    type: array
+                    items:
                       type: string
-                      description: (Required) The container image. `ghcr.io/radius-project/samples/demo:latest` for example.
-                    command:
-                      type: array
-                      items:
-                        type: string
-                        description: '(Optional) Command the container runs. Overrides the container image ENTRYPOINT. `["/bin/sh", "-c"]` for example.'
-                    args:
-                      type: array
-                      items:
-                        type: string
-                        description: '(Optional) Arguments for the command. Overrides the container image CMD. `["echo Hello", "&&", "echo World"]` for example.'
-                    env:
-                      type: object
-                      description: (Optional) Environment variables injected into the container. 
-                      additionalProperties:
-                        type: object
-                        properties:
-                          value:
-                            type: string
-                            description: (Optional) String value of the environment variable.
-                          valueFrom:
-                            type: object
-                            properties:
-                              secretKeyRef:
-                                type: object
-                                description: (Optional) Set the environment variable value based on a Radius Secrets resource.
-                                properties:
-                                  secretId:
-                                    type: string
-                                    description: (Optional) The ID of the Radius Secrets resource.
-                                  key:
-                                    type: string
-                                    description: (Optional) The key of the Radius Secrets resource. The value of the key will be used as the environment variable value.
-                    workingDir:
+                      description: '(Optional) Command the container runs. Overrides the container image ENTRYPOINT. `["/bin/sh", "-c"]` for example.'
+                  args:
+                    type: array
+                    items:
                       type: string
-                      description: (Optional) The working directory inside the container. `/usr/share` for example.
-                    resources:
+                      description: '(Optional) Arguments for the command. Overrides the container image CMD. `["echo Hello", "&&", "echo World"]` for example.'
+                  env:
+                    type: object
+                    description: (Optional) Environment variables injected into the container. 
+                    additionalProperties:
                       type: object
-                      description: (Optional) Compute resource requirements for the container.
                       properties:
-                        requests:
+                        value:
+                          type: string
+                          description: (Optional) String value of the environment variable.
+                        valueFrom:
                           type: object
-                          description: (Optional) Requests define the minimum amount of CPU or memory that is required by the container.
                           properties:
-                            cpu:
-                              # TODO: Should be float or number https://github.com/radius-project/radius/issues/10279
-                              type: string
-                              description: (Optional) The minimum number of vCPUs required by the container. `0.1` results in one tenth of a vCPU being reserved.
-                            memoryInMib:
-                              type: integer
-                              description: (Optional) The minimum amount of memory required by the container in MiB. `1024` results in 1 GiB of memory being reserved.
-                        limits:
-                          type: object
-                          description: (Optional) Limits define the maximum amount of CPU or memory the container can consume.
-                          properties:
-                            cpu:
-                              # TODO: Should be float or number
-                              type: string
-                              description: (Optional) The maximum number of vCPUs which can be used by the container.
-                            memoryInMib:
-                              type: integer
-                              description: (Optional) The maximum amount of memory which can be used by the container in MiB.
-                    ports:
-                      type: object
-                      description: (Optional) Network ports exposed by the container. A network endpoint is created for each port. When using Kubernetes a Service with type ClusterIP is created. For L7 ingress create a Gateway resource.
-                      additionalProperties:
-                        type: object
-                        properties:
-                          containerPort:
-                            type: integer
-                            description: (Required) The network port the container is listening on. `443` for example.
-                          protocol:
-                            type: string
-                            enum: [TCP, UDP]
-                            description: (Optional) The protocol. If not specified, `TCP` is assumed.
-                        required: [containerPort]
-                    volumeMounts:
-                      type: object
-                      description: (Optional) Volumes to mount in the container.
-                      additionalProperties:
-                        type: object
-                        properties:
-                          volumeName:
-                            type: string
-                            description: (Required) The name of the volume defined in Containers.properties.volumes. 
-                          mountPath:
-                            type: string
-                            description: (Required) The path to mount the volume in the container file system.
-                          readOnly: 
-                            type: boolean
-                            description: (Optional) The volume is mounted as read-only if true. If not set assumed to be false.
-                        required: [volumeName, mountPath]
-                    readinessProbe:
-                      type: object
-                      description: (Optional) A readiness probe defines a check (a probe) to determine when a container is ready to begin accepting traffic.
-                      properties:
-                        exec:
-                          type: object
-                          description: (Optional) An exec probe runs a command within a container. If the command succeeds and returns 0 the probe is healthy. 
-                          properties:
-                            command:
-                              type: array
-                              items:
-                                type: string
-                                description: '(Required) The command to run inside the container. `["cat", "/tmp/healthy"]` for example.'
-                          required: [command]
-                        httpGet:
-                          type: object
-                          description: (Optional) A httpGet probe performs a HTTP GET against the container on the specified port. If the HTTP server returns a code greater than or equal to 200 and less than 400 the probe is healthy.
-                          properties:
-                            path:
-                              type: string
-                              description: (Required) The path to access on the HTTP server.
-                            port:
-                              type: integer
-                              description: (Required) The TCP port connect to on the container.
-                            httpHeaders:
+                            secretKeyRef:
                               type: object
-                              description: (Optional) Custom HTTP headers to be included in the GET request.
-                              additionalProperties:
-                                type: object
-                                properties:
-                                  value:
-                                    type: string
-                                    description: (Required) The header field value.
-                                required: [value]
-                            scheme:
+                              description: (Optional) Set the environment variable value based on a Radius Secrets resource.
+                              properties:
+                                secretId:
+                                  type: string
+                                  description: (Optional) The ID of the Radius Secrets resource.
+                                key:
+                                  type: string
+                                  description: (Optional) The key of the Radius Secrets resource. The value of the key will be used as the environment variable value.
+                  workingDir:
+                    type: string
+                    description: (Optional) The working directory inside the container. `/usr/share` for example.
+                  resources:
+                    type: object
+                    description: (Optional) Compute resource requirements for the container.
+                    properties:
+                      requests:
+                        type: object
+                        description: (Optional) Requests define the minimum amount of CPU or memory that is required by the container.
+                        properties:
+                          cpu:
+                            # TODO: Change to float once floats are availabla https://github.com/radius-project/radius/issues/10279
+                            type: string
+                            description: (Optional) The minimum number of vCPUs required by the container. `0.1` results in one tenth of a vCPU being reserved.
+                          memoryInMib:
+                            type: integer
+                            description: (Optional) The minimum amount of memory required by the container in MiB. `1024` results in 1 GiB of memory being reserved.
+                      limits:
+                        type: object
+                        description: (Optional) Limits define the maximum amount of CPU or memory the container can consume.
+                        properties:
+                          cpu:
+                            # TODO: Change to float once floats are availabla https://github.com/radius-project/radius/issues/10279
+                            type: string
+                            description: (Optional) The maximum number of vCPUs which can be used by the container.
+                          memoryInMib:
+                            type: integer
+                            description: (Optional) The maximum amount of memory which can be used by the container in MiB.
+                  ports:
+                    type: object
+                    description: (Optional) Network ports exposed by the container. A network endpoint is created for each port. When using Kubernetes a Service with type ClusterIP is created. For L7 ingress create a Gateway resource.
+                    additionalProperties:
+                      type: object
+                      properties:
+                        containerPort:
+                          type: integer
+                          description: (Required) The network port the container is listening on. `443` for example.
+                        protocol:
+                          type: string
+                          enum: [TCP, UDP]
+                          description: (Optional) The protocol. If not specified, `TCP` is assumed.
+                      required: [containerPort]
+                  volumeMounts:
+                    type: object
+                    description: (Optional) Volumes to mount in the container.
+                    additionalProperties:
+                      type: object
+                      properties:
+                        volumeName:
+                          type: string
+                          description: (Required) The name of the volume defined in Containers.properties.volumes. 
+                        mountPath:
+                          type: string
+                          description: (Required) The path to mount the volume in the container file system.
+                      required: [volumeName, mountPath]
+                  readinessProbe:
+                    type: object
+                    description: (Optional) A readiness probe defines a check (a probe) to determine when a container is ready to begin accepting traffic.
+                    properties:
+                      exec:
+                        type: object
+                        description: (Optional) An exec probe runs a command within a container. If the command succeeds and returns 0 the probe is healthy. 
+                        properties:
+                          command:
+                            type: array
+                            items:
                               type: string
-                              enum: [http, https]
-                              description: (Optional) HTTP or HTTPS. Assumes HTTP is not specified.
-                          required: [path, port]
-                        tcpSocket:
+                              description: '(Required) The command to run inside the container. `["cat", "/tmp/healthy"]` for example.'
+                        required: [command]
+                      httpGet:
+                        type: object
+                        description: (Optional) A httpGet probe performs a HTTP GET against the container on the specified port. If the HTTP server returns a code greater than or equal to 200 and less than 400 the probe is healthy.
+                        properties:
+                          path:
+                            type: string
+                            description: (Required) The path to access on the HTTP server.
+                          port:
+                            type: integer
+                            description: (Required) The TCP port connect to on the container.
+                          httpHeaders:
+                            type: object
+                            description: (Optional) Custom HTTP headers to be included in the GET request.
+                            additionalProperties:
+                              type: object
+                              properties:
+                                value:
+                                  type: string
+                                  description: (Required) The header field value.
+                              required: [value]
+                          scheme:
+                            type: string
+                            enum: [http, https]
+                            description: (Optional) HTTP or HTTPS. Assumes HTTP is not specified.
+                        required: [path, port]
+                      tcpSocket:
+                        type: object
+                        description: (Optional) A TCP socket probe establishes a TCP connection to the container on the specified port. If a connection is established the probe is healthy.
+                        properties:
+                          port:
+                            type: integer
+                            description: (Required) The TCP port to connect to. 
+                        required: [port]
+                      initialDelaySeconds:
+                        type: integer
+                        description: (Optional) Number of seconds after the container has started before probes are initiated.
+                      terminationGracePeriodSeconds:
+                        type: integer
+                        description: (Optional) Number of seconds the container needs to terminate gracefully upon probe failure. The grace period amount of time between when a container is sent a termination signal and the time when the processes are forcibly halted with a kill signal. 
+                      periodSeconds:
+                        type: integer
+                        description: (Optional) How often to perform the probe. Assumed to be 10 seconds if not specified.
+                      timeoutSeconds:
+                        type: integer
+                        description: (Optional) Number of seconds after which the probe times out. Assumed to be 1 second if not specified.
+                      failureThreshold:
+                        type: integer
+                        description: (Optional) Minimum consecutive failures for the probe to be considered failed after having succeeded. Assumed to be 3 if not specified.
+                      successThreshold: 
+                        type: integer
+                        description: (Optional) Minimum consecutive successes for the probe to be considered successful after having failed. Assumed to be 1 if not specified.
+                  livenessProbe:
+                    # TODO: livenessProbe and readinessProbe are the same object definition. Use references in the future to de-duplicate code. https://github.com/radius-project/radius/issues/10276
+                    type: object
+                    description: (Optional) A liveness probe defines a check (a probe) to determine if a container is healthy.
+                    properties:
+                      exec:
+                        type: object
+                        description: (Optional) An exec probe runs a command within a container. If the command succeeds and returns 0 the probe is healthy. 
+                        properties:
+                          command:
+                            type: array
+                            items:
+                              type: string
+                              description: '(Required) The command to run inside the container. `["cat", "/tmp/healthy"]` for example.'
+                        required: [command]
+                      httpGet:
+                        type: object
+                        description: (Optional) A httpGet probe performs a HTTP GET against the container on the specified port. If the HTTP server returns a code greater than or equal to 200 and less than 400 the probe is healthy.
+                        properties:
+                          path:
+                            type: string
+                            description: (Required) The path to access on the HTTP server.
+                          port:
+                            type: integer
+                            description: (Required) The TCP port connect to on the container.
+                          httpHeaders:
+                            type: object
+                            description: (Optional) Custom HTTP headers to be included in the GET request.
+                            additionalProperties:
+                              type: object
+                              properties:
+                                value:
+                                  type: string
+                                  description: (Required) The header field value.
+                              required: [value]
+                          scheme:
+                            type: string
+                            enum: [http, https]
+                            description: (Optional) HTTP or HTTPS. Assumes HTTP is not specified.
+                        required: [path, port]
+                      tcpSocket:
+                        type: object
+                        description: (Optional) A TCP socket probe establishes a TCP connection to the container on the specified port. If a connection is established the probe is healthy.
+                        properties:
+                          port:
+                            type: integer
+                            description: (Required) The TCP port to connect to. 
+                        required: [port]
+                      initialDelaySeconds:
+                        type: integer
+                        description: (Optional) Number of seconds after the container has started before probes are initiated.
+                      terminationGracePeriodSeconds:
+                        type: integer
+                        description: (Optional) Number of seconds the container needs to terminate gracefully upon probe failure. The grace period amount of time between when a container is sent a termination signal and the time when the processes are forcibly halted with a kill signal. 
+                      periodSeconds:
+                        type: integer
+                        description: (Optional) How often to perform the probe. Assumed to be 10 seconds if not specified.
+                      timeoutSeconds:
+                        type: integer
+                        description: (Optional) Number of seconds after which the probe times out. Assumed to be 1 second if not specified.
+                      failureThreshold:
+                        type: integer
+                        description: (Optional) Minimum consecutive failures for the probe to be considered failed after having succeeded. Assumed to be 3 if not specified.
+                      successThreshold: 
+                        type: integer
+                        description: (Optional) Minimum consecutive successes for the probe to be considered successful after having failed. Assumed to be 1 if not specified.
+                required: [image]
+            initContainers:
+              # TODO: containers and initContainers are the same object definition. Use references in the future to de-duplicate code. https://github.com/radius-project/radius/issues/10276
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  image:
+                    type: string
+                    description: (Required) The container image. `ghcr.io/radius-project/samples/demo:latest` for example.
+                  command:
+                    type: array
+                    items:
+                      type: string
+                      description: '(Optional) Command the container runs. Overrides the container image ENTRYPOINT. `["/bin/sh", "-c"]` for example.'
+                  args:
+                    type: array
+                    items:
+                      type: string
+                      description: '(Optional) Arguments for the command. Overrides the container image CMD. `["echo Hello", "&&", "echo World"]` for example.'
+                  env:
+                    type: object
+                    description: (Optional) Environment variables injected into the container. 
+                    additionalProperties:
+                      type: object
+                      properties:
+                        value:
+                          type: string
+                          description: (Optional) String value of the environment variable.
+                        valueFrom:
                           type: object
-                          description: (Optional) A TCP socket probe establishes a TCP connection to the container on the specified port. If a connection is established the probe is healthy.
                           properties:
-                            port:
-                              type: integer
-                              description: (Required) The TCP port to connect to. 
-                          required: [port]
-                        initialDelaySeconds:
+                            secretKeyRef:
+                              type: object
+                              description: (Optional) Set the environment variable value based on a Radius Secrets resource.
+                              properties:
+                                secretId:
+                                  type: string
+                                  description: (Optional) The ID of the Radius Secrets resource.
+                                key:
+                                  type: string
+                                  description: (Optional) The key of the Radius Secrets resource. The value of the key will be used as the environment variable value.
+                  workingDir:
+                    type: string
+                    description: (Optional) The working directory inside the container. `/usr/share` for example.
+                  resources:
+                    type: object
+                    description: (Optional) Compute resource requirements for the container.
+                    properties:
+                      requests:
+                        type: object
+                        description: (Optional) Requests define the minimum amount of CPU or memory that is required by the container.
+                        properties:
+                          cpu:
+                            # TODO: Change to float once floats are availabla https://github.com/radius-project/radius/issues/10279
+                            type: string
+                            description: (Optional) The minimum number of vCPUs required by the container. `0.1` results in one tenth of a vCPU being reserved.
+                          memoryInMib:
+                            type: integer
+                            description: (Optional) The minimum amount of memory required by the container in MiB. `1024` results in 1 GiB of memory being reserved.
+                      limits:
+                        type: object
+                        description: (Optional) Limits define the maximum amount of CPU or memory the container can consume.
+                        properties:
+                          cpu:
+                            # TODO: Change to float once floats are availabla https://github.com/radius-project/radius/issues/10279
+                            type: string
+                            description: (Optional) The maximum number of vCPUs which can be used by the container.
+                          memoryInMib:
+                            type: integer
+                            description: (Optional) The maximum amount of memory which can be used by the container in MiB.
+                  ports:
+                    type: object
+                    description: (Optional) Network ports exposed by the container. A network endpoint is created for each port. When using Kubernetes a Service with type ClusterIP is created. For L7 ingress create a Gateway resource.
+                    additionalProperties:
+                      type: object
+                      properties:
+                        containerPort:
                           type: integer
-                          description: (Optional) Number of seconds after the container has started before probes are initiated.
-                        terminationGracePeriodSeconds:
-                          type: integer
-                          description: (Optional) Number of seconds the container needs to terminate gracefully upon probe failure. The grace period amount of time between when a container is sent a termination signal and the time when the processes are forcibly halted with a kill signal. 
-                        periodSeconds:
-                          type: integer
-                          description: (Optional) How often to perform the probe. Assumed to be 10 seconds if not specified.
-                        timeoutSeconds:
-                          type: integer
-                          description: (Optional) Number of seconds after which the probe times out. Assumed to be 1 second if not specified.
-                        failureThreshold:
-                          type: integer
-                          description: (Optional) Minimum consecutive failures for the probe to be considered failed after having succeeded. Assumed to be 3 if not specified.
-                        successThreshold: 
-                          type: integer
-                          description: (Optional) Minimum consecutive successes for the probe to be considered successful after having failed. Assumed to be 1 if not specified.
-                    # livenessProbe:
-                    #   type: object
-                    #   description: (Optional) A liveness probe defines a check (a probe) to determine if a container is healthy.
-                    #   properties:
-                    #     # TODO: Include same properties as readinessProbe. 
-                    #     # Confirmed with @lakshmimsft that Radius Resource Type definitions do not support object references
-                  required: [image]
-            # initContainers:
-            #   type: array
-            #   description:
-            #   items:
-            #     type: object
-            #     properties: 
-            #       # TODO: Include same properties as containers. 
-            #       # Confirmed with @lakshmimsft that Radius Resource Type definitions do not support object references
+                          description: (Required) The network port the container is listening on. `443` for example.
+                        protocol:
+                          type: string
+                          enum: [TCP, UDP]
+                          description: (Optional) The protocol. If not specified, `TCP` is assumed.
+                      required: [containerPort]
+                  volumeMounts:
+                    type: object
+                    description: (Optional) Volumes to mount in the container.
+                    additionalProperties:
+                      type: object
+                      properties:
+                        volumeName:
+                          type: string
+                          description: (Required) The name of the volume defined in Containers.properties.volumes. 
+                        mountPath:
+                          type: string
+                          description: (Required) The path to mount the volume in the container file system.
+                      required: [volumeName, mountPath]
+                  readinessProbe:
+                    type: object
+                    description: (Optional) A readiness probe defines a check (a probe) to determine when a container is ready to begin accepting traffic.
+                    properties:
+                      exec:
+                        type: object
+                        description: (Optional) An exec probe runs a command within a container. If the command succeeds and returns 0 the probe is healthy. 
+                        properties:
+                          command:
+                            type: array
+                            items:
+                              type: string
+                              description: '(Required) The command to run inside the container. `["cat", "/tmp/healthy"]` for example.'
+                        required: [command]
+                      httpGet:
+                        type: object
+                        description: (Optional) A httpGet probe performs a HTTP GET against the container on the specified port. If the HTTP server returns a code greater than or equal to 200 and less than 400 the probe is healthy.
+                        properties:
+                          path:
+                            type: string
+                            description: (Required) The path to access on the HTTP server.
+                          port:
+                            type: integer
+                            description: (Required) The TCP port connect to on the container.
+                          httpHeaders:
+                            type: object
+                            description: (Optional) Custom HTTP headers to be included in the GET request.
+                            additionalProperties:
+                              type: object
+                              properties:
+                                value:
+                                  type: string
+                                  description: (Required) The header field value.
+                              required: [value]
+                          scheme:
+                            type: string
+                            enum: [http, https]
+                            description: (Optional) HTTP or HTTPS. Assumes HTTP is not specified.
+                        required: [path, port]
+                      tcpSocket:
+                        type: object
+                        description: (Optional) A TCP socket probe establishes a TCP connection to the container on the specified port. If a connection is established the probe is healthy.
+                        properties:
+                          port:
+                            type: integer
+                            description: (Required) The TCP port to connect to. 
+                        required: [port]
+                      initialDelaySeconds:
+                        type: integer
+                        description: (Optional) Number of seconds after the container has started before probes are initiated.
+                      terminationGracePeriodSeconds:
+                        type: integer
+                        description: (Optional) Number of seconds the container needs to terminate gracefully upon probe failure. The grace period amount of time between when a container is sent a termination signal and the time when the processes are forcibly halted with a kill signal. 
+                      periodSeconds:
+                        type: integer
+                        description: (Optional) How often to perform the probe. Assumed to be 10 seconds if not specified.
+                      timeoutSeconds:
+                        type: integer
+                        description: (Optional) Number of seconds after which the probe times out. Assumed to be 1 second if not specified.
+                      failureThreshold:
+                        type: integer
+                        description: (Optional) Minimum consecutive failures for the probe to be considered failed after having succeeded. Assumed to be 3 if not specified.
+                      successThreshold: 
+                        type: integer
+                        description: (Optional) Minimum consecutive successes for the probe to be considered successful after having failed. Assumed to be 1 if not specified.
+                  livenessProbe:
+                    # TODO: livenessProbe and readinessProbe are the same object definition. Use references in the future to de-duplicate code. https://github.com/radius-project/radius/issues/10276
+                    type: object
+                    description: (Optional) A liveness probe defines a check (a probe) to determine if a container is healthy.
+                    properties:
+                      exec:
+                        type: object
+                        description: (Optional) An exec probe runs a command within a container. If the command succeeds and returns 0 the probe is healthy. 
+                        properties:
+                          command:
+                            type: array
+                            items:
+                              type: string
+                              description: '(Required) The command to run inside the container. `["cat", "/tmp/healthy"]` for example.'
+                        required: [command]
+                      httpGet:
+                        type: object
+                        description: (Optional) A httpGet probe performs a HTTP GET against the container on the specified port. If the HTTP server returns a code greater than or equal to 200 and less than 400 the probe is healthy.
+                        properties:
+                          path:
+                            type: string
+                            description: (Required) The path to access on the HTTP server.
+                          port:
+                            type: integer
+                            description: (Required) The TCP port connect to on the container.
+                          httpHeaders:
+                            type: object
+                            description: (Optional) Custom HTTP headers to be included in the GET request.
+                            additionalProperties:
+                              type: object
+                              properties:
+                                value:
+                                  type: string
+                                  description: (Required) The header field value.
+                              required: [value]
+                          scheme:
+                            type: string
+                            enum: [http, https]
+                            description: (Optional) HTTP or HTTPS. Assumes HTTP is not specified.
+                        required: [path, port]
+                      tcpSocket:
+                        type: object
+                        description: (Optional) A TCP socket probe establishes a TCP connection to the container on the specified port. If a connection is established the probe is healthy.
+                        properties:
+                          port:
+                            type: integer
+                            description: (Required) The TCP port to connect to. 
+                        required: [port]
+                      initialDelaySeconds:
+                        type: integer
+                        description: (Optional) Number of seconds after the container has started before probes are initiated.
+                      terminationGracePeriodSeconds:
+                        type: integer
+                        description: (Optional) Number of seconds the container needs to terminate gracefully upon probe failure. The grace period amount of time between when a container is sent a termination signal and the time when the processes are forcibly halted with a kill signal. 
+                      periodSeconds:
+                        type: integer
+                        description: (Optional) How often to perform the probe. Assumed to be 10 seconds if not specified.
+                      timeoutSeconds:
+                        type: integer
+                        description: (Optional) Number of seconds after which the probe times out. Assumed to be 1 second if not specified.
+                      failureThreshold:
+                        type: integer
+                        description: (Optional) Minimum consecutive failures for the probe to be considered failed after having succeeded. Assumed to be 3 if not specified.
+                      successThreshold: 
+                        type: integer
+                        description: (Optional) Minimum consecutive successes for the probe to be considered successful after having failed. Assumed to be 1 if not specified.
+                required: [image]
             volumes:
               type: object
               description: (Optional) List of volumes that can be mounted by a container. 
               additionalProperties:
                 type: object
                 properties:
-                  persistentVolumeId: 
-                    type: string
-                    description: (Optional) The Radius PersistentVolume resource ID.
+                  persistentVolume:
+                    type: object
+                    description: (Optional) Mount an existing Radius PersistentVolume resource.
+                    properties:
+                      resourceId:
+                        type: string
+                        description: (Required) The Radius PersistentVolume resource ID.
+                      accessMode:
+                        type: string
+                        enum: [ReadWriteOnce, ReadOnlyMany, ReadWriteMany]
+                        description: (Optional) Set to `ReadWriteOnce` if no other Containers can mount in read/write mode. Set to `ReadOnlyMany` to enable other Containers to mount in read-only mode. Set to `ReadWriteMany` to allow multiple containers to mount in read/write mode. Assumed to be `ReadWriteOnce` if not specified.
                   secretId:
                     type: string
                     description: (Optional) The Radius Secret resource ID.
