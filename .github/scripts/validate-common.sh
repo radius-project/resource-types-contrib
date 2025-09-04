@@ -110,6 +110,11 @@ deploy_and_cleanup_test_app() {
       
       if rad app delete "$deployment_name" --yes; then
         echo "✅ rad app delete succeeded"
+        
+        # Wait for Kubernetes garbage collection in CI environments
+        echo "Waiting for resource cleanup..."
+        sleep 5
+          
       else
         echo "⚠️ rad app delete failed with exit code $?"
       fi
