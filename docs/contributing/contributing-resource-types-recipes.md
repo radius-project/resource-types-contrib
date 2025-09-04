@@ -161,10 +161,10 @@ The following guidelines should be followed when contributing new Resource Types
 - The description property must be populated with developer documentation. The top-level descrption and each property's description are output by `rad resource-type show` and will be visible in the Radius Dashboard in the future. See documentation section for more details.
 
 - Each Resource Type will have one or more common properties:
-   - `environment` must always be a required property.
+   - `environment` must always be a required property (include in the `required` property).
    - `application` may be a required or property:
      - Required: Use when a resource must always be part of an application. For example, a Container will always be part of an application. 
-     - Optional: Use for resources that may be deployed to an Environment without an application with the intention of being a shared resource. A blob store, for example, may be shared across multiple containers and applications.
+     - Not required: Do not include in the `required` property for resources that may be deployed to an Environment without an application with the intention of being a shared resource. A blob store, for example, may be shared across multiple containers and applications.
    
 - Each additional properties must:
     - Follow the camelCase naming convention.
