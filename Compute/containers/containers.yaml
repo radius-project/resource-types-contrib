@@ -87,10 +87,13 @@ types:
                     description: (Optional) Disables the automatic injection of environment variables from connected resource properties.
                 required: [source]
             containers:
-              type: object
-              additionalProperties:
+              type: array
+              items:
                 type: object
                 properties:
+                  name:
+                    type: string
+                    description: (Required) Unique name of this container.
                   image:
                     type: string
                     description: (Required) The container image. `ghcr.io/radius-project/samples/demo:latest` for example.
