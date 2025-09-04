@@ -57,7 +57,7 @@ jobs:
         run: make test-bicep-recipes
 
       - name: Publish Terraform recipes to module server
-        run: make publish-terraform-recipes
+        run: make publish-test-terraform-recipes
 
       - name: Register and test Terraform recipes
         run: make test-terraform-recipes

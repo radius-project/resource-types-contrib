@@ -21,18 +21,30 @@ TERRAFORM_MODULE_CONFIGMAP_NAME=tf-module-server-content
 ##@ Recipes
 
 .PHONY: publish-test-terraform-recipes
-publish-test-terraform-recipes: ## Publishes test terraform recipes to the current Kubernetes cluster
+publish-test-terraform-recipes: ## Publishes terraform recipes to the current Kubernetes cluster
 	@echo "$(ARROW) Creating Kubernetes namespace $(TERRAFORM_MODULE_SERVER_NAMESPACE)..."
 	kubectl create namespace $(TERRAFORM_MODULE_SERVER_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
 
-	@echo "$(ARROW) Publishing Terraform test recipes from ./test/testrecipes/test-terraform-recipes..."
+	@echo "$(ARROW) Finding and publishing Terraform recipes..."
+	@source .github/scripts/validate-common.sh && setup_config && \
+	readarray -t terraform_recipes < <(find_and_validate_recipes "*/recipes/kubernetes/terraform/main.tf" "Terraform") && \
+	temp_recipes_dir=$$(mktemp -d) && \
+	echo "Using temporary directory: $$temp_recipes_dir" && \
+	for recipe_file in "$${terraform_recipes[@]}"; do \
+		read -r root_folder resource_type platform_service file_name <<< "$$(extract_recipe_info "$$recipe_file")" && \
+		recipe_dir=$$(dirname "$$recipe_file") && \
+		recipe_name="$$resource_type-$$platform_service" && \
+		echo "Copying recipe from $$recipe_dir to $$temp_recipes_dir/$$recipe_name" && \
+		cp -r "$$recipe_dir" "$$temp_recipes_dir/$$recipe_name"; \
+	done && \
 	./.github/scripts/publish-test-terraform-recipes.py \
-		./test/testrecipes/test-terraform-recipes \
+		"$$temp_recipes_dir" \
 		$(TERRAFORM_MODULE_SERVER_NAMESPACE) \
-		$(TERRAFORM_MODULE_CONFIGMAP_NAME)
+		$(TERRAFORM_MODULE_CONFIGMAP_NAME) && \
+	rm -rf "$$temp_recipes_dir"
 	
 	@echo "$(ARROW) Deploying web server..."
-	kubectl apply -f ./deploy/tf-module-server/resources.yaml -n $(TERRAFORM_MODULE_SERVER_NAMESPACE)
+	kubectl apply -f ./build/tf-module-server/resources.yaml -n $(TERRAFORM_MODULE_SERVER_NAMESPACE)
 
 	@echo "$(ARROW) Waiting for web server to be ready..."
 	kubectl rollout status deployment.apps/tf-module-server -n $(TERRAFORM_MODULE_SERVER_NAMESPACE) --timeout=600s
@@ -88,25 +100,6 @@ test-bicep-recipes: ## Register and test Bicep recipes
 	echo "✅ All Kubernetes Bicep recipes tested successfully" && \
 	rad recipe list --environment default
 
-.PHONY: publish-terraform-recipes
-publish-terraform-recipes: ## Publish Terraform recipes to module server
-	@echo "$(ARROW) Publishing Terraform recipes..."
-	@source .github/scripts/validate-common.sh && setup_config && \
-	readarray -t terraform_recipes < <(find_and_validate_recipes "*/recipes/kubernetes/terraform/main.tf" "Terraform") && \
-	read -r tf_namespace tf_deployment tf_configmap <<< "$$(setup_terraform_module_server)" && \
-	temp_recipes_dir=$$(mktemp -d) && \
-	echo "Using temporary directory: $$temp_recipes_dir" && \
-	for recipe_file in "$${terraform_recipes[@]}"; do \
-		read -r root_folder resource_type platform_service file_name <<< "$$(extract_recipe_info "$$recipe_file")" && \
-		recipe_dir=$$(dirname "$$recipe_file") && \
-		recipe_name="$$resource_type-$$platform_service" && \
-		echo "Copying recipe from $$recipe_dir to $$temp_recipes_dir/$$recipe_name" && \
-		cp -r "$$recipe_dir" "$$temp_recipes_dir/$$recipe_name"; \
-	done && \
-	publish_terraform_recipes "$$temp_recipes_dir" "$$tf_namespace" "$$tf_configmap" && \
-	wait_for_terraform_server "$$tf_namespace" "$$tf_deployment" && \
-	rm -rf "$$temp_recipes_dir" && \
-	echo "✅ All Terraform recipes published and server ready"
 
 .PHONY: test-terraform-recipes
 test-terraform-recipes: ## Register and test Terraform recipes

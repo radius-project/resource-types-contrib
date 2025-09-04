@@ -104,24 +104,12 @@ deploy_and_cleanup_test_app() {
       # Clean up immediately
       echo "Cleaning up deployment: $deployment_name"
       
-      # Show resources before cleanup
-      echo "Resources before cleanup:"
-      kubectl get secrets,deployments,services,pods --all-namespaces | grep -E "(app-secrets|$deployment_name)" || echo "No matching resources found"
-      
       if rad app delete "$deployment_name" --yes; then
         echo "✅ rad app delete succeeded"
-        
-        # Wait for Kubernetes garbage collection in CI environments
-        echo "Waiting for resource cleanup..."
-        sleep 5
           
       else
         echo "⚠️ rad app delete failed with exit code $?"
       fi
-      
-      # Show resources after cleanup to see what's left
-      echo "Resources after cleanup:"
-      kubectl get secrets,deployments,services,pods --all-namespaces | grep -E "(app-secrets|$deployment_name)" || echo "No matching resources found"
       
       echo "✅ Cleanup attempt completed"
     else
@@ -133,60 +121,6 @@ deploy_and_cleanup_test_app() {
   fi
 }
 
-# Setup Terraform module server for publishing recipes
-setup_terraform_module_server() {
-  local namespace="radius-test-tf-module-server"
-  local deployment_name="tf-module-server"
-  local configmap_name="tf-module-server-content"
-  
-  echo "Setting up Terraform module server..." >&2
-  
-  # Create namespace
-  echo "Creating Kubernetes namespace $namespace..." >&2
-  kubectl create namespace "$namespace" --dry-run=client -o yaml | kubectl apply -f - >&2
-  
-  echo "$namespace $deployment_name $configmap_name"
-}
-
-# Publish Terraform recipes using the Python script
-publish_terraform_recipes() {
-  local recipe_dir="$1"
-  local namespace="$2" 
-  local configmap_name="$3"
-  
-  if [[ ! -d "$recipe_dir" ]]; then
-    echo "❌ Recipe directory not found: $recipe_dir" >&2
-    exit 1
-  fi
-  
-  echo "Publishing Terraform recipes from $recipe_dir..." >&2
-  if python3 .github/scripts/publish-test-terraform-recipes.py "$recipe_dir" "$namespace" "$configmap_name"; then
-    echo "✅ Successfully published Terraform recipes to ConfigMap" >&2
-    
-    # Deploy the tf-module-server
-    echo "Deploying Terraform module server..." >&2
-    kubectl apply -f ./deploy/tf-module-server/resources.yaml -n "$namespace" >&2
-    
-    echo "✅ Terraform module server deployed" >&2
-  else
-    echo "❌ Failed to publish Terraform recipes" >&2
-    exit 1
-  fi
-}
-
-# Wait for Terraform module server to be ready
-wait_for_terraform_server() {
-  local namespace="$1"
-  local deployment_name="$2"
-  
-  echo "Waiting for Terraform module server to be ready..." >&2
-  if kubectl rollout status deployment.apps/"$deployment_name" -n "$namespace" --timeout=600s >&2; then
-    echo "✅ Terraform module server is ready" >&2
-  else
-    echo "❌ Terraform module server failed to start" >&2
-    exit 1
-  fi
-}
 
 # Create resource types from YAML files
 create_resource_types() {
