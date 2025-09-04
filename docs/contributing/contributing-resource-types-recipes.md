@@ -59,7 +59,7 @@ _Stage 3: Stable_
         - Ownership (cloud platform Recipes): Contributor designates a committed owner for the cloud platform Recipes (e.g. AWS and Azure)
         - SLA commitment: Defined support level and response time commitments from cloud platform Recipe owners
         - Maintainer review: Formal review and approval by Radius maintainers
-    
+
 ## Resource Type Definition
 
 ### 1. Choose a Resource Type
@@ -162,8 +162,10 @@ The following guidelines should be followed when contributing new Resource Types
 
 - Each Resource Type will have one or more common properties:
    - `environment` must always be a required property.
-   - `application` must always be an optional property.
-
+   - `application` may be a required or property:
+     - Required: Use when a resource must always be part of an application. For example, a Container will always be part of an application. 
+     - Optional: Use for resources that may be deployed to an Environment without an application with the intention of being a shared resource. A blob store, for example, may be shared across multiple containers and applications.
+   
 - Each additional properties must:
     - Follow the camelCase naming convention.
     - Include a description for each property (see documentation section for more details).
