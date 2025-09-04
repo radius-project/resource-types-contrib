@@ -17,4 +17,4 @@
 ARROW := \033[34;1m=>\033[0m
 
 # order matters for these
-include build/recipe.mk
+include build/validation.mk

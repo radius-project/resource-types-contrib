@@ -183,6 +183,137 @@ wait_for_terraform_server() {
   fi
 }
 
+# Create resource types from YAML files
+create_resource_types() {
+  echo "Finding YAML files in resource type folders..."
+  readarray -t all_yaml_files < <(find_yaml_files)
+
+  echo "Creating resource types..."
+  for yaml_file in "${all_yaml_files[@]}"; do
+    echo "Processing: $yaml_file"
+
+    # Extract resource type name from the file path
+    resource_name=$(basename "$yaml_file" .yaml)
+
+    echo "Creating resource type '$resource_name' from $yaml_file..."
+    if rad resource-type create "$resource_name" -f "$yaml_file"; then
+      echo "✅ Successfully created resource type: $resource_name"
+    else
+      echo "❌ Failed to create resource type: $resource_name"
+      exit 1
+    fi
+  done
+
+  echo "✅ All resource types created successfully"
+}
+
+# Verify that expected resource types are present
+verify_resource_types() {
+  echo "Listing all resource types..."
+  rad resource-type list
+  
+  echo "Verifying expected resource types..."
+  
+  # Build expected resource types list dynamically
+  expected_resource_types=()
+  for folder in "${resource_folders[@]}"; do
+    if [[ -d "./$folder" ]]; then
+      folder_yaml_files=$(find "./$folder" -name "*.yaml" -type f)
+      radius_namespace="${folder_to_namespace[$folder]}"
+      for yaml_file in $folder_yaml_files; do
+        resource_name=$(basename "$yaml_file" .yaml)
+        expected_resource_types+=("$radius_namespace/$resource_name")
+      done
+    fi
+  done
+  
+  if [[ ${#expected_resource_types[@]} -eq 0 ]]; then
+    echo "No expected resource types found"
+    exit 0
+  fi
+  
+  echo "Expected resource types:"
+  printf '%s\n' "${expected_resource_types[@]}"
+  
+  # Get the list of resource types
+  resource_type_list=$(rad resource-type list)
+  
+  verification_failed=false
+  
+  for expected_type in "${expected_resource_types[@]}"; do
+    echo "Checking for resource type: $expected_type"
+    
+    if echo "$resource_type_list" | grep -q "$expected_type"; then
+      echo "✅ Found resource type: $expected_type"
+    else
+      echo "❌ Missing resource type: $expected_type"
+      verification_failed=true
+    fi
+  done
+  
+  if [[ "$verification_failed" == "true" ]]; then
+    echo "❌ Resource type verification failed"
+    echo "Expected resource types not found in the list"
+    exit 1
+  else
+    echo "✅ All expected resource types are present"
+  fi
+}
+
+# Publish Bicep extensions for all YAML files
+publish_bicep_extensions() {
+  echo "Publishing Bicep extensions for all YAML files..."
+  readarray -t all_yaml_files < <(find_yaml_files)
+
+  for yaml_file in "${all_yaml_files[@]}"; do
+    echo "Publishing extension for $yaml_file..."
+
+    resource_name=$(basename "$yaml_file" .yaml)
+    extension_name="${resource_name}-extension"
+
+    echo "Publishing extension '$extension_name.tgz' from $yaml_file..."
+    if rad bicep publish-extension -f "$yaml_file" --target "$extension_name.tgz"; then
+      echo "✅ Successfully published extension: $extension_name.tgz"
+    else
+      echo "❌ Failed to publish extension: $extension_name.tgz"
+      exit 1
+    fi
+  done
+
+  echo "✅ All Bicep extensions published successfully"
+}
+
+# Publish all Bicep recipes to registry
+publish_bicep_recipes() {
+  echo "Finding and publishing all Bicep recipes..."
+  readarray -t bicep_recipes < <(find_recipe_files "*/recipes/*/*.bicep")
+
+  if [[ ${#bicep_recipes[@]} -eq 0 ]]; then
+    echo "No Bicep recipe files found"
+    exit 0
+  fi
+
+  echo "Found ${#bicep_recipes[@]} Bicep recipes"
+
+  # Publish all Bicep recipes
+  for recipe_file in "${bicep_recipes[@]}"; do
+    read -r root_folder resource_type platform_service file_name <<< "$(extract_recipe_info "$recipe_file")"
+    
+    recipe_name=$(basename "$recipe_file" .bicep)
+    registry_path="localhost:51351/recipes/$resource_type/$platform_service/$recipe_name:latest"
+    
+    echo "Publishing Bicep recipe '$recipe_name' from $platform_service to registry: $registry_path"
+    if rad bicep publish --file "$recipe_file" --target "br:$registry_path" --plain-http; then
+      echo "✅ Successfully published Bicep recipe to registry"
+    else
+      echo "❌ Failed to publish Bicep recipe to registry"
+      exit 1
+    fi
+  done
+
+  echo "✅ All Bicep recipes published successfully"
+}
+
 # Register and test recipes (unified function for Bicep and Terraform)
 test_recipes() {
   local template_kind="$1"
