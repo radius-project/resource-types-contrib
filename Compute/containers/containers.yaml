@@ -282,7 +282,7 @@ types:
                         properties:
                           command:
                             type: array
-                              description: '(Required) The command to run inside the container. `["cat", "/tmp/healthy"]` for example.'
+                            description: '(Required) The command to run inside the container. `["cat", "/tmp/healthy"]` for example.'
                             items:
                               type: string
                         required: [command]
