@@ -46,28 +46,32 @@ types:
       
       Then add the existing PersistentVolume to the volumes property of a Container with accessMode set to `ReadOnlyMany`.
       
-      resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
-        name: 'myContainer'
-        properties: {
-          environment: environment
-          application: myApplication.id
-          containers: {
-            demo: {
-              image: 'ghcr.io/radius-project/samples/demo:latest'
-              volumeMounts:
-                volumeName: readOnlyData
-                mountPath: '/app/data' 
-            }
+resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
+  name: 'myContainer'
+  properties: {
+    environment: environment
+    application: myApplication.id
+    containers: {
+      demo: {
+        image: 'ghcr.io/radius-project/samples/demo:latest'
+        volumeMounts: [
+          {
+            volumeName: 'readOnlyData'
+            mountPath: '/app/data' 
           }
-          volumes: {
-            readOnlyData: {
-              persistentVolume
-                resourceId: existingPersistentVolume.id
-                accessMode: ReadOnlyMany
-            }
-          }
+        ]
+      }
+    }
+    volumes: {
+      readOnlyData: {
+        persistentVolume: {
+          resourceId: existingPersistentVolume.id
+          accessMode: 'ReadOnlyMany'
         }
       }
+    }
+  }
+}
       
       A PersistentVolume may be shared between multiple Containers in read/write mode if the PersistentVolume was created with `accessMode: ReadWriteMany` and the volume is set to ReadWriteMany as well. 
       Note that not all infrastructures support this mode.
