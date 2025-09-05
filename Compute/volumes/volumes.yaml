@@ -5,6 +5,11 @@ types:
       The Radius.Compute/persistentVolumes Resource Type represents a persistent storage volume. A PersistentVolume can be referenced in the volumes property of a Container. 
       To deploy, first add a PersistentVolume resource to the application definition Bicep file.
       
+      extension radius
+      param environment string 
+
+      resource myApplication 'Radius.Core/applications@2025-08-01-preview' = { ... }
+
       resource myPersistentVolume 'Radius.Compute/persistentVolumes@2025-08-01-preview' = {
         name: 'myPersistentVolume'
         properties: {
