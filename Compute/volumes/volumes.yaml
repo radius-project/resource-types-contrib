@@ -77,8 +77,7 @@ types:
         }
       }
       
-      A PersistentVolume may be shared between multiple Containers in read/write mode if the PersistentVolume was created with `accessMode: ReadWriteMany` and the volume is set to ReadWriteMany as well. 
-      Note that not all infrastructures support this mode.
+      A PersistentVolume may be shared between multiple Containers in read/write mode if the PersistentVolume was created with `accessMode: ReadWriteMany` and the volume is set to ReadWriteMany as well. Note that not all infrastructures support this mode.
 
     apiVersions:
       '2025-08-01-preview':
