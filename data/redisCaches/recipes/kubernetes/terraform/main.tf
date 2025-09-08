@@ -7,29 +7,6 @@ terraform {
   }
 }
 
-variable "context" {
-  description = "Radius-provided object containing information about the resource calling the Recipe."
-  type = any
-}
-
-variable "memory" {
-  description = "Memory limits for the Redis container"
-  type = map(object({
-    memoryRequest = string
-    memoryLimit  = string
-  }))
-  default = {
-    S = {
-      memoryRequest = "512Mi"
-      memoryLimit   = "1024Mi"
-    },
-    M = {
-      memoryRequest = "1Gi"
-      memoryLimit   = "2Gi"
-    }
-  }
-}
-
 locals {
   uniqueName = var.context.resource.name
   port     = 6379
@@ -64,10 +41,10 @@ resource "kubernetes_deployment" "redis" {
           image = "redis:6"
           resources {
             requests = {
-              memory = var.memory[var.context.resource.properties.capacity].memoryRequest
+              memory = var.memory[try(var.context.resource.properties.capacity, "S")].memoryRequest
               }
               limits = {
-                memory= var.memory[var.context.resource.properties.capacity].memoryLimit
+                memory= var.memory[try(var.context.resource.properties.capacity, "S")].memoryLimit
               }
             }
           port {

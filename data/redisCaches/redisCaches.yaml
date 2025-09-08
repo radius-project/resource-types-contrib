@@ -1,0 +1,76 @@
+namespace: Radius.Data
+types:
+  redisCaches:
+    description: |
+      The Radius.Data/redisCaches Resource Type represents Redis, an in-memory data structure store used as a cache or database. 
+      
+      To deploy a Redis Cache resource, add the resource to the application definition Bicep file 
+
+      param environment string
+      resource redisCache 'Radius.Data/redisCaches@2025-08-01-preview' = {
+        name: 'redisCache'
+        properties: {
+          environment: environment
+        }
+      }
+
+      When `capacity` is not set, the value is assumed to be `S`(Small) in Recipes.
+
+      For the application to connect to the Redis Cache, add a connection from the container to the Redis Cache. When a connection is added, all the properties of the Redis Cache are created as environment variables in the container. 
+      
+      resource myContainer 'Applications.Core/containers@2023-10-01-preview' = {
+        name: 'myContainer'
+          properties: {
+          application: todoapp.id
+          container: {
+            image: 'ghcr.io/radius-project/samples/demo:latest'
+            ports: {
+              web: {
+                containerPort: 3000
+              }
+            } 
+          }
+          connections: {
+            redisCache:{
+              source: redisCache.id
+            }
+          }
+        }
+      }
+    apiVersions:
+      '2025-08-01-preview':
+        schema: 
+          type: object
+          properties:
+            environment:
+              type: string
+              description: (Required) The Radius Environment ID. Typically set by the rad CLI. Typically value should be `environment`.
+            application:
+              type: string
+              description: (Optional) The Radius Application ID. `myApplication.id` for example.
+            capacity:
+              type: string
+              enum: [S, M, L]
+              description: (Optional) The capacity of the Redis server.
+            host:
+              type: string
+              description: (Read-Only) The host name used to connect to the Redis server.
+              readOnly: true
+            port:
+              type: integer
+              description: (Read-Only) The port used to connected to the Redis server.
+              readOnly: true
+            tls:
+              type: boolean
+              description: (Read-Only) Set to true if the Redis server requires a TLS/SSL connection.
+              readOnly: true
+            username:
+              type: string
+              description: (Read-Only) The username used to connected to the Redis server.
+              readOnly: true
+            password:
+              type: string
+              description: (Read-Only) The password used to connected to the Redis server.
+              readOnly: true
+          required:
+              - environment
