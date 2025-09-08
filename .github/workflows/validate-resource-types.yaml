@@ -31,11 +31,14 @@ jobs:
         uses: oras-project/setup-oras@v1
         with:
           version: '1.2.0'
-      - name: Setup environment
-        run: make setup-environment VERSION="${{ inputs.version || 'edge' }}"
+      - name: Install Radius
+        run: make install-radius VERSION="${{ inputs.version || 'edge' }}"
         
       - name: Verify manifests are registered
         run: make verify-manifests
+        
+      - name: Create workspace and environment
+        run: make create-workspace
 
       - name: Create resource types from resource folders
         run: make create-resource-types

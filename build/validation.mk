@@ -56,15 +56,20 @@ publish-test-terraform-recipes: ## Publishes terraform recipes to the current Ku
 
 ##@ Workflow Commands
 
-.PHONY: setup-environment
-setup-environment: ## Set up k3d cluster, install tools, and initialize Radius environment
-	@echo -e "$(ARROW) Setting up environment..."
-	./.github/scripts/setup-environment.sh $(VERSION)
+.PHONY: install-radius
+install-radius: ## Set up k3d cluster, install tools, and install Radius
+	@echo -e "$(ARROW) Installing Radius..."
+	./.github/scripts/install-radius.sh $(VERSION)
 
 .PHONY: verify-manifests
 verify-manifests: ## Verify that manifests are registered in the UCP pod
 	@echo -e "$(ARROW) Verifying manifests registration..."
 	./.github/scripts/verify-manifests.sh
+
+.PHONY: create-workspace
+create-workspace: ## Create Radius workspace and environment
+	@echo -e "$(ARROW) Creating workspace and environment..."
+	./.github/scripts/create-workspace.sh
 
 .PHONY: create-resource-types
 create-resource-types: ## Create resource types from YAML files
