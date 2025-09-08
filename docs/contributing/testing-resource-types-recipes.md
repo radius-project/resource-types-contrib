@@ -25,6 +25,8 @@
     ```json
     {
         "extensions": {
+            "radius": "br:biceptypes.azurecr.io/radius:latest",
+            "aws": "br:biceptypes.azurecr.io/aws:latest",
             "radiusResources": "<extensionName>.tgz"
         }
     }
