@@ -8,7 +8,7 @@ terraform {
 }
 
 locals {
-  uniqueName = var.context.resource.name
+  uniqueName = "redis-${substr(sha1(var.context.resource.id), 0, 8)}"
   port     = 6379
   namespace = var.context.runtime.kubernetes.namespace
 }
