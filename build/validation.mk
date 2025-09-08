@@ -22,10 +22,10 @@ TERRAFORM_MODULE_CONFIGMAP_NAME=tf-module-server-content
 
 .PHONY: publish-test-terraform-recipes
 publish-test-terraform-recipes: ## Publishes terraform recipes to the current Kubernetes cluster
-	@echo "$(ARROW) Creating Kubernetes namespace $(TERRAFORM_MODULE_SERVER_NAMESPACE)..."
+	@echo -e "$(ARROW) Creating Kubernetes namespace $(TERRAFORM_MODULE_SERVER_NAMESPACE)..."
 	kubectl create namespace $(TERRAFORM_MODULE_SERVER_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
 
-	@echo "$(ARROW) Finding and publishing Terraform recipes..."
+	@echo -e "$(ARROW) Finding and publishing Terraform recipes..."
 	@source .github/scripts/validate-common.sh && setup_config && \
 	readarray -t terraform_recipes < <(find_and_validate_recipes "*/recipes/kubernetes/terraform/main.tf" "Terraform") && \
 	temp_recipes_dir=$$(mktemp -d) && \
@@ -43,57 +43,57 @@ publish-test-terraform-recipes: ## Publishes terraform recipes to the current Ku
 		$(TERRAFORM_MODULE_CONFIGMAP_NAME) && \
 	rm -rf "$$temp_recipes_dir"
 	
-	@echo "$(ARROW) Deploying web server..."
+	@echo -e "$(ARROW) Deploying web server..."
 	kubectl apply -f ./build/tf-module-server/resources.yaml -n $(TERRAFORM_MODULE_SERVER_NAMESPACE)
 
-	@echo "$(ARROW) Waiting for web server to be ready..."
+	@echo -e "$(ARROW) Waiting for web server to be ready..."
 	kubectl rollout status deployment.apps/tf-module-server -n $(TERRAFORM_MODULE_SERVER_NAMESPACE) --timeout=600s
 
-	@echo "$(ARROW) Web server ready. Recipes published to http://$(TERRAFORM_MODULE_SERVER_DEPLOYMENT_NAME).$(TERRAFORM_MODULE_SERVER_NAMESPACE).svc.cluster.local/<recipe_name>.zip"
-	@echo "$(ARROW) To test use:"
-	@echo "$(ARROW)     kubectl port-forward svc/$(TERRAFORM_MODULE_SERVER_DEPLOYMENT_NAME) 8999:80 -n $(TERRAFORM_MODULE_SERVER_NAMESPACE)"
-	@echo "$(ARROW)     curl http://localhost:8999/<recipe-name>.zip --output <recipe-name>.zip"
+	@echo -e "$(ARROW) Web server ready. Recipes published to http://$(TERRAFORM_MODULE_SERVER_DEPLOYMENT_NAME).$(TERRAFORM_MODULE_SERVER_NAMESPACE).svc.cluster.local/<recipe_name>.zip"
+	@echo -e "$(ARROW) To test use:"
+	@echo -e "$(ARROW)     kubectl port-forward svc/$(TERRAFORM_MODULE_SERVER_DEPLOYMENT_NAME) 8999:80 -n $(TERRAFORM_MODULE_SERVER_NAMESPACE)"
+	@echo -e "$(ARROW)     curl http://localhost:8999/<recipe-name>.zip --output <recipe-name>.zip"
 
 ##@ Workflow Commands
 
 .PHONY: setup-environment
 setup-environment: ## Set up k3d cluster, install tools, and initialize Radius environment
-	@echo "$(ARROW) Setting up environment..."
+	@echo -e "$(ARROW) Setting up environment..."
 	./.github/scripts/setup-environment.sh $(VERSION)
 
 .PHONY: verify-manifests
 verify-manifests: ## Verify that manifests are registered in the UCP pod
-	@echo "$(ARROW) Verifying manifests registration..."
+	@echo -e "$(ARROW) Verifying manifests registration..."
 	./.github/scripts/verify-manifests.sh
 
 .PHONY: create-resource-types
 create-resource-types: ## Create resource types from YAML files
-	@echo "$(ARROW) Creating resource types..."
+	@echo -e "$(ARROW) Creating resource types..."
 	@source .github/scripts/validate-common.sh && setup_config && create_resource_types
 
 .PHONY: verify-resource-types
 verify-resource-types: ## Verify that expected resource types are present
-	@echo "$(ARROW) Verifying resource types..."
+	@echo -e "$(ARROW) Verifying resource types..."
 	@source .github/scripts/validate-common.sh && setup_config && verify_resource_types
 
 .PHONY: publish-bicep-extensions
 publish-bicep-extensions: ## Publish Bicep extensions for all YAML files
-	@echo "$(ARROW) Publishing Bicep extensions..."
+	@echo -e "$(ARROW) Publishing Bicep extensions..."
 	@source .github/scripts/validate-common.sh && setup_config && publish_bicep_extensions
 
 .PHONY: update-bicepconfig
 update-bicepconfig: ## Update bicepconfig.json with published extensions
-	@echo "$(ARROW) Updating bicepconfig.json..."
+	@echo -e "$(ARROW) Updating bicepconfig.json..."
 	./.github/scripts/update-bicepconfig.sh
 
 .PHONY: publish-bicep-recipes
 publish-bicep-recipes: ## Publish all Bicep recipes to registry
-	@echo "$(ARROW) Publishing Bicep recipes..."
+	@echo -e "$(ARROW) Publishing Bicep recipes..."
 	@source .github/scripts/validate-common.sh && setup_config && publish_bicep_recipes
 
 .PHONY: test-bicep-recipes
 test-bicep-recipes: ## Register and test Bicep recipes
-	@echo "$(ARROW) Testing Bicep recipes..."
+	@echo -e "$(ARROW) Testing Bicep recipes..."
 	@source .github/scripts/validate-common.sh && setup_config && \
 	readarray -t bicep_recipes < <(find_and_validate_recipes "*/recipes/kubernetes/bicep/*.bicep" "Kubernetes Bicep") && \
 	test_recipes "bicep" "$${bicep_recipes[@]}" && \
@@ -103,7 +103,7 @@ test-bicep-recipes: ## Register and test Bicep recipes
 
 .PHONY: test-terraform-recipes
 test-terraform-recipes: ## Register and test Terraform recipes
-	@echo "$(ARROW) Testing Terraform recipes..."
+	@echo -e "$(ARROW) Testing Terraform recipes..."
 	@source .github/scripts/validate-common.sh && setup_config && \
 	readarray -t terraform_recipes < <(find_and_validate_recipes "*/recipes/kubernetes/terraform/main.tf" "Terraform") && \
 	test_recipes "terraform" "$${terraform_recipes[@]}" && \

@@ -155,15 +155,14 @@ verify_resource_types() {
   
   # Build expected resource types list dynamically
   expected_resource_types=()
-  for folder in "${resource_folders[@]}"; do
-    if [[ -d "./$folder" ]]; then
-      folder_yaml_files=$(find "./$folder" -name "*.yaml" -type f)
-      radius_namespace="${folder_to_namespace[$folder]}"
-      for yaml_file in $folder_yaml_files; do
-        resource_name=$(basename "$yaml_file" .yaml)
-        expected_resource_types+=("$radius_namespace/$resource_name")
-      done
-    fi
+  readarray -t all_yaml_files < <(find_yaml_files)
+  
+  for yaml_file in "${all_yaml_files[@]}"; do
+    # Extract folder from path to get namespace
+    folder=$(echo "$yaml_file" | cut -d'/' -f2)
+    radius_namespace="${folder_to_namespace[$folder]}"
+    resource_name=$(basename "$yaml_file" .yaml)
+    expected_resource_types+=("$radius_namespace/$resource_name")
   done
   
   if [[ ${#expected_resource_types[@]} -eq 0 ]]; then

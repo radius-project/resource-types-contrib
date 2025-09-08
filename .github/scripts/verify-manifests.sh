@@ -6,8 +6,6 @@ set -e
 
 echo "Verifying manifests are registered..."
 
-rm -f registermanifest_logs.txt
-
 # Find the pod with container "ucp"
 POD_NAME=$(
   kubectl get pods -n radius-system \
@@ -26,17 +24,17 @@ fi
 
 # Poll logs for up to 20 iterations, 30 seconds each (up to 10 minutes total)
 for i in {1..20}; do
-  kubectl logs "$POD_NAME" -n radius-system | tee registermanifest_logs.txt > /dev/null
+  logs=$(kubectl logs "$POD_NAME" -n radius-system)
 
   # Exit on error
-  if grep -qi "Service initializer terminated with error" registermanifest_logs.txt; then
+  if echo "$logs" | grep -qi "Service initializer terminated with error"; then
     echo "Error found in ucp logs."
-    grep -i "Service initializer terminated with error" registermanifest_logs.txt
+    echo "$logs" | grep -i "Service initializer terminated with error"
     exit 1
   fi
 
   # Check for success
-  if grep -q "Successfully registered manifests" registermanifest_logs.txt; then
+  if echo "$logs" | grep -q "Successfully registered manifests"; then
     echo "Successfully registered manifests - message found."
     break
   fi
@@ -46,7 +44,7 @@ for i in {1..20}; do
 done
 
 # Final check to ensure success message was found
-if ! grep -q "Successfully registered manifests" registermanifest_logs.txt; then
+if ! echo "$logs" | grep -q "Successfully registered manifests"; then
   echo "Manifests not registered after 10 minutes."
   exit 1
 fi

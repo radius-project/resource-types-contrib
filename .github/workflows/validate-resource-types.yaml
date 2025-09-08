@@ -35,7 +35,6 @@ jobs:
         run: make setup-environment VERSION="${{ inputs.version || 'edge' }}"
         
       - name: Verify manifests are registered
-        if: env.SKIP_BUILD != 'true'
         run: make verify-manifests
 
       - name: Create resource types from resource folders

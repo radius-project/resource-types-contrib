@@ -15,7 +15,7 @@ RAD_VERSION="${1:-edge}"
 wget -q "https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh" -O - | /bin/bash -s "$RAD_VERSION"
 
 echo "Initializing default environment..."
-rad install kubernetes --set rp.publicEndpointOverride=localhost
+rad install kubernetes --set rp.publicEndpointOverride=localhost --skip-contour-install
 rad group create default
 rad workspace create kubernetes default --group default
 rad group switch default
