@@ -28,12 +28,12 @@ resource "kubernetes_persistent_volume" "pv" {
       storage = var.context.resource.properties.sizeInGib
     }
 
-    access_modes = can(var.context.resource.properties.allowedAccessModes) ? [var.context.resource.properties.allowedAccessModes] : null
+    access_modes = can(var.context.resource.properties.allowedAccessModes) ? [var.context.resource.properties.allowedAccessModes] : ["ReadWriteOnce", "ReadOnlyMany", "ReadWriteMany"]
 
     persistent_volume_source {
-      host_path {
-        path = var.host_path
-        type = "DirectoryOrCreate"
+      csi {
+        driver        = var.csi_driver
+        volume_handle = var.csi_volume_handle
       }
     }
   }

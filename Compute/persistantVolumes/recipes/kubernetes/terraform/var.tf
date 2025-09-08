@@ -3,15 +3,21 @@ variable "context" {
   type        = any
 }
 
-variable "host_path" {
-  description = "Host path for the persistent volume"
+variable "csi_driver" {
+  description = "CSI driver for the persistent volume"
   type        = string
-  default     = "/mnt/data"
+  default     = "csi.example.com"
+}
+
+variable "csi_volume_handle" {
+  description = "CSI volume handle for the persistent volume"
+  type        = string
+  default     = "default-volume"
 }
 
 variable "storage_class" {
   description = "StorageClass name to set on the PersistentVolume"
   type        = string
-  default     = "manual"
+  default     = ""
 }
 
