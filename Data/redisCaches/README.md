@@ -26,5 +26,5 @@ The Redis resource has the following output properties that will be set by a Rec
 - `context.properties.hostname` (string, read-only): The hostname used to connect to the Redis server.
 - `context.properties.port` (integer, read-only): The port number used to connect to the Redis server.
 - `context.properties.tls` (boolean, read-only): Indicates if TLS is enabled for the Redis server.
-- `context.properties.secrets.username` (string, read-only): The username for connecting to the Redis server.
-- `context.properties.secrets.password` (string, read-only): The password for connecting to the Redis server.
+- `context.properties.username` (string, read-only): The username for connecting to the Redis server.
+- `context.properties.password` (string, read-only): The password for connecting to the Redis server.
