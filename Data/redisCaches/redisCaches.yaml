@@ -16,7 +16,7 @@ types:
 
       When `capacity` is not set, the value is assumed to be `S`(Small) in Recipes.
 
-      For the application to connect to the Redis Cache, add a connection from the container to the Redis Cache. When a connection is added, all the properties of the Redis Cache are created as environment variables in the container. 
+      To connect your application to the Redis Cache, establish a connection from the container to the Redis Cache as shown below. Once connected, all Redis Cache properties are automatically injected as environment variables into the container. 
       
       resource myContainer 'Applications.Core/containers@2023-10-01-preview' = {
         name: 'myContainer'
