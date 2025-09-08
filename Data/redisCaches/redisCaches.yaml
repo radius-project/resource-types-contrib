@@ -54,7 +54,7 @@ types:
               description: (Optional) The capacity of the Redis server.
             host:
               type: string
-              description: (Read-Only) The host name used to connect to the Redis server.
+              description: (Read-Only) The hostname used to connect to the Redis server.
               readOnly: true
             port:
               type: integer

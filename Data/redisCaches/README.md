@@ -23,7 +23,7 @@ Properties for the redisCaches resource are provided to the Recipe via the [Reci
 
 The Redis resource has the following output properties that will be set by a Recipe:
 
-- `context.properties.hostname` (string, read-only): The hostname used to connect to the Redis server.
+- `context.properties.host` (string, read-only): The hostname used to connect to the Redis server.
 - `context.properties.port` (integer, read-only): The port number used to connect to the Redis server.
 - `context.properties.tls` (boolean, read-only): Indicates if TLS is enabled for the Redis server.
 - `context.properties.username` (string, read-only): The username for connecting to the Redis server.
