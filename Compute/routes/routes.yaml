@@ -113,7 +113,7 @@ types:
             kind:
               type: string 
               enum: [HTTP, TCP, TLS, UDP]
-              description: (Optional) The type of rule. `HTTPRoute` provides L7 ingress with support for matching based on the hostname and HTTP header. `TCPRoute` provides L4 ingress with no support for matching (all traffic is forwarded to the Container). `TLSRoute` provides L4 ingress with the ability to match based on Server Name Indication (SNI) which is equivalent to hostname in TLS. `UDPRoute` is similar to TCPRoutes but uses UDP.
+              description: (Optional) The type of rule. If not specified, `HTTPRoute` is assumed. `HTTPRoute` provides L7 ingress with support for matching based on the hostname and HTTP header. `TCPRoute` provides L4 ingress with no support for matching (all traffic is forwarded to the Container). `TLSRoute` provides L4 ingress with the ability to match based on Server Name Indication (SNI) which is equivalent to hostname in TLS. `UDPRoute` is similar to TCPRoutes but uses UDP.
             hostnames:
               type: array
               description: (Optional) Use only when kind is HTTP or TLS. When HTTP, match against the HTTP Host header. When using TLS, match against the SNI attribute of TLS ClientHello message. Hostname may be preceded by a * wildcard.
