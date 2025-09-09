@@ -342,7 +342,7 @@ test_recipes() {
     done
     
     # Deploy test application for this resource type
-    test_app_path="$root_folder/$resource_type/app.bicep"
+    test_app_path="$root_folder/$resource_type/test/app.bicep"
     deployment_name="test-${root_folder,,}-${platform_service}-${template_kind}-$(date +%s)"
     
     deploy_and_cleanup_test_app "$test_app_path" "$deployment_name" "for $platform_service ($template_kind recipe)"
