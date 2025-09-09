@@ -2,9 +2,9 @@ namespace: Radius.Data
 types:
   redisCaches:
     description: |
-      The Radius.Data/redisCaches Resource Type represents Redis, an in-memory data structure store used as a cache or database. 
+      The Radius.Data/redisCaches Resource Type deploys Redis, an in-memory, key/value store used as an application cache.
       
-      To deploy a Redis Cache resource, add the resource to the application definition Bicep file 
+      To deploy a new Redis cache, add a RedisCaches resource to the application definition Bicep file.   
 
       param environment string
       resource redisCache 'Radius.Data/redisCaches@2025-08-01-preview' = {
@@ -18,21 +18,19 @@ types:
 
       To connect your application to the Redis Cache, establish a connection from the container to the Redis Cache as shown below. Once connected, all Redis Cache properties are automatically injected as environment variables into the container. 
       
-      resource myContainer 'Applications.Core/containers@2023-10-01-preview' = {
+      resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
         name: 'myContainer'
-          properties: {
-          application: todoapp.id
-          container: {
-            image: 'ghcr.io/radius-project/samples/demo:latest'
-            ports: {
-              web: {
-                containerPort: 3000
-              }
-            } 
+        properties: {
+          environment: environment
+          application: myApplication.id
+          containers: {
+            frontend: {
+              image: 'frontend:1.25' 
+            }
           }
           connections: {
-            redisCache:{
-              source: redisCache.id
+            redis:{
+              source: redis.id
             }
           }
         }

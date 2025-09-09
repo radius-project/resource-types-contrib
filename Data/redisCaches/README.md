@@ -1,6 +1,6 @@
 ## Overview
 
-The Radius.Data/redisCaches Resource Type represents Redis, a popular in-memory data structure store used as a cache or database. This Resource Type allows developers to create and manage Redis cache instances as part of their Radius applications.
+The Radius.Data/redisCaches Resource Type represents Redis, an in-memory, key/value store used as an application cache. This Resource Type allows developers to create and easily connect to Redis caches as part of their Radius applications.
 
 Developer documentation is embedded in the Resource Type definition YAML file. Developer documentation is accessible via `rad resource-type show Radius.Data/redisCaches`.
 
@@ -21,10 +21,10 @@ Properties for the redisCaches resource are provided to the Recipe via the [Reci
 
 ## Recipe Output Properties
 
-The Redis resource has the following output properties that will be set by a Recipe:
+The RedisCaches Resource Type expects the following output properties to be set in the Results object in the Recipe:
 
-- `context.properties.host` (string, read-only): The hostname used to connect to the Redis server.
-- `context.properties.port` (integer, read-only): The port number used to connect to the Redis server.
-- `context.properties.tls` (boolean, read-only): Indicates if TLS is enabled for the Redis server.
-- `context.properties.username` (string, read-only): The username for connecting to the Redis server.
-- `context.properties.password` (string, read-only): The password for connecting to the Redis server.
+- `context.properties.host` (string): The hostname used to connect to the Redis server.
+- `context.properties.port` (integer): The port number used to connect to the Redis server.
+- `context.properties.tls` (boolean): Indicates if TLS is enabled for the Redis server.
+- `context.properties.username` (string): The username for connecting to the Redis server.
+- `context.properties.password` (string): The password for connecting to the Redis server.
