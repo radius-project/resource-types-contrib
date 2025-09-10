@@ -4,16 +4,16 @@ Brief description of the changes in this PR.
 
 ## Type of Contribution
 
-- [ ] Bug fix
 - [ ] New Resource Type
 - [ ] New Recipe
-- [ ] Documentation update
+- [ ] Documentation Update
+- [ ] Added or Updated Test
+- [ ] Bug Fix
 - [ ] Other (please describe):
 
 Related GitHub Issue: #issue_number or N/A
 
 ## Checklist
-
 
 - [ ] File names follow naming conventions and folder structure
 - [ ] Platform engineer documentation is in README.md
@@ -32,7 +32,6 @@ Related GitHub Issue: #issue_number or N/A
 - [ ] Recipes handle secrets securely
 - [ ] Recipes are idempotent
 - [ ] Resource types and recipes were tested
-
 
 ## Testing
 
