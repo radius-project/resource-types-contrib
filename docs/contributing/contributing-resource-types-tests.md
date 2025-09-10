@@ -6,13 +6,13 @@ Stable resource types are required to integrate with Radius CI/CD testing. The t
 
 This folder contains the automated testing workflows and scripts. The workflows validate resource type schemas, test recipe deployments, and ensure compatibility with Radius. Scripts provide utility functions for manifest generation, resource verification, and test execution.
 
+### `.github/build` 
+
+The `build` folder includes logic used to define the make targets. The `help.mk` file provides help documentation for available targets, while `validation.mk` contains all the core testing logic including Radius installation, resource type creation, recipe publishing, and test execution workflows. The `tf-module-server` folder contains Kubernetes deployment resources for hosting Terraform modules during testing, providing a local module server that recipes can reference.
+
 ### Makefile
 
-The Makefile provides standardized commands for testing resource types locally and in CI/CD. It includes targets for installing dependencies, creating resources, publishing recipes, running tests, and cleaning up test environments. These targets can be run locally to help with manual testing. 
-
-### `bicepconfig.json`
-
-This file configures the Bicep compiler to recognize custom Radius resource types. It specifies extension aliases and registry locations, enabling Bicep files to import and use the contributed resource types during development and testing.
+The Makefile provides standardized commands for testing resource types locally and in CI/CD. It includes targets for installing dependencies, creating resources, publishing recipes, running tests, and cleaning up test environments. These targets can be run locally to help with manual testing.
 
 ## Add test coverage for stable resource types
 
@@ -89,5 +89,16 @@ resource secret 'Radius.Security/secrets@2025-08-01-preview' = {
       }
     }
   }
+}
+```
+
+4. In `validate-common.sh`, update `setup_config()` to contain your new type. For example, if you were to add a `Radius.Compute/containers` resource type, the updated `setup_config()` should look like: 
+```
+setup_config() {
+  resource_folders=("Security" "Compute")
+  declare -g -A folder_to_namespace=(
+    ["Security"]="Radius.Security"
+    ["Compute"]="Radius.Compute"
+  )
 }
 ```
