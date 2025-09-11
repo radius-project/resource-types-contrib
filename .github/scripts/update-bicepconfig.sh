@@ -8,9 +8,6 @@ echo "Creating bicepconfig.json with published extensions..."
 # Create base bicepconfig.json with required experimental features
 cat > bicepconfig.json << 'EOF'
 {
-  "experimentalFeaturesEnabled": {
-    "extensibility": true
-  },
   "extensions": {
     "radius": "br:biceptypes.azurecr.io/radius:latest",
     "aws": "br:biceptypes.azurecr.io/aws:latest"
