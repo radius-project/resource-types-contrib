@@ -8,7 +8,7 @@ This folder contains the automated testing workflows and scripts. The workflows 
 
 ### `.github/build` 
 
-The `build` folder includes logic used to define the make targets. The `help.mk` file provides help documentation for available targets, while `validation.mk` contains all the core testing logic including Radius installation, Resource Type creation, Recipe publishing, and test execution workflows. The `tf-module-server` folder contains Kubernetes deployment resources for hosting Terraform modules during testing, providing a local module server that Recipes can reference.
+The `build` folder includes logic used to define the make targets. The `help.mk` file provides help documentation for available targets, while `validation.mk` contains all the core testing logic including Radius installation, Resource Type creation, Recipe publishing, and test execution workflows. The `tf-module-server` folder contains a container that is used to host a local module server for Terraform Recipes to referenced during testing.
 
 ### Makefile
 
