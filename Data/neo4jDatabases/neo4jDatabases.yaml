@@ -1,0 +1,48 @@
+namespace: Radius.Data
+types:
+  neo4jDatabases:
+    capabilities: ["SupportsRecipes"]
+    description: |
+      The Radius.Data/neo4jDatabases Resource Type adds a Neo4j graph database to an application.
+
+      Example usage in an application Bicep file:
+
+        resource neo4j 'Radius.Data/neo4jDatabases@2025-09-11-preview' = {
+          name: 'neo4j'
+          properties: {
+            environment: environment
+            // application: myApp.id // Optional: include when bound to an app
+          }
+        }
+
+      Then add a connection from a Container (or other resource) to the Neo4j resource as needed.
+
+    apiVersions:
+      '2025-09-11-preview':
+        schema:
+          type: object
+          properties:
+            environment:
+              type: string
+              description: (Required) The Radius Environment ID. Typically provided by the rad CLI. The typical value is `environment`.
+            application:
+              type: string
+              description: (Optional) The Radius Application ID when the database is app-scoped. Omit to provision a shared database in an Environment.
+            host:
+              type: string
+              readOnly: true
+              description: (Read Only) The DNS hostname used by clients to connect to Neo4j.
+            port:
+              type: integer
+              readOnly: true
+              description: (Read Only) The Bolt protocol port used to connect to Neo4j (typically `7687`).
+            username:
+              type: string
+              readOnly: true
+              description: (Read Only) The username for connecting to Neo4j.
+            password:
+              type: string
+              readOnly: true
+              description: (Read Only) The password for connecting to Neo4j.
+          required:
+            - environment
