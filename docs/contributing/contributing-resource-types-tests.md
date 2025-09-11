@@ -28,7 +28,7 @@ These are the steps to follow to ensure that a stable Resource Type is fully int
 
 1. Create a new `test` folder in your Resource Type root folder. For example, for a Secrets Resource Type, the directory structure would be `/Security/secrets/test`.
 
-2. Create a application definition Bicep file called `app.bicep` in the test folder. Add an an Application resource and a resource for your new Resource Type. Make sure to include the proper extensions for `radius` and your Resource Type. The naming of extension should be the same as your Resource Type. For example, the extension name for the `Radius.Security/secrets` Resource Type should be `secrets`. An `environment` parameter is also needed and will be set by the workflow during automated testing. 
+2. Create a application definition Bicep file called `app.bicep` in the test folder. Add an Application resource and a resource for your new Resource Type. Make sure to include the proper extensions for `radius` and your Resource Type. The naming of extension should be the same as your Resource Type. For example, the extension name for the `Radius.Security/secrets` Resource Type should be `secrets`. An `environment` parameter is also needed and will be set by the workflow during automated testing. 
 
 Using the Secrets example, the full application definition should look similar to:
 
