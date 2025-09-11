@@ -12,10 +12,7 @@ The `Radius.Data/neo4jDatabases` Resource Type represents a Neo4j graph database
 
 ## Recipe Input Properties
 
-Developers set the following properties in the resource definition when authoring applications:
-
-- `environment` (string, required): The Environment ID.
-- `application` (string, optional): Application ID when the DB is app-scoped.
+This Resource Type is in Alpha and does not expose developer-set input properties for the Recipe at this time. In future iterations, additional properties (for example, size and Neo4j-specific configuration) may be introduced.
 
 ## Recipe Output Properties
 

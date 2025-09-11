@@ -1,21 +1,48 @@
 namespace: Radius.Data
 types:
   neo4jDatabases:
-    capabilities: ["SupportsRecipes"]
     description: |
-      The Radius.Data/neo4jDatabases Resource Type adds a Neo4j graph database to an application.
+      The Radius.Data/neo4jDatabases Resource Type deploys a Neo4j graph database. To create a new Neo4j database, define an Application and Container resource in your application definition Bicep file.
 
-      Example usage in an application Bicep file:
+        extension radius
+        param environment string
+
+        resource myapplication 'Radius.Core/applications@2025-08-01-preview' = { ... }
+        resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = { ... }
+
+      Then add a `neo4jDatabases` resource.
 
         resource neo4j 'Radius.Data/neo4jDatabases@2025-09-11-preview' = {
           name: 'neo4j'
           properties: {
+            application: myapplication.id
             environment: environment
-            // application: myApp.id // Optional: include when bound to an app
           }
         }
 
-      Then add a connection from a Container (or other resource) to the Neo4j resource as needed.
+      To connect to the new Neo4j database, add a connection between the container and the new Neo4j database. The final Container resource should look similar to:
+
+        resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
+          name: 'myContainer'
+          properties: {
+            environment: environment
+            application: myapplication.id
+            containers: { ... }
+            connections: {
+              neo4jDb: {
+                source: neo4j.id
+              }
+            }
+          }
+        }
+
+      Within your container, your application code can obtain the host, port, username, and password values via environment variables automatically created. 
+
+        CONNECTION_NEO4JDB_HOST
+        CONNECTION_NEO4JDB_PORT
+        CONNECTION_NEO4JDB_DATABASE
+        CONNECTION_NEO4JDB_USERNAME
+        CONNECTION_NEO4JDB_PASSWORD
 
     apiVersions:
       '2025-09-11-preview':
@@ -31,18 +58,18 @@ types:
             host:
               type: string
               readOnly: true
-              description: (Read Only) The DNS hostname used by clients to connect to Neo4j.
+              description: (Read-only) The DNS hostname used by clients to connect to Neo4j.
             port:
               type: integer
               readOnly: true
-              description: (Read Only) The Bolt protocol port used to connect to Neo4j (typically `7687`).
+              description: (Read-only) The Bolt protocol port used to connect to Neo4j (typically `7687`).
             username:
               type: string
               readOnly: true
-              description: (Read Only) The username for connecting to Neo4j.
+              description: (Read-only) The username for connecting to Neo4j.
             password:
               type: string
               readOnly: true
-              description: (Read Only) The password for connecting to Neo4j.
+              description: (Read-only) The password for connecting to Neo4j.
           required:
             - environment
