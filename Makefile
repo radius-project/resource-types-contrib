@@ -14,8 +14,25 @@
 # limitations under the License.
 # ------------------------------------------------------------
 
+# Makefile for Radius Resource Types and Recipes Testing
+#
+# This Makefile provides standardized commands for testing resource types 
+# locally and in CI/CD pipelines. It supports Kubernetes recipe testing
+# with automated setup, validation, and cleanup.
+#
+# Quick Start:
+#   make help                    # Show all available targets
+#   make install-radius          # Set up local test environment  
+#   make test-bicep-recipes      # Test Kubernetes Bicep recipes
+#
+# Common Workflow:
+#   make install-radius VERSION=edge
+#   make create-workspace
+#   make create-resource-types
+#   make test-bicep-recipes
+
 SHELL := /bin/bash
 ARROW := \033[34;1m=>\033[0m
 
 # order matters for these
-include build/help.mk build/validation.mk
+include ./.github/build/help.mk ./.github/build/validation.mk

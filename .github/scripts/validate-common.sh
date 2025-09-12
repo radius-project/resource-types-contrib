@@ -32,14 +32,21 @@ find_yaml_files() {
   printf '%s\n' "${yaml_files[@]}"
 }
 
-# Find recipe files with specific pattern
+# Find recipe files with specific pattern (only in configured resource folders)
 find_recipe_files() {
   local pattern="$1"
   local recipe_files=()
   
-  while IFS= read -r -d '' f; do
-    recipe_files+=("$f")
-  done < <(find . -path "$pattern" -type f -print0)
+  for folder in "${resource_folders[@]}"; do
+    if [[ -d "./$folder" ]]; then
+      echo "Searching for recipes in folder: $folder" >&2
+      while IFS= read -r -d '' f; do
+        recipe_files+=("$f")
+      done < <(find "./$folder" -path "$pattern" -type f -print0)
+    else
+      echo "Folder $folder does not exist, skipping recipe search..." >&2
+    fi
+  done
   
   printf '%s\n' "${recipe_files[@]}"
 }
@@ -342,7 +349,7 @@ test_recipes() {
     done
     
     # Deploy test application for this resource type
-    test_app_path="$root_folder/$resource_type/app.bicep"
+    test_app_path="$root_folder/$resource_type/test/app.bicep"
     deployment_name="test-${root_folder,,}-${platform_service}-${template_kind}-$(date +%s)"
     
     deploy_and_cleanup_test_app "$test_app_path" "$deployment_name" "for $platform_service ($template_kind recipe)"

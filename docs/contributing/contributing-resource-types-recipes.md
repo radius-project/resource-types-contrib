@@ -516,3 +516,7 @@ output "result" {
 - Provide outputs required to connect to the resource provisioned by the Recipe.
 - Use core Radius Resource Types like `containers`, `gateway` and `secrets` where applicable to ensure consistency and reusability.
 - Use comments to explain complex logic or important decisions in your Recipe code.
+
+## Integration with CI/CD Testing for Stable Resource Types
+
+For resource types categorized in the "Stable" maturity level, automated test coverage is required in the repository's CI/CD pipeline. The contribution guide with the steps to follow to update the automated tests can be found in [Contributing Tests for Stable Resource Types](docs/contributing/contributing-resource-types-tests.md)

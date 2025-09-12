@@ -44,7 +44,7 @@ publish-test-terraform-recipes: ## Publishes terraform recipes to the current Ku
 	rm -rf "$$temp_recipes_dir"
 	
 	@echo -e "$(ARROW) Deploying web server..."
-	kubectl apply -f ./build/tf-module-server/resources.yaml -n $(TERRAFORM_MODULE_SERVER_NAMESPACE)
+	kubectl apply -f ./.github/build/tf-module-server/resources.yaml -n $(TERRAFORM_MODULE_SERVER_NAMESPACE)
 
 	@echo -e "$(ARROW) Waiting for web server to be ready..."
 	kubectl rollout status deployment.apps/tf-module-server -n $(TERRAFORM_MODULE_SERVER_NAMESPACE) --timeout=600s

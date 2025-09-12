@@ -3,8 +3,12 @@ name: Validate Resource Types
 on:
   push:
     branches: [ main ]
+    paths:
+      - '**/test/**'
   pull_request:
     branches: [ main ]
+    paths:
+      - '**/test/**'
   workflow_dispatch:
     inputs:
       version:
