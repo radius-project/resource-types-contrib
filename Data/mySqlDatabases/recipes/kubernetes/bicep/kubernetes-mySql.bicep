@@ -23,13 +23,6 @@ param root_password string = uniqueString(context.resource.id, newGuid())
 @description('Tag to pull for the mysql container image. Defaults to latest.')
 param tag string = 'latest'
 
-@description('Memory request for the mysql deployment. Defaults to 512Mi.')
-param memoryRequest string = '512Mi'
-
-@description('Memory limit for the mysql deployment. Defaults to 1024Mi.')
-param memoryLimit string = '1024Mi'
-
-
 
 var uniqueName = 'mysql-${uniqueString(context.resource.id)}'
 var mySqlImage = 'mysql:${tag}'
@@ -64,14 +57,6 @@ resource mySql 'apps/Deployment@v1' = {
                 containerPort: port
               }
             ]
-            resources: {
-              requests: {
-                memory: memoryRequest
-              }
-              limits: {
-                memory: memoryLimit
-              }
-            }
             env: [
               {
                 name: 'MYSQL_ROOT_PASSWORD'

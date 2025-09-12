@@ -69,11 +69,5 @@ types:
             tag:
               type: string
               description: "(Optional) MySQL server version."
-            memoryRequest:
-              type: string
-              description: "(Optional) Memory request for the MySQL deployment."
-            memoryLimit:
-              type: string
-              description: "(Optional) Memory limit for the MySQL deployment."
           required:
           - environment
