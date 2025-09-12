@@ -21,8 +21,6 @@ Properties for the **Radius.Data/mySqlDatabases** resource type are provided via
 - `context.properties.database`(string, optional): The name of the database to create/use.
 - `context.properties.user`(string, optional): The username to use to connect to the database.
 - `context.properties.tag`(string, optional): The MySQL server version as a container tag.
-- `context.properties.memoryRequest`(string, optional): Memory request for the mysql deployment.
-- `context.properties.memoryLimit`(string, optional): Memory limit for the mysql deployment.
 
 ## Recipe Output Properties
 
