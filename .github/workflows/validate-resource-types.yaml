@@ -1,0 +1,65 @@
+name: Validate Resource Types
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Radius version number to use (e.g. 0.1.0, 0.1.0-rc1, edge). Defaults to edge.'
+        required: false
+        default: 'edge'
+        type: string
+
+jobs:
+  validate-resource-types:
+    runs-on: ubuntu-latest
+    name: Validate Resource Type Schemas
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 16
+      - name: Download k3d
+        run: wget -q -O - https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@v1
+        with:
+          version: '1.2.0'
+      - name: Install Radius
+        run: make install-radius VERSION="${{ inputs.version || 'edge' }}"
+        
+      - name: Verify manifests are registered
+        run: make verify-manifests
+        
+      - name: Create workspace and environment
+        run: make create-workspace
+
+      - name: Create resource types from resource folders
+        run: make create-resource-types
+
+      - name: Verify expected resource types are present
+        run: make verify-resource-types
+
+      - name: Publish Bicep extensions
+        run: make publish-bicep-extensions
+
+      - name: Update bicepconfig.json with published extensions
+        run: make update-bicepconfig
+
+      - name: Publish all Bicep recipes to registry
+        run: make publish-bicep-recipes
+
+      - name: Register and test Bicep recipes
+        run: make test-bicep-recipes
+
+      - name: Publish Terraform recipes to module server
+        run: make publish-test-terraform-recipes
+
+      - name: Register and test Terraform recipes
+        run: make test-terraform-recipes
