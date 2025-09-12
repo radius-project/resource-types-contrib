@@ -15,44 +15,7 @@
 # ------------------------------------------------------------
 
 TERRAFORM_MODULE_SERVER_NAMESPACE=radius-test-tf-module-server
-TERRAFORM_MODULE_SERVER_DEPLOYMENT_NAME=tf-module-server
 TERRAFORM_MODULE_CONFIGMAP_NAME=tf-module-server-content
-
-##@ Recipes
-
-.PHONY: publish-test-terraform-recipes
-publish-test-terraform-recipes: ## Publishes terraform recipes to the current Kubernetes cluster
-	@echo -e "$(ARROW) Creating Kubernetes namespace $(TERRAFORM_MODULE_SERVER_NAMESPACE)..."
-	kubectl create namespace $(TERRAFORM_MODULE_SERVER_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
-
-	@echo -e "$(ARROW) Finding and publishing Terraform recipes..."
-	@source .github/scripts/validate-common.sh && setup_config && \
-	readarray -t terraform_recipes < <(find_and_validate_recipes "*/recipes/kubernetes/terraform/main.tf" "Terraform") && \
-	temp_recipes_dir=$$(mktemp -d) && \
-	echo "Using temporary directory: $$temp_recipes_dir" && \
-	for recipe_file in "$${terraform_recipes[@]}"; do \
-		read -r root_folder resource_type platform_service file_name <<< "$$(extract_recipe_info "$$recipe_file")" && \
-		recipe_dir=$$(dirname "$$recipe_file") && \
-		recipe_name="$$resource_type-$$platform_service" && \
-		echo "Copying recipe from $$recipe_dir to $$temp_recipes_dir/$$recipe_name" && \
-		cp -r "$$recipe_dir" "$$temp_recipes_dir/$$recipe_name"; \
-	done && \
-	./.github/scripts/publish-test-terraform-recipes.py \
-		"$$temp_recipes_dir" \
-		$(TERRAFORM_MODULE_SERVER_NAMESPACE) \
-		$(TERRAFORM_MODULE_CONFIGMAP_NAME) && \
-	rm -rf "$$temp_recipes_dir"
-	
-	@echo -e "$(ARROW) Deploying web server..."
-	kubectl apply -f ./.github/build/tf-module-server/resources.yaml -n $(TERRAFORM_MODULE_SERVER_NAMESPACE)
-
-	@echo -e "$(ARROW) Waiting for web server to be ready..."
-	kubectl rollout status deployment.apps/tf-module-server -n $(TERRAFORM_MODULE_SERVER_NAMESPACE) --timeout=600s
-
-	@echo -e "$(ARROW) Web server ready. Recipes published to http://$(TERRAFORM_MODULE_SERVER_DEPLOYMENT_NAME).$(TERRAFORM_MODULE_SERVER_NAMESPACE).svc.cluster.local/<recipe_name>.zip"
-	@echo -e "$(ARROW) To test use:"
-	@echo -e "$(ARROW)     kubectl port-forward svc/$(TERRAFORM_MODULE_SERVER_DEPLOYMENT_NAME) 8999:80 -n $(TERRAFORM_MODULE_SERVER_NAMESPACE)"
-	@echo -e "$(ARROW)     curl http://localhost:8999/<recipe-name>.zip --output <recipe-name>.zip"
 
 ##@ Workflow Commands
 
@@ -105,6 +68,10 @@ test-bicep-recipes: ## Register and test Bicep recipes
 	echo "✅ All Kubernetes Bicep recipes tested successfully" && \
 	rad recipe list --environment default
 
+.PHONY: publish-test-terraform-recipes
+publish-test-terraform-recipes: ## Publishes terraform recipes to the current Kubernetes cluster
+	@echo -e "$(ARROW) Publishing Terraform recipes..."
+	@./.github/scripts/publish-test-terraform-recipes.sh
 
 .PHONY: test-terraform-recipes
 test-terraform-recipes: ## Register and test Terraform recipes
