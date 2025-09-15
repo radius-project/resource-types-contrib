@@ -1,30 +1,56 @@
 extension radius
+extension containers
 extension routes
 
 param environment string
 
 resource app 'Applications.Core/applications@2023-10-01-preview' = {
-  name: 'routes-test-app'
+  name: 'routes-example-app'
   location: 'global'
   properties: {
     environment: environment
     extensions: [
       {
         kind: 'kubernetesNamespace'
-        namespace: 'routes-test'
+        namespace: 'routes-example'
       }
     ]
   }
 }
 
-// Simple routes resource with mock container references
-resource testRoutes 'Radius.Compute/routes@2025-08-01-preview' = {
-  name: 'testRoutes'
+resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
+  name: 'myContainer'
+  properties: {
+    environment: environment
+    application: app.id
+    containers: {
+      frontend: {
+        image: 'nginx:latest'
+        ports: {
+          web: {
+            containerPort: 80
+          }
+        }
+      }
+      accounts: {
+        image: 'nginx:latest'
+        ports: {
+          web: {
+            containerPort: 80
+          }
+        }
+      }
+    }
+  }
+}
+
+resource ingressRule 'Radius.Compute/routes@2025-08-01-preview' = {
+  name: 'ingressRule'
   properties: {
     environment: environment
     application: app.id
     kind: 'HTTP'
-    hostnames: ['test.local']
+    hostnames: ['myapp.example.com']
     rules: [
       {
         matches: [
@@ -33,21 +59,21 @@ resource testRoutes 'Radius.Compute/routes@2025-08-01-preview' = {
           }
         ]
         destinationContainer: {
-          resourceId: '/planes/radius/local/resourceGroups/test-group/providers/Radius.Compute/containers/mock-container'
-          containerName: 'mock-web'
-          containerPortName: 'http'
+          resourceId: myContainer.id
+          containerName: 'frontend'
+          containerPortName: 'web'
         }
       }
       {
         matches: [
           {
-            httpPath: '/api'
+            httpPath: '/accounts'
           }
         ]
         destinationContainer: {
-          resourceId: '/planes/radius/local/resourceGroups/test-group/providers/Radius.Compute/containers/mock-container'
-          containerName: 'mock-api'
-          containerPortName: 'http'
+          resourceId: myContainer.id
+          containerName: 'accounts'
+          containerPortName: 'web'
         }
       }
     ]
