@@ -16,17 +16,18 @@ param username string = '${context.application.name}-user'
 @secure()
 param password string = uniqueString(context.resource.id, newGuid())
 
-@description('MySQL root user password. Defaults to a unique generated value.')
-@secure()
-param root_password string = uniqueString(context.resource.id, newGuid())
-
-@description('Tag to pull for the mysql container image. Defaults to latest.')
-param tag string = 'latest'
-
+@description('The major MySQL server version in the X.Y format. Defaults to the version 8.4 if not provided.')
+@allowed([
+  '5.7'
+  '8.0'
+  '8.4'
+])
+param version string = '8.4'
 
 var uniqueName = 'mysql-${uniqueString(context.resource.id)}'
-var mySqlImage = 'mysql:${tag}'
+var mySqlImage = 'mysql:${version}'
 var port = 3306
+var root_password string = uniqueString(context.resource.id, guid(uniqueName))
 
 resource mySql 'apps/Deployment@v1' = {
   metadata: {
@@ -117,7 +118,5 @@ output result object = {
   secrets: {
     #disable-next-line outputs-should-not-contain-secrets
     password: password
-    #disable-next-line outputs-should-not-contain-secrets
-    root_password: root_password
   }
 }

@@ -50,6 +50,10 @@ types:
             username:
               type: string
               description: "(Optional) The username for connecting to the database."
+            version:
+              type: string
+              enum: ['5.7', '8.0', '8.4']
+              description: "(Optional) The major MySQL server version in the X.Y format."
             password:
               type: string
               description: "(Read-only) The password for connecting to the database."
@@ -60,14 +64,7 @@ types:
               readOnly: true
             port:
               type: integer
-              description: "(Read-only) The port number used to connected to the the database."
+              description: "(Read-only) The port number used to connect to the the database."
               readOnly: true
-            root_password:
-              type: string
-              description: "(Read-only) The MySQL root password."
-              readOnly: true
-            tag:
-              type: string
-              description: "(Optional) MySQL server version."
           required:
           - environment
