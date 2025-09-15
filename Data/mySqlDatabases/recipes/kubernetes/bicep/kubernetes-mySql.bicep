@@ -10,7 +10,7 @@ extension kubernetes with {
 param database string = context.application.name
 
 @description('MySQL username. Defaults to <application-name>-user')
-param user string = '${context.application.name}-user'
+param username string = '${context.application.name}-user'
 
 @description('MySQL user password. Defaults to a unique generated value.')
 @secure()
@@ -64,7 +64,7 @@ resource mySql 'apps/Deployment@v1' = {
               }
               {
                 name: 'MYSQL_USER'
-                value: user
+                value: username
               }
               {
                 name: 'MYSQL_PASSWORD'
@@ -112,7 +112,7 @@ output result object = {
     host: '${svc.metadata.name}.${svc.metadata.namespace}.svc.cluster.local'
     port: port
     database: database
-    user: user
+    username: username
   }
   secrets: {
     #disable-next-line outputs-should-not-contain-secrets

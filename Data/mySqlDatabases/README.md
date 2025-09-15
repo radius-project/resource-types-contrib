@@ -19,7 +19,7 @@ A list of available Recipes for this resource type, including links to the Bicep
 Properties for the **Radius.Data/mySqlDatabases** resource type are provided via the [Recipe Context](https://docs.radapp.io/reference/context-schema/) object. These properties include:
 
 - `context.properties.database`(string, optional): The name of the database to create/use.
-- `context.properties.user`(string, optional): The username to use to connect to the database.
+- `context.properties.username`(string, optional): The username for connecting to the database. Defaults to the \<application-name\>-user if not provided.
 - `context.properties.tag`(string, optional): The MySQL server version as a container tag.
 
 ## Recipe Output Properties
@@ -29,6 +29,6 @@ The **Radius.Data/mySqlDatabases** resource type expects the following output pr
 - `context.properties.host` (string): The hostname used to connect to the MySQL server.
 - `context.properties.port` (integer): The port number used to connect to the MySQL server.
 - `context.properties.database` (string): Database name to select on connection.
-- `context.properties.user` (string): The username for connecting to the database.
+- `context.properties.username` (string): The username for connecting to the database.
 - `context.properties.password` (string): The password for connecting to the database.
 - `context.properties.root_password` (string): The password for the MySQL server root user.

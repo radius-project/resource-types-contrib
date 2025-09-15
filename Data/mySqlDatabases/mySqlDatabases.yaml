@@ -47,9 +47,9 @@ types:
             database:
               type: string
               description: "(Optional) The name of the database."
-            user:
+            username:
               type: string
-              description: "(Optional) The username used to authenticate to the database."
+              description: "(Optional) The username for connecting to the database."
             password:
               type: string
               description: "(Read-only) The password used to authenticate to the database."
