@@ -27,7 +27,7 @@ Properties for the **Radius.Data/mySqlDatabases** resource type are provided via
 The **Radius.Data/mySqlDatabases** resource type expects the following output properties to be set in the Results object in the Recipe:
 
 - `context.properties.host` (string): The hostname used to connect to the database.
-- `context.properties.port` (integer): The port number used to connect to the MySQL server.
+- `context.properties.port` (integer): The port number used to connect to the database.
 - `context.properties.database` (string): The name of the database.
 - `context.properties.username` (string): The username for connecting to the database.
 - `context.properties.password` (string): The password for connecting to the database.
