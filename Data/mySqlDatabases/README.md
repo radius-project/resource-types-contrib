@@ -12,7 +12,7 @@ A list of available Recipes for this resource type, including links to the Bicep
 
 |Platform| IaC Language| Recipe Name | Stage |
 |---|---|---|---|
-| Kubernetes | Bicep | kubernetes-mySql.bicep | Alpha |
+| Kubernetes | Bicep | kubernetes-mysql.bicep | Alpha |
 
 ## Recipe Input Properties
 
