@@ -6,7 +6,7 @@
 setup_config() {
   # Define specific resource types to test instead of entire folders
   # Format: "folder/resource_type"
-  resource_types_to_test=("Security/secrets" "Compute/routes")
+  resource_types_to_test=("Security/secrets" "Compute/routes" "Compute/containers")
   
   # Map folders to their namespaces
   declare -g -A folder_to_namespace=(

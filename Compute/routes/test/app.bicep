@@ -4,7 +4,7 @@ extension routes
 param environment string
 
 resource app 'Applications.Core/applications@2023-10-01-preview' = {
-  name: 'routes-app'
+  name: 'routes-test-app'
   location: 'global'
   properties: {
     environment: environment
@@ -17,27 +17,38 @@ resource app 'Applications.Core/applications@2023-10-01-preview' = {
   }
 }
 
-resource myRoutes 'Radius.Compute/routes@2025-08-01-preview' = {
-  name: 'myRoutes'
+// Simple routes resource with mock container references
+resource testRoutes 'Radius.Compute/routes@2025-08-01-preview' = {
+  name: 'testRoutes'
   properties: {
     environment: environment
     application: app.id
-    hostname: 'myroutes.example.com'
-    routes: [
+    kind: 'HTTP'
+    hostnames: ['test.local']
+    rules: [
       {
-        path: '/api'
-        nextHopType: 'VirtualAppliance'
-        serviceName: 'api-service'
-        port: 8080
+        matches: [
+          {
+            httpPath: '/'
+          }
+        ]
+        destinationContainer: {
+          resourceId: '/planes/radius/local/resourceGroups/test-group/providers/Radius.Compute/containers/mock-container'
+          containerName: 'mock-web'
+          containerPortName: 'http'
+        }
       }
       {
-        path: '/blocked'
-        nextHopType: 'None'
-      }
-      {
-        path: '/external'
-        nextHopType: 'Internet'
-        nextHopAddress: 'external-service.com'
+        matches: [
+          {
+            httpPath: '/api'
+          }
+        ]
+        destinationContainer: {
+          resourceId: '/planes/radius/local/resourceGroups/test-group/providers/Radius.Compute/containers/mock-container'
+          containerName: 'mock-api'
+          containerPortName: 'http'
+        }
       }
     ]
   }

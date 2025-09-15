@@ -7,8 +7,14 @@ extension kubernetes with {
 } as kubernetes
 
 // Extract route information from context
-var routes = context.resource.properties.routes
+var rules = context.resource.properties.rules
+var hostnames = context.resource.properties.?hostnames ?? []
 var resourceName = context.resource.name
+var routeKind = context.resource.properties.?kind ?? 'HTTP'
+
+// Validate that we can handle this route kind
+var supportedKinds = ['HTTP', 'TLS']
+var isSupported = contains(supportedKinds, routeKind)
 
 // Install Contour using the standard quickstart YAML
 // This creates a minimal Contour installation
@@ -78,8 +84,8 @@ resource contourInstallerBinding 'rbac.authorization.k8s.io/ClusterRoleBinding@v
   ]
 }
 
-// Create HTTPProxy for our routes
-resource httpProxy 'projectcontour.io/HTTPProxy@v1' = {
+// Create HTTPProxy for our routes (only for HTTP/TLS kinds)
+resource httpProxy 'projectcontour.io/HTTPProxy@v1' = if (isSupported) {
   metadata: {
     name: 'routes-${uniqueString(context.resource.id)}'
     namespace: context.runtime.kubernetes.namespace
@@ -91,22 +97,25 @@ resource httpProxy 'projectcontour.io/HTTPProxy@v1' = {
     }
   }
   spec: {
-    virtualhost: {
-      fqdn: context.resource.properties.hostname ?? '${resourceName}.local'
+    virtualhost: length(hostnames) > 0 ? {
+      fqdn: hostnames[0]
+    } : {
+      fqdn: '${resourceName}.local'
     }
     routes: [
-      for route in routes: {
+      for rule in rules: {
         conditions: [
           {
-            prefix: route.path ?? '/'
+            prefix: rule.matches[0].?httpPath ?? '/'
           }
         ]
-        services: route.nextHopType == 'VirtualAppliance' ? [
+        services: [
           {
-            name: route.serviceName ?? 'default-backend'
-            port: int(route.port ?? 80)
+            // Create a predictable service name based on container name
+            name: 'mock-${replace(rule.destinationContainer.containerName, '_', '-')}-service'
+            port: 80
           }
-        ] : []
+        ]
       }
     ]
   }
@@ -115,51 +124,68 @@ resource httpProxy 'projectcontour.io/HTTPProxy@v1' = {
   ]
 }
 
-// Simple default backend service
-resource defaultBackendService 'core/Service@v1' = {
+// Create mock services for each container referenced in rules
+resource mockServices 'core/Service@v1' = [for rule in rules: {
   metadata: {
-    name: 'default-backend'
+    name: 'mock-${replace(rule.destinationContainer.containerName, '_', '-')}-service'
     namespace: context.runtime.kubernetes.namespace
+    labels: {
+      'app': 'mock-backend'
+      'mock-for': rule.destinationContainer.containerName
+    }
   }
   spec: {
     selector: {
-      app: 'default-backend'
+      'app': 'mock-backend'
     }
     ports: [
       {
         port: 80
-        targetPort: 8080
+        targetPort: 'http'
+        name: 'http'
       }
     ]
+    type: 'ClusterIP'
   }
-}
+}]
 
-resource defaultBackendDeployment 'apps/Deployment@v1' = {
+// Single deployment that serves as backend for all mock services
+resource mockBackendDeployment 'apps/Deployment@v1' = {
   metadata: {
-    name: 'default-backend'
+    name: 'mock-backend'
     namespace: context.runtime.kubernetes.namespace
+    labels: {
+      'app': 'mock-backend'
+    }
   }
   spec: {
     replicas: 1
     selector: {
       matchLabels: {
-        app: 'default-backend'
+        'app': 'mock-backend'
       }
     }
     template: {
       metadata: {
         labels: {
-          app: 'default-backend'
+          'app': 'mock-backend'
         }
       }
       spec: {
         containers: [
           {
-            name: 'backend'
+            name: 'mock-backend'
             image: 'gcr.io/google-containers/defaultbackend-amd64:1.4'
             ports: [
               {
                 containerPort: 8080
+                name: 'http'
+              }
+            ]
+            env: [
+              {
+                name: 'PORT'
+                value: '8080'
               }
             ]
           }
@@ -169,15 +195,22 @@ resource defaultBackendDeployment 'apps/Deployment@v1' = {
   }
 }
 
+// Generate mock service resource paths
+var mockServicePaths = [for i in range(0, length(rules)): '/planes/kubernetes/local/namespaces/${context.runtime.kubernetes.namespace}/providers/core/Service/mock-${replace(rules[i].destinationContainer.containerName, '_', '-')}-service']
+
 output result object = {
   values: {
-    hostname: httpProxy.spec.virtualhost.fqdn
-    routeCount: length(routes)
+    hostname: isSupported && length(hostnames) > 0 ? hostnames[0] : 'mock.local'
+    routeCount: length(rules)
   }
   secrets: {}
-  resources: [
-    '/planes/kubernetes/local/namespaces/${httpProxy.metadata.namespace}/providers/projectcontour.io/HTTPProxy/${httpProxy.metadata.name}'
-    '/planes/kubernetes/local/namespaces/${defaultBackendService.metadata.namespace}/providers/core/Service/${defaultBackendService.metadata.name}'
-    '/planes/kubernetes/local/namespaces/${defaultBackendDeployment.metadata.namespace}/providers/apps/Deployment/${defaultBackendDeployment.metadata.name}'
-  ]
+  resources: concat(
+    isSupported ? [
+      '/planes/kubernetes/local/namespaces/${context.runtime.kubernetes.namespace}/providers/projectcontour.io/HTTPProxy/routes-${uniqueString(context.resource.id)}'
+    ] : [],
+    [
+      '/planes/kubernetes/local/namespaces/${context.runtime.kubernetes.namespace}/providers/apps/Deployment/mock-backend'
+    ],
+    mockServicePaths
+  )
 }
