@@ -40,10 +40,10 @@ types:
           properties:
             environment:
               type: string
-              description: "(Required) The Radius environmentID. Typically set by the rad CLI."
+              description: "(Required) The Radius EnvironmentID. Typically set by the rad CLI. Typically value should be `environment`"
             application:
               type: string
-              description: "(Optional) The application ID which the resource is associated with."
+              description: "(Optional) The Radius Application ID. `myApplication.id` for example."
             database:
               type: string
               description: "(Optional) The name of the database."
@@ -52,11 +52,11 @@ types:
               description: "(Optional) The username for connecting to the database."
             password:
               type: string
-              description: "(Read-only) The password used to authenticate to the database."
+              description: "(Read-only) The password for connecting to the database."
               readOnly: true
             host:
               type: string
-              description: "(Read-only) The host name used to connected to the database."
+              description: "(Read-only) The host name used to connect to the database."
               readOnly: true
             port:
               type: integer
