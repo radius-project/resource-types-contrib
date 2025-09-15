@@ -7,28 +7,51 @@ types:
       To deploy a new MySQL database, add the mySqlDatabases resource to the application definition Bicep file.
 
       param environment string
-      resource mySqlDatabase 'Radius.Data/mySQL@2023-10-01-preview' = {
-        name: 'mySqlDatabase'
+      resource database 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
+        name: 'mysql'
         properties: {
+          application: application
           environment: environment
         }
       }
 
       To connect your application to the MySQL database, establish a connection from the container to the database resource as shown below.
 
-      resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
-        name: 'myContainer'
+      @description('Tag to pull for the WordPress container image.')
+      param tag string = 'latest'
+
+      var port int = 80
+
+      resource frontend 'Applications.Core/containers@2023-10-01-preview' = {
+        name: 'wordpress'
         properties: {
+          application: application
           environment: environment
-          application: myApplication.id
-          containers: {
-            frontend: {
-              image: 'frontend:latest'
+          container: {
+            image: 'wordpress:${tag}'
+            ports: {
+              web: {
+                containerPort: port
+              }
+            }
+            env: {
+              WORDPRESS_DB_HOST: {
+                value: '${database.properties.host}:${database.properties.port}'
+              }
+              WORDPRESS_DB_USER: {
+                value: database.properties.username
+              }
+              WORDPRESS_DB_PASSWORD: {
+                value: database.properties.password
+              }
+              WORDPRESS_DB_NAME: {
+                value: database.properties.database
+              }
             }
           }
           connections: {
-            mySql:{
-              source: mySqlDatabase.id
+            database: {
+              source: database.id
             }
           }
         }
