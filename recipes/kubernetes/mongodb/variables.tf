@@ -6,7 +6,7 @@ variable "name" {
 variable "mongodb_version" {
   description = "MongoDB version"
   type        = string
-  default     = "6.0"
+  default     = "6.0-focal"
 }
 
 variable "replicas" {
