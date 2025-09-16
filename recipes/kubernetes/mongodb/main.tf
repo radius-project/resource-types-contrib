@@ -119,11 +119,14 @@ resource "kubernetes_stateful_set" "mongodb" {
             mount_path = "/data/db"
           }
         }
-        volume {
-          name = "data"
+        dynamic "volume" {
+          for_each = var.persistence ? [1] : []
+          content {
+            name = "data"
 
-          persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.mongodb[0].metadata[0].name
+            persistent_volume_claim {
+              claim_name = kubernetes_persistent_volume_claim.mongodb[0].metadata[0].name
+            }
           }
         }
       }
