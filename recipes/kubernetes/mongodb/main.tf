@@ -132,4 +132,8 @@ resource "kubernetes_stateful_set" "mongodb" {
       }
     }
   }
+
+  timeouts {
+    create = "10m"
+  }
 }
