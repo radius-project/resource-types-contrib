@@ -12,10 +12,6 @@ param database string = context.application.name
 @description('MySQL username. Defaults to <application-name>-user')
 param username string = '${context.application.name}-user'
 
-@description('MySQL user password. Defaults to a unique generated value.')
-@secure()
-param password string = uniqueString(context.resource.id, newGuid())
-
 @description('The major MySQL server version in the X.Y format. Defaults to the version 8.4 if not provided.')
 @allowed([
   '5.7'
@@ -24,10 +20,20 @@ param password string = uniqueString(context.resource.id, newGuid())
 ])
 param version string = '8.4'
 
+@description('Unique name for the MySQL deployment and service.')
 var uniqueName = 'mysql-${uniqueString(context.resource.id)}'
+
+@description('The MySQL container image to use.')
 var mySqlImage = 'mysql:${version}'
+
+@description('The port the MySQL server listens on.')
 var port = 3306
-var root_password string = uniqueString(context.resource.id, guid(uniqueName))
+
+@description('MySQL user password. Defaults to a unique generated value.')
+var password string = uniqueString(context.resource.id, guid(uniqueName, username))
+
+@description('MySQL server root password.')
+var root_password string = uniqueString(context.resource.id, guid(uniqueName, 'root'))
 
 resource mySql 'apps/Deployment@v1' = {
   metadata: {
