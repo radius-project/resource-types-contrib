@@ -41,9 +41,11 @@ jobs:
         working-directory: recipes/kubernetes/mongodb
         run: |
           terraform init
-          terraform apply -auto-approve \
-            -var="name=test-mongodb" \
-            -var="password=MySecretPass123"
+          terraform apply \
+          -var="name=test-mongodb" \
+          -var="password=MySecretPass123" \
+          -var="persistence=false" \
+          -auto-approve
 
       # Optional: Test pods
       - name: List Pods
