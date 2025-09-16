@@ -44,8 +44,8 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
   }
 }
 
-resource ingressRule 'Radius.Compute/routes@2025-08-01-preview' = {
-  name: 'ingressRule'
+resource gatewayRule 'Radius.Compute/routes@2025-08-01-preview' = {
+  name: 'gatewayRule'
   properties: {
     environment: environment
     application: app.id

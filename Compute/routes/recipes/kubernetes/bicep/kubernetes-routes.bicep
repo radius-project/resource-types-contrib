@@ -43,6 +43,9 @@ resource gateway 'gateway.networking.k8s.io/Gateway@v1' = {
 
 // Create HTTPRoute for HTTP routing using Gateway API
 resource httpRoute 'gateway.networking.k8s.io/HTTPRoute@v1' = if (routeKind == 'HTTP') {
+  dependsOn: [
+    gateway
+  ]
   metadata: {
     name: 'routes-${uniqueString(context.resource.id)}'
     namespace: context.runtime.kubernetes.namespace
