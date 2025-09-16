@@ -42,11 +42,27 @@ jobs:
         run: |
           terraform init
           terraform apply \
-          -var="name=test-mongodb" \
-          -var="password=MySecretPass123" \
-          -var="persistence=false" \
-          -auto-approve
+            -var="name=test-mongodb" \
+            -var="password=MySecretPass123" \
+            -var="persistence=false" \
+            -auto-approve
 
       # Optional: Test pods
       - name: List Pods
         run: kubectl get pods
+
+      # Cleanup: Destroy Terraform resources
+      - name: Terraform Destroy
+        if: always()  # ensure it runs even if previous steps fail
+        working-directory: recipes/kubernetes/mongodb
+        run: |
+          terraform destroy \
+            -var="name=test-mongodb" \
+            -var="password=MySecretPass123" \
+            -var="persistence=false" \
+            -auto-approve
+
+      # Cleanup: Delete Kind cluster
+      - name: Delete Kind Cluster
+        if: always()
+        run: kind delete cluster --name tf-test
