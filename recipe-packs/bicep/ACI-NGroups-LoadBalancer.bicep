@@ -4,7 +4,7 @@ param apiVersion string = '2024-09-01-preview'
 
 @description('NGroups parameter name')
 @maxLength(64)
-param nGroupsParamName string = 'nGroups_lin100_reg_lb'
+param nGroupsParamName string = 'nGroups_resource_1'
 
 @description('Container Group Profile name')
 @maxLength(64)
@@ -38,9 +38,6 @@ param inboundPublicIPName string = 'inboundPublicIP'
 @maxLength(64)
 param outboundPublicIPName string = 'outboundPublicIP'
 
-@description('Name of the NAT gateway public IP')
-param outboundPublicIPPrefixName string = 'outBoundPublicIPPrefix'
-
 @description('NAT Gateway name')
 param natGatewayName string = 'natGateway1'
 
@@ -52,20 +49,16 @@ param frontendIPName string = 'loadBalancerFrontend'
 @maxLength(64)
 param httpRuleName string = 'httpRule'
 
-@description('Health Probe name')
-@maxLength(64)
-param healthProbeName string = 'healthProbe'
-
 @description('Virtual Network address prefix')
 @maxLength(64)
-param vnetAddressPrefix string = '172.19.0.0/16'
+param vnetAddressPrefix string
 
 @description('Subnet address prefix')
 @maxLength(64)
-param subnetAddressPrefix string = '172.19.1.0/24'
+param subnetAddressPrefix string
 
 @description('Desired container count')
-param desiredCount int = 100
+param desiredCount int = 3
 
 @description('Availability zones')
 param zones array = []
@@ -73,17 +66,15 @@ param zones array = []
 @description('Maintain desired count')
 param maintainDesiredCount bool = true
 
-@description('Domain name label for public IP')
-@maxLength(64)
-param domainNameLabel string = 'ngroupsdemo'
-
 @description('Inbound NAT Rule name')
 @maxLength(64)
 param inboundNatRuleName string = 'inboundNatRule'
 
+@description('Radius ACI Container Context')
+param context object
+
 // Variables
 var cgProfileName = containerGroupProfileName
-var prefixCG = 'cg-lin100-regional-lb-'
 var nGroupsName = nGroupsParamName
 var resourcePrefix = '/subscriptions/${subscription().subscriptionId}/resourceGroups/${resourceGroup().name}/providers/'
 var loadBalancerApiVersion = '2022-07-01'
@@ -136,9 +127,6 @@ resource inboundPublicIP 'Microsoft.Network/publicIPAddresses@2022-07-01' = {
     publicIPAllocationMethod: 'Static'
     idleTimeoutInMinutes: 4
     ipTags: []
-    dnsSettings: {
-      domainNameLabel: domainNameLabel
-    }
   }
 }
 
@@ -256,18 +244,32 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
         }
       }
     ]
-    probes: [
-      {
-        name: healthProbeName
-        properties: {
-          protocol: 'Tcp'
-          port: 80
-          intervalInSeconds: 5
-          numberOfProbes: 2
-          probeThreshold: 1
+    probes: union(
+      context.properties.containers.readinessProbe != null ? [
+        {
+          name: 'readinessProbe'
+          properties: {
+            protocol: 'Tcp'
+            port: context.properties.containers.readinessProbe.tcpSocket.properties.port ?? 80
+            intervalInSeconds: context.properties.containers.readinessProbe.periodSeconds ?? 5
+            numberOfProbes: context.properties.containers.readinessProbe.failureThreshold ?? 3
+            probeThreshold: context.properties.containers.readinessProbe.successThreshold ?? 1
+          }
         }
-      }
-    ]
+      ] : [],
+      context.properties.containers.livenessProbe != null ? [
+        {
+          name: 'livenessProbe'
+          properties: {
+            protocol: 'Tcp'
+            port: context.properties.containers.livenessProbe.tcpSocket.properties.port ?? 80
+            intervalInSeconds: context.properties.containers.livenessProbe.periodSeconds ?? 10
+            numberOfProbes: context.properties.containers.livenessProbe.failureThreshold ?? 3
+            probeThreshold: context.properties.containers.livenessProbe.successThreshold ?? 1
+          }
+        }
+      ] : []
+    )
     loadBalancingRules: [
       {
         name: httpRuleName
@@ -288,9 +290,9 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
               id: resourceId('Microsoft.Network/loadBalancers/backendAddressPools', loadBalancerName, backendAddressPoolName)
             }
           ]
-          probe: {
-            id: resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, healthProbeName)
-          }
+          probe: context.properties.containers.readinessProbe != null ? {
+            id: resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, 'readinessProbe')
+          } : null
         }
       }
     ]
@@ -323,8 +325,8 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
   ]
 }
 
-// Container Group Profile
-resource containerGroupProfile 'Microsoft.ContainerInstance/containerGroupProfiles@2024-09-01-preview' = {
+// ContainerGroupProfile resource - Create default CGProfile when platformOptions is not provided else use the CGProfile resource provided by the customer.
+resource containerGroupProfile 'Microsoft.ContainerInstance/containerGroupProfiles@2024-09-01-preview' = if (context.properties.platformOptions == null) {
   name: cgProfileName
   location: resourceGroup().location
   properties: {
@@ -333,20 +335,32 @@ resource containerGroupProfile 'Microsoft.ContainerInstance/containerGroupProfil
       {
         name: 'web'
         properties: {
-          image: 'mcr.microsoft.com/azuredocs/aci-helloworld@sha256:565dba8ce20ca1a311c2d9485089d7ddc935dd50140510050345a1b0ea4ffa6e'
+          image: context.properties.containers.image
           ports: [
             {
-              protocol: 'TCP'
-              port: 80
+              protocol: context.properties.containers.ports != null ? context.properties.containers.ports.additionalProperties.properties.protocol ?? 'TCP' : 'TCP'
+              port: context.properties.containers.ports != null ? context.properties.containers.ports.additionalProperties.properties.containerPort : 80
             }
           ]
           resources: {
             requests: {
-              memoryInGB: json('1.0')
-              cpu: json('1.0')
+              memoryInGB: context.properties.containers.resources.?requests.?memoryInMib/1024 ?? json('1.0')
+              cpu: context.properties.containers.resources.?requests.?cpu ?? json('1.0')
             }
           }
+          volumeMounts: [
+            {
+              name: 'cacheVolume'
+              mountPath: '/mnt/cache' // ephemeral volume path in container filesystem
+            }
+          ]
         }
+      }
+    ]
+    volumes: [
+      {
+        name: 'cacheVolume'
+        emptyDir: {}   // ephemeral volume
       }
     ]
     restartPolicy: 'Always'
@@ -368,15 +382,16 @@ resource nGroups 'Microsoft.ContainerInstance/NGroups@2024-09-01-preview' = {
   name: nGroupsName
   location: resourceGroup().location
   zones: zones
+  identity: {
+    type: 'SystemAssigned'
+  }
   properties: {
     elasticProfile: {
       desiredCount: desiredCount
       maintainDesiredCount: maintainDesiredCount
-      containerGroupNamingPolicy: {
-        guidNamingPolicy: {
-          prefix: prefixCG
-        }
-      }
+    }
+    updateProfile: {
+      updateMode: 'Rolling'
     }
     containerGroupProfiles: [
       {
@@ -406,8 +421,9 @@ resource nGroups 'Microsoft.ContainerInstance/NGroups@2024-09-01-preview' = {
     ]
   }
   tags: {
-    cirrusTestScenario: 'lin-100.regional.loadbalancer'
     'reprovision.enabled': true
+    'metadata.container.environmentVariable.orchestratorId': true
+    'rollingupdate.replace.enabled': true
   }
   dependsOn: [
     containerGroupProfile
@@ -422,7 +438,6 @@ output subnetId string = virtualNetwork.properties.subnets[0].id
 output loadBalancerId string = loadBalancer.id
 output frontendIPConfigurationId string = loadBalancer.properties.frontendIPConfigurations[0].id
 output backendAddressPoolId string = loadBalancer.properties.backendAddressPools[0].id
-output healthProbeId string = loadBalancer.properties.probes[0].id
 output inboundPublicIPId string = inboundPublicIP.id
 output outboundPublicIPId string = outboundPublicIP.id
 output inboundPublicIPFQDN string = inboundPublicIP.properties.dnsSettings.fqdn
@@ -431,3 +446,5 @@ output networkSecurityGroupId string = networkSecurityGroup.id
 output ddosProtectionPlanId string = ddosProtectionPlan.id
 output containerGroupProfileId string = containerGroupProfile.id
 output nGroupsId string = nGroups.id
+output readinessProbeId string = context.properties.containers.readinessProbe != null ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, 'readinessProbe') : ''
+output livenessProbeId string = context.properties.containers.livenessProbe != null ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, 'livenessProbe') : ''
