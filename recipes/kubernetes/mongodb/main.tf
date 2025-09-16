@@ -114,9 +114,12 @@ resource "kubernetes_stateful_set" "mongodb" {
             limits   = var.resources.limits
           }
 
-          volume_mount {
-            name       = "data"
-            mount_path = "/data/db"
+          dynamic "volume_mount" {
+            for_each = var.persistence ? [1] : []
+            content {
+              name       = "data"
+              mount_path = "/data/db"
+            }
           }
         }
         dynamic "volume" {
