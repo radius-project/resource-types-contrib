@@ -83,7 +83,7 @@ resource "kubernetes_stateful_set" "mongodb" {
       spec {
         container {
           name  = "mongodb"
-          image = "mongo:${var.version}"
+          image = "mongo:${var.mongodb_version}"
 
           port {
             container_port = 27017

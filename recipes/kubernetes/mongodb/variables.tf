@@ -3,7 +3,7 @@ variable "name" {
   type        = string
 }
 
-variable "version" {
+variable "mongodb_version" {
   description = "MongoDB version"
   type        = string
   default     = "6.0"
