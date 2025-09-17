@@ -7,10 +7,10 @@ extension kubernetes with {
 } as kubernetes
 
 @description('Name of the MySQL database. Defaults to the application name.')
-param database string = context.application.name
+param database string = context.resource.properties.database != null ? context.resource.properties.database : context.application.name
 
 @description('MySQL username. Defaults to <application-name>-user')
-param username string = '${context.application.name}-user'
+param username string = context.resource.properties.username != null ? context.resource.properties.username : '${context.application.name}-user'
 
 @description('The major MySQL server version in the X.Y format. Defaults to the version 8.4 if not provided.')
 @allowed([
@@ -18,7 +18,7 @@ param username string = '${context.application.name}-user'
   '8.0'
   '8.4'
 ])
-param version string = '8.4'
+param version string = context.resource.properties.version != null ? context.resource.properties.version : '8.4'
 
 @description('Unique name for the MySQL deployment and service.')
 var uniqueName = 'mysql-${uniqueString(context.resource.id)}'
