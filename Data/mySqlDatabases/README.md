@@ -20,7 +20,7 @@ Properties for the **Radius.Data/mySqlDatabases** resource type are provided via
 
 - `context.properties.database`(string, optional): The name of the database. Defaults to the application name if not provided.
 - `context.properties.username`(string, optional): The username for connecting to the database. Defaults to the \<application-name\>-user if not provided.
-- `context.properties.version`(string, optional): The major MySQL server version in the X.Y format. Defaults to the version 8.4 if not provided.
+- `context.properties.version`(string, optional): The major MySQL server version in the X.Y format. Defaults to the version `8.4` if not provided.
 
 ## Recipe Output Properties
 
