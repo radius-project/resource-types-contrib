@@ -17,35 +17,21 @@ types:
 
       To connect your application to the MySQL database, establish a connection from the container to the database resource as shown below.
 
-      @description('Tag to pull for the WordPress container image.')
+      @description('Tag to pull for the application container image.')
       param tag string = 'latest'
 
       var port int = 80
 
       resource frontend 'Applications.Core/containers@2023-10-01-preview' = {
-        name: 'wordpress'
+        name: 'frontend'
         properties: {
           application: application
           environment: environment
           container: {
-            image: 'wordpress:${tag}'
+            image: 'your-application-container-using-mysql-database:${tag}'
             ports: {
               web: {
                 containerPort: port
-              }
-            }
-            env: {
-              WORDPRESS_DB_HOST: {
-                value: '${database.properties.host}:${database.properties.port}'
-              }
-              WORDPRESS_DB_USER: {
-                value: database.properties.username
-              }
-              WORDPRESS_DB_PASSWORD: {
-                value: database.properties.password
-              }
-              WORDPRESS_DB_NAME: {
-                value: database.properties.database
               }
             }
           }
