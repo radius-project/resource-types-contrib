@@ -1,19 +1,10 @@
 #!/bin/bash
 set -e
 
-# This script creates a fresh bicepconfig.json with all published .tgz files
+# Script: Update bicepconfig.json with published extensions
+# This script finds all published .tgz files and adds them to bicepconfig.json
 
-echo "Creating bicepconfig.json with published extensions..."
-
-# Create base bicepconfig.json with required experimental features
-cat > bicepconfig.json << 'EOF'
-{
-  "extensions": {
-    "radius": "br:biceptypes.azurecr.io/radius:latest",
-    "aws": "br:biceptypes.azurecr.io/aws:latest"
-  }
-}
-EOF
+echo "Updating bicepconfig.json with published extensions..."
 
 # Find all published .tgz files and add them to bicepconfig.json (safe handling)
 tgz_files=()
@@ -38,7 +29,7 @@ if [[ ${#tgz_files[@]} -gt 0 ]]; then
       mv bicepconfig.tmp bicepconfig.json
   done
 
-  echo "✅ Successfully created bicepconfig.json with extensions"
+  echo "✅ Successfully updated bicepconfig.json with extensions"
 else
   echo "No extension .tgz files found to add to bicepconfig.json"
 fi
