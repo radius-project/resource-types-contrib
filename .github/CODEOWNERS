@@ -7,3 +7,6 @@
 
 # Default rule: anything that doesn't match a more specific rule goes here
 * @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib
+
+# Allows on-call members to respond to dependabot updates to workflows.
+.github/workflows/* @radius-project/on-call @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib
