@@ -3,20 +3,8 @@ variable "context" {
   type        = any
 }
 
-variable "csi_driver" {
-  description = "CSI driver for the persistent volume"
-  type        = string
-  default     = "csi.example.com"
-}
-
-variable "csi_volume_handle" {
-  description = "CSI volume handle for the persistent volume"
-  type        = string
-  default     = "default-volume"
-}
-
 variable "storage_class" {
-  description = "StorageClass name to set on the PersistentVolume"
+  description = "StorageClass name to set on the PersistentVolumeClaim"
   type        = string
   default     = ""
 }
