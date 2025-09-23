@@ -6,26 +6,29 @@ types:
 
       To deploy a new MySQL database, add the mySqlDatabases resource to the application definition Bicep file.
 
+      extension Radius
+
+      resource myApplication 'Applications.Core/applications@2023-10-01-preview' = { ... }
+
       param environment string
       resource database 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
-        name: 'mysql'
         properties: {
-          application: application
+          application: myApplication.id
           environment: environment
         }
       }
 
-      To connect your application to the MySQL database, establish a connection from the container to the database resource as shown below.
+
+      For example, to connect to the MySQL database from a container, establish a connection to the database resource as shown below.
 
       @description('Tag to pull for the application container image.')
       param tag string = 'latest'
 
       var port int = 80
-
       resource frontend 'Applications.Core/containers@2023-10-01-preview' = {
         name: 'frontend'
         properties: {
-          application: application
+          application: myApplication.id
           environment: environment
           container: {
             image: 'your-application-container-using-mysql-database:${tag}'
