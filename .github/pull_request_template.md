@@ -1,23 +1,16 @@
 ## Description
+<!--
+Brief description of the changes in this PR. Give enough context for the reviewer to understand why the change is being made.
+-->
 
-Brief description of the changes in this PR.
-
-## Type of Contribution
-
-- [ ] Resource Type
-- [ ] Recipe
-- [ ] Documentation
-- [ ] Added or Updated Test
-- [ ] Bug Fix
-- [ ] Other (please describe):
-
-Related GitHub Issue: #issue_number or N/A
+Related GitHub Issue: <!--#issue_number or N/A-->
 
 ## Testing
-
+<!--
 Describe how a reviewer should test these changes.
+-->
 
-## Checklist
+## Contributor Checklist
 
 - [ ] File names follow naming conventions and folder structure
 - [ ] Platform engineer documentation is in README.md
