@@ -1,0 +1,82 @@
+namespace: Radius.Data
+types:
+  mySqlDatabases:
+    description: |
+      The Radius.Data/mySqlDatabases Resource Type deploys a MySQL database.
+
+      To deploy a new MySQL database, add the mySqlDatabases resource to the application definition Bicep file.
+
+      extension Radius
+
+      resource myApplication 'Applications.Core/applications@2023-10-01-preview' = { ... }
+
+      param environment string
+      resource database 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
+        properties: {
+          application: myApplication.id
+          environment: environment
+        }
+      }
+
+
+      For example, to connect to the MySQL database from a container, establish a connection to the database resource as shown below.
+
+      @description('Tag to pull for the application container image.')
+      param tag string = 'latest'
+
+      var port int = 80
+      resource frontend 'Applications.Core/containers@2023-10-01-preview' = {
+        name: 'frontend'
+        properties: {
+          application: myApplication.id
+          environment: environment
+          container: {
+            image: 'your-application-container-using-mysql-database:${tag}'
+            ports: {
+              web: {
+                containerPort: port
+              }
+            }
+          }
+          connections: {
+            database: {
+              source: database.id
+            }
+          }
+        }
+      }
+    apiVersions:
+      '2025-08-01-preview':
+        schema:
+          type: object
+          properties:
+            environment:
+              type: string
+              description: "(Required) The Radius EnvironmentID. Typically set by the rad CLI. Typically value should be `environment`"
+            application:
+              type: string
+              description: "(Optional) The Radius Application ID. `myApplication.id` for example."
+            database:
+              type: string
+              description: "(Optional) The name of the database."
+            username:
+              type: string
+              description: "(Optional) The username for connecting to the database."
+            version:
+              type: string
+              enum: ['5.7', '8.0', '8.4']
+              description: "(Optional) The major MySQL server version in the X.Y format."
+            password:
+              type: string
+              description: "(Read-only) The password for connecting to the database."
+              readOnly: true
+            host:
+              type: string
+              description: "(Read-only) The host name used to connect to the database."
+              readOnly: true
+            port:
+              type: integer
+              description: "(Read-only) The port number used to connect to the the database."
+              readOnly: true
+          required:
+          - environment
