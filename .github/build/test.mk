@@ -19,11 +19,6 @@ TERRAFORM_MODULE_CONFIGMAP_NAME=tf-module-server-content
 
 ##@ Workflow Commands
 
-.PHONY: install-radius
-install-radius: ## Set up k3d cluster, install tools, and install Radius
-	@echo -e "$(ARROW) Installing Radius..."
-	./.github/scripts/install-radius.sh $(VERSION)
-
 .PHONY: verify-manifests
 verify-manifests: ## Verify that manifests are registered in the UCP pod
 	@echo -e "$(ARROW) Verifying manifests registration..."

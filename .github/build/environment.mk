@@ -14,27 +14,28 @@
 # limitations under the License.
 # ------------------------------------------------------------
 
-# Makefile for Radius Resource Types and Recipes Testing
-#
-# This Makefile provides standardized commands for testing resource types 
-# locally and in CI/CD pipelines. It supports Kubernetes recipe testing
-# with automated setup, validation, and cleanup.
-#
-# Help:
-#   make help                    # Show all available targets
-#
+##@ Environment Setup Commands
+
 # Environment Setup:
 #   make install-radius		     # Install Radius CLI
 #   make create-cluster		     # Create a local k3d Kubernetes cluster for testing
 #   make delete-cluster		     # Delete the local k3d Kubernetes cluster
-#
-# Developement and testing:
-#   make lint					# Lint all resource types and recipes
-#   make build		            # Build all resource types and recipes
-#   make test					# Run automated tests for all recipes
 
-SHELL := /bin/bash
-ARROW := \033[34;1m=>\033[0m
+.PHONY: install-radius
+install-radius: ## Install the Radius CLI. Optionally specify a version number using the RAD_VERSION argument, e.g., "make install-radius RAD_VERSION=0.48.0". Set RAD_VERSION=edge for the edge version.
+	@echo -e "$(ARROW) Installing Radius..."
+	@RAD_VERSION="$(RAD_VERSION)"; \
+	if [ -n "$$RAD_VERSION" ]; then \
+		wget -q "https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh" -O - | /bin/bash -s "$$RAD_VERSION"; \
+	else \
+		wget -q "https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh" -O - | /bin/bash; \
+	fi
 
-# order matters for these
-include ./.github/build/help.mk ./.github/build/environment.mk ./.github/build/test.mk
+.PHONY: create-cluster
+create-cluster: ## Create a local k3d Kubernetes cluster for testing using the default cluster name.
+	@.github/scripts/create-cluster.sh
+
+.PHONY: delete-cluster
+delete-cluster: ## Delete the local default k3d cluster.
+	@echo -e "$(ARROW) Deleting k3d cluster..."
+	k3d cluster delete
