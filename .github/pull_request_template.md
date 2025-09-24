@@ -4,14 +4,18 @@ Brief description of the changes in this PR.
 
 ## Type of Contribution
 
-- [ ] New Resource Type
-- [ ] New Recipe
-- [ ] Documentation Update
+- [ ] Resource Type
+- [ ] Recipe
+- [ ] Documentation
 - [ ] Added or Updated Test
 - [ ] Bug Fix
 - [ ] Other (please describe):
 
 Related GitHub Issue: #issue_number or N/A
+
+## Testing
+
+Describe how a reviewer should test these changes.
 
 ## Checklist
 
@@ -32,7 +36,3 @@ Related GitHub Issue: #issue_number or N/A
 - [ ] Recipes handle secrets securely
 - [ ] Recipes are idempotent
 - [ ] Resource types and recipes were tested
-
-## Testing
-
-Describe how a reviewer should test these changes.
