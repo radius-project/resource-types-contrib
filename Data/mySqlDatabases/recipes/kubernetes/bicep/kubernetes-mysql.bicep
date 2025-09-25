@@ -51,7 +51,7 @@ resource mySql 'apps/Deployment@v1' = {
         labels: {
           app: context.application.name
           resource: context.resource.name
-          // 'radapp.io/application': context.application == null ? '' : context.application.name
+          'radapp.io/application': context.application == null ? '' : context.application.name
         }
       }
       spec: {
@@ -94,6 +94,8 @@ resource svc 'core/Service@v1' = {
     name: uniqueName
     labels: {
       app: context.application.name
+      resource: context.resource.name
+      'radapp.io/application': context.application == null ? '' : context.application.name
     }
   }
   spec: {
