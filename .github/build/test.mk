@@ -28,3 +28,4 @@ ifndef TYPE_FOLDER
 	$(error TYPE_FOLDER parameter is required. Usage: make build-resource-type TYPE_FOLDER=<resource-type-folder>)
 endif
 	@./.github/scripts/build-resource-type.sh "$(TYPE_FOLDER)"
+	./.github/scripts/update-bicepconfig.sh

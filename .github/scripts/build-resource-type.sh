@@ -42,7 +42,7 @@ publish_extension() {
     local base_name extension_name target_path
     base_name="$(basename "$yaml_file")"
     extension_name="${base_name%.*}"
-    target_path="${REPO_ROOT}/${extension_name}.tgz"
+    target_path="${REPO_ROOT}/${extension_name}-extension.tgz"
 
     if rad bicep publish-extension -f "$yaml_file" --target "$target_path"; then
         echo ""
