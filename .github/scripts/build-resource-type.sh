@@ -1,17 +1,19 @@
 #!/bin/bash
 
 # =============================================================================
-# validate-resource-types.sh
+# build-resource-type.sh
 # -----------------------------------------------------------------------------
 # Validate Radius resource type definitions by running `rad resource-type create`
-# against each YAML file located at the root of the provided folder. The script
-# accepts exactly one argument: the path to a folder containing resource type
-# YAML files. Each file is processed independently so that validation continues
-# across failures. The script exits with a non-zero status if any validation
-# fails.
+# against each YAML file located at the root of the provided folder, and publish
+# the matching resource type extension using `rad bicep publish-extension`. The
+# script accepts exactly one argument: the path to a folder containing resource
+# type YAML files. The script exits immediately if any command fails.
 # =============================================================================
 
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 validate_dependencies() {
     if ! command -v rad >/dev/null 2>&1; then
@@ -20,16 +22,34 @@ validate_dependencies() {
     fi
 }
 
-validate_yaml_file() {
+create_resource_type() {
     local yaml_file="$1"
 
     local output
     if output=$(rad resource-type create -f "$yaml_file" 2>&1); then
         echo "PASS $yaml_file"
+        return 0
     else
         echo "$output" >&2
         echo "FAIL $yaml_file"
-        VALIDATION_FAILURES=$((VALIDATION_FAILURES + 1))
+        return 1
+    fi
+}
+
+publish_extension() {
+    local yaml_file="$1"
+
+    local base_name extension_name target_path output
+    base_name="$(basename "$yaml_file")"
+    extension_name="${base_name%.*}"
+    target_path="${REPO_ROOT}/${extension_name}.tgz"
+
+    if output=$(rad bicep publish-extension -f "$yaml_file" --target "$target_path" 2>&1); then
+        echo "EXT PASS $yaml_file"
+    else
+        echo "$output" >&2
+        echo "EXT FAIL $yaml_file"
+        return 1
     fi
 }
 
@@ -53,19 +73,14 @@ main() {
 
     target_folder="$(cd "$target_folder" && pwd)"
 
-    VALIDATION_FAILURES=0
-
     local -a yaml_files=()
     mapfile -d '' -t yaml_files < <(find "$target_folder" -maxdepth 1 -mindepth 1 -type f \
         \( -name '*.yaml' -o -name '*.yml' \) -print0)
 
     for yaml_file in "${yaml_files[@]}"; do
-        validate_yaml_file "$yaml_file"
+        create_resource_type "$yaml_file"
+        publish_extension "$yaml_file"
     done
-
-    if [[ $VALIDATION_FAILURES -ne 0 ]]; then
-        exit 1
-    fi
 }
 
 main "$@"

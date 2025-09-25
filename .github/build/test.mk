@@ -22,9 +22,9 @@ RESOURCE_TYPE_ROOT ?=$(shell pwd)
 list-resource-type-folders: ## List resource type folders under the specified root
 	@./.github/scripts/list-resource-type-folders.sh "$(RESOURCE_TYPE_ROOT)"
 
-.PHONY: create-resource-type
-create-resource-type: ## Validate a resource type by running the 'rad resource-type create' command (requires TYPE_FOLDER parameter)
+.PHONY: build-resource-type
+build-resource-type: ## Validate a resource type by running the 'rad resource-type create' command (requires TYPE_FOLDER parameter)
 ifndef TYPE_FOLDER
-	$(error TYPE_FOLDER parameter is required. Usage: make create-resource-type TYPE_FOLDER=<resource-type-folder>)
+	$(error TYPE_FOLDER parameter is required. Usage: make build-resource-type TYPE_FOLDER=<resource-type-folder>)
 endif
-	@./.github/scripts/create-resource-types.sh "$(TYPE_FOLDER)"
+	@./.github/scripts/build-resource-type.sh "$(TYPE_FOLDER)"
