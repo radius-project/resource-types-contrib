@@ -14,55 +14,17 @@
 # limitations under the License.
 # ------------------------------------------------------------
 
-TERRAFORM_MODULE_SERVER_NAMESPACE=radius-test-tf-module-server
-TERRAFORM_MODULE_CONFIGMAP_NAME=tf-module-server-content
+##@ Testing
 
-##@ Workflow Commands
+RESOURCE_TYPE_ROOT ?=$(shell pwd)
 
-.PHONY: create-resource-types
-create-resource-types: ## Create resource types from YAML files
-	@echo -e "$(ARROW) Creating resource types..."
-	@source .github/scripts/validate-common.sh && setup_config && create_resource_types
+.PHONY: list-resource-type-folders
+list-resource-type-folders: ## List resource type folders under the specified root
+	@./.github/scripts/list-resource-type-folders.sh "$(RESOURCE_TYPE_ROOT)"
 
-.PHONY: verify-resource-types
-verify-resource-types: ## Verify that expected resource types are present
-	@echo -e "$(ARROW) Verifying resource types..."
-	@source .github/scripts/validate-common.sh && setup_config && verify_resource_types
-
-.PHONY: publish-bicep-extensions
-publish-bicep-extensions: ## Publish Bicep extensions for all YAML files
-	@echo -e "$(ARROW) Publishing Bicep extensions..."
-	@source .github/scripts/validate-common.sh && setup_config && publish_bicep_extensions
-
-.PHONY: update-bicepconfig
-update-bicepconfig: ## Update bicepconfig.json with published extensions
-	@echo -e "$(ARROW) Updating bicepconfig.json..."
-	./.github/scripts/update-bicepconfig.sh
-
-.PHONY: publish-bicep-recipes
-publish-bicep-recipes: ## Publish all Bicep recipes to registry
-	@echo -e "$(ARROW) Publishing Bicep recipes..."
-	@source .github/scripts/validate-common.sh && setup_config && publish_bicep_recipes
-
-.PHONY: test-bicep-recipes
-test-bicep-recipes: ## Register and test Bicep recipes
-	@echo -e "$(ARROW) Testing Bicep recipes..."
-	@source .github/scripts/validate-common.sh && setup_config && \
-	readarray -t bicep_recipes < <(find_and_validate_recipes "*/recipes/kubernetes/bicep/*.bicep" "Kubernetes Bicep") && \
-	test_recipes "bicep" "$${bicep_recipes[@]}" && \
-	echo "✅ All Kubernetes Bicep recipes tested successfully" && \
-	rad recipe list --environment default
-
-.PHONY: publish-test-terraform-recipes
-publish-test-terraform-recipes: ## Publishes terraform recipes to the current Kubernetes cluster
-	@echo -e "$(ARROW) Publishing Terraform recipes..."
-	@./.github/scripts/publish-test-terraform-recipes.sh
-
-.PHONY: test-terraform-recipes
-test-terraform-recipes: ## Register and test Terraform recipes
-	@echo -e "$(ARROW) Testing Terraform recipes..."
-	@source .github/scripts/validate-common.sh && setup_config && \
-	readarray -t terraform_recipes < <(find_and_validate_recipes "*/recipes/kubernetes/terraform/main.tf" "Terraform") && \
-	test_recipes "terraform" "$${terraform_recipes[@]}" && \
-	echo "✅ All Terraform recipes tested successfully" && \
-	rad recipe list --environment default
+.PHONY: create-resource-type
+create-resource-type: ## Validate a resource type by running the 'rad resource-type create' command (requires TYPE_FOLDER parameter)
+ifndef TYPE_FOLDER
+	$(error TYPE_FOLDER parameter is required. Usage: make create-resource-type TYPE_FOLDER=<resource-type-folder>)
+endif
+	@./.github/scripts/create-resource-types.sh "$(TYPE_FOLDER)"
