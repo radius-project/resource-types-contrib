@@ -25,13 +25,13 @@ validate_dependencies() {
 create_resource_type() {
     local yaml_file="$1"
 
-    local output
-    if output=$(rad resource-type create -f "$yaml_file" 2>&1); then
-        echo "PASS $yaml_file"
+    if rad resource-type create -f "$yaml_file"; then
+        echo "CREATED RESOURCE TYPE: $yaml_file"
+        echo ""
         return 0
     else
-        echo "$output" >&2
-        echo "FAIL $yaml_file"
+        echo "FAILED CREATING RESOURCE TYPE: $yaml_file"
+        echo ""
         return 1
     fi
 }
@@ -39,16 +39,15 @@ create_resource_type() {
 publish_extension() {
     local yaml_file="$1"
 
-    local base_name extension_name target_path output
+    local base_name extension_name target_path
     base_name="$(basename "$yaml_file")"
     extension_name="${base_name%.*}"
     target_path="${REPO_ROOT}/${extension_name}.tgz"
 
-    if output=$(rad bicep publish-extension -f "$yaml_file" --target "$target_path" 2>&1); then
-        echo "EXT PASS $yaml_file"
+    if rad bicep publish-extension -f "$yaml_file" --target "$target_path"; then
+        echo ""
     else
-        echo "$output" >&2
-        echo "EXT FAIL $yaml_file"
+        echo "FAILED PUBLISHING EXTENSION: $yaml_file"
         return 1
     fi
 }
@@ -77,10 +76,14 @@ main() {
     mapfile -d '' -t yaml_files < <(find "$target_folder" -maxdepth 1 -mindepth 1 -type f \
         \( -name '*.yaml' -o -name '*.yml' \) -print0)
 
+    echo "🛠️  Building resource types in $target_folder"
+
     for yaml_file in "${yaml_files[@]}"; do
         create_resource_type "$yaml_file"
         publish_extension "$yaml_file"
     done
+
+    echo "✅ Successfully built resource types in $target_folder"
 }
 
 main "$@"
