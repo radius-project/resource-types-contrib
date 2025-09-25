@@ -22,8 +22,8 @@ if [ -z "$POD_NAME" ]; then
   exit 1
 fi
 
-# Poll logs for up to 20 iterations, 30 seconds each (up to 10 minutes total)
-for i in {1..20}; do
+# Poll logs for up to 120 iterations, 5 seconds each (up to 10 minutes total)
+for i in {1..120}; do
   logs=$(kubectl logs "$POD_NAME" -n radius-system)
 
   # Exit on error
@@ -39,8 +39,8 @@ for i in {1..20}; do
     break
   fi
 
-  echo "Logs not ready, waiting 30 seconds..."
-  sleep 30
+  echo "Logs not ready, waiting 5 seconds..."
+  sleep 5
 done
 
 # Final check to ensure success message was found

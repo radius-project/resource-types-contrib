@@ -14,7 +14,7 @@
 # limitations under the License.
 # ------------------------------------------------------------
 
-##@ Environment Setup Commands
+##@ Environment Setup
 
 # Environment Setup:
 #   make install-radius		     # Install Radius CLI
@@ -22,7 +22,7 @@
 #   make delete-cluster		     # Delete the local k3d Kubernetes cluster
 
 .PHONY: install-radius
-install-radius: ## Install the Radius CLI. Optionally specify a version number using the RAD_VERSION argument, e.g., "make install-radius RAD_VERSION=0.48.0". Set RAD_VERSION=edge for the edge version.
+install-radius: ## Install the Radius CLI. Optionally specify a version number, e.g., "make install-radius RAD_VERSION=0.48.0" or "make install-radius RAD_VERSION=edge"
 	@echo -e "$(ARROW) Installing Radius..."
 	@RAD_VERSION="$(RAD_VERSION)"; \
 	if [ -n "$$RAD_VERSION" ]; then \
@@ -31,11 +31,15 @@ install-radius: ## Install the Radius CLI. Optionally specify a version number u
 		wget -q "https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh" -O - | /bin/bash; \
 	fi
 
-.PHONY: create-cluster
-create-cluster: ## Create a local k3d Kubernetes cluster for testing using the default cluster name.
+.PHONY: setup-cluster
+setup-cluster: ## Create a local k3d Kubernetes cluster with a default Radius workspace/group/environment.
+	@echo -e "$(ARROW) Creating local k3d cluster and installing Radius..."
 	@.github/scripts/create-cluster.sh
+	@.github/scripts/verify-manifests.sh
+	@echo -e "$(ARROW) Creating workspace and environment..."
+	@.github/scripts/create-workspace.sh
 
 .PHONY: delete-cluster
 delete-cluster: ## Delete the local default k3d cluster.
 	@echo -e "$(ARROW) Deleting k3d cluster..."
-	k3d cluster delete
+	@k3d cluster delete

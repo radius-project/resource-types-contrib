@@ -19,16 +19,6 @@ TERRAFORM_MODULE_CONFIGMAP_NAME=tf-module-server-content
 
 ##@ Workflow Commands
 
-.PHONY: verify-manifests
-verify-manifests: ## Verify that manifests are registered in the UCP pod
-	@echo -e "$(ARROW) Verifying manifests registration..."
-	./.github/scripts/verify-manifests.sh
-
-.PHONY: create-workspace
-create-workspace: ## Create Radius workspace and environment
-	@echo -e "$(ARROW) Creating workspace and environment..."
-	./.github/scripts/create-workspace.sh
-
 .PHONY: create-resource-types
 create-resource-types: ## Create resource types from YAML files
 	@echo -e "$(ARROW) Creating resource types..."
