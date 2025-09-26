@@ -29,3 +29,12 @@ ifndef TYPE_FOLDER
 endif
 	@./.github/scripts/build-resource-type.sh "$(TYPE_FOLDER)"
 	./.github/scripts/update-bicepconfig.sh
+
+.PHONY: build-bicep-recipe
+build-bicep-recipe: ## Build a Bicep recipe at the specified path (requires RECIPE_PATH parameter)
+ifndef RECIPE_PATH
+	$(error RECIPE_PATH parameter is required. Usage: make build-bicep-recipe RECIPE_PATH=<path-to-bicep-recipe>)
+endif
+	@echo -e "$(ARROW) Building Bicep recipe at $(RECIPE_PATH)..."
+	@./.github/scripts/build-bicep-recipe.sh "$(RECIPE_PATH)"
+

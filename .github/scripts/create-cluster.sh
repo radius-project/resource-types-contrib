@@ -37,7 +37,13 @@ validate_command "k3d"
 validate_command "oras"
 
 echo "Setting up k3d cluster..."
-k3d cluster create -p "8081:80@loadbalancer" --k3s-arg "--disable=traefik@server:*" --k3s-arg "--disable=servicelb@server:*" --wait
+k3d cluster create \
+    -p "8081:80@loadbalancer" \
+    --k3s-arg "--disable=traefik@server:*" \
+    --k3s-arg "--disable=servicelb@server:*" \
+    --registry-create reciperegistry:5000 \
+    --set dashboard.enabled=false \
+    --wait
 
 echo "Installing Radius on Kubernetes..."
 rad install kubernetes --set rp.publicEndpointOverride=localhost:8081 --skip-contour-install
