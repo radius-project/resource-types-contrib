@@ -42,10 +42,9 @@ k3d cluster create \
     --k3s-arg "--disable=traefik@server:*" \
     --k3s-arg "--disable=servicelb@server:*" \
     --registry-create reciperegistry:5000 \
-    --set dashboard.enabled=false \
     --wait
 
 echo "Installing Radius on Kubernetes..."
-rad install kubernetes --set rp.publicEndpointOverride=localhost:8081 --skip-contour-install
+rad install kubernetes --set rp.publicEndpointOverride=localhost:8081 --skip-contour-install --set dashboard.enabled=false
 
 echo "✅ Radius installation completed successfully"
