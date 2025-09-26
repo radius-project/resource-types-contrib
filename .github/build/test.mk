@@ -18,9 +18,9 @@
 
 RESOURCE_TYPE_ROOT ?=$(shell pwd)
 
-.PHONY: list-resource-type-folders
-list-resource-type-folders: ## List resource type folders under the specified root
-	@./.github/scripts/list-resource-type-folders.sh "$(RESOURCE_TYPE_ROOT)"
+.PHONY: build
+build: ## Build all resource types and their recipes (optionally set RESOURCE_TYPE_ROOT)
+	@./.github/scripts/build-all.sh "$(RESOURCE_TYPE_ROOT)"
 
 .PHONY: build-resource-type
 build-resource-type: ## Validate a resource type by running the 'rad resource-type create' command (requires TYPE_FOLDER parameter)
@@ -38,3 +38,6 @@ endif
 	@echo -e "$(ARROW) Building Bicep recipe at $(RECIPE_PATH)..."
 	@./.github/scripts/build-bicep-recipe.sh "$(RECIPE_PATH)"
 
+.PHONY: list-resource-types
+list-resource-types: ## List resource type folders under the specified root
+	@./.github/scripts/list-resource-type-folders.sh "$(RESOURCE_TYPE_ROOT)"
