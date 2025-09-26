@@ -3,12 +3,8 @@ name: Validate Resource Types
 on:
   push:
     branches: [ main ]
-    paths:
-      - '**/test/**'
   pull_request:
     branches: [ main ]
-    paths:
-      - '**/test/**'
   workflow_dispatch:
     inputs:
       version:
@@ -20,7 +16,7 @@ on:
 jobs:
   validate-resource-types:
     runs-on: ubuntu-latest
-    name: Validate Resource Type Schemas
+    name: Validate Resource Types and Recipes
     
     steps:
       - name: Checkout code
@@ -36,34 +32,8 @@ jobs:
         with:
           version: '1.2.0'
       - name: Install Radius
-        run: make install-radius VERSION="${{ inputs.version || 'edge' }}"
-        
-      - name: Verify manifests are registered
-        run: make verify-manifests
-        
-      - name: Create workspace and environment
-        run: make create-workspace
-
-      - name: Create resource types from resource folders
-        run: make create-resource-types
-
-      - name: Verify expected resource types are present
-        run: make verify-resource-types
-
-      - name: Publish Bicep extensions
-        run: make publish-bicep-extensions
-
-      - name: Update bicepconfig.json with published extensions
-        run: make update-bicepconfig
-
-      - name: Publish all Bicep recipes to registry
-        run: make publish-bicep-recipes
-
-      - name: Register and test Bicep recipes
-        run: make test-bicep-recipes
-
-      - name: Publish Terraform recipes to module server
-        run: make publish-test-terraform-recipes
-
-      - name: Register and test Terraform recipes
-        run: make test-terraform-recipes
+        run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
+      - name: Create Radius Cluster
+        run: make create-radius-cluster
+      - name: Build
+        run: make build
