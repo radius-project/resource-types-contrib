@@ -32,6 +32,8 @@ resolve_root_dir() {
     ROOT_DIR="$(cd "$ROOT_DIR" && pwd)"
 }
 
+# Determines if a given yaml file is a resource type definition by checking
+# if its first two non-empty, non-comment lines are "namespace:" and "types:"
 is_resource_type_yaml() {
     local file="$1"
     local line1=""

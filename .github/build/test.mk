@@ -19,11 +19,11 @@
 RESOURCE_TYPE_ROOT ?=$(shell pwd)
 
 .PHONY: build
-build: ## Build all resource types and their recipes (optionally set RESOURCE_TYPE_ROOT)
+build: ## Build all resource types and their recipes by running the 'build-resource-type' and 'build-bicep-recipe' targets (optionally set RESOURCE_TYPE_ROOT)
 	@./.github/scripts/build-all.sh "$(RESOURCE_TYPE_ROOT)"
 
 .PHONY: build-resource-type
-build-resource-type: ## Validate a resource type by running the 'rad resource-type create' command (requires TYPE_FOLDER parameter)
+build-resource-type: ## Validate a resource type by running the 'rad resource-type create' and 'bicep publish-extension' commands (requires TYPE_FOLDER parameter)
 ifndef TYPE_FOLDER
 	$(error TYPE_FOLDER parameter is required. Usage: make build-resource-type TYPE_FOLDER=<resource-type-folder>)
 endif
