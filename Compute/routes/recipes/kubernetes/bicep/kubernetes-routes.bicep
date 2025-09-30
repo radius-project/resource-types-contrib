@@ -1,4 +1,4 @@
-@description('Radius-provided deployment context (resource properties and metadata).')
+@description('Radius-provided deployment context.')
 param context object
 
 extension kubernetes with {
@@ -10,42 +10,13 @@ extension kubernetes with {
 var rules = context.resource.properties.rules
 var hostnames = context.resource.properties.?hostnames ?? []
 var routeKind = context.resource.properties.?kind ?? 'HTTP'
-var resourceId = context.resource.id
-var gatewayName = 'gateway-${uniqueString(resourceId)}'
 
-// Create Gateway for routing
-resource gateway 'gateway.networking.k8s.io/Gateway@v1' = {
-  metadata: {
-    name: gatewayName
-    namespace: context.runtime.kubernetes.namespace
-    labels: {
-      'app.kubernetes.io/name': 'radius-gateway'
-      'app.kubernetes.io/component': 'gateway'
-      'app.kubernetes.io/part-of': 'radius'
-    }
-  }
-  spec: {
-    gatewayClassName: 'contour'
-    listeners: [
-      {
-        name: 'http'
-        port: 80
-        protocol: 'HTTP'
-        allowedRoutes: {
-          namespaces: {
-            from: 'Same'
-          }
-        }
-      }
-    ]
-  }
-}
+// Assume Gateway already exists - use a default gateway name
+// Platform engineers should configure this via recipe parameters or environment
+var gatewayName = 'default-gateway'
 
 // Create HTTPRoute for HTTP routing using Gateway API
 resource httpRoute 'gateway.networking.k8s.io/HTTPRoute@v1' = if (routeKind == 'HTTP') {
-  dependsOn: [
-    gateway
-  ]
   metadata: {
     name: 'routes-${uniqueString(context.resource.id)}'
     namespace: context.runtime.kubernetes.namespace
@@ -179,16 +150,7 @@ resource udpRoute 'gateway.networking.k8s.io/UDPRoute@v1alpha2' = if (routeKind 
 }
 
 output result object = {
-  values: {
-    hostname: length(hostnames) > 0 ? hostnames[0] : 'localhost'
-    routeCount: length(rules)
-    routeKind: routeKind
-    gatewayName: gatewayName
-  }
-  secrets: {}
-  resources: concat([
-    '/planes/kubernetes/local/namespaces/${context.runtime.kubernetes.namespace}/providers/gateway.networking.k8s.io/Gateway/${gatewayName}'
-  ], routeKind == 'HTTP' ? [
+  resources: routeKind == 'HTTP' ? [
     '/planes/kubernetes/local/namespaces/${context.runtime.kubernetes.namespace}/providers/gateway.networking.k8s.io/HTTPRoute/routes-${uniqueString(context.resource.id)}'
   ] : routeKind == 'TLS' ? [
     '/planes/kubernetes/local/namespaces/${context.runtime.kubernetes.namespace}/providers/gateway.networking.k8s.io/TLSRoute/routes-${uniqueString(context.resource.id)}'
@@ -196,5 +158,5 @@ output result object = {
     '/planes/kubernetes/local/namespaces/${context.runtime.kubernetes.namespace}/providers/gateway.networking.k8s.io/TCPRoute/routes-${uniqueString(context.resource.id)}'
   ] : routeKind == 'UDP' ? [
     '/planes/kubernetes/local/namespaces/${context.runtime.kubernetes.namespace}/providers/gateway.networking.k8s.io/UDPRoute/routes-${uniqueString(context.resource.id)}'
-  ] : [])
+  ] : []
 }

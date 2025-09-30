@@ -1,8 +1,9 @@
 terraform {
+  required_version = ">= 1.5"
   required_providers {
     kubernetes = {
       source  = "hashicorp/kubernetes"
-      version = "~> 2.0"
+      version = ">= 2.37.1"
     }
   }
 }
@@ -13,80 +14,18 @@ locals {
   hostnames    = try(var.context.resource.properties.hostnames, [])
   route_kind   = try(var.context.resource.properties.kind, "HTTP")
   resource_id  = var.context.resource.id
-  
+
   # Generate unique suffix for resource naming
   resource_id_hash = substr(sha256(local.resource_id), 0, 10)
-  gateway_name     = "gateway-${local.resource_id_hash}"
-}
 
-variable "context" {
-  description = "Radius-provided deployment context (resource properties and metadata)."
-  type = object({
-    resource = object({
-      id   = string
-      name = string
-      type = string
-      properties = object({
-        environment = string
-        rules = list(object({
-          matches = list(object({
-            httpPath = optional(string)
-          }))
-          destinationContainer = object({
-            resourceId        = string
-            containerName     = string
-            containerPortName = string
-          })
-        }))
-        hostnames = optional(list(string))
-        kind      = optional(string)
-      })
-    })
-    runtime = object({
-      kubernetes = object({
-        namespace = string
-      })
-    })
-  })
-}
-
-# Create Gateway for routing
-resource "kubernetes_manifest" "gateway" {
-  manifest = {
-    apiVersion = "gateway.networking.k8s.io/v1"
-    kind       = "Gateway"
-    metadata = {
-      name      = local.gateway_name
-      namespace = var.context.runtime.kubernetes.namespace
-      labels = {
-        "app.kubernetes.io/name"      = "radius-gateway"
-        "app.kubernetes.io/component" = "gateway"
-        "app.kubernetes.io/part-of"   = "radius"
-      }
-    }
-    spec = {
-      gatewayClassName = "contour"
-      listeners = [
-        {
-          name     = "http"
-          port     = 80
-          protocol = "HTTP"
-          allowedRoutes = {
-            namespaces = {
-              from = "Same"
-            }
-          }
-        }
-      ]
-    }
-  }
+  # Assume Gateway already exists - use a default gateway name
+  # Platform engineers should configure this via recipe parameters or environment
+  gateway_name = "default-gateway"
 }
 
 # Create HTTPRoute for HTTP routing using Gateway API
 resource "kubernetes_manifest" "http_route" {
   count = local.route_kind == "HTTP" ? 1 : 0
-  
-  depends_on = [kubernetes_manifest.gateway]
   
   manifest = {
     apiVersion = "gateway.networking.k8s.io/v1"
@@ -130,11 +69,9 @@ resource "kubernetes_manifest" "http_route" {
   }
 }
 
-# Create TLSRoute for TLS routing using Gateway API  
+# Create TLSRoute for TLS routing using Gateway API
 resource "kubernetes_manifest" "tls_route" {
   count = local.route_kind == "TLS" ? 1 : 0
-  
-  depends_on = [kubernetes_manifest.gateway]
   
   manifest = {
     apiVersion = "gateway.networking.k8s.io/v1alpha2"
@@ -174,8 +111,6 @@ resource "kubernetes_manifest" "tls_route" {
 resource "kubernetes_manifest" "tcp_route" {
   count = local.route_kind == "TCP" ? 1 : 0
   
-  depends_on = [kubernetes_manifest.gateway]
-  
   manifest = {
     apiVersion = "gateway.networking.k8s.io/v1alpha2"
     kind       = "TCPRoute"
@@ -213,8 +148,6 @@ resource "kubernetes_manifest" "tcp_route" {
 resource "kubernetes_manifest" "udp_route" {
   count = local.route_kind == "UDP" ? 1 : 0
   
-  depends_on = [kubernetes_manifest.gateway]
-  
   manifest = {
     apiVersion = "gateway.networking.k8s.io/v1alpha2"
     kind       = "UDPRoute"
@@ -245,29 +178,5 @@ resource "kubernetes_manifest" "udp_route" {
         }
       ]
     }
-  }
-}
-
-# Output the result in the format expected by Radius
-output "result" {
-  value = {
-    values = {
-      hostname    = length(local.hostnames) > 0 ? local.hostnames[0] : "localhost"
-      routeCount  = length(local.rules)
-      routeKind   = local.route_kind
-      gatewayName = local.gateway_name
-    }
-    secrets = {}
-    resources = concat([
-      "/planes/kubernetes/local/namespaces/${var.context.runtime.kubernetes.namespace}/providers/gateway.networking.k8s.io/Gateway/${local.gateway_name}"
-    ], local.route_kind == "HTTP" ? [
-      "/planes/kubernetes/local/namespaces/${var.context.runtime.kubernetes.namespace}/providers/gateway.networking.k8s.io/HTTPRoute/routes-${local.resource_id_hash}"
-    ] : local.route_kind == "TLS" ? [
-      "/planes/kubernetes/local/namespaces/${var.context.runtime.kubernetes.namespace}/providers/gateway.networking.k8s.io/TLSRoute/routes-${local.resource_id_hash}"
-    ] : local.route_kind == "TCP" ? [
-      "/planes/kubernetes/local/namespaces/${var.context.runtime.kubernetes.namespace}/providers/gateway.networking.k8s.io/TCPRoute/routes-${local.resource_id_hash}"
-    ] : local.route_kind == "UDP" ? [
-      "/planes/kubernetes/local/namespaces/${var.context.runtime.kubernetes.namespace}/providers/gateway.networking.k8s.io/UDPRoute/routes-${local.resource_id_hash}"
-    ] : [])
   }
 }

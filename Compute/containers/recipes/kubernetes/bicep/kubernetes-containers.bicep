@@ -17,20 +17,26 @@ resource deployments 'apps/Deployment@v1' = [for containerName in containerNames
     name: '${toLower(resourceName)}-${containerName}'
     namespace: context.runtime.kubernetes.namespace
     labels: {
-      'app.kubernetes.io/name': '${toLower(resourceName)}-${containerName}'
+      'app.kubernetes.io/name': 'radius-containers'
+      'app.kubernetes.io/component': 'deployment'
+      'app.kubernetes.io/part-of': 'radius'
+      'app.kubernetes.io/instance': '${toLower(resourceName)}-${containerName}'
     }
   }
   spec: {
     replicas: 1
     selector: {
       matchLabels: {
-        'app.kubernetes.io/name': '${toLower(resourceName)}-${containerName}'
+        'app.kubernetes.io/instance': '${toLower(resourceName)}-${containerName}'
       }
     }
     template: {
       metadata: {
         labels: {
-          'app.kubernetes.io/name': '${toLower(resourceName)}-${containerName}'
+          'app.kubernetes.io/name': 'radius-containers'
+          'app.kubernetes.io/component': 'deployment'
+          'app.kubernetes.io/part-of': 'radius'
+          'app.kubernetes.io/instance': '${toLower(resourceName)}-${containerName}'
         }
       }
       spec: {
@@ -62,10 +68,16 @@ resource containerServices 'core/Service@v1' = [for containerName in containerNa
   metadata: {
     name: '${toLower(resourceName)}-${containerName}'
     namespace: context.runtime.kubernetes.namespace
+    labels: {
+      'app.kubernetes.io/name': 'radius-containers'
+      'app.kubernetes.io/component': 'service'
+      'app.kubernetes.io/part-of': 'radius'
+      'app.kubernetes.io/instance': '${toLower(resourceName)}-${containerName}'
+    }
   }
   spec: {
     selector: {
-      'app.kubernetes.io/name': '${toLower(resourceName)}-${containerName}'
+      'app.kubernetes.io/instance': '${toLower(resourceName)}-${containerName}'
     }
     ports: [
       {
@@ -79,6 +91,7 @@ resource containerServices 'core/Service@v1' = [for containerName in containerNa
   }
 }]
 
+// Generate resource paths for output
 var deploymentResourcePaths = [for containerName in containerNames: '/planes/kubernetes/local/namespaces/${context.runtime.kubernetes.namespace}/providers/apps/Deployment/${toLower(resourceName)}-${containerName}']
 var serviceResourcePaths = [for containerName in containerNames: '/planes/kubernetes/local/namespaces/${context.runtime.kubernetes.namespace}/providers/core/Service/${toLower(resourceName)}-${containerName}']
 
