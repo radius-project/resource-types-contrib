@@ -26,36 +26,21 @@ resource httpRoute 'gateway.networking.k8s.io/HTTPRoute@v1' = if (routeKind == '
       'app.kubernetes.io/part-of': 'radius'
     }
   }
-  spec: {
-    parentRefs: [
-      {
-        name: gatewayName
-        namespace: context.runtime.kubernetes.namespace
-      }
-    ]
-    hostnames: length(hostnames) > 0 ? hostnames : ['localhost']
-    rules: [
-      for rule in rules: {
-        matches: [
-          {
-            path: {
-              type: 'PathPrefix'
-              value: rule.matches[0].?httpPath ?? '/'
-            }
-          }
-        ]
-        backendRefs: [
-          {
-            name: '${toLower(last(split(rule.destinationContainer.resourceId, '/')))}-${rule.destinationContainer.containerName}'
-            port: 80
-          }
-        ]
-      }
-    ]
-  }
+  spec: union(
+    {
+      parentRefs: [
+        {
+          name: gatewayName
+          namespace: context.runtime.kubernetes.namespace
+        }
+      ]
+      rules: httpRules
+    },
+    length(hostnames) > 0 ? { hostnames: hostnames } : {}
+  )
 }
 
-// Create TLSRoute for TLS routing using Gateway API  
+// Create TLSRoute for TLS routing using Gateway API
 resource tlsRoute 'gateway.networking.k8s.io/TLSRoute@v1alpha2' = if (routeKind == 'TLS') {
   metadata: {
     name: 'routes-${uniqueString(context.resource.id)}'
@@ -66,25 +51,18 @@ resource tlsRoute 'gateway.networking.k8s.io/TLSRoute@v1alpha2' = if (routeKind 
       'app.kubernetes.io/part-of': 'radius'
     }
   }
-  spec: {
-    parentRefs: [
-      {
-        name: gatewayName
-        namespace: context.runtime.kubernetes.namespace
-      }
-    ]
-    hostnames: length(hostnames) > 0 ? hostnames : ['localhost']
-    rules: [
-      for rule in rules: {
-        backendRefs: [
-          {
-            name: '${toLower(last(split(rule.destinationContainer.resourceId, '/')))}-${rule.destinationContainer.containerName}'
-            port: 443
-          }
-        ]
-      }
-    ]
-  }
+  spec: union(
+    {
+      parentRefs: [
+        {
+          name: gatewayName
+          namespace: context.runtime.kubernetes.namespace
+        }
+      ]
+      rules: tlsRules
+    },
+    length(hostnames) > 0 ? { hostnames: hostnames } : {}
+  )
 }
 
 // Create TCPRoute for TCP routing using Gateway API
@@ -148,6 +126,38 @@ resource udpRoute 'gateway.networking.k8s.io/UDPRoute@v1alpha2' = if (routeKind 
     ]
   }
 }
+
+// Build HTTP rules
+var httpRules = [
+  for rule in rules: {
+    matches: [
+      {
+        path: {
+          type: 'PathPrefix'
+          value: rule.matches[0].?httpPath ?? '/'
+        }
+      }
+    ]
+    backendRefs: [
+      {
+        name: '${toLower(last(split(rule.destinationContainer.resourceId, '/')))}-${rule.destinationContainer.containerName}'
+        port: 80
+      }
+    ]
+  }
+]
+
+// Build TLS rules
+var tlsRules = [
+  for rule in rules: {
+    backendRefs: [
+      {
+        name: '${toLower(last(split(rule.destinationContainer.resourceId, '/')))}-${rule.destinationContainer.containerName}'
+        port: 443
+      }
+    ]
+  }
+]
 
 output result object = {
   resources: routeKind == 'HTTP' ? [
