@@ -4,47 +4,58 @@
 
 # Define common configuration
 setup_config() {
-  resource_folders=("Security")
+  # Define specific resource types to test instead of entire folders
+  # Format: "folder/resource_type"
+  resource_types_to_test=("Security/secrets" "Compute/routes" "Compute/containers")
+  
+  # Map folders to their namespaces
   declare -g -A folder_to_namespace=(
     ["Security"]="Radius.Security"
+    ["Compute"]="Radius.Compute"
   )
 }
 
-# Find YAML files in resource folders
+# Find YAML files for specific resource types
 find_yaml_files() {
   local yaml_files=()
-  for folder in "${resource_folders[@]}"; do
-    if [[ -d "./$folder" ]]; then
-      echo "Searching in folder: $folder" >&2
+  for resource_type in "${resource_types_to_test[@]}"; do
+    IFS='/' read -r folder resource <<< "$resource_type"
+    resource_path="./$folder/$resource"
+    
+    if [[ -d "$resource_path" ]]; then
+      echo "Searching for YAML files in resource type: $resource_type" >&2
       while IFS= read -r -d '' file; do
         yaml_files+=("$file")
-      done < <(find "./$folder" -name "*.yaml" -type f -print0)
+      done < <(find "$resource_path" -name "*.yaml" -type f -print0)
     else
-      echo "Folder $folder does not exist, skipping..." >&2
+      echo "Resource type path $resource_path does not exist, skipping..." >&2
     fi
   done
   
   if [[ ${#yaml_files[@]} -eq 0 ]]; then
-    echo "No YAML files found in any resource type folders" >&2
+    echo "No YAML files found for specified resource types" >&2
     exit 0
   fi
   
   printf '%s\n' "${yaml_files[@]}"
 }
 
-# Find recipe files with specific pattern (only in configured resource folders)
+# Find recipe files with specific pattern (only in configured resource types)
 find_recipe_files() {
   local pattern="$1"
   local recipe_files=()
   
-  for folder in "${resource_folders[@]}"; do
-    if [[ -d "./$folder" ]]; then
-      echo "Searching for recipes in folder: $folder" >&2
+  for resource_type in "${resource_types_to_test[@]}"; do
+    IFS='/' read -r folder resource <<< "$resource_type"
+    resource_path="./$folder/$resource"
+    
+    if [[ -d "$resource_path" ]]; then
+      echo "Searching for recipes in resource type: $resource_type" >&2
       while IFS= read -r -d '' f; do
         recipe_files+=("$f")
-      done < <(find "./$folder" -path "$pattern" -type f -print0)
+      done < <(find "$resource_path" -path "$pattern" -type f -print0)
     else
-      echo "Folder $folder does not exist, skipping recipe search..." >&2
+      echo "Resource type path $resource_path does not exist, skipping recipe search..." >&2
     fi
   done
   
