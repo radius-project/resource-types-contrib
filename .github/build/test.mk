@@ -41,3 +41,7 @@ endif
 .PHONY: list-resource-types
 list-resource-types: ## List resource type folders under the specified root
 	@./.github/scripts/list-resource-type-folders.sh "$(RESOURCE_TYPE_ROOT)"
+
+.PHONY: publish-test-terraform-recipes
+publish-test-terraform-recipes: ## Publish Terraform recipes to Kubernetes module server for testing
+	@./.github/scripts/publish-test-terraform-recipes.sh
