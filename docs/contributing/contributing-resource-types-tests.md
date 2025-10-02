@@ -38,8 +38,10 @@ Repository Root
 ```bash
 make install-radius-cli          # Install Radius CLI
 make create-radius-cluster       # Create k3d cluster with Radius
-make delete-radius-cluster       # Delete test cluster
+make clean                       # Delete cluster, config, and generated files
 ```
+
+**Note**: The `make clean` command deletes the k3d cluster, Radius configuration, all Bicep extension files (*.tgz), and bicepconfig.json files.
 
 ### Building
 

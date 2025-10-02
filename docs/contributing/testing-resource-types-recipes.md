@@ -150,11 +150,17 @@ resource mysql 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
 
 ## Cleanup
 
-Delete your test cluster when done:
+Clean up your test environment when done:
 
 ```bash
-make delete-radius-cluster
+make clean
 ```
+
+This command will:
+- Delete the k3d cluster
+- Remove Radius configuration (~/.rad/config.yaml)
+- Delete all Bicep extension files (*.tgz)
+- Remove all bicepconfig.json files
 
 ## Manual Testing (Advanced)
 
@@ -243,7 +249,7 @@ make test-recipe RECIPE_PATH=Security/secrets/recipes/kubernetes/bicep
 # Environment setup
 make install-radius-cli          # Install Radius CLI
 make create-radius-cluster       # Create k3d cluster with Radius
-make delete-radius-cluster       # Delete test cluster
+make clean                       # Delete cluster, config, and generated files
 
 # Build commands
 make build                                              # Build all resources
