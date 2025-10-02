@@ -42,6 +42,17 @@ endif
 list-resource-types: ## List resource type folders under the specified root
 	@./.github/scripts/list-resource-type-folders.sh "$(RESOURCE_TYPE_ROOT)"
 
-.PHONY: publish-test-terraform-recipes
-publish-test-terraform-recipes: ## Publish Terraform recipes to Kubernetes module server for testing
-	@./.github/scripts/publish-test-terraform-recipes.sh
+.PHONY: publish-terraform-recipes
+publish-terraform-recipes: ## Publish Terraform recipes to the local Kubernetes cluster as config maps
+	@./.github/scripts/publish-terraform-recipes.sh
+
+.PHONY: test-recipe
+test-recipe: ## Test a single recipe by registering and deploying it (requires RECIPE_PATH parameter)
+ifndef RECIPE_PATH
+	$(error RECIPE_PATH parameter is required. Usage: make test-recipe RECIPE_PATH=<path-to-recipe-directory>)
+endif
+	@./.github/scripts/test-recipe.sh "$(RECIPE_PATH)"
+
+.PHONY: test-all-recipes
+test-all-recipes: ## Find and test all recipes in the repository
+	@./.github/scripts/test-all-recipes.sh "$(RESOURCE_TYPE_ROOT)"
