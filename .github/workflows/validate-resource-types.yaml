@@ -37,5 +37,3 @@ jobs:
         run: make create-radius-cluster
       - name: Build
         run: make build
-      - name: Publish Terraform Recipes
-        run: make publish-test-terraform-recipes
