@@ -39,9 +39,13 @@ create-radius-cluster: ## Create a local k3d Kubernetes cluster with a default R
 	@echo -e "$(ARROW) Creating workspace and environment..."
 	@.github/scripts/create-workspace.sh
 
-.PHONY: delete-radius-cluster
-delete-radius-cluster: ## Delete the local default k3d cluster.
-	@echo -e "$(ARROW) Deleting k3d cluster..."
-	@k3d cluster delete
+.PHONY: clean
+clean: ## Delete the local k3d cluster, Radius config, Bicep extensions (*.tgz), and bicepconfig.json files
 	@echo -e "$(ARROW) Deleting Radius config file at ~/.rad/config.yaml..."
 	@rm -f ~/.rad/config.yaml
+	@echo -e "$(ARROW) Deleting Bicep extension files (*.tgz)..."
+	@find . -name "*.tgz" -type f -delete
+	@echo -e "$(ARROW) Deleting bicepconfig.json files..."
+	@find . -name "bicepconfig.json" -type f -delete
+	@echo -e "$(ARROW) Deleting k3d cluster..."
+	@k3d cluster delete
