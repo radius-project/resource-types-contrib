@@ -19,7 +19,7 @@
 RESOURCE_TYPE_ROOT ?=$(shell pwd)
 
 .PHONY: build
-build: ## Build all resource types and their recipes by running 'build-resource-type', 'build-bicep-recipe', and 'build-terraform-recipe' targets (optionally set RESOURCE_TYPE_ROOT)
+build: ## Build all resource types and recipes
 	@./.github/scripts/build-all.sh "$(RESOURCE_TYPE_ROOT)"
 
 .PHONY: build-resource-type
@@ -45,18 +45,6 @@ ifndef RECIPE_PATH
 endif
 	@./.github/scripts/build-terraform-recipe.sh "$(RECIPE_PATH)"
 
-.PHONY: list-resource-types
-list-resource-types: ## List resource type folders under the specified root
-	@./.github/scripts/list-resource-type-folders.sh "$(RESOURCE_TYPE_ROOT)"
-
-.PHONY: list-recipes
-list-recipes: ## List all recipe folders (Bicep and Terraform) under the specified root
-	@./.github/scripts/list-recipe-folders.sh "$(RESOURCE_TYPE_ROOT)"
-
-.PHONY: publish-terraform-recipes
-publish-terraform-recipes: ## Publish Terraform recipes to the local Kubernetes cluster as config maps
-	@./.github/scripts/publish-terraform-recipes.sh
-
 .PHONY: test-recipe
 test-recipe: ## Test a single recipe by registering and deploying it (requires RECIPE_PATH parameter)
 ifndef RECIPE_PATH
@@ -64,6 +52,14 @@ ifndef RECIPE_PATH
 endif
 	@./.github/scripts/test-recipe.sh "$(RECIPE_PATH)"
 
-.PHONY: test-all-recipes
-test-all-recipes: ## Find and test all recipes in the repository
+.PHONY: test
+test: ## Run all recipe tests
 	@./.github/scripts/test-all-recipes.sh "$(RESOURCE_TYPE_ROOT)"
+
+.PHONY: list-resource-types
+list-resource-types: ## List resource type folders under the specified root
+	@./.github/scripts/list-resource-type-folders.sh "$(RESOURCE_TYPE_ROOT)"
+
+.PHONY: list-recipes
+list-recipes: ## List all recipe folders (Bicep and Terraform) under the specified root
+	@./.github/scripts/list-recipe-folders.sh "$(RESOURCE_TYPE_ROOT)"
