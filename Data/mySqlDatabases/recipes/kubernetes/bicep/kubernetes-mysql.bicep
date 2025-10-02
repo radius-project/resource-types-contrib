@@ -20,6 +20,9 @@ param username string = context.resource.properties.?username ?? '${context.appl
 ])
 param version string = context.resource.properties.?version ?? '8.4'
 
+@description('The user-defined tags that will be applied to the resource. Default is null.')
+param tags object = {}
+
 @description('Unique name for the MySQL deployment and service.')
 var uniqueName = 'mysql-${uniqueString(context.resource.id)}'
 
@@ -38,6 +41,7 @@ var root_password string = uniqueString(context.resource.id, guid(uniqueName, 'r
 resource mySql 'apps/Deployment@v1' = {
   metadata: {
     name: uniqueName
+    labels: tags
   }
   spec: {
     selector: {
