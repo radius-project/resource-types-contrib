@@ -35,7 +35,7 @@ install-radius-cli: ## Install the Radius CLI. Optionally specify a version numb
 create-radius-cluster: ## Create a local k3d Kubernetes cluster with a default Radius workspace/group/environment.
 	@echo -e "$(ARROW) Creating local k3d cluster and installing Radius..."
 	@.github/scripts/create-cluster.sh
-	@.github/scripts/verify-manifests.sh
+	@.github/scripts/verify-ucp-readiness.sh
 	@echo -e "$(ARROW) Creating workspace and environment..."
 	@.github/scripts/create-workspace.sh
 

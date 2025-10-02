@@ -1,10 +1,9 @@
 #!/bin/bash
 set -e
 
-# Script: Verify that manifests are registered in the UCP pod
 # This script monitors the UCP pod logs to ensure manifests are successfully registered
 
-echo "Verifying manifests are registered..."
+echo "Waiting for Radius UCP pod to start..."
 
 # Find the pod with container "ucp"
 POD_NAME=$(
@@ -15,7 +14,7 @@ POD_NAME=$(
   | cut -d" " -f1
 )
 
-echo "Found ucp pod: $POD_NAME"
+echo "Found UCP pod: $POD_NAME"
 
 if [ -z "$POD_NAME" ]; then
   echo "No pod with container 'ucp' found in namespace radius-system."
@@ -35,18 +34,18 @@ for i in {1..120}; do
 
   # Check for success
   if echo "$logs" | grep -q "Successfully registered manifests"; then
-    echo "Successfully registered manifests - message found."
+    echo "Pod is ready."
     break
   fi
 
-  echo "Logs not ready, waiting 5 seconds..."
+  echo "Pod not ready, waiting 5 seconds..."
   sleep 5
 done
 
 # Final check to ensure success message was found
 if ! echo "$logs" | grep -q "Successfully registered manifests"; then
-  echo "Manifests not registered after 10 minutes."
+  echo "Pod not ready after 10 minutes."
   exit 1
 fi
 
-echo "✅ All manifests successfully registered"
+echo "✅ Radius UCP pod is ready."

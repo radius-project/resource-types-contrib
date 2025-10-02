@@ -27,11 +27,9 @@ create_resource_type() {
 
     if rad resource-type create -f "$yaml_file"; then
         echo "CREATED RESOURCE TYPE: $yaml_file"
-        echo ""
         return 0
     else
         echo "FAILED CREATING RESOURCE TYPE: $yaml_file"
-        echo ""
         return 1
     fi
 }
@@ -44,9 +42,7 @@ publish_extension() {
     extension_name="${base_name%.*}"
     target_path="${REPO_ROOT}/${extension_name}-extension.tgz"
 
-    if rad bicep publish-extension -f "$yaml_file" --target "$target_path"; then
-        echo ""
-    else
+    if ! rad bicep publish-extension -f "$yaml_file" --target "$target_path"; then
         echo "FAILED PUBLISHING EXTENSION: $yaml_file"
         return 1
     fi
@@ -76,7 +72,7 @@ main() {
     mapfile -d '' -t yaml_files < <(find "$target_folder" -maxdepth 1 -mindepth 1 -type f \
         \( -name '*.yaml' -o -name '*.yml' \) -print0)
 
-    echo "🛠️  Building resource types in $target_folder"
+    echo "🛠️ Creating the resource type and Bicep extension in $target_folder"
 
     for yaml_file in "${yaml_files[@]}"; do
         create_resource_type "$yaml_file"
