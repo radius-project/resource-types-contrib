@@ -107,6 +107,13 @@ types:
             tags:
               type: object
               description: "(Optional) The user-defined tags that will be applied to the resource. Default is null."
+              additionalProperties:
+                type: string
+                description: "(Optional) Tag name."
+                properties:
+                  value:
+                    type: string
+                    description: "(Optional) Tag value."
             password:
               type: string
               description: "(Read-only) The password for connecting to the database."
