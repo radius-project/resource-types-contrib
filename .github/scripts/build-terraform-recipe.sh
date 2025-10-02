@@ -134,6 +134,37 @@ else
         --from-file="${RECIPE_NAME}.zip=$ZIP_FILE"
 fi
 
+# Ensure web server deployment exists
+echo "==> Ensuring web server is deployed..."
+DEPLOYMENT_EXISTS=false
+if kubectl get deployment tf-module-server \
+    -n "$TERRAFORM_MODULE_SERVER_NAMESPACE" >/dev/null 2>&1; then
+    DEPLOYMENT_EXISTS=true
+fi
+
+if [[ "$DEPLOYMENT_EXISTS" == "false" ]]; then
+    echo "    Deploying web server..."
+    RESOURCES_FILE=".github/build/tf-module-server/resources.yaml"
+    
+    if [[ ! -f "$RESOURCES_FILE" ]]; then
+        echo "Error: Resources file not found: $RESOURCES_FILE" >&2
+        exit 1
+    fi
+    
+    kubectl apply -f "$RESOURCES_FILE" -n "$TERRAFORM_MODULE_SERVER_NAMESPACE" >/dev/null 2>&1
+    
+    echo "    Waiting for deployment to be ready..."
+    if ! kubectl rollout status deployment.apps/tf-module-server \
+        -n "$TERRAFORM_MODULE_SERVER_NAMESPACE" --timeout=60s >/dev/null 2>&1; then
+        echo "Warning: Deployment may not have completed successfully" >&2
+    fi
+else
+    echo "    Web server already deployed"
+    # Restart deployment to pick up ConfigMap changes
+    kubectl rollout restart deployment/tf-module-server \
+        -n "$TERRAFORM_MODULE_SERVER_NAMESPACE" >/dev/null 2>&1
+fi
+
 echo "==> Successfully published recipe: $RECIPE_NAME"
 echo ""
 echo "Recipe URL (cluster-internal):"
