@@ -43,3 +43,5 @@ create-radius-cluster: ## Create a local k3d Kubernetes cluster with a default R
 delete-radius-cluster: ## Delete the local default k3d cluster.
 	@echo -e "$(ARROW) Deleting k3d cluster..."
 	@k3d cluster delete
+	@echo -e "$(ARROW) Deleting Radius config file at ~/.rad/config.yaml..."
+	@rm -f ~/.rad/config.yaml
