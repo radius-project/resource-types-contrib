@@ -21,7 +21,7 @@ param username string = context.resource.properties.?username ?? '${context.appl
 param version string = context.resource.properties.?version ?? '8.4'
 
 @description('The user-defined tags that will be applied to the resource. Default is null.')
-param tags object = {}
+param tags object = context.resource.properties.?tags ?? {}
 
 @description('Unique name for the MySQL deployment and service.')
 var uniqueName = 'mysql-${uniqueString(context.resource.id)}'
