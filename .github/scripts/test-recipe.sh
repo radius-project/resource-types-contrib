@@ -23,6 +23,10 @@ if [[ ! -d "$RECIPE_PATH" ]]; then
     exit 1
 fi
 
+# Normalize path: convert absolute to relative for consistency
+RECIPE_PATH="$(realpath --relative-to="$(pwd)" "$RECIPE_PATH" 2>/dev/null || echo "$RECIPE_PATH")"
+RECIPE_PATH="${RECIPE_PATH#./}"
+
 # Detect recipe type based on file presence
 if [[ -f "$RECIPE_PATH/main.tf" ]]; then
     RECIPE_TYPE="terraform"

@@ -19,7 +19,7 @@
 RESOURCE_TYPE_ROOT ?=$(shell pwd)
 
 .PHONY: build
-build: ## Build all resource types and their recipes by running the 'build-resource-type' and 'build-bicep-recipe' targets (optionally set RESOURCE_TYPE_ROOT)
+build: ## Build all resource types and their recipes by running 'build-resource-type', 'build-bicep-recipe', and 'build-terraform-recipe' targets (optionally set RESOURCE_TYPE_ROOT)
 	@./.github/scripts/build-all.sh "$(RESOURCE_TYPE_ROOT)"
 
 .PHONY: build-resource-type
@@ -38,9 +38,20 @@ endif
 	@echo -e "$(ARROW) Building Bicep recipe at $(RECIPE_PATH)..."
 	@./.github/scripts/build-bicep-recipe.sh "$(RECIPE_PATH)"
 
+.PHONY: build-terraform-recipe
+build-terraform-recipe: ## Build a Terraform recipe at the specified path (requires RECIPE_PATH parameter)
+ifndef RECIPE_PATH
+	$(error RECIPE_PATH parameter is required. Usage: make build-terraform-recipe RECIPE_PATH=<path-to-terraform-recipe-directory>)
+endif
+	@./.github/scripts/build-terraform-recipe.sh "$(RECIPE_PATH)"
+
 .PHONY: list-resource-types
 list-resource-types: ## List resource type folders under the specified root
 	@./.github/scripts/list-resource-type-folders.sh "$(RESOURCE_TYPE_ROOT)"
+
+.PHONY: list-recipes
+list-recipes: ## List all recipe folders (Bicep and Terraform) under the specified root
+	@./.github/scripts/list-recipe-folders.sh "$(RESOURCE_TYPE_ROOT)"
 
 .PHONY: publish-terraform-recipes
 publish-terraform-recipes: ## Publish Terraform recipes to the local Kubernetes cluster as config maps
