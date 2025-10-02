@@ -165,7 +165,18 @@ else
         -n "$TERRAFORM_MODULE_SERVER_NAMESPACE" >/dev/null 2>&1
 fi
 
-echo "==> Successfully published recipe: $RECIPE_NAME"
 echo ""
-echo "Recipe URL (cluster-internal):"
+echo "============================================================================"
+echo "Recipe Published Successfully"
+echo "============================================================================"
+echo "Recipe: $RECIPE_NAME"
+echo ""
+echo "Cluster-internal URL (for Radius):"
 echo "  http://tf-module-server.$TERRAFORM_MODULE_SERVER_NAMESPACE.svc.cluster.local/${RECIPE_NAME}.zip"
+echo ""
+echo "To test locally, run:"
+echo "  kubectl port-forward svc/tf-module-server 8999:80 -n $TERRAFORM_MODULE_SERVER_NAMESPACE"
+echo ""
+echo "Then access recipe at:"
+echo "  http://localhost:8999/${RECIPE_NAME}.zip"
+echo ""
