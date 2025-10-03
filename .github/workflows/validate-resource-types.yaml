@@ -8,9 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Radius version number to use (e.g. 0.1.0, 0.1.0-rc1, edge). Defaults to edge.'
+        description: 'Radius version number to use (e.g. 0.51.0, edge). Leave empty for default.'
         required: false
-        default: 'edge'
+        default: ''
         type: string
 
 jobs:
@@ -32,7 +32,12 @@ jobs:
         with:
           version: '1.2.0'
       - name: Install Radius CLI
-        run: make install-radius-cli
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            make install-radius-cli RAD_VERSION="${{ inputs.version }}"
+          else
+            make install-radius-cli
+          fi
       - name: Create Radius Cluster
         run: make create-radius-cluster
       - name: Build
