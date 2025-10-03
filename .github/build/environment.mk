@@ -21,15 +21,12 @@
 #   make create-cluster		     # Create a local k3d Kubernetes cluster for testing
 #   make delete-cluster		     # Delete the local k3d Kubernetes cluster
 
+RAD_VERSION ?=
+
 .PHONY: install-radius-cli
 install-radius-cli: ## Install the Radius CLI. Optionally specify a version number, e.g., "make install-radius RAD_VERSION=0.48.0" or "make install-radius RAD_VERSION=edge"
 	@echo -e "$(ARROW) Installing Radius..."
-	@RAD_VERSION="$(RAD_VERSION)"; \
-	if [ -n "$$RAD_VERSION" ]; then \
-		wget -q "https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh" -O - | /bin/bash -s "$$RAD_VERSION"; \
-	else \
-		wget -q "https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh" -O - | /bin/bash; \
-	fi
+	wget -q "https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh" -O - | /bin/bash $(if $(RAD_VERSION),-s $(RAD_VERSION))
 
 .PHONY: create-radius-cluster
 create-radius-cluster: ## Create a local k3d Kubernetes cluster with a default Radius workspace/group/environment.
