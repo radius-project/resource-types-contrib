@@ -2,11 +2,20 @@ provider "kubernetes" {
   config_path = "~/.kube/config"
 }
 
+terraform {
+  required_providers {
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = ">= 2.0"
+    }
+  }
+}
+
 # Secret for credentials
 resource "kubernetes_secret" "mongodb_credentials" {
   metadata {
     name      = "${var.name}-credentials"
-    namespace = "default"
+    namespace = var.context.runtime.kubernetes.namespace
   }
   data = {
     username = base64encode(var.username)
@@ -20,7 +29,7 @@ resource "kubernetes_persistent_volume_claim" "mongodb" {
 
   metadata {
     name      = "${var.name}-pvc"
-    namespace = "default"
+    namespace = var.context.runtime.kubernetes.namespace
   }
 
   spec {
@@ -38,7 +47,7 @@ resource "kubernetes_persistent_volume_claim" "mongodb" {
 resource "kubernetes_service" "mongodb" {
   metadata {
     name      = "${var.name}-svc"
-    namespace = "default"
+    namespace = var.context.runtime.kubernetes.namespace
   }
 
   spec {
@@ -57,7 +66,7 @@ resource "kubernetes_service" "mongodb" {
 resource "kubernetes_stateful_set" "mongodb" {
   metadata {
     name      = var.name
-    namespace = "default"
+    namespace = var.context.runtime.kubernetes.namespace
     labels = {
       app = var.name
     }
@@ -66,7 +75,6 @@ resource "kubernetes_stateful_set" "mongodb" {
   spec {
     service_name = "${var.name}-svc"
     replicas     = var.replicas
-
     selector {
       match_labels = {
         app = var.name
@@ -90,20 +98,20 @@ resource "kubernetes_stateful_set" "mongodb" {
           }
 
           env {
-            name  = "MONGO_INITDB_ROOT_USERNAME"
+            name = "MONGO_INITDB_ROOT_USERNAME"
             value_from {
               secret_key_ref {
-                name = kubernetes_secret.mongodb_credentials.metadata[0].name
+                name = kubernetes_secret.mongodb_credentials.metadata.name
                 key  = "username"
               }
             }
           }
 
           env {
-            name  = "MONGO_INITDB_ROOT_PASSWORD"
+            name = "MONGO_INITDB_ROOT_PASSWORD"
             value_from {
               secret_key_ref {
-                name = kubernetes_secret.mongodb_credentials.metadata[0].name
+                name = kubernetes_secret.mongodb_credentials.metadata.name
                 key  = "password"
               }
             }
@@ -122,21 +130,53 @@ resource "kubernetes_stateful_set" "mongodb" {
             }
           }
         }
+
         dynamic "volume" {
           for_each = var.persistence ? [1] : []
           content {
             name = "data"
 
             persistent_volume_claim {
-              claim_name = kubernetes_persistent_volume_claim.mongodb[0].metadata[0].name
+              claim_name = kubernetes_persistent_volume_claim.mongodb[0].metadata.name
             }
           }
         }
       }
     }
+
+    # Optional: Grace period
+    termination_grace_period_seconds = 30
   }
 
   timeouts {
     create = "40m"
   }
 }
+
+output "result" {
+  value = {
+    values = {
+      host     = "${kubernetes_service.mongodb.metadata[0].name}.${kubernetes_service.mongodb.metadata[0].namespace}.svc.cluster.local"
+      port     = kubernetes_service.mongodb.spec[0].port[0].port
+      username = var.username
+    }
+    secrets = {
+      password = var.password
+    }
+    # UCP resource IDs
+    resources = [
+      "/planes/kubernetes/local/namespaces/${kubernetes_service.mongodb.metadata[0].namespace}/providers/core/Service/${kubernetes_service.mongodb.metadata[0].name}",
+      "/planes/kubernetes/local/namespaces/${kubernetes_stateful_set.mongodb.metadata[0].namespace}/providers/apps/StatefulSet/${kubernetes_stateful_set.mongodb.metadata[0].name}"
+    ]
+  }
+  description = <<EOD
+The result of the MongoDB Recipe in Radius.Data/mongoDatabases format.
+
+- `values` exposes the connection info (host, port, username).
+- `secrets` exposes sensitive data (password).
+- `resources` lists the UCP resource paths for Service and StatefulSet.
+EOD
+  sensitive = true
+}
+
+
