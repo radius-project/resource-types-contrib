@@ -25,14 +25,14 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: 16
-      - name: Download k3d
+      - name: Set up k3d
         run: wget -q -O - https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
       - name: Set up ORAS
         uses: oras-project/setup-oras@v1
         with:
           version: '1.2.0'
-      - name: Install Radius
-        run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
+      - name: Install Radius CLI
+        run: make install-radius-cli
       - name: Create Radius Cluster
         run: make create-radius-cluster
       - name: Build
