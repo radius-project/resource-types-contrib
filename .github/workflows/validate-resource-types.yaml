@@ -8,9 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Radius version number to use (e.g. 0.51.0, edge). Leave empty for default.'
+        description: 'Radius version number to use (e.g. 0.51.0, edge). Leave empty for using the current release.'
         required: false
-        default: ''
+        default: 'edge'
         type: string
 
 jobs:
@@ -42,3 +42,5 @@ jobs:
         run: make create-radius-cluster
       - name: Build
         run: make build
+      - name: Test
+        run: make test
