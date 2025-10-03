@@ -1,5 +1,5 @@
 # ------------------------------------------------------------
-# Copyright 2023 The Radius Authors.
+# Copyright 2025 The Radius Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,19 +20,21 @@
 # locally and in CI/CD pipelines. It supports Kubernetes recipe testing
 # with automated setup, validation, and cleanup.
 #
-# Quick Start:
+# Help:
 #   make help                    # Show all available targets
-#   make install-radius          # Set up local test environment  
-#   make test-bicep-recipes      # Test Kubernetes Bicep recipes
 #
-# Common Workflow:
-#   make install-radius VERSION=edge
-#   make create-workspace
-#   make create-resource-types
-#   make test-bicep-recipes
+# Environment Setup:
+#   make install-radius		     # Install Radius CLI
+#   make create-cluster		     # Create a local k3d Kubernetes cluster for testing
+#   make delete-cluster		     # Delete the local k3d Kubernetes cluster
+#
+# Developement and testing:
+#   make lint					# Lint all resource types and recipes
+#   make build		            # Build all resource types and recipes
+#   make test					# Run automated tests for all recipes
 
 SHELL := /bin/bash
 ARROW := \033[34;1m=>\033[0m
 
 # order matters for these
-include ./.github/build/help.mk ./.github/build/validation.mk
+include ./.github/build/help.mk ./.github/build/environment.mk ./.github/build/test.mk
