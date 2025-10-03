@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Radius version number to use (e.g. 0.51.0, edge).'
+        description: 'Radius version number to use (e.g. 0.51.0, 0.51.0-rc1, edge).'
         required: false
         default: 'edge'
         type: string

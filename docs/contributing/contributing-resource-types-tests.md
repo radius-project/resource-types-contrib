@@ -130,28 +130,7 @@ make build-bicep-recipe RECIPE_PATH=Security/secrets/recipes/kubernetes/bicep
 make test-recipe RECIPE_PATH=Security/secrets/recipes/kubernetes/bicep
 ```
 
-### Step 3: Register Your Resource Type Category
-
-If you're adding a new category (e.g., `Compute`, `AI`), update the script configuration:
-
-**File:** `.github/scripts/build-all.sh`
-
-Find the `setup_config()` function and add your category:
-
-```bash
-setup_config() {
-  resource_folders=("Security" "Data" "Compute")  # Add your category here
-  declare -g -A folder_to_namespace=(
-    ["Security"]="Radius.Security"
-    ["Data"]="Radius.Data"
-    ["Compute"]="Radius.Compute"  # Add mapping here
-  )
-}
-```
-
-**Note:** If your resource type is in an existing category (Security, Data, Compute), this step is not needed.
-
-### Step 4: Verify CI/CD Integration
+### Step 3: Verify CI/CD Integration
 
 When you submit your PR, the CI workflow will:
 
