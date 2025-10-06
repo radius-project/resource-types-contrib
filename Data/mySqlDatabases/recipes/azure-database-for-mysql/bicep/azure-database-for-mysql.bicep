@@ -36,7 +36,8 @@ var uniqueName = 'mysql-${uniqueString(context.resource.id)}'
 var port = 3306
 
 @description('MySQL server root password.')
-var root_password string = uniqueString(context.resource.id, guid(uniqueName, username))
+@secure()
+param root_password string = uniqueString(context.resource.id, newGuid())
 
 resource mysqlServer 'Microsoft.DBforMySQL/flexibleServers@2024-12-01-preview' = {
   name: uniqueName
