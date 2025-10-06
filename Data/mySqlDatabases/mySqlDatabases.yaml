@@ -62,44 +62,10 @@ types:
               description: "(Optional) The Radius Application ID. `myApplication.id` for example."
             database:
               type: string
-              description: "(Optional) The name of the database."
+              description: "(Optional) The name of the database. Assumed to be `myApplication.name` if not specified."
             username:
               type: string
-              description: "(Optional) The username for connecting to the database."
-            version:
-              type: string
-              enum: ['5.7', '8.0', '8.4']
-              description: "(Optional) The major MySQL server version in the X.Y format. Assumed to be 8.4 if not specified."
-            password:
-              type: string
-              description: "(Read-only) The password for connecting to the database."
-              readOnly: true
-            host:
-              type: string
-              description: "(Read-only) The host name used to connect to the database."
-              readOnly: true
-            port:
-              type: integer
-              description: "(Read-only) The port number used to connect to the the database."
-              readOnly: true
-          required:
-          - environment
-      '2025-10-01-preview':
-        schema:
-          type: object
-          properties:
-            environment:
-              type: string
-              description: "(Required) The Radius EnvironmentID. Typically set by the rad CLI. Typically value should be `environment`"
-            application:
-              type: string
-              description: "(Optional) The Radius Application ID. `myApplication.id` for example."
-            database:
-              type: string
-              description: "(Optional) The name of the database."
-            username:
-              type: string
-              description: "(Optional) The username for connecting to the database."
+              description: "(Optional) The username for connecting to the database. Assumed to be `<myApplication.name>_user` if not specified."
             version:
               type: string
               enum: ['5.7', '8.0', '8.4']
