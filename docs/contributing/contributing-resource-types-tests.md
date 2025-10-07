@@ -1,44 +1,91 @@
 # Contributing Tests for Stable Resource Types
 
-Resource Types at the Stable maturity level are required to integrate with Radius CI/CD testing. The test files are discussed below and are only relevant if you are adding test coverage for stable Resource Types. The workflow will run on your PR to validate that the Resource Type definition and Recipes are able to be created with Radius and deployed. 
+Resource Types at the Stable maturity level are required to integrate with Radius CI/CD testing. This guide explains how to add automated test coverage for your Resource Type so it can be validated in CI/CD pipelines.
 
-### `.github/workflows` and `.github/scripts`
+## Overview
 
-This folder contains the automated testing workflows and scripts. The workflows validate Resource Type definitions, test Recipe deployments, and ensure compatibility with Radius. Scripts provide utility functions for manifest generation, resource verification, and test execution.
+The repository provides a complete testing framework built around `make` commands. The same commands used for local development are also used in CI/CD, ensuring consistent behavior.
 
-### `.github/build` 
-
-The `build` folder includes logic used to define the make targets. The `help.mk` file provides help documentation for available targets, while `validation.mk` contains all the core testing logic including Radius installation, Resource Type creation, Recipe publishing, and test execution workflows. The `tf-module-server` folder contains a container that is used to host a local module server for Terraform Recipes to referenced during testing.
-
-### Makefile
-
-The Makefile provides standardized commands for testing Resource Types locally and in CI/CD. It includes targets for installing dependencies, creating resources, publishing Recipes, running tests, and cleaning up Environments. These targets can be run locally to help with manual testing.
-
-## Add test coverage for stable Resource Types
-These are the steps to follow to ensure that a stable Resource Type is fully integrated with Radius testing in the CI/CD pipelines. 
-
-### Pre-requisites
-
-1. [**Resource Type Definition**](../contributing/contributing-resource-types-tests.md#resource-type-definition): Defines the structure and properties of your Resource Type
-2. [**Recipes**](../contributing/contributing-resource-types-tests.md#recipes-for-the-resource-type): Terraform or Bicep templates for deploying the Resource Type on different platforms
-
-### Add an app.bicep
-
-### Add an app.bicep
-
-1. Create a new `test` folder in your Resource Type root folder. For example, for a Secrets Resource Type, the directory structure would be `/Security/secrets/test`.
-
-2. Create a application definition Bicep file called `app.bicep` in the test folder. Add an Application resource and a resource for your new Resource Type. Make sure to include the proper extensions for `radius` and your Resource Type. The naming of extension should be the same as your Resource Type. For example, the extension name for the `Radius.Security/secrets` Resource Type should be `secrets`. An `environment` parameter is also needed and will be set by the workflow during automated testing. 
-
-Using the Secrets example, the full application definition should look similar to:
+### Testing Architecture
 
 ```
+Repository Root
+├── Makefile                    # Main entry point for commands
+├── .github/
+│   ├── build/                  # Make target definitions
+│   │   ├── help.mk            # Help documentation
+│   │   ├── environment.mk     # Environment setup targets
+│   │   └── test.mk            # Testing targets
+│   ├── scripts/               # Shell scripts for testing
+│   │   ├── build-all.sh       # Build all resources
+│   │   ├── build-resource-type.sh
+│   │   ├── build-bicep-recipe.sh
+│   │   ├── build-terraform-recipe.sh
+│   │   ├── test-recipe.sh     # Test individual recipes
+│   │   └── test-all-recipes.sh
+│   └── workflows/             # GitHub Actions workflows
+└── <Category>/<ResourceType>/
+    ├── <resourceType>.yaml    # Resource Type definition
+    ├── recipes/               # Recipe implementations
+    └── test/
+        └── app.bicep          # Test application (required for CI)
+```
+
+## Available Make Commands
+
+### Environment Setup
+
+```bash
+make install-radius-cli          # Install Radius CLI
+make create-radius-cluster       # Create k3d cluster with Radius
+make delete-radius-cluster       # Delete test cluster
+```
+
+### Building
+
+```bash
+make build                                              # Build all resources
+make build-resource-type TYPE_FOLDER=<path>            # Build single resource type
+make build-bicep-recipe RECIPE_PATH=<path>             # Build Bicep recipe
+make build-terraform-recipe RECIPE_PATH=<path>         # Build Terraform recipe
+```
+
+### Testing
+
+```bash
+make test                          # Test all recipes
+make test-recipe RECIPE_PATH=<path>  # Test single recipe
+make list-resource-types           # List resource type folders
+make list-recipes                  # List all recipes
+```
+
+## Adding Automated Test Coverage
+
+Follow these steps to ensure your Resource Type is tested in CI/CD pipelines.
+
+### Step 1: Create Test Application
+
+Create a `test/app.bicep` file in your Resource Type directory:
+
+```
+<Category>/<ResourceType>/
+├── <resourceType>.yaml
+├── README.md
+├── recipes/
+│   └── ...
+└── test/
+    └── app.bicep    # ← Create this file
+```
+
+**Example: Security/secrets/test/app.bicep**
+
+```bicep
 extension radius
 extension secrets
 
 param environment string
 
-resource testapp 'Applications.Core/applications@2023-10-01-preview' = {
+resource app 'Applications.Core/applications@2023-10-01-preview' = {
   name: 'testapp'
   properties: {
     environment: environment
@@ -59,13 +106,104 @@ resource secret 'Radius.Security/secrets@2025-08-01-preview' = {
 }
 ```
 
-3. In `validate-common.sh`, update `setup_config()` to contain your new Resource Type. For example, if you were to add a `Radius.Compute/containers` Resource Type, the updated `setup_config()` should look like:  
+**Key Requirements:**
+- Extension name must match your resource type name (e.g., `secrets` for `Radius.Security/secrets`)
+- Include `environment` parameter (set by test framework)
+- Create an Application resource
+- Create your Resource Type resource with required properties
+
+### Step 2: Test Locally
+
+Before submitting to CI, test your application locally:
+
+```bash
+# Create test cluster
+make create-radius-cluster
+
+# Build your resource type
+make build-resource-type TYPE_FOLDER=Security/secrets
+
+# Build recipes
+make build-bicep-recipe RECIPE_PATH=Security/secrets/recipes/kubernetes/bicep
+
+# Test the recipe (deploys test/app.bicep)
+make test-recipe RECIPE_PATH=Security/secrets/recipes/kubernetes/bicep
 ```
-setup_config() {
-  resource_folders=("Security" "Compute")
-  declare -g -A folder_to_namespace=(
-    ["Security"]="Radius.Security"
-    ["Compute"]="Radius.Compute"
-  )
-}
+
+### Step 3: Verify CI/CD Integration
+
+When you submit your PR, the CI workflow will:
+
+1. Set up a test Kubernetes cluster
+2. Install Radius
+3. Build all resource types (including yours)
+4. Build all recipes (Bicep and Terraform)
+5. Test each recipe by:
+   - Registering it as the default
+   - Deploying your `test/app.bicep`
+   - Verifying successful deployment
+   - Cleaning up resources
+
+You can see these steps by running:
+
+```bash
+make test
 ```
+
+## Testing Multiple Recipes
+
+If your Resource Type has multiple recipes, the test framework will automatically test each one:
+
+```
+Data/redisCaches/
+├── redisCaches.yaml
+├── recipes/
+│   ├── kubernetes/
+│   │   ├── bicep/
+│   │   │   └── kubernetes-redis.bicep     # Tested automatically
+│   │   └── terraform/
+│   │       └── main.tf                    # Tested automatically
+│   └── azure-cache/
+│       ├── bicep/
+│       │   └── azure-redis.bicep          # Tested automatically
+│       └── terraform/
+│           └── main.tf                    # Tested automatically
+└── test/
+    └── app.bicep                          # Used for all recipe tests
+```
+
+Each recipe is tested independently using the same `test/app.bicep` file.
+
+## Troubleshooting
+
+### Test application won't deploy
+
+- Verify your `test/app.bicep` syntax locally
+- Ensure extension name matches resource type name
+- Check that all required properties are set
+
+### Resource type not found in CI
+
+- Confirm your resource type is in a configured category folder
+- Check that `<resourceType>.yaml` is valid YAML
+- Ensure the folder structure matches the expected pattern
+
+### Recipe registration fails
+
+- Verify recipe files exist in expected locations
+- For Bicep: Ensure `.bicep` files are valid
+- For Terraform: Ensure `main.tf` exists
+
+### Local tests pass but CI fails
+
+- Ensure your test doesn't depend on local files outside the resource type directory
+- Check that all dependencies are properly declared in the recipe
+- Review CI logs for specific error messages
+
+## Best Practices
+
+1. **Keep tests simple**: Test one resource type instance with minimal configuration
+2. **Test required properties**: Ensure your test exercises all required properties
+3. **Clean naming**: Use consistent, descriptive names for resources
+4. **Document special cases**: Add comments for non-obvious test configurations
+5. **Test early**: Run `make test-recipe` frequently during development
