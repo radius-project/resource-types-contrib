@@ -37,14 +37,29 @@ if [[ ! -d "$ROOT_DIR" ]]; then
     exit 1
 fi
 
+# Convert ROOT_DIR to an absolute path
 ROOT_DIR="$(cd "$ROOT_DIR" && pwd)"
 
-# Find all Bicep recipe directories (directories containing .bicep files under recipes/)
-find "$ROOT_DIR" -type f -path "*/recipes/*/*.bicep" -print0 2>/dev/null | \
-    xargs -0 -n1 dirname 2>/dev/null | \
-    sort -u
+declare -A RECIPE_DIRS=()
 
-# Find all Terraform recipe directories (directories named 'terraform' under recipes/)
-find "$ROOT_DIR" -type d -path "*/recipes/*/terraform" -print0 2>/dev/null | \
-    xargs -0 -n1 printf '%s\n' 2>/dev/null | \
-    sort -u
+find_recipe_dirs() {
+    local -a find_expression=("$@")
+
+    while IFS= read -r -d '' matched_path; do
+        local dir
+        dir="$(dirname "$matched_path")"
+        RECIPE_DIRS["$dir"]=1
+    done < <(find "$ROOT_DIR" "${find_expression[@]}" -print0 2>/dev/null)
+}
+
+# Collect Bicep recipe directories (directories containing .bicep files under recipes/)
+find_recipe_dirs -type f -path "*/recipes/*/*.bicep"
+
+# Collect Terraform recipe directories (directories containing main.tf under recipes/terraform)
+find_recipe_dirs -type f -path "*/recipes/*/terraform/main.tf"
+
+if [[ ${#RECIPE_DIRS[@]} -eq 0 ]]; then
+    exit 0
+fi
+
+printf '%s\n' "${!RECIPE_DIRS[@]}" | sort

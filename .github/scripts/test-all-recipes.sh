@@ -24,21 +24,11 @@
 set -euo pipefail
 
 REPO_ROOT="${1:-$(pwd)}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "==> Finding all recipes in $REPO_ROOT"
 
-# Find all recipe directories (both bicep and terraform)
-RECIPE_DIRS=()
-
-# Find Bicep recipes (directories containing .bicep files under recipes/)
-while IFS= read -r -d '' dir; do
-    RECIPE_DIRS+=("$dir")
-done < <(find "$REPO_ROOT" -type d -path "*/recipes/*/*" -exec sh -c 'ls "$1"/*.bicep >/dev/null 2>&1' _ {} \; -print0)
-
-# Find Terraform recipes (directories containing main.tf under recipes/)
-while IFS= read -r -d '' dir; do
-    RECIPE_DIRS+=("$dir")
-done < <(find "$REPO_ROOT" -type d -path "*/recipes/*/*" -exec test -f {}/main.tf \; -print0)
+mapfile -t RECIPE_DIRS < <("$SCRIPT_DIR"/list-recipe-folders.sh "$REPO_ROOT")
 
 if [[ ${#RECIPE_DIRS[@]} -eq 0 ]]; then
     echo "==> No recipes found"
