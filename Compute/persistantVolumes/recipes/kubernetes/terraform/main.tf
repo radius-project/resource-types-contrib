@@ -1,4 +1,5 @@
 terraform {
+  required_version = ">= 1.5"
   required_providers {
     kubernetes = {
       source  = "hashicorp/kubernetes"
@@ -7,7 +8,6 @@ terraform {
   }
 }
 locals {
-  uniqueName = var.context.resource.name
   namespace = var.context.runtime.kubernetes.namespace
 }
 
@@ -18,9 +18,9 @@ resource "kubernetes_persistent_volume_claim" "pvc" {
     name      = var.context.resource.name
     namespace = local.namespace
     labels = {
-      resource = var.context.resource.name
-      # Label pods with the application name so `rad run` can find the logs.
+      "radapp.io/resource" = var.context.resource.name
       "radapp.io/application" = var.context.application != null ? var.context.application.name : ""
+      "radapp.io/environment" = var.context.environment != null ? var.context.environment.name : ""
     }
   }
 
