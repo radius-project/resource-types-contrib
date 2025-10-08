@@ -180,7 +180,9 @@ The following guidelines should be followed when contributing new Resource Types
 Each Resource Type has two types of documentation written specifically for developers, and separately, for platform engineers.
 
 ### Developers
-Developer documentation is embedded in the Resource Type definition. Each Resource Type definition must have documentation on how and when to use the resource in the top-level description property. Each property must also include:
+Developer documentation is embedded in the Resource Type definition. Each Resource Type definition must have documentation on how and when to use the resource in the top-level description property. When writing developer documentation, use Markdown. This is especially important for code blocks which must be quoted using triple backquotes. Output from `rad resource-type show` is shown in text only, but the Radius Dashboard formats the Markdown property including the ability to single-click copy code blocks.
+
+Each property must also include:
  - The overall description of the property including example values.
  - Whether the property is required or optional.
 
