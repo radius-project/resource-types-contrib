@@ -64,6 +64,12 @@ Community members can contribute new Resource Types, Recipes, and Recipe Packs t
 - Contributing Recipe Packs: Coming soon!
 - [Submitting Issues](docs/contributing/contributing-issues.md): This guide provides an overview of how to submit issues related to Resource Types or Recipes.
 
+**Thanks to everyone who has contributed!**
+
+<a href="https://github.com/radius-project/resource-types-contrib/graphs/contributors">
+  <img src="https://contributors-img.web.app/image?repo=radius-project/resource-types-contrib" />
+</a>
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
