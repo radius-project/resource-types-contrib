@@ -1,152 +1,309 @@
-## Test Your Resource Type and Recipes
+# Testing Resource Types and Recipes
 
-### Prerequisites
+This guide explains how to test Resource Types and Recipes locally using the standardized `make` commands provided in this repository.
 
-- A Kubernetes cluster must be running and accessible.
-- Radius must be installed on the Kubernetes cluster.
-- The 'rad' CLI tool must be installed on your local machine or environment where you intend to run commands.
+## Prerequisites
 
-### Steps
+Before testing, ensure you have:
 
-1. Create the Resource Type in Radius:
+- Docker installed (for running k3d)
+- `kubectl` installed
+- `make` available in your environment
 
-    ```bash
-    rad resource-type create -f types.yaml
-    ```
+## Quick Start
 
-2. Generate Bicep Extension to enable tooling support:
+### 1. Set Up Your Environment
 
-    ```bash
-    rad bicep publish-extension -f types.yaml --target <extensionName>.tgz
-    ```
+Create a local Kubernetes cluster with Radius installed:
 
-    Create a `bicepconfig.json` file and add the path to the `<extensionName>.tgz`.
+```bash
+# Install Radius CLI (optional: specify version with RAD_VERSION=0.48.0)
+make install-radius-cli
 
-    ```json
-    {
-        "extensions": {
-            "radius": "br:biceptypes.azurecr.io/radius:latest",
-            "aws": "br:biceptypes.azurecr.io/aws:latest",
-            "radiusResources": "<extensionName>.tgz"
-        }
-    }
-    ```
+# Create k3d cluster with Radius configured
+make create-radius-cluster
+```
 
-    Now, any Bicep template with extension radiusResources will reference the `<extensionName>.tgz` file for details about the new resource type. You can create instances of the new resource type in your Bicep templates and check to make sure that the extension recognizes your types. You won't be able to deploy until you create a recipe (see steps below), but you can check the syntax of your types.
+### 2. Build Your Resource Type
 
-    ```bicep
-    extension radiusResources
-    param environment string
+Build and validate a Resource Type definition:
 
-    resource redis 'Radius.Data/redisCaches@2025-08-01-preview'= {
-        name: 'myresource'
-            properties: {
-                environment: environment
-            }
-        }
-    }
-    ```
+```bash
+make build-resource-type TYPE_FOLDER=Data/mySqlDatabases
+```
 
-3. Publish the Recipe to a Registry
+This command:
+- Creates the Resource Type in Radius using `rad resource-type create`
+- Generates a Bicep extension file (`.tgz`)
+- Updates `bicepconfig.json` to reference the extension
+- Enables IntelliSense and validation in your Bicep files
 
-    For Bicep, Recipes leverage [Bicep registries](https://learn.microsoft.com/azure/azure-resource-manager/bicep/private-module-registry) for template storage.
+### 3. Build Your Recipes
 
-    - Make sure you have the right permissions to push to the registry. Owner or Contributor alone won't allow you to push.
+#### Bicep Recipe
 
-    - Make sure to log in to your registry before publishing the recipe. e.g.
+```bash
+make build-bicep-recipe RECIPE_PATH=Data/mySqlDatabases/recipes/kubernetes/bicep
+```
 
-        ```bash
-        az acr login --name <registryname>
-        ```
+This publishes the Bicep recipe to a local OCI registry.
 
-    - Once you've authored a Recipe, you can publish it to your preferred OCI-compliant registry with [`rad bicep publish`](https://docs.radapp.io/reference/cli/rad_bicep_publish/).
+#### Terraform Recipe
 
-        ```bash
-        rad bicep publish --file myrecipe.bicep --target br:<registrypath>/myrecipe:1.1.0
-        ```
+```bash
+make build-terraform-recipe RECIPE_PATH=Security/secrets/recipes/kubernetes/terraform
+```
 
-    - For Terraform Recipes, the easiest way is to publish to a Git repository with anonymous access otherwise, you will need to configure [Git authentication](https://docs.radapp.io/guides/recipes/terraform/howto-private-registry/). Learn more about Recipes in this [How-to guide](https://docs.radapp.io/guides/recipes/howto-author-recipes/).
+This packages the Terraform module and publishes it to an in-cluster HTTP server.
 
-4. Register the recipe in your environment using the `rad recipe register` command
+### 4. Test Individual Recipes
 
-    **Bicep Recipe via rad CLI**
+Test a recipe by registering it and deploying a test application:
 
-    ```bash
-    rad recipe register default --environment default \
-        --resource-type Radius.Resources/redisCaches \
-        --template-kind bicep \
-        --template-path <host>/<registry>/rediscache:latest
-    ```
+```bash
+# Test a Bicep recipe
+make test-recipe RECIPE_PATH=Data/mySqlDatabases/recipes/kubernetes/bicep
 
-    **Terraform recipe via rad CLI**
+# Test a Terraform recipe
+make test-recipe RECIPE_PATH=Security/secrets/recipes/kubernetes/terraform
+```
 
-    ```bash
-    rad recipe register default \
-        --environment default \
-        --resource-type Radius.Datastores/redisCaches \
-        --template-kind terraform \
-        --template-path git::<git-server-name>/<repository-name>.git//<directory>/<subdirectory>
-    ```
+The `test-recipe` command:
+- Auto-detects whether the recipe is Bicep or Terraform
+- Registers the recipe as the default for its resource type
+- Deploys the `test/app.bicep` file (if it exists)
+- Cleans up resources after testing
 
-    **Via Radius environment bicep**
+### 5. Test All Recipes
 
-    ```bicep
-    extension radius
-    resource env 'Applications.Core/environments@2023-10-01-preview' = {
-        name: 'prod'
-        properties: {
-            compute: {
-                kind: 'kubernetes'
-                resourceId: 'self'
-                namespace: 'default'
-            }
-            recipes: {
-                'Applications.Datastores/redisCaches':{
-                    'redis-bicep': {
-                        templateKind: 'bicep'
-                        templatePath: 'https://ghcr.io/USERNAME/recipes/myrecipe:1.1.0'
-                        // Optionally set parameters for all resources calling this Recipe
-                        parameters: {
-                            port: 3000
-                        }
-                    }
-                    'redis-terraform': {
-                        templateKind: 'terraform'
-                        templatePath: 'git::<git-server-name>/<repository-name>.git//<directory>/<subdirectory>'
-                        // Optionally set parameters for all resources calling this Recipe
-                        parameters: {
-                            port: 3000
-                        }
-                    }
-                }   
-            }
-        }
-    }
-    ```
+Run tests for all recipes in the repository:
 
-5. Author the resource types in your application and verify that it works as expected
+```bash
+make test
+```
 
-    ```bicep
-    extension radiusResources
-    param environment string
+This discovers and tests every recipe automatically.
 
-    resource redis 'Radius.Data/redisCaches@2025-08-01-preview'= {
-        name: 'myresource'
-            properties: {
-                environment: environment
-            }
-        }
-    }
-    ```
+## Build All Resources
 
-    Deploy and test the application using the recipe:
+Build all resource types and recipes at once:
 
-    ```bash
-    rad deploy app.bicep 
-    ```
+```bash
+make build
+```
 
-For an alpha level contribution, you are good to submit your contribution with the evidence of manual testing.
+## Utility Commands
 
-## Add a functional test to validate your Resource Type and Recipe
+List available resource types:
 
-For beta and stable contributions, you will need to ensure that the resource type and recipe are thoroughly tested, documented, and meet the requirements outlined in the [Maturity Levels](contributing-resource-types-recipes.md#maturity-levels) section. More details coming soon!
+```bash
+make list-resource-types
+```
+
+List all recipes (Bicep and Terraform):
+
+```bash
+make list-recipes
+```
+
+## Creating Test Applications
+
+For recipes to be tested via `make test-recipe` or `make test`, create a `test/app.bicep` file in your Resource Type directory:
+
+```
+Data/mySqlDatabases/
+├── mySqlDatabases.yaml
+├── README.md
+├── recipes/
+│   └── kubernetes/
+│       ├── bicep/
+│       │   └── kubernetes-mysql.bicep
+│       └── terraform/
+│           └── main.tf
+└── test/
+    └── app.bicep  # Test application
+```
+
+Example `test/app.bicep`:
+
+```bicep
+extension radius
+extension mySqlDatabases
+
+param environment string
+
+resource app 'Applications.Core/applications@2023-10-01-preview' = {
+  name: 'testapp'
+  properties: {
+    environment: environment
+  }
+}
+
+resource mysql 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
+  name: 'mysql'
+  properties: {
+    environment: environment
+    application: app.id
+  }
+}
+```
+
+## Cleanup
+
+Delete your test cluster when done:
+
+```bash
+make delete-radius-cluster
+```
+
+## Manual Testing (Advanced)
+
+If you prefer manual testing or need to test externally-published recipes:
+
+### Register a Recipe Manually
+
+**Bicep Recipe:**
+
+```bash
+rad recipe register default \
+  --environment default \
+  --resource-type "Radius.Data/mySqlDatabases" \
+  --template-kind bicep \
+  --template-path "reciperegistry:5000/recipes/mysql/kubernetes:latest" \
+  --plain-http
+```
+
+**Terraform Recipe:**
+
+```bash
+rad recipe register default \
+  --environment default \
+  --resource-type "Radius.Security/secrets" \
+  --template-kind terraform \
+  --template-path "http://tf-module-server.radius-test-tf-module-server.svc.cluster.local/secrets-kubernetes.zip"
+```
+
+### Deploy and Test
+
+```bash
+rad deploy test/app.bicep -p environment=default
+```
+
+### Cleanup
+
+```bash
+rad app delete testapp --yes
+rad recipe unregister default --resource-type "Radius.Data/mySqlDatabases"
+```
+
+## Common Workflows
+
+### Complete Workflow for a New Resource Type
+
+```bash
+# 1. Create directory structure
+mkdir -p Data/newResource/recipes/kubernetes/{bicep,terraform}
+mkdir -p Data/newResource/test
+
+# 2. Create and edit resource type definition
+# Edit Data/newResource/newResource.yaml
+
+# 3. Build and validate the resource type
+make build-resource-type TYPE_FOLDER=Data/newResource
+
+# 4. Create recipes (Bicep or Terraform)
+# Edit Data/newResource/recipes/kubernetes/bicep/*.bicep
+
+# 5. Build the recipe
+make build-bicep-recipe RECIPE_PATH=Data/newResource/recipes/kubernetes/bicep
+
+# 6. Create test application
+# Edit Data/newResource/test/app.bicep
+
+# 7. Test the recipe
+make test-recipe RECIPE_PATH=Data/newResource/recipes/kubernetes/bicep
+
+# 8. Test all recipes (if you have multiple)
+make test
+```
+
+### Testing an Existing Resource Type
+
+```bash
+# Test all recipes in the repository
+make test
+
+# Test a specific recipe
+make test-recipe RECIPE_PATH=Security/secrets/recipes/kubernetes/bicep
+```
+
+### Available Make Commands
+
+```bash
+# Environment setup
+make install-radius-cli          # Install Radius CLI
+make create-radius-cluster       # Create k3d cluster with Radius
+make delete-radius-cluster       # Delete test cluster
+
+# Build commands
+make build                                              # Build all resources
+make build-resource-type TYPE_FOLDER=<path>            # Build single resource type
+make build-bicep-recipe RECIPE_PATH=<path>             # Build Bicep recipe
+make build-terraform-recipe RECIPE_PATH=<path>         # Build Terraform recipe
+
+# Test commands
+make test                          # Test all recipes
+make test-recipe RECIPE_PATH=<path>  # Test single recipe
+
+# Utility commands
+make list-resource-types           # List resource type folders
+make list-recipes                  # List all recipes
+make help                          # Show all available commands
+```
+
+## Troubleshooting
+
+### "Error: kubectl not found"
+
+Install kubectl by following the [official installation guide](https://kubernetes.io/docs/tasks/tools/).
+
+### "Error: cluster not found" or cluster connection issues
+
+Create a new cluster:
+```bash
+make create-radius-cluster
+```
+
+Verify cluster is running:
+```bash
+kubectl cluster-info
+rad env list
+```
+
+### Recipe not found during testing
+
+Ensure you've built the recipe first:
+```bash
+make build-bicep-recipe RECIPE_PATH=<path>
+# or
+make build-terraform-recipe RECIPE_PATH=<path>
+```
+
+### Bicep extension not recognized
+
+Make sure `bicepconfig.json` is updated:
+```bash
+make build-resource-type TYPE_FOLDER=<folder>
+```
+
+### Recipe registration fails
+
+Ensure the recipe is built before testing:
+- **Bicep**: `make build-bicep-recipe RECIPE_PATH=<path>`
+- **Terraform**: `make build-terraform-recipe RECIPE_PATH=<path>`
+
+## Maturity Level Testing Requirements
+
+- **Alpha**: Manual testing using `make test-recipe` is sufficient
+- **Beta**: Automated testing with `test/app.bicep` files required for all recipes
+- **Stable**: Full CI/CD integration (see [Contributing Tests](contributing-resource-types-tests.md))
