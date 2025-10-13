@@ -74,9 +74,9 @@ resource mysqlDatabase 'Microsoft.DBforMySQL/flexibleServers/databases@2024-12-0
 output result object = {
   values: {
     host: mysqlServer.properties.fullyQualifiedDomainName
-    port: mysqlServer.properties.databasePort
-    database: mysqlDatabase.name
-    username: mysqlServer.properties.administratorLogin
+    port: port
+    database: database
+    username: username
   }
   secrets: {
     #disable-next-line outputs-should-not-contain-secrets
