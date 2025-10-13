@@ -30,7 +30,7 @@ var radiusTags = {
 var location string = resourceGroup().location
 
 @description('Unique name for the MySQL deployment and service.')
-var uniqueName = 'mysql-${uniqueString(context.resource.id)}'
+var uniqueName = 'mysql-${uniqueString(context.resource.id, resourceGroup().id)}'
 
 @description('The port the MySQL server listens on.')
 var port = 3306
