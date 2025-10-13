@@ -39,7 +39,7 @@ var port = 3306
 @secure()
 param root_password string = uniqueString(context.resource.id, newGuid())
 
-resource mysqlServer 'Microsoft.DBforMySQL/flexibleServers@2024-12-01-preview' = {
+resource mysqlServer 'Microsoft.DBforMySQL/flexibleServers@2024-12-30' = {
   name: uniqueName
   location: location
   tags: union(tags, radiusTags)
