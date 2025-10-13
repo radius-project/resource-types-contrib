@@ -58,16 +58,16 @@ resource mysqlServer 'Microsoft.DBforMySQL/flexibleServers@2024-12-30' = {
     }
     network: {
       publicNetworkAccess: 'Enabled'
+    }
   }
-}
 
   resource mysqlDatabase 'databases' = {
-  name: database
-  properties: {
-    charset: 'utf8'
-    collation: 'utf8_general_ci'
+    name: database
+    properties: {
+      charset: 'utf8'
+      collation: 'utf8_general_ci'
+    }
   }
-}
 }
 
 
