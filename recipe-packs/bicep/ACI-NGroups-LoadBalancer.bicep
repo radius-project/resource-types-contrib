@@ -1,6 +1,6 @@
 @description('Container Instance API version')
 @maxLength(32)
-param apiVersion string = '2024-09-01-preview'
+param apiVersion string = '2024-11-01-preview'
 
 @description('NGroups parameter name')
 @maxLength(64)
@@ -57,8 +57,8 @@ param vnetAddressPrefix string
 @maxLength(64)
 param subnetAddressPrefix string
 
-@description('Desired container count')
-param desiredCount int = 3
+// @description('Desired container count')
+// param desiredCount int = 3
 
 @description('Availability zones')
 param zones array = []
@@ -73,14 +73,25 @@ param inboundNatRuleName string = 'inboundNatRule'
 @description('Radius ACI Container Context')
 param context object
 
+// Output the context object for debugging
+output contextObject object = context
+
 // Variables
 var cgProfileName = containerGroupProfileName
 var nGroupsName = nGroupsParamName
 var resourcePrefix = '/subscriptions/${subscription().subscriptionId}/resourceGroups/${resourceGroup().name}/providers/'
-var loadBalancerApiVersion = '2022-07-01'
-var vnetApiVersion = '2022-07-01'
-var publicIPVersion = '2022-07-01'
+// var loadBalancerApiVersion = '2022-07-01'
+// var vnetApiVersion = '2022-07-01'
+// var publicIPVersion = '2022-07-01'
 var ddosProtectionPlanName = 'ddosProtectionPlan'
+
+// Helper variables for probes
+var hasReadinessProbe = contains(context.properties.containers, 'readinessProbe') && context.properties.containers.readinessProbe != null
+var hasLivenessProbe = contains(context.properties.containers, 'livenessProbe') && context.properties.containers.livenessProbe != null
+
+// Get probe port with safe navigation
+var readinessProbePort = hasReadinessProbe && contains(context.properties.containers.readinessProbe, 'tcpSocket') && context.properties.containers.readinessProbe.tcpSocket != null && contains(context.properties.containers.readinessProbe.tcpSocket, 'properties') && contains(context.properties.containers.readinessProbe.tcpSocket.properties, 'port') ? context.properties.containers.readinessProbe.tcpSocket.properties.port : 80
+var livenessProbePort = hasLivenessProbe && contains(context.properties.containers.livenessProbe, 'tcpSocket') && context.properties.containers.livenessProbe.tcpSocket != null && contains(context.properties.containers.livenessProbe.tcpSocket, 'properties') && contains(context.properties.containers.livenessProbe.tcpSocket.properties, 'port') ? context.properties.containers.livenessProbe.tcpSocket.properties.port : 80
 
 // DDoS Protection Plan
 resource ddosProtectionPlan 'Microsoft.Network/ddosProtectionPlans@2022-07-01' = {
@@ -161,9 +172,7 @@ resource natGateway 'Microsoft.Network/natGateways@2022-07-01' = {
       }
     ]
   }
-  dependsOn: [
-    outboundPublicIP
-  ]
+
 }
 
 // Virtual Network
@@ -210,10 +219,7 @@ resource virtualNetwork 'Microsoft.Network/virtualNetworks@2022-07-01' = {
       id: ddosProtectionPlan.id
     }
   }
-  dependsOn: [
-    networkSecurityGroup
-    natGateway
-  ]
+
 }
 
 // Load Balancer
@@ -245,27 +251,27 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
       }
     ]
     probes: union(
-      context.properties.containers.readinessProbe != null ? [
+      hasReadinessProbe ? [
         {
           name: 'readinessProbe'
           properties: {
             protocol: 'Tcp'
-            port: context.properties.containers.readinessProbe.tcpSocket.properties.port ?? 80
-            intervalInSeconds: context.properties.containers.readinessProbe.periodSeconds ?? 5
-            numberOfProbes: context.properties.containers.readinessProbe.failureThreshold ?? 3
-            probeThreshold: context.properties.containers.readinessProbe.successThreshold ?? 1
+            port: readinessProbePort
+            intervalInSeconds: context.properties.containers.readinessProbe.?periodSeconds ?? 5
+            numberOfProbes: context.properties.containers.readinessProbe.?failureThreshold ?? 3
+            probeThreshold: context.properties.containers.readinessProbe.?successThreshold ?? 1
           }
         }
       ] : [],
-      context.properties.containers.livenessProbe != null ? [
+      hasLivenessProbe ? [
         {
           name: 'livenessProbe'
           properties: {
             protocol: 'Tcp'
-            port: context.properties.containers.livenessProbe.tcpSocket.properties.port ?? 80
-            intervalInSeconds: context.properties.containers.livenessProbe.periodSeconds ?? 10
-            numberOfProbes: context.properties.containers.livenessProbe.failureThreshold ?? 3
-            probeThreshold: context.properties.containers.livenessProbe.successThreshold ?? 1
+            port: livenessProbePort
+            intervalInSeconds: context.properties.containers.livenessProbe.?periodSeconds ?? 10
+            numberOfProbes: context.properties.containers.livenessProbe.?failureThreshold ?? 3
+            probeThreshold: context.properties.containers.livenessProbe.?successThreshold ?? 1
           }
         }
       ] : []
@@ -290,7 +296,7 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
               id: resourceId('Microsoft.Network/loadBalancers/backendAddressPools', loadBalancerName, backendAddressPoolName)
             }
           ]
-          probe: context.properties.containers.readinessProbe != null ? {
+          probe: hasReadinessProbe ? {
             id: resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, 'readinessProbe')
           } : null
         }
@@ -303,15 +309,15 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
           backendAddressPool: {
             id: resourceId('Microsoft.Network/loadBalancers/backendAddressPools', loadBalancerName, backendAddressPoolName)
           }
-          backendPort: '80'
-          enableFloatingIP: 'false'
-          enableTcpReset: 'false'
+          backendPort: 80
+          enableFloatingIP: false
+          enableTcpReset: false
           frontendIPConfiguration: {
             id: resourceId('Microsoft.Network/loadBalancers/frontendIPConfigurations', loadBalancerName, frontendIPName)
           }
-          frontendPortRangeEnd: '331'
-          frontendPortRangeStart: '81'
-          idleTimeoutInMinutes: '4'
+          frontendPortRangeEnd: 331
+          frontendPortRangeStart: 81
+          idleTimeoutInMinutes: 4
           protocol: 'Tcp'
         }
       }
@@ -320,13 +326,12 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
     inboundNatPools: []
   }
   dependsOn: [
-    inboundPublicIP
     virtualNetwork
   ]
 }
 
 // ContainerGroupProfile resource - Create default CGProfile when platformOptions is not provided else use the CGProfile resource provided by the customer.
-resource containerGroupProfile 'Microsoft.ContainerInstance/containerGroupProfiles@2024-09-01-preview' = if (context.properties.platformOptions == null) {
+resource containerGroupProfile 'Microsoft.ContainerInstance/containerGroupProfiles@2024-09-01-preview' = {
   name: cgProfileName
   location: resourceGroup().location
   properties: {
@@ -387,7 +392,7 @@ resource nGroups 'Microsoft.ContainerInstance/NGroups@2024-09-01-preview' = {
   }
   properties: {
     elasticProfile: {
-      desiredCount: desiredCount
+      desiredCount: context.properties.replicas ?? 2
       maintainDesiredCount: maintainDesiredCount
     }
     updateProfile: {
@@ -421,9 +426,9 @@ resource nGroups 'Microsoft.ContainerInstance/NGroups@2024-09-01-preview' = {
     ]
   }
   tags: {
-    'reprovision.enabled': true
-    'metadata.container.environmentVariable.orchestratorId': true
-    'rollingupdate.replace.enabled': true
+    'reprovision.enabled': 'true'
+    'metadata.container.environmentVariable.orchestratorId': 'true'
+    'rollingupdate.replace.enabled': 'true'
   }
   dependsOn: [
     containerGroupProfile
@@ -440,11 +445,11 @@ output frontendIPConfigurationId string = loadBalancer.properties.frontendIPConf
 output backendAddressPoolId string = loadBalancer.properties.backendAddressPools[0].id
 output inboundPublicIPId string = inboundPublicIP.id
 output outboundPublicIPId string = outboundPublicIP.id
-output inboundPublicIPFQDN string = inboundPublicIP.properties.dnsSettings.fqdn
+output inboundPublicIPFQDN string = contains(inboundPublicIP.properties, 'dnsSettings') && inboundPublicIP.properties.dnsSettings != null ? inboundPublicIP.properties.dnsSettings.fqdn : ''
 output natGatewayId string = natGateway.id
 output networkSecurityGroupId string = networkSecurityGroup.id
 output ddosProtectionPlanId string = ddosProtectionPlan.id
 output containerGroupProfileId string = containerGroupProfile.id
 output nGroupsId string = nGroups.id
-output readinessProbeId string = context.properties.containers.readinessProbe != null ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, 'readinessProbe') : ''
-output livenessProbeId string = context.properties.containers.livenessProbe != null ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, 'livenessProbe') : ''
+output readinessProbeId string = hasReadinessProbe ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, 'readinessProbe') : ''
+output livenessProbeId string = hasLivenessProbe ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, 'livenessProbe') : ''

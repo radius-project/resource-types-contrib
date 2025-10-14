@@ -1,0 +1,556 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.38.33.27573",
+      "templateHash": "6336561542319590498"
+    }
+  },
+  "parameters": {
+    "apiVersion": {
+      "type": "string",
+      "defaultValue": "2024-11-01-preview",
+      "maxLength": 32,
+      "metadata": {
+        "description": "Container Instance API version"
+      }
+    },
+    "nGroupsParamName": {
+      "type": "string",
+      "defaultValue": "nGroups_resource_1",
+      "maxLength": 64,
+      "metadata": {
+        "description": "NGroups parameter name"
+      }
+    },
+    "containerGroupProfileName": {
+      "type": "string",
+      "defaultValue": "cgp_1",
+      "maxLength": 64,
+      "metadata": {
+        "description": "Container Group Profile name"
+      }
+    },
+    "loadBalancerName": {
+      "type": "string",
+      "defaultValue": "slb_1",
+      "maxLength": 64,
+      "metadata": {
+        "description": "Load Balancer name"
+      }
+    },
+    "backendAddressPoolName": {
+      "type": "string",
+      "defaultValue": "bepool_1",
+      "maxLength": 64,
+      "metadata": {
+        "description": "Backend Address Pool name"
+      }
+    },
+    "vnetName": {
+      "type": "string",
+      "defaultValue": "vnet_1",
+      "maxLength": 64,
+      "metadata": {
+        "description": "Virtual Network name"
+      }
+    },
+    "subnetName": {
+      "type": "string",
+      "defaultValue": "subnet_1",
+      "maxLength": 64,
+      "metadata": {
+        "description": "Subnet name"
+      }
+    },
+    "networkSecurityGroupName": {
+      "type": "string",
+      "defaultValue": "nsg_1",
+      "maxLength": 64,
+      "metadata": {
+        "description": "Network Security Group name"
+      }
+    },
+    "inboundPublicIPName": {
+      "type": "string",
+      "defaultValue": "inboundPublicIP",
+      "maxLength": 64,
+      "metadata": {
+        "description": "Inbound Public IP name"
+      }
+    },
+    "outboundPublicIPName": {
+      "type": "string",
+      "defaultValue": "outboundPublicIP",
+      "maxLength": 64,
+      "metadata": {
+        "description": "Outbound Public IP name"
+      }
+    },
+    "natGatewayName": {
+      "type": "string",
+      "defaultValue": "natGateway1",
+      "metadata": {
+        "description": "NAT Gateway name"
+      }
+    },
+    "frontendIPName": {
+      "type": "string",
+      "defaultValue": "loadBalancerFrontend",
+      "maxLength": 64,
+      "metadata": {
+        "description": "Frontend IP name"
+      }
+    },
+    "httpRuleName": {
+      "type": "string",
+      "defaultValue": "httpRule",
+      "maxLength": 64,
+      "metadata": {
+        "description": "HTTP Rule name"
+      }
+    },
+    "vnetAddressPrefix": {
+      "type": "string",
+      "maxLength": 64,
+      "metadata": {
+        "description": "Virtual Network address prefix"
+      }
+    },
+    "subnetAddressPrefix": {
+      "type": "string",
+      "maxLength": 64,
+      "metadata": {
+        "description": "Subnet address prefix"
+      }
+    },
+    "zones": {
+      "type": "array",
+      "defaultValue": [],
+      "metadata": {
+        "description": "Availability zones"
+      }
+    },
+    "maintainDesiredCount": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Maintain desired count"
+      }
+    },
+    "inboundNatRuleName": {
+      "type": "string",
+      "defaultValue": "inboundNatRule",
+      "maxLength": 64,
+      "metadata": {
+        "description": "Inbound NAT Rule name"
+      }
+    },
+    "context": {
+      "type": "object",
+      "metadata": {
+        "description": "Radius ACI Container Context"
+      }
+    }
+  },
+  "variables": {
+    "cgProfileName": "[parameters('containerGroupProfileName')]",
+    "nGroupsName": "[parameters('nGroupsParamName')]",
+    "resourcePrefix": "[format('/subscriptions/{0}/resourceGroups/{1}/providers/', subscription().subscriptionId, resourceGroup().name)]",
+    "ddosProtectionPlanName": "ddosProtectionPlan",
+    "hasReadinessProbe": "[and(contains(parameters('context').properties.containers, 'readinessProbe'), not(equals(parameters('context').properties.containers.readinessProbe, null())))]",
+    "hasLivenessProbe": "[and(contains(parameters('context').properties.containers, 'livenessProbe'), not(equals(parameters('context').properties.containers.livenessProbe, null())))]",
+    "readinessProbePort": "[if(and(and(and(and(variables('hasReadinessProbe'), contains(parameters('context').properties.containers.readinessProbe, 'tcpSocket')), not(equals(parameters('context').properties.containers.readinessProbe.tcpSocket, null()))), contains(parameters('context').properties.containers.readinessProbe.tcpSocket, 'properties')), contains(parameters('context').properties.containers.readinessProbe.tcpSocket.properties, 'port')), parameters('context').properties.containers.readinessProbe.tcpSocket.properties.port, 80)]",
+    "livenessProbePort": "[if(and(and(and(and(variables('hasLivenessProbe'), contains(parameters('context').properties.containers.livenessProbe, 'tcpSocket')), not(equals(parameters('context').properties.containers.livenessProbe.tcpSocket, null()))), contains(parameters('context').properties.containers.livenessProbe.tcpSocket, 'properties')), contains(parameters('context').properties.containers.livenessProbe.tcpSocket.properties, 'port')), parameters('context').properties.containers.livenessProbe.tcpSocket.properties.port, 80)]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/ddosProtectionPlans",
+      "apiVersion": "2022-07-01",
+      "name": "[variables('ddosProtectionPlanName')]",
+      "location": "[resourceGroup().location]"
+    },
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2022-07-01",
+      "name": "[parameters('networkSecurityGroupName')]",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "securityRules": [
+          {
+            "name": "AllowHTTPInbound",
+            "properties": {
+              "access": "Allow",
+              "description": "Allow Internet traffic on port range",
+              "destinationAddressPrefix": "*",
+              "destinationPortRanges": [
+                "80-331"
+              ],
+              "direction": "Inbound",
+              "protocol": "*",
+              "priority": 100,
+              "sourceAddressPrefix": "Internet",
+              "sourcePortRange": "*"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "apiVersion": "2022-07-01",
+      "name": "[parameters('inboundPublicIPName')]",
+      "location": "[resourceGroup().location]",
+      "sku": {
+        "name": "Standard",
+        "tier": "Regional"
+      },
+      "properties": {
+        "publicIPAddressVersion": "IPv4",
+        "publicIPAllocationMethod": "Static",
+        "idleTimeoutInMinutes": 4,
+        "ipTags": []
+      }
+    },
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "apiVersion": "2022-07-01",
+      "name": "[parameters('outboundPublicIPName')]",
+      "location": "[resourceGroup().location]",
+      "sku": {
+        "name": "Standard",
+        "tier": "Regional"
+      },
+      "properties": {
+        "publicIPAddressVersion": "IPv4",
+        "publicIPAllocationMethod": "Static",
+        "idleTimeoutInMinutes": 4,
+        "ipTags": []
+      }
+    },
+    {
+      "type": "Microsoft.Network/natGateways",
+      "apiVersion": "2022-07-01",
+      "name": "[parameters('natGatewayName')]",
+      "location": "[resourceGroup().location]",
+      "sku": {
+        "name": "Standard"
+      },
+      "properties": {
+        "idleTimeoutInMinutes": 4,
+        "publicIpAddresses": [
+          {
+            "id": "[resourceId('Microsoft.Network/publicIPAddresses', parameters('outboundPublicIPName'))]"
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/publicIPAddresses', parameters('outboundPublicIPName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2022-07-01",
+      "name": "[parameters('vnetName')]",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "[parameters('vnetAddressPrefix')]"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "[parameters('subnetName')]",
+            "properties": {
+              "addressPrefix": "[parameters('subnetAddressPrefix')]",
+              "serviceEndpoints": [],
+              "delegations": [
+                {
+                  "name": "Microsoft.ContainerInstance.containerGroups",
+                  "id": "[format('{0}/delegations/Microsoft.ContainerInstance.containerGroups', resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('subnetName')))]",
+                  "properties": {
+                    "serviceName": "Microsoft.ContainerInstance/containerGroups"
+                  },
+                  "type": "Microsoft.Network/virtualNetworks/subnets/delegations"
+                }
+              ],
+              "privateEndpointNetworkPolicies": "Disabled",
+              "privateLinkServiceNetworkPolicies": "Enabled",
+              "networkSecurityGroup": {
+                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', parameters('networkSecurityGroupName'))]"
+              },
+              "natGateway": {
+                "id": "[resourceId('Microsoft.Network/natGateways', parameters('natGatewayName'))]"
+              }
+            },
+            "type": "Microsoft.Network/virtualNetworks/subnets"
+          }
+        ],
+        "virtualNetworkPeerings": [],
+        "enableDdosProtection": true,
+        "ddosProtectionPlan": {
+          "id": "[resourceId('Microsoft.Network/ddosProtectionPlans', variables('ddosProtectionPlanName'))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/ddosProtectionPlans', variables('ddosProtectionPlanName'))]",
+        "[resourceId('Microsoft.Network/natGateways', parameters('natGatewayName'))]",
+        "[resourceId('Microsoft.Network/networkSecurityGroups', parameters('networkSecurityGroupName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/loadBalancers",
+      "apiVersion": "2022-07-01",
+      "name": "[parameters('loadBalancerName')]",
+      "location": "[resourceGroup().location]",
+      "sku": {
+        "name": "Standard"
+      },
+      "properties": {
+        "frontendIPConfigurations": [
+          {
+            "properties": {
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses', parameters('inboundPublicIPName'))]"
+              },
+              "privateIPAllocationMethod": "Dynamic"
+            },
+            "name": "[parameters('frontendIPName')]"
+          }
+        ],
+        "backendAddressPools": [
+          {
+            "name": "[parameters('backendAddressPoolName')]",
+            "id": "[resourceId('Microsoft.Network/loadBalancers/backendAddressPools', parameters('loadBalancerName'), parameters('backendAddressPoolName'))]",
+            "properties": {
+              "loadBalancerBackendAddresses": []
+            }
+          }
+        ],
+        "probes": "[union(if(variables('hasReadinessProbe'), createArray(createObject('name', 'readinessProbe', 'properties', createObject('protocol', 'Tcp', 'port', variables('readinessProbePort'), 'intervalInSeconds', coalesce(tryGet(parameters('context').properties.containers.readinessProbe, 'periodSeconds'), 5), 'numberOfProbes', coalesce(tryGet(parameters('context').properties.containers.readinessProbe, 'failureThreshold'), 3), 'probeThreshold', coalesce(tryGet(parameters('context').properties.containers.readinessProbe, 'successThreshold'), 1)))), createArray()), if(variables('hasLivenessProbe'), createArray(createObject('name', 'livenessProbe', 'properties', createObject('protocol', 'Tcp', 'port', variables('livenessProbePort'), 'intervalInSeconds', coalesce(tryGet(parameters('context').properties.containers.livenessProbe, 'periodSeconds'), 10), 'numberOfProbes', coalesce(tryGet(parameters('context').properties.containers.livenessProbe, 'failureThreshold'), 3), 'probeThreshold', coalesce(tryGet(parameters('context').properties.containers.livenessProbe, 'successThreshold'), 1)))), createArray()))]",
+        "loadBalancingRules": [
+          {
+            "name": "[parameters('httpRuleName')]",
+            "properties": {
+              "frontendIPConfiguration": {
+                "id": "[resourceId('Microsoft.Network/loadBalancers/frontendIPConfigurations', parameters('loadBalancerName'), parameters('frontendIPName'))]"
+              },
+              "frontendPort": 80,
+              "backendPort": 80,
+              "enableFloatingIP": false,
+              "idleTimeoutInMinutes": 15,
+              "protocol": "Tcp",
+              "enableTcpReset": true,
+              "loadDistribution": "Default",
+              "disableOutboundSnat": false,
+              "backendAddressPools": [
+                {
+                  "id": "[resourceId('Microsoft.Network/loadBalancers/backendAddressPools', parameters('loadBalancerName'), parameters('backendAddressPoolName'))]"
+                }
+              ],
+              "probe": "[if(variables('hasReadinessProbe'), createObject('id', resourceId('Microsoft.Network/loadBalancers/probes', parameters('loadBalancerName'), 'readinessProbe')), null())]"
+            }
+          }
+        ],
+        "inboundNatRules": [
+          {
+            "name": "[parameters('inboundNatRuleName')]",
+            "properties": {
+              "backendAddressPool": {
+                "id": "[resourceId('Microsoft.Network/loadBalancers/backendAddressPools', parameters('loadBalancerName'), parameters('backendAddressPoolName'))]"
+              },
+              "backendPort": 80,
+              "enableFloatingIP": false,
+              "enableTcpReset": false,
+              "frontendIPConfiguration": {
+                "id": "[resourceId('Microsoft.Network/loadBalancers/frontendIPConfigurations', parameters('loadBalancerName'), parameters('frontendIPName'))]"
+              },
+              "frontendPortRangeEnd": 331,
+              "frontendPortRangeStart": 81,
+              "idleTimeoutInMinutes": 4,
+              "protocol": "Tcp"
+            }
+          }
+        ],
+        "outboundRules": [],
+        "inboundNatPools": []
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/publicIPAddresses', parameters('inboundPublicIPName'))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.ContainerInstance/containerGroupProfiles",
+      "apiVersion": "2024-09-01-preview",
+      "name": "[variables('cgProfileName')]",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "sku": "Standard",
+        "containers": [
+          {
+            "name": "web",
+            "properties": {
+              "image": "[parameters('context').properties.containers.image]",
+              "ports": [
+                {
+                  "protocol": "[if(not(equals(parameters('context').properties.containers.ports, null())), coalesce(parameters('context').properties.containers.ports.additionalProperties.properties.protocol, 'TCP'), 'TCP')]",
+                  "port": "[if(not(equals(parameters('context').properties.containers.ports, null())), parameters('context').properties.containers.ports.additionalProperties.properties.containerPort, 80)]"
+                }
+              ],
+              "resources": {
+                "requests": {
+                  "memoryInGB": "[coalesce(div(tryGet(tryGet(parameters('context').properties.containers.resources, 'requests'), 'memoryInMib'), 1024), json('1.0'))]",
+                  "cpu": "[coalesce(tryGet(tryGet(parameters('context').properties.containers.resources, 'requests'), 'cpu'), json('1.0'))]"
+                }
+              },
+              "volumeMounts": [
+                {
+                  "name": "cacheVolume",
+                  "mountPath": "/mnt/cache"
+                }
+              ]
+            }
+          }
+        ],
+        "volumes": [
+          {
+            "name": "cacheVolume",
+            "emptyDir": {}
+          }
+        ],
+        "restartPolicy": "Always",
+        "ipAddress": {
+          "ports": [
+            {
+              "protocol": "TCP",
+              "port": 80
+            }
+          ],
+          "type": "Private"
+        },
+        "osType": "Linux"
+      }
+    },
+    {
+      "type": "Microsoft.ContainerInstance/ngroups",
+      "apiVersion": "2024-09-01-preview",
+      "name": "[variables('nGroupsName')]",
+      "location": "[resourceGroup().location]",
+      "zones": "[parameters('zones')]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "elasticProfile": {
+          "desiredCount": "[coalesce(parameters('context').properties.replicas, 2)]",
+          "maintainDesiredCount": "[parameters('maintainDesiredCount')]"
+        },
+        "updateProfile": {
+          "updateMode": "Rolling"
+        },
+        "containerGroupProfiles": [
+          {
+            "resource": {
+              "id": "[format('{0}Microsoft.ContainerInstance/containerGroupProfiles/{1}', variables('resourcePrefix'), variables('cgProfileName'))]"
+            },
+            "containerGroupProperties": {
+              "subnetIds": [
+                {
+                  "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('subnetName'))]",
+                  "name": "[parameters('subnetName')]"
+                }
+              ]
+            },
+            "networkProfile": {
+              "loadBalancer": {
+                "backendAddressPools": [
+                  {
+                    "resource": {
+                      "id": "[resourceId('Microsoft.Network/loadBalancers/backendAddressPools', parameters('loadBalancerName'), parameters('backendAddressPoolName'))]"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "tags": {
+        "reprovision.enabled": "true",
+        "metadata.container.environmentVariable.orchestratorId": "true",
+        "rollingupdate.replace.enabled": "true"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ContainerInstance/containerGroupProfiles', variables('cgProfileName'))]",
+        "[resourceId('Microsoft.Network/loadBalancers', parameters('loadBalancerName'))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "virtualNetworkId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+    },
+    "subnetId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName')), '2022-07-01').subnets[0].id]"
+    },
+    "loadBalancerId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/loadBalancers', parameters('loadBalancerName'))]"
+    },
+    "frontendIPConfigurationId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Network/loadBalancers', parameters('loadBalancerName')), '2022-07-01').frontendIPConfigurations[0].id]"
+    },
+    "backendAddressPoolId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Network/loadBalancers', parameters('loadBalancerName')), '2022-07-01').backendAddressPools[0].id]"
+    },
+    "inboundPublicIPId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/publicIPAddresses', parameters('inboundPublicIPName'))]"
+    },
+    "outboundPublicIPId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/publicIPAddresses', parameters('outboundPublicIPName'))]"
+    },
+    "inboundPublicIPFQDN": {
+      "type": "string",
+      "value": "[if(and(contains(reference(resourceId('Microsoft.Network/publicIPAddresses', parameters('inboundPublicIPName')), '2022-07-01'), 'dnsSettings'), not(equals(reference(resourceId('Microsoft.Network/publicIPAddresses', parameters('inboundPublicIPName')), '2022-07-01').dnsSettings, null()))), reference(resourceId('Microsoft.Network/publicIPAddresses', parameters('inboundPublicIPName')), '2022-07-01').dnsSettings.fqdn, '')]"
+    },
+    "natGatewayId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/natGateways', parameters('natGatewayName'))]"
+    },
+    "networkSecurityGroupId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/networkSecurityGroups', parameters('networkSecurityGroupName'))]"
+    },
+    "ddosProtectionPlanId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/ddosProtectionPlans', variables('ddosProtectionPlanName'))]"
+    },
+    "containerGroupProfileId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.ContainerInstance/containerGroupProfiles', variables('cgProfileName'))]"
+    },
+    "nGroupsId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.ContainerInstance/ngroups', variables('nGroupsName'))]"
+    },
+    "readinessProbeId": {
+      "type": "string",
+      "value": "[if(variables('hasReadinessProbe'), resourceId('Microsoft.Network/loadBalancers/probes', parameters('loadBalancerName'), 'readinessProbe'), '')]"
+    },
+    "livenessProbeId": {
+      "type": "string",
+      "value": "[if(variables('hasLivenessProbe'), resourceId('Microsoft.Network/loadBalancers/probes', parameters('loadBalancerName'), 'livenessProbe'), '')]"
+    }
+  }
+}
