@@ -86,12 +86,12 @@ var resourcePrefix = '/subscriptions/${subscription().subscriptionId}/resourceGr
 var ddosProtectionPlanName = 'ddosProtectionPlan'
 
 // Helper variables for probes
-var hasReadinessProbe = contains(context.properties.containers, 'readinessProbe') && context.properties.containers.readinessProbe != null
-var hasLivenessProbe = contains(context.properties.containers, 'livenessProbe') && context.properties.containers.livenessProbe != null
+var hasReadinessProbe = contains(context.resource.properties.containers, 'readinessProbe') && context.resource.properties.containers.readinessProbe != null
+var hasLivenessProbe = contains(context.resource.properties.containers, 'livenessProbe') && context.resource.properties.containers.livenessProbe != null
 
 // Get probe port with safe navigation
-var readinessProbePort = hasReadinessProbe && contains(context.properties.containers.readinessProbe, 'tcpSocket') && context.properties.containers.readinessProbe.tcpSocket != null && contains(context.properties.containers.readinessProbe.tcpSocket, 'properties') && contains(context.properties.containers.readinessProbe.tcpSocket.properties, 'port') ? context.properties.containers.readinessProbe.tcpSocket.properties.port : 80
-var livenessProbePort = hasLivenessProbe && contains(context.properties.containers.livenessProbe, 'tcpSocket') && context.properties.containers.livenessProbe.tcpSocket != null && contains(context.properties.containers.livenessProbe.tcpSocket, 'properties') && contains(context.properties.containers.livenessProbe.tcpSocket.properties, 'port') ? context.properties.containers.livenessProbe.tcpSocket.properties.port : 80
+var readinessProbePort = hasReadinessProbe && contains(context.resource.properties.containers.readinessProbe, 'tcpSocket') && context.resource.properties.containers.readinessProbe.tcpSocket != null && contains(context.resource.properties.containers.readinessProbe.tcpSocket, 'properties') && contains(context.resource.properties.containers.readinessProbe.tcpSocket.properties, 'port') ? context.resource.properties.containers.readinessProbe.tcpSocket.properties.port : 80
+var livenessProbePort = hasLivenessProbe && contains(context.resource.properties.containers.livenessProbe, 'tcpSocket') && context.resource.properties.containers.livenessProbe.tcpSocket != null && contains(context.resource.properties.containers.livenessProbe.tcpSocket, 'properties') && contains(context.resource.properties.containers.livenessProbe.tcpSocket.properties, 'port') ? context.resource.properties.containers.livenessProbe.tcpSocket.properties.port : 80
 
 // DDoS Protection Plan
 resource ddosProtectionPlan 'Microsoft.Network/ddosProtectionPlans@2022-07-01' = {
@@ -257,9 +257,9 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
           properties: {
             protocol: 'Tcp'
             port: readinessProbePort
-            intervalInSeconds: context.properties.containers.readinessProbe.?periodSeconds ?? 5
-            numberOfProbes: context.properties.containers.readinessProbe.?failureThreshold ?? 3
-            probeThreshold: context.properties.containers.readinessProbe.?successThreshold ?? 1
+            intervalInSeconds: context.resource.properties.containers.readinessProbe.?periodSeconds ?? 5
+            numberOfProbes: context.resource.properties.containers.readinessProbe.?failureThreshold ?? 3
+            probeThreshold: context.resource.properties.containers.readinessProbe.?successThreshold ?? 1
           }
         }
       ] : [],
@@ -269,9 +269,9 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
           properties: {
             protocol: 'Tcp'
             port: livenessProbePort
-            intervalInSeconds: context.properties.containers.livenessProbe.?periodSeconds ?? 10
-            numberOfProbes: context.properties.containers.livenessProbe.?failureThreshold ?? 3
-            probeThreshold: context.properties.containers.livenessProbe.?successThreshold ?? 1
+            intervalInSeconds: context.resource.properties.containers.livenessProbe.?periodSeconds ?? 10
+            numberOfProbes: context.resource.properties.containers.livenessProbe.?failureThreshold ?? 3
+            probeThreshold: context.resource.properties.containers.livenessProbe.?successThreshold ?? 1
           }
         }
       ] : []
@@ -340,17 +340,17 @@ resource containerGroupProfile 'Microsoft.ContainerInstance/containerGroupProfil
       {
         name: 'web'
         properties: {
-          image: context.properties.containers.image
+          image: context.resource.properties.containers.image
           ports: [
             {
-              protocol: context.properties.containers.ports != null ? context.properties.containers.ports.additionalProperties.properties.protocol ?? 'TCP' : 'TCP'
-              port: context.properties.containers.ports != null ? context.properties.containers.ports.additionalProperties.properties.containerPort : 80
+              protocol: context.resource.properties.containers.ports != null ? context.resource.properties.containers.ports.additionalProperties.properties.protocol ?? 'TCP' : 'TCP'
+              port: context.resource.properties.containers.ports != null ? context.resource.properties.containers.ports.additionalProperties.properties.containerPort : 80
             }
           ]
           resources: {
             requests: {
-              memoryInGB: context.properties.containers.resources.?requests.?memoryInMib/1024 ?? json('1.0')
-              cpu: context.properties.containers.resources.?requests.?cpu ?? json('1.0')
+              memoryInGB: context.resource.properties.containers.resource.?requests.?memoryInMib/1024 ?? json('1.0')
+              cpu: context.resource.properties.containers.resource.?requests.?cpu ?? json('1.0')
             }
           }
           volumeMounts: [
@@ -392,7 +392,7 @@ resource nGroups 'Microsoft.ContainerInstance/NGroups@2024-09-01-preview' = {
   }
   properties: {
     elasticProfile: {
-      desiredCount: context.properties.replicas ?? 2
+      desiredCount: context.resource.properties.replicas ?? 2
       maintainDesiredCount: maintainDesiredCount
     }
     updateProfile: {
