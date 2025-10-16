@@ -90,8 +90,8 @@ var hasReadinessProbe = contains(context.resource.properties.containers, 'readin
 var hasLivenessProbe = contains(context.resource.properties.containers, 'livenessProbe') && context.resource.properties.containers.demo.livenessProbe != null
 
 // Get probe port with safe navigation
-var readinessProbePort = hasReadinessProbe && contains(context.resource.properties.containers.demo.readinessProbe, 'tcpSocket') && context.resource.properties.containers.demo.readinessProbe.tcpSocket != null && contains(context.resource.properties.containers.demo.readinessProbe.tcpSocket, 'properties') && contains(context.resource.properties.containers.demo.readinessProbe.tcpSocket.properties, 'port') ? context.resource.properties.containers.demo.readinessProbe.tcpSocket.properties.port : 80
-var livenessProbePort = hasLivenessProbe && contains(context.resource.properties.containers.demo.livenessProbe, 'tcpSocket') && context.resource.properties.containers.demo.livenessProbe.tcpSocket != null && contains(context.resource.properties.containers.demo.livenessProbe.tcpSocket, 'properties') && contains(context.resource.properties.containers.demo.livenessProbe.tcpSocket.properties, 'port') ? context.resource.properties.containers.demo.livenessProbe.tcpSocket.properties.port : 80
+// var readinessProbePort = context.resource.properties.containers.?demo.?readinessProbe.?tcpSocket.?properties.?port ?? 80
+var livenessProbePort = context.resource.properties.containers.?demo.?livenessProbe.?tcpSocket.?properties.?port ?? 80
 
 
 // DDoS Protection Plan
@@ -119,6 +119,22 @@ resource networkSecurityGroup 'Microsoft.Network/networkSecurityGroups@2022-07-0
           protocol: '*'
           priority: 100
           sourceAddressPrefix: 'Internet'
+          sourcePortRange: '*'
+        }
+      }
+      {
+        name: 'AzureCloudInbound'
+        properties: {
+          access: 'Allow'
+          description: 'Allow Azure Cloud traffic on port range'
+          destinationAddressPrefix: '*'
+          destinationPortRanges: [
+            '3000'
+          ]
+          direction: 'Inbound'
+          protocol: '*'
+          priority: 110
+          sourceAddressPrefix: 'AzureCloud'
           sourcePortRange: '*'
         }
       }
@@ -252,18 +268,18 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
       }
     ]
     probes: union(
-      hasReadinessProbe ? [
+      [
         {
           name: 'readinessProbe'
           properties: {
             protocol: 'Tcp'
-            port: readinessProbePort
-            intervalInSeconds: context.resource.properties.containers.demo.readinessProbe.?periodSeconds ?? 5
-            numberOfProbes: context.resource.properties.containers.demo.readinessProbe.?failureThreshold ?? 3
-            probeThreshold: context.resource.properties.containers.demo.readinessProbe.?successThreshold ?? 1
+            port: context.resource.properties.containers.demo.ports.?http.?containerPort ?? 80
+            intervalInSeconds: context.resource.properties.containers.?demo.?readinessProbe.?periodSeconds ?? 5
+            numberOfProbes: context.resource.properties.containers.?demo.?readinessProbe.?failureThreshold ?? 1
+            probeThreshold: context.resource.properties.containers.?demo.?readinessProbe.?successThreshold ?? 1
           }
         }
-      ] : [],
+      ],
       hasLivenessProbe ? [
         {
           name: 'livenessProbe'
@@ -284,45 +300,26 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
           frontendIPConfiguration: {
             id: resourceId('Microsoft.Network/loadBalancers/frontendIPConfigurations', loadBalancerName, frontendIPName)
           }
-          frontendPort: 80
-          backendPort: 80
+          frontendPort: context.resource.properties.containers.demo.ports.?http.?containerPort ?? 80
+          backendPort: context.resource.properties.containers.demo.ports.?http.?containerPort ?? 80
           enableFloatingIP: false
-          idleTimeoutInMinutes: 15
+          idleTimeoutInMinutes: 5
           protocol: 'Tcp'
           enableTcpReset: true
           loadDistribution: 'Default'
-          disableOutboundSnat: false
+          disableOutboundSnat: true
           backendAddressPools: [
             {
               id: resourceId('Microsoft.Network/loadBalancers/backendAddressPools', loadBalancerName, backendAddressPoolName)
             }
           ]
-          probe: hasReadinessProbe ? {
+          probe: {
             id: resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, 'readinessProbe')
-          } : null
+          }
         }
       }
     ]
-    inboundNatRules: [
-      {
-        name: inboundNatRuleName
-        properties: {
-          backendAddressPool: {
-            id: resourceId('Microsoft.Network/loadBalancers/backendAddressPools', loadBalancerName, backendAddressPoolName)
-          }
-          backendPort: 80
-          enableFloatingIP: false
-          enableTcpReset: false
-          frontendIPConfiguration: {
-            id: resourceId('Microsoft.Network/loadBalancers/frontendIPConfigurations', loadBalancerName, frontendIPName)
-          }
-          frontendPortRangeEnd: 331
-          frontendPortRangeStart: 81
-          idleTimeoutInMinutes: 4
-          protocol: 'Tcp'
-        }
-      }
-    ]
+    inboundNatRules: []
     outboundRules: []
     inboundNatPools: []
   }
