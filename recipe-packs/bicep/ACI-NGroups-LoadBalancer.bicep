@@ -70,6 +70,10 @@ param maintainDesiredCount bool = true
 @maxLength(64)
 param inboundNatRuleName string = 'inboundNatRule'
 
+@description('User Assigned Identity name')
+@maxLength(64)
+param userAssignedIdentityName string = 'uai_1'
+
 @description('Radius ACI Container Context')
 param context object
 
@@ -93,6 +97,21 @@ var hasLivenessProbe = contains(context.resource.properties.containers, 'livenes
 // var readinessProbePort = context.resource.properties.containers.?demo.?readinessProbe.?tcpSocket.?properties.?port ?? 80
 var livenessProbePort = context.resource.properties.containers.?demo.?livenessProbe.?tcpSocket.?properties.?port ?? 80
 
+// Check if there's a Redis connection configured
+var resourceProperties = context.resource.properties ?? {}
+var connectionsConfig = resourceProperties.connections ?? {}
+var hasRedisConnection = contains(connectionsConfig, 'redis')
+// Get Redis connection outputs if available
+var resourceConnections = context.resource.connections ?? {}
+var redisOutputs = hasRedisConnection && contains(resourceConnections, 'redis') ? resourceConnections.redis : {}
+var redisHost = hasRedisConnection && contains(redisOutputs, 'host') ? redisOutputs.host : ''
+var redisPort = hasRedisConnection && contains(redisOutputs, 'port') ? redisOutputs.port : 0
+
+// User Assigned Managed Identity
+resource userAssignedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: userAssignedIdentityName
+  location: resourceGroup().location
+}
 
 // DDoS Protection Plan
 resource ddosProtectionPlan 'Microsoft.Network/ddosProtectionPlans@2022-07-01' = {
@@ -339,6 +358,20 @@ resource containerGroupProfile 'Microsoft.ContainerInstance/containerGroupProfil
         name: 'web'
         properties: {
           image: context.resource.properties.containers.demo.image
+           environmentVariables: [
+            {
+              name: 'CONNECTION_REDIS_HOST'
+              value: redisHost
+            }
+            {
+              name: 'CONNECTION_REDIS_PORT'
+              value: redisPort
+            }
+            {
+              name: 'CONNECTION_REDIS_CONNECTIONSTRING'
+              secureValue: 'redis://${redisHost}:${redisPort},abortConnect=False'
+            }
+          ]
           ports: [
             {
               protocol: context.resource.properties.containers.demo.ports.?http.?protocol ?? 'TCP'
@@ -386,7 +419,10 @@ resource nGroups 'Microsoft.ContainerInstance/NGroups@2024-09-01-preview' = {
   location: resourceGroup().location
   zones: zones
   identity: {
-    type: 'SystemAssigned'
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${resourcePrefix}Microsoft.ManagedIdentity/userAssignedIdentities/${userAssignedIdentityName}': {}
+    }
   }
   properties: {
     elasticProfile: {
@@ -432,6 +468,7 @@ resource nGroups 'Microsoft.ContainerInstance/NGroups@2024-09-01-preview' = {
     containerGroupProfile
     loadBalancer
     virtualNetwork
+    userAssignedIdentity
   ]
 }
 
@@ -451,3 +488,6 @@ output containerGroupProfileId string = containerGroupProfile.id
 output nGroupsId string = nGroups.id
 output readinessProbeId string = hasReadinessProbe ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, 'readinessProbe') : ''
 output livenessProbeId string = hasLivenessProbe ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, 'livenessProbe') : ''
+output userAssignedIdentityId string = userAssignedIdentity.id
+output userAssignedIdentityClientId string = userAssignedIdentity.properties.clientId
+output userAssignedIdentityPrincipalId string = userAssignedIdentity.properties.principalId
