@@ -69,9 +69,6 @@ resource "kubernetes_deployment" "postgresql" {
             requests = {
               memory = var.memory[var.context.resource.properties.size].memoryRequest
               }
-              limits = {
-                memory= var.memory[var.context.resource.properties.size].memoryLimit
-              }
             }
           env {
             name  = "POSTGRES_PASSWORD"
