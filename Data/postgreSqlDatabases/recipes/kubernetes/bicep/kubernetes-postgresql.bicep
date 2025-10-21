@@ -19,11 +19,12 @@ param tag string = '16-alpine'
 var memory ={
   S: {
     memoryRequest: '512Mi'
-    memoryLimit: '1024Mi'
   } 
   M: {
     memoryRequest: '1Gi'
-    memoryLimit: '2Gi'
+  }
+  L: {
+    memoryRequest: '2Gi'
   }
 } 
 
