@@ -16,7 +16,6 @@ variable "memory" {
   description = "Memory limits for the PostgreSQL container"
   type = map(object({
     memoryRequest = string
-    memoryLimit  = string
   }))
   default = {
     S = {
