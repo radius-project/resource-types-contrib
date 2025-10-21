@@ -16,7 +16,6 @@ variable "memory" {
   description = "Memory limits for the PostgreSQL container"
   type = map(object({
     memoryRequest = string
-    memoryLimit  = string
   }))
   default = {
     S = {
@@ -68,9 +67,6 @@ resource "kubernetes_deployment" "postgresql" {
           resources {
             requests = {
               memory = var.memory[var.context.resource.properties.size].memoryRequest
-              }
-              limits = {
-                memory= var.memory[var.context.resource.properties.size].memoryLimit
               }
             }
           env {

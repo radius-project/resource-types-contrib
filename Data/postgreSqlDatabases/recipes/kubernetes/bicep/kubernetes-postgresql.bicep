@@ -72,9 +72,6 @@ resource postgresql 'apps/Deployment@v1' = {
               requests: {
                 memory: memory[context.resource.properties.size].memoryRequest
               }
-              limits: {
-                memory: memory[context.resource.properties.size].memoryLimit
-              }
             }
             env: [
               {
