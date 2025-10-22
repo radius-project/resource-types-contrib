@@ -406,7 +406,7 @@ types:
                             type: integer
                             description: (Optional) The absolute value of the metric as a quantity.
                     required: [kind, target]
-              required: [metric]
+              required: [metrics]
             extensions:
               type: object
               description: (Optional) Properties for additional functionality. daprSidecar is the only available option.
