@@ -37,5 +37,7 @@ jobs:
         run: make create-radius-cluster
       - name: Build
         run: make build
+      - name: Register
+        run: make register
       - name: Test
         run: make test
