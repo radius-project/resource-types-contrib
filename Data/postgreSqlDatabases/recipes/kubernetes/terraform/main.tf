@@ -8,7 +8,7 @@ terraform {
 }
 
 variable "context" {
-  description = "This variable contains Radius recipe context."
+  description = "This variable contains Radius Recipe context."
   type = any
 }
 
@@ -37,7 +37,8 @@ locals {
 }
 
 resource "random_password" "password" {
-  length           = 16
+  length  = 16
+  special = false
 }
 
 resource "kubernetes_deployment" "postgresql" {
