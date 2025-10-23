@@ -96,30 +96,42 @@ rad recipe register default \
     --template-path "$TEMPLATE_PATH" \
     --plain-http
 
-# Check if test file exists
-TEST_FILE="$RESOURCE_TYPE_PATH/test/app.bicep"
-if [[ ! -f "$TEST_FILE" ]]; then
-    echo "==> No test file found at $TEST_FILE, skipping deployment test"
+# Check for test files matching app*.bicep
+TEST_DIR="$RESOURCE_TYPE_PATH/test"
+if [[ ! -d "$TEST_DIR" ]]; then
+    echo "==> Test directory not found at $TEST_DIR, skipping deployment test"
     rad recipe unregister default --resource-type "$RESOURCE_TYPE"
     exit 0
 fi
 
-echo "==> Deploying test application from $TEST_FILE"
-APP_NAME="testapp-$(date +%s)"
+shopt -s nullglob
+TEST_FILES=("$TEST_DIR"/app*.bicep)
+shopt -u nullglob
 
-# Deploy the test app
-if rad deploy "$TEST_FILE" --application "$APP_NAME" --environment default; then
-    echo "==> Test deployment successful"
-    
-    # Cleanup: delete the app
-    echo "==> Cleaning up test application"
-    rad app delete "$APP_NAME" --yes
-else
-    echo "==> Test deployment failed"
-    rad app delete "$APP_NAME" --yes 2>/dev/null || true
+if [[ ${#TEST_FILES[@]} -eq 0 ]]; then
+    echo "==> No test files found matching $TEST_DIR/app*.bicep, skipping deployment test"
     rad recipe unregister default --resource-type "$RESOURCE_TYPE"
-    exit 1
+    exit 0
 fi
+
+for TEST_FILE in "${TEST_FILES[@]}"; do
+    echo "==> Deploying test application from $TEST_FILE"
+    APP_NAME="testapp-$(date +%s)"
+
+    # Deploy the test app
+    if rad deploy "$TEST_FILE" --application "$APP_NAME" --environment default; then
+        echo "==> Test deployment for $TEST_FILE successful"
+
+        # Cleanup: delete the app
+        echo "==> Cleaning up test application $APP_NAME"
+        rad app delete "$APP_NAME" --yes
+    else
+        echo "==> Test deployment failed for $TEST_FILE"
+        rad app delete "$APP_NAME" --yes 2>/dev/null || true
+        rad recipe unregister default --resource-type "$RESOURCE_TYPE"
+        exit 1
+    fi
+done
 
 # Unregister the recipe
 echo "==> Unregistering recipe"

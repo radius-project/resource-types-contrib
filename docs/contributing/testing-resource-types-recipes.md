@@ -9,6 +9,7 @@ Before testing, ensure you have:
 - Docker installed (for running k3d)
 - `kubectl` installed
 - `make` available in your environment
+- `dapr` CLI installed (for Dapr related recipes)
 
 ## Quick Start
 
