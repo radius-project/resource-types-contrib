@@ -174,6 +174,15 @@ if [[ "$DEPLOYMENT_EXISTS" == "false" ]]; then
         -n "$TERRAFORM_MODULE_SERVER_NAMESPACE" --timeout=60s >/dev/null 2>&1; then
         echo "Warning: Deployment may not have completed successfully" >&2
     fi
+    
+    echo "    Applying ClusterRoleBinding for CRD access..."
+    CRD_ACCESS_FILE=".github/build/tf-module-server/crd-access.yaml"
+    if [[ ! -f "$CRD_ACCESS_FILE" ]]; then
+        echo "Error: CRD access file not found: $CRD_ACCESS_FILE" >&2
+        exit 1
+    fi
+    kubectl apply -f "$CRD_ACCESS_FILE" >/dev/null 2>&1
+
 else
     echo "    Web server already deployed"
     # Restart deployment to pick up ConfigMap changes
