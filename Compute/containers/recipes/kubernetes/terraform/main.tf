@@ -23,13 +23,8 @@ locals {
   volumes             = try(local.resource_properties.volumes, {})
   restart_policy      = try(local.resource_properties.restartPolicy, null)
 
-  # Connections - Extract secret connections from Radius.Security/secrets resources
+  # Connections - used for linked resources like persistent volumes
   connections = try(var.context.resource.connections, {})
-  secret_connections = {
-    for name, conn in local.connections : name => conn
-    if try(conn.status.computedValues.secretName, null) != null
-  }
-  secret_names = [for name, conn in local.secret_connections : conn.status.computedValues.secretName]
 
   # Replica count - use from properties or default to 1
   replica_count = try(local.resource_properties.replicas, 1)
@@ -94,10 +89,17 @@ locals {
 
       # Volume mounts
       volume_mounts = [
-        for vm in try(config.volumeMounts, []) : {
-          name       = vm.volumeName
-          mount_path = vm.mountPath
-        }
+        for vm in try(config.volumeMounts, []) : merge(
+          {
+            name       = vm.volumeName
+            mount_path = vm.mountPath
+          },
+          try(vm.subPath, null) != null ? { sub_path = vm.subPath } : {},
+          try(vm.readOnly, null) != null ? { read_only = vm.readOnly } : {},
+          try(vm.readOnly, null) == null && try(local.volumes[vm.volumeName].persistentVolume.accessMode, "") != "" && lower(local.volumes[vm.volumeName].persistentVolume.accessMode) == "readonlymany" ? {
+            read_only = true
+          } : {}
+        )
       ]
 
       # Resources - Transform memoryInMib to memory format
@@ -150,10 +152,17 @@ locals {
 
       # Volume mounts
       volume_mounts = [
-        for vm in try(config.volumeMounts, []) : {
-          name       = vm.volumeName
-          mount_path = vm.mountPath
-        }
+        for vm in try(config.volumeMounts, []) : merge(
+          {
+            name       = vm.volumeName
+            mount_path = vm.mountPath
+          },
+          try(vm.subPath, null) != null ? { sub_path = vm.subPath } : {},
+          try(vm.readOnly, null) != null ? { read_only = vm.readOnly } : {},
+          try(vm.readOnly, null) == null && try(local.volumes[vm.volumeName].persistentVolume.accessMode, "") != "" && lower(local.volumes[vm.volumeName].persistentVolume.accessMode) == "readonlymany" ? {
+            read_only = true
+          } : {}
+        )
       ]
 
       # Resources - Transform memoryInMib to memory format
@@ -180,9 +189,15 @@ locals {
       name = vol_name
 
       # Persistent Volume Claim
-      persistent_volume_claim = try(vol_config.persistentVolume, null) != null ? {
-        claim_name = vol_config.persistentVolume.claimName
-      } : null
+      persistent_volume_claim = try(vol_config.persistentVolume, null) != null ? (
+        try(vol_config.persistentVolume.claimName, "") != "" ? {
+          claim_name = vol_config.persistentVolume.claimName
+          } : (
+          try(local.connections[vol_name].status.computedValues.claimName, "") != "" ? {
+            claim_name = local.connections[vol_name].status.computedValues.claimName
+          } : null
+        )
+      ) : null
 
       # Secret
       secret = try(vol_config.secret, null) != null ? {
@@ -326,22 +341,14 @@ resource "kubernetes_deployment" "deployment" {
               }
             }
 
-            # Environment variables from connected secrets (Radius.Security/secrets)
-            dynamic "env_from" {
-              for_each = local.secret_names
-              content {
-                secret_ref {
-                  name = env_from.value
-                }
-              }
-            }
-
             # Volume mounts
             dynamic "volume_mount" {
               for_each = init_container.value.volume_mounts
               content {
                 name       = volume_mount.value.name
                 mount_path = volume_mount.value.mount_path
+                sub_path   = try(volume_mount.value.sub_path, null)
+                read_only  = try(volume_mount.value.read_only, null)
               }
             }
 
@@ -407,22 +414,14 @@ resource "kubernetes_deployment" "deployment" {
               }
             }
 
-            # Environment variables from connected secrets (Radius.Security/secrets)
-            dynamic "env_from" {
-              for_each = local.secret_names
-              content {
-                secret_ref {
-                  name = env_from.value
-                }
-              }
-            }
-
             # Volume mounts
             dynamic "volume_mount" {
               for_each = container.value.volume_mounts
               content {
                 name       = volume_mount.value.name
                 mount_path = volume_mount.value.mount_path
+                sub_path   = try(volume_mount.value.sub_path, null)
+                read_only  = try(volume_mount.value.read_only, null)
               }
             }
 

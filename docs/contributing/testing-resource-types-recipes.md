@@ -84,6 +84,16 @@ make test
 
 This discovers and tests every recipe automatically.
 
+To run only Bicep or Terraform recipes, set the `RECIPE_TYPE` variable. You can also override the environment name with `ENVIRONMENT` if you created an isolated Radius environment for testing:
+
+```bash
+# Test only Bicep recipes
+make test RECIPE_TYPE=bicep
+
+# Test Terraform recipes in a custom environment
+make test RECIPE_TYPE=terraform ENVIRONMENT=my-terraform-env
+```
+
 ## Build All Resources
 
 Build all resource types and recipes at once:

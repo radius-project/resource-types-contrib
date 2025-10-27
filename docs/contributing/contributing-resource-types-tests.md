@@ -59,6 +59,13 @@ make list-resource-types           # List resource type folders
 make list-recipes                  # List all recipes
 ```
 
+To target a specific implementation, provide the `RECIPE_TYPE` variable (supported values: `bicep`, `terraform`). You can also override the Radius environment used during testing via `ENVIRONMENT`:
+
+```bash
+make test RECIPE_TYPE=bicep
+make test RECIPE_TYPE=terraform ENVIRONMENT=ci-terraform
+```
+
 ## Using the Dev Container
 
 This repository includes a pre-configured dev container with all necessary tools installed, making it easy to get started with development and testing.

@@ -47,4 +47,35 @@ k3d cluster create \
 echo "Installing Radius on Kubernetes..."
 rad install kubernetes --set rp.publicEndpointOverride=localhost:8081 --skip-contour-install --set dashboard.enabled=false
 
+echo "Configuring RBAC for Radius dynamic-rp service account (HorizontalPodAutoscaler support)..."
+cat <<'EOF' | kubectl apply -f -
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: radius-hpa-manager
+rules:
+- apiGroups: ["autoscaling"]
+  resources: ["horizontalpodautoscalers"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+EOF
+
+cat <<'EOF' | kubectl apply -f -
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: radius-hpa-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: radius-hpa-manager
+subjects:
+- kind: ServiceAccount
+  name: dynamic-rp
+  namespace: radius-system
+EOF
+
+echo "Restarting Radius dynamic-rp deployment to pick up new permissions..."
+kubectl rollout restart deployment dynamic-rp -n radius-system
+kubectl rollout status deployment dynamic-rp -n radius-system --timeout=120s
+
 echo "✅ Radius installation completed successfully"

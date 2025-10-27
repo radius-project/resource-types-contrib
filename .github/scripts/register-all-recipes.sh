@@ -20,27 +20,40 @@
 # Register all Radius recipes in the repository by calling register-recipe.sh
 # for each discovered recipe directory. This should be run after building all
 # recipes but before testing them.
+#
+# Usage: ./register-all-recipes.sh [repo-root] [environment] [recipe-type]
+# Example: ./register-all-recipes.sh . bicep-test bicep
+# Example: ./register-all-recipes.sh . terraform-test terraform
 # =============================================================================
 
 set -euo pipefail
 
 REPO_ROOT="${1:-$(pwd)}"
+ENVIRONMENT="${2:-default}"
+RECIPE_TYPE="${3:-all}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "==> Finding all recipes in $REPO_ROOT"
+echo "==> Finding $RECIPE_TYPE recipes in $REPO_ROOT for environment $ENVIRONMENT"
 
 # Use while read loop for better compatibility (mapfile requires bash 4+)
 RECIPE_DIRS=()
 while IFS= read -r line; do
-    RECIPE_DIRS+=("$line")
-done < <("$SCRIPT_DIR"/list-recipe-folders.sh "$REPO_ROOT")
+    # Filter by recipe type if specified
+    if [[ "$RECIPE_TYPE" == "all" ]]; then
+        RECIPE_DIRS+=("$line")
+    elif [[ "$RECIPE_TYPE" == "bicep" ]] && [[ "$line" == *"/bicep" ]] && ls "$line"/*.bicep &>/dev/null; then
+        RECIPE_DIRS+=("$line")
+    elif [[ "$RECIPE_TYPE" == "terraform" ]] && [[ "$line" == *"/terraform" ]] && [[ -f "$line/main.tf" ]]; then
+        RECIPE_DIRS+=("$line")
+    fi
+done < <("$SCRIPT_DIR"/list-recipe-folders.sh "$REPO_ROOT" "$RECIPE_TYPE")
 
 if [[ ${#RECIPE_DIRS[@]} -eq 0 ]]; then
-    echo "==> No recipes found"
+    echo "==> No $RECIPE_TYPE recipes found"
     exit 0
 fi
 
-echo "==> Found ${#RECIPE_DIRS[@]} recipe(s) to register"
+echo "==> Found ${#RECIPE_DIRS[@]} $RECIPE_TYPE recipe(s) to register"
 
 FAILED_RECIPES=()
 PASSED_RECIPES=()
@@ -54,7 +67,7 @@ for recipe_dir in "${RECIPE_DIRS[@]}"; do
     echo "Registering: $RELATIVE_PATH"
     echo "================================================"
     
-    if ./.github/scripts/register-recipe.sh "$recipe_dir"; then
+    if ./.github/scripts/register-recipe.sh "$recipe_dir" "$ENVIRONMENT"; then
         PASSED_RECIPES+=("$RELATIVE_PATH")
     else
         FAILED_RECIPES+=("$RELATIVE_PATH")
@@ -86,4 +99,4 @@ echo ""
 echo "================================================"
 echo "Currently Registered Recipes"  
 echo "================================================"
-rad recipe list --environment default || echo "Warning: Could not list registered recipes"
+rad recipe list --environment "$ENVIRONMENT" || echo "Warning: Could not list registered recipes"

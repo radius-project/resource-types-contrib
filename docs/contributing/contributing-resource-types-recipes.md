@@ -545,15 +545,34 @@ After creating your Resource Type and Recipes, test them locally using the provi
    make build-terraform-recipe RECIPE_PATH=Data/redisCaches/recipes/kubernetes/terraform
    ```
 
-4. **Test individual recipes**:
+4. **Register your recipes** (required before testing):
+  ```bash
+  # Register Bicep recipes you've built
+  make register RECIPE_TYPE=bicep
+
+  # Register Terraform recipes in a separate environment or after cleanup
+  make register RECIPE_TYPE=terraform ENVIRONMENT=my-terraform-env
+  ```
+
+  If you rely on a single Radius environment, run the register → test flow for one IaC format, clean up (or switch environments), and only then repeat for the other format so the two template kinds do not overwrite each other's registrations.
+
+5. **Test individual recipes**:
    ```bash
    make test-recipe RECIPE_PATH=Data/redisCaches/recipes/kubernetes/bicep
    ```
 
-5. **Test all recipes** (if you have multiple):
-   ```bash
-   make test
-   ```
+6. **Test all recipes** (if you have multiple):
+  ```bash
+  make test
+  ```
+
+  To scope testing to a specific implementation, set `RECIPE_TYPE` to `bicep` or `terraform` (and optionally override the Radius environment with `ENVIRONMENT`):
+  ```bash
+  make test RECIPE_TYPE=bicep
+  make test RECIPE_TYPE=terraform ENVIRONMENT=my-terraform-env
+  ```
+
+  Remember that `make test` assumes recipes are already registered. To validate both Bicep and Terraform recipes for the same resource type, run those register/test cycles sequentially or in distinct environments to avoid template registration conflicts.
 
 For detailed testing instructions, see [Testing Resource Types and Recipes](testing-resource-types-recipes.md).
 
