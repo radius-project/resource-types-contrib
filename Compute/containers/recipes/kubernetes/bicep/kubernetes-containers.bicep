@@ -13,6 +13,7 @@ var normalizedName = toLower(replace(replace(replace(resourceName, '_', '-'), '.
 
 var resourceProperties = context.resource.properties ?? {}
 var containerItems = items(resourceProperties.containers ?? {})
+var volumesMap = resourceProperties.?volumes ?? {}
 
 // Labels
 var labels = {
@@ -24,14 +25,6 @@ var labels = {
 
 // Extract connection data from linked resources
 var resourceConnections = context.resource.connections ?? {}
-
-// Check for 'secrets' connection and extract secretName output value
-var hasSecretsConnection = contains(resourceConnections, 'secrets')
-var secretsOutputs = hasSecretsConnection ? resourceConnections.secrets : {}
-var secretName = secretsOutputs.?status.?computedValues.?secretName ?? ''
-
-// Build list of secret names to inject via envFrom
-var secretNames = secretName != '' ? [secretName] : []
 
 // Use replicas from properties, default to 1 if not specified
 var replicaCount = resourceProperties.?replicas != null ? int(resourceProperties.replicas) : 1
@@ -61,20 +54,17 @@ var podContainers = reduce(containerItems, [], (acc, item) =>
         contains(envItem.value, 'valueFrom') ? { valueFrom: envItem.value.valueFrom } : {}
       )]))
     } : {},
-    // Add envFrom to inject secret connections from Radius.Security/secrets resources
-    length(secretNames) > 0 ? {
-      envFrom: reduce(secretNames, [], (acc, secretName) => concat(acc, [{
-        secretRef: {
-          name: secretName
-        }
-      }]))
-    } : {},
     // Add volume mounts if they exist
     contains(item.value, 'volumeMounts') ? {
-      volumeMounts: reduce(item.value.volumeMounts, [], (vmAcc, vm) => concat(vmAcc, [{
-        name: vm.volumeName
-        mountPath: vm.mountPath
-      }]))
+      volumeMounts: reduce(item.value.volumeMounts, [], (vmAcc, vm) => concat(vmAcc, [union(
+        {
+          name: vm.volumeName
+          mountPath: vm.mountPath
+        },
+  contains(vm, 'subPath') ? { subPath: vm.subPath } : {},
+  contains(vm, 'readOnly') ? { readOnly: vm.readOnly } : {},
+  (!contains(vm, 'readOnly') && contains(volumesMap, vm.volumeName) && contains(volumesMap[vm.volumeName], 'persistentVolume') && contains(volumesMap[vm.volumeName].persistentVolume, 'accessMode') && toLower(volumesMap[vm.volumeName].persistentVolume.accessMode) == 'readonlymany') ? { readOnly: true } : {}
+      )]))
     } : {},
     // Add command if specified
     contains(item.value, 'command') ? { command: item.value.command } : {},
@@ -177,19 +167,16 @@ var podInitContainers = reduce(containerItems, [], (acc, item) =>
         contains(envItem.value, 'valueFrom') ? { valueFrom: envItem.value.valueFrom } : {}
       )]))
     } : {},
-    // Add envFrom to inject secret connections from Radius.Security/secrets resources (for init containers too)
-    length(secretNames) > 0 ? {
-      envFrom: reduce(secretNames, [], (acc, secretName) => concat(acc, [{
-        secretRef: {
-          name: secretName
-        }
-      }]))
-    } : {},
     contains(item.value, 'volumeMounts') ? {
-      volumeMounts: reduce(item.value.volumeMounts, [], (vmAcc, vm) => concat(vmAcc, [{
-        name: vm.volumeName
-        mountPath: vm.mountPath
-      }]))
+      volumeMounts: reduce(item.value.volumeMounts, [], (vmAcc, vm) => concat(vmAcc, [union(
+        {
+          name: vm.volumeName
+          mountPath: vm.mountPath
+        },
+  contains(vm, 'subPath') ? { subPath: vm.subPath } : {},
+  contains(vm, 'readOnly') ? { readOnly: vm.readOnly } : {},
+  (!contains(vm, 'readOnly') && contains(volumesMap, vm.volumeName) && contains(volumesMap[vm.volumeName], 'persistentVolume') && contains(volumesMap[vm.volumeName].persistentVolume, 'accessMode') && toLower(volumesMap[vm.volumeName].persistentVolume.accessMode) == 'readonlymany') ? { readOnly: true } : {}
+      )]))
     } : {},
     contains(item.value, 'command') ? { command: item.value.command } : {},
     contains(item.value, 'args') ? { args: item.value.args } : {},
@@ -219,11 +206,18 @@ var podVolumes = reduce(volumeItems, [], (acc, vol) => concat(acc, [union(
   {
     name: vol.key
   },
-  contains(vol.value, 'persistentVolume') ? {
-    persistentVolumeClaim: {
-      claimName: vol.value.persistentVolume.claimName
-    }
-  } : {},
+  contains(vol.value, 'persistentVolume') ? union(
+    (contains(vol.value.persistentVolume, 'claimName') && vol.value.persistentVolume.claimName != '') ? {
+      persistentVolumeClaim: {
+        claimName: vol.value.persistentVolume.claimName
+      }
+    } : {},
+    (!(contains(vol.value.persistentVolume, 'claimName') && vol.value.persistentVolume.claimName != '') && contains(resourceConnections, vol.key) && (resourceConnections[vol.key].?status.?computedValues.?claimName ?? '') != '') ? {
+      persistentVolumeClaim: {
+        claimName: resourceConnections[vol.key].?status.?computedValues.?claimName
+      }
+    } : {}
+  ) : {},
   contains(vol.value, 'secret') ? {
     secret: {
       secretName: vol.value.secret.secretName

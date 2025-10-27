@@ -51,7 +51,4 @@ output result object = {
   resources: [
     '/planes/kubernetes/local/namespaces/${context.runtime.kubernetes.namespace}/providers/core/Secret/${secretName}'
   ]
-  values: {
-    secretName: secretName
-  }
 }

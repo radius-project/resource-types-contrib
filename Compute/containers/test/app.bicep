@@ -1,42 +1,27 @@
 extension radius
 extension containers
-extension secrets
+extension volumes
 
 param environment string
 
 resource app 'Applications.Core/applications@2023-10-01-preview' = {
   name: 'containers-testapp'
-  location: 'global'
   properties: {
     environment: environment
-    extensions: [
-      {
-        kind: 'kubernetesNamespace'
-        namespace: 'containers-testapp'
-      }
-    ]
   }
 }
 
-// Create a secret
-resource mySecret 'Radius.Security/secrets@2025-08-01-preview' = {
-  name: 'app-secrets'
-  properties: {
-    environment: environment
-    application: app.id
-    data: {
-      API_KEY: { value: 'secret-key' }
-      DB_PASSWORD: { value: 'password123' }
-    }
-  }
-}
-
-// Create a container that uses the secret
+// Create a container that mounts the persistent volume
 resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
   name: 'myapp'
   properties: {
     environment: environment
     application: app.id
+    connections: {
+      data: {
+        source: myPersistentVolume.id
+      }
+    }
     containers: {
       web: {
         image: 'nginx:alpine'
@@ -45,17 +30,26 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
             containerPort: 80
           }
         }
+        volumeMounts: [
+          {
+            volumeName: 'data'
+            mountPath: '/app/data'
+          } 
+        ] 
         resources: {
           requests: {
-            cpu: '100m'       
+            cpu: '0.1'       
             memoryInMib: 128   
           }
         }
       }
     }
-    connections: {
-      secrets: {
-        source: mySecret.id
+    volumes: {
+      data: {
+        persistentVolume: {
+          resourceId: myPersistentVolume.id
+          accessMode: 'ReadWriteOnce'
+        }
       }
     }
     replicas: 1
@@ -70,5 +64,14 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
         }
       ]
     }
+  }
+}
+
+resource myPersistentVolume 'Radius.Compute/persistentVolumes@2025-08-01-preview' = {
+  name: 'myPersistentVolume'
+  properties: {
+    environment: environment
+    application: app.id
+    sizeInGib: 1
   }
 }
