@@ -9,8 +9,9 @@ extension kubernetes with {
 @description('Name of the MySQL database. Defaults to the application name.')
 param database string = context.resource.properties.?database ?? '${context.application.name}'
 
-@description('MySQL username. Defaults to <application-name>-user')
-param username string = context.resource.properties.?username ?? '${context.application.name}-user'
+@description('MySQL username. Defaults to <application-name>_user')
+@maxLength(32)
+param username string = context.resource.properties.?username ?? '${context.application.name}_user'
 
 @description('The major MySQL server version in the X.Y format. Defaults to the version 8.4 if not provided.')
 @allowed([
@@ -19,6 +20,9 @@ param username string = context.resource.properties.?username ?? '${context.appl
   '8.4'
 ])
 param version string = context.resource.properties.?version ?? '8.4'
+
+@description('The user-defined tags that will be applied to the resource. Default is null.')
+param tags object = context.resource.properties.?tags ?? {}
 
 @description('Unique name for the MySQL deployment and service.')
 var uniqueName = 'mysql-${uniqueString(context.resource.id)}'
@@ -38,6 +42,7 @@ var root_password string = uniqueString(context.resource.id, guid(uniqueName, 'r
 resource mySql 'apps/Deployment@v1' = {
   metadata: {
     name: uniqueName
+    labels: tags
   }
   spec: {
     selector: {
