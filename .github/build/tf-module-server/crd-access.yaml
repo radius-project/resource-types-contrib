@@ -1,0 +1,26 @@
+# Note : The Terraform provider for Kubernetes kubernetes_manifest needs to be able to look up the CRD to create a resource of that type.
+# https://github.com/hashicorp/terraform-provider-kubernetes/pull/1506
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: radius-dapr-role
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["dapr.io"]
+    resources: ["components"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: radius-dapr-rolebinding
+subjects:
+  - kind: ServiceAccount
+    name: dynamic-rp
+    namespace: radius-system
+roleRef:
+  kind: ClusterRole
+  name: radius-dapr-role
+  apiGroup: rbac.authorization.k8s.io

@@ -1,0 +1,117 @@
+namespace: Radius.Dapr
+types:
+  stateStores:
+    description: |
+      The Radius.Dapr/stateStores Resource Type deploys a Dapr state store component for your application. To provision a state store, add the `stateStores` resource to your application definition Bicep file.
+
+      extension radius
+      extension stateStores
+      param environment string
+
+      resource myApplication 'Applications.Core/applications@2023-10-01-preview' = { ... }
+
+      resource stateStore 'Radius.Dapr/stateStores@2025-11-01-preview' = {
+        name: 'statestore'
+        properties: {
+          application: myApplication.id
+          environment: environment
+          type: 'state.redis'
+          metadata: [
+            {
+              name: 'redisHost'
+              value: 'redis:6379'
+            }
+          ]
+        }
+      }
+
+      To use the state store from a container, connect the container resource to the state store and enable the Dapr sidecar extension.
+
+      resource backend 'Applications.Core/containers@2023-10-01-preview' = {
+        name: 'backend'
+        properties: {
+          application: myApplication.id
+          environment: environment
+          container: {
+            image: 'ghcr.io/radius-project/samples/dapr-backend:latest'
+            ports: {
+              orders: {
+                containerPort: 3000
+              }
+            }
+          }
+          connections: {
+            orders: {
+              source: stateStore.id
+            }
+          }
+          extensions: [
+            {
+              kind: 'daprSidecar'
+              appId: 'backend'
+              appPort: 3000
+            }
+          ]
+        }
+      }
+
+      The connection deploys the Dapr component and wires it to the container's sidecar. It also injects environment variables into the container for the connection values. With the connection name `orders`, the following variables are available:
+
+      CONNECTION_ORDERS_TYPE
+      CONNECTION_ORDERS_COMPONENTNAME
+
+    apiVersions:
+      '2025-11-01-preview':
+        schema:
+          type: object
+          properties:
+          # Radius specific properties
+            environment:
+              type: string
+              description: "(Required) The Radius EnvironmentID. Typically set by the rad CLI. Typically value should be `environment`"
+            application:
+              type: string
+              description: "(Optional) The Radius Application ID. `myApplication.id` for example."
+          # Resource type specific properties
+            type:
+              type: string
+              description: "(Optional) The type of state store. Default is `state.redis`. See https://docs.dapr.io/reference/components-reference/supported-state-stores/ for details."
+            version:
+              type: string
+              description: "(Optional) The version of the state store component. Default is `v1`."
+            metadata:
+              type: array
+              description: "(Optional) Metadata specific to the state store component. See https://docs.dapr.io/reference/components-reference/supported-state-stores/ for details."
+              items:
+                type: object
+                properties:
+                  name: 
+                    type: string
+                    description: "(Required) Name of the metadata property."
+                  value:
+                    type: string
+                    description: "(Optional) Value of the metadata property. Leave empty if using secretKeyRef."
+                  secretKeyRef:
+                    type: object
+                    description: "(Optional) Reference to a secret key in a dapr secret store. Leave empty if using value."
+                    properties:
+                      name:
+                        type: string
+                        description: "(Required) The name of the secret store."
+                      key:
+                        type: string
+                        description: "(Required) The key of the secret in the secret store."
+                    required:
+                    - name
+                    - key
+                required:
+                - name
+            secretStore:
+              type: string
+              description: "(Optional) The name of the dapr secret store to use for this component."
+            componentName:
+              type: string
+              readOnly: true
+              description: "The name of the Dapr component that can be used to reference the state store."
+          required:
+          - environment

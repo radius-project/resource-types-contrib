@@ -53,7 +53,8 @@ find_recipe_dirs() {
 }
 
 # Collect Bicep recipe directories (directories containing .bicep files under recipes/)
-find_recipe_dirs -type f -path "*/recipes/*/*.bicep"
+# Ignore bicep files under modules/, as those are shared modules, not recipes.
+find_recipe_dirs -type f -path "*/recipes/*/*.bicep" -not -path "*/modules/*"
 
 # Collect Terraform recipe directories (directories containing main.tf under recipes/terraform)
 find_recipe_dirs -type f -path "*/recipes/*/terraform/main.tf"
