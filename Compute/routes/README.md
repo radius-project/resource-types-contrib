@@ -10,7 +10,8 @@ A list of available Recipes for this Resource Type, including links to the Bicep
 
 |Platform| IaC Language| Recipe Name | Stage |
 |---|---|---|---|
-| TODO | TODO | TODO | Alpha |
+| Kubernetes | Bicep | recipes/kubernetes/bicep/kubernetes-routes.bicep | Alpha |
+| Kubernetes | Terraform | recipes/kubernetes/terraform/main.tf | Alpha |
 
 ## Recipe Input Properties
 
@@ -27,7 +28,7 @@ A list of available Recipes for this Resource Type, including links to the Bicep
 | context.properties.rules[].destinationContainer | N/A |
 | context.properties.rules[].destinationContainer.resourceId |  N/A |
 | context.properties.rules[].destinationContainer.containerName |  N/A |
-| context.properties.rules[].destinationContainer.containerPortName |  N/A |
+| context.properties.rules[].destinationContainer.containerPort |  N/A |
 
 ## Recipe Output Properties
 
