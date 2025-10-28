@@ -10,7 +10,6 @@ terraform {
 locals {
   namespace         = var.context.runtime.kubernetes.namespace
   resource_name     = var.context.resource.name
-  normalized_name   = lower(replace(replace(replace(local.resource_name, "_", "-"), ".", "-"), " ", "-"))
   application_name  = var.context.application != null ? var.context.application.name : ""
   environment_id    = try(var.context.resource.properties.environment, "")
   environment_parts = local.environment_id != "" ? split("/", local.environment_id) : []
@@ -21,7 +20,7 @@ resource "kubernetes_persistent_volume_claim" "pvc" {
   wait_until_bound = false
 
   metadata {
-    name      = local.normalized_name
+    name      = local.resource_name
     namespace = local.namespace
     labels = {
       "radapp.io/resource"    = local.resource_name
@@ -46,10 +45,10 @@ resource "kubernetes_persistent_volume_claim" "pvc" {
 output "result" {
   value = {
     resources = [
-      "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/PersistentVolumeClaim/${local.normalized_name}"
+      "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/PersistentVolumeClaim/${local.resource_name}"
     ]
     values = {
-      claimName = local.normalized_name
+      claimName = local.resource_name
     }
   }
 }

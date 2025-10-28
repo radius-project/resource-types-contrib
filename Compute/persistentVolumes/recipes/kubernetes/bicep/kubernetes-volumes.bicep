@@ -1,10 +1,8 @@
 param context object
 
 var resourceName = context.resource.name
-var normalizedName = toLower(replace(replace(replace(resourceName, '_', '-'), '.', '-'), ' ', '-'))
 var environmentSegments = context.resource.properties.environment != null ? split(string(context.resource.properties.environment), '/') : []
 var environmentLabel = length(environmentSegments) > 0 ? last(environmentSegments) : ''
-
 
 @description('Storage Class for the persistent volume')
 param storageClass string = ''
@@ -17,9 +15,9 @@ extension kubernetes with {
 
 resource persistentVolumeClaim 'core/PersistentVolumeClaim@v1' = {
   metadata: {
-    name: normalizedName
+    name: resourceName
     labels: {
-      'radapp.io/resource': context.resource.name
+      'radapp.io/resource': resourceName
       'radapp.io/environment': environmentLabel
       // Label pods with the application name so `rad run` can find the logs.
       'radapp.io/application': context.application == null ? '' : context.application.name

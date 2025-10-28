@@ -68,7 +68,7 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
 }
 
 resource myPersistentVolume 'Radius.Compute/persistentVolumes@2025-08-01-preview' = {
-  name: 'myPersistentVolume'
+  name: 'mypersistentvolume'
   properties: {
     environment: environment
     application: app.id

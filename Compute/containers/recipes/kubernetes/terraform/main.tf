@@ -12,10 +12,9 @@ terraform {
 # Local Values - Basic Configuration
 # ========================================
 locals {
-  resource_name    = var.context.resource.name
-  namespace        = var.context.runtime.kubernetes.namespace
-  application_name = var.context.application != null ? var.context.application.name : ""
-  normalized_name  = lower(replace(replace(replace(local.resource_name, "_", "-"), ".", "-"), " ", "-"))
+  resource_name   = var.context.resource.name
+  namespace       = var.context.runtime.kubernetes.namespace
+  normalized_name = local.resource_name
 
   # Extract resource properties
   resource_properties = try(var.context.resource.properties, {})
@@ -36,12 +35,16 @@ locals {
   autoscaling_max     = local.has_autoscaling ? try(local.autoscaling.maxReplicas, 10) : 10
   autoscaling_metrics = local.has_autoscaling ? try(local.autoscaling.metrics, []) : []
 
+  # Extract last segment from environment path for labels
+  environment_id    = try(local.resource_properties.environment, "")
+  environment_parts = local.environment_id != "" ? split("/", local.environment_id) : []
+  environment_label = length(local.environment_parts) > 0 ? local.environment_parts[length(local.environment_parts) - 1] : ""
+
   # Build labels
   labels = {
-    resource                 = local.resource_name
-    app                      = local.application_name
-    "radapp.io/application"  = local.application_name
-    "app.kubernetes.io/name" = local.normalized_name
+    "radapp.io/resource"    = local.resource_name
+    "radapp.io/application" = var.context.application != null ? var.context.application.name : ""
+    "radapp.io/environment" = local.environment_label
   }
 }
 
@@ -49,20 +52,10 @@ locals {
 # Container Processing
 # ========================================
 locals {
-  # Separate regular containers from init containers
-  regular_containers = {
-    for name, config in local.containers : name => config
-    if try(config.initContainer, false) == false
-  }
-
-  init_containers = {
-    for name, config in local.containers : name => config
-    if try(config.initContainer, false) == true
-  }
-
-  # Build complete container specs for regular containers
+  # Build container specs once and track whether they are init containers
   container_specs = {
-    for name, config in local.regular_containers : name => {
+    for name, config in local.containers : name => {
+      is_init     = try(config.initContainer, false)
       name        = name
       image       = config.image
       command     = try(config.command, null)
@@ -123,60 +116,14 @@ locals {
     }
   }
 
-  # Build init container specs
+  regular_container_specs = {
+    for name, spec in local.container_specs : name => spec
+    if try(spec.is_init, false) == false
+  }
+
   init_container_specs = {
-    for name, config in local.init_containers : name => {
-      name        = name
-      image       = config.image
-      command     = try(config.command, null)
-      args        = try(config.args, null)
-      working_dir = try(config.workingDir, null)
-
-      # Ports
-      ports = [
-        for port_name, port_config in try(config.ports, {}) : {
-          name           = port_name
-          container_port = port_config.containerPort
-          protocol       = try(port_config.protocol, "TCP")
-        }
-      ]
-
-      # Environment variables
-      env = [
-        for env_name, env_config in try(config.env, {}) : {
-          name       = env_name
-          value      = try(env_config.value, null)
-          value_from = try(env_config.valueFrom, null)
-        }
-      ]
-
-      # Volume mounts
-      volume_mounts = [
-        for vm in try(config.volumeMounts, []) : merge(
-          {
-            name       = vm.volumeName
-            mount_path = vm.mountPath
-          },
-          try(vm.subPath, null) != null ? { sub_path = vm.subPath } : {},
-          try(vm.readOnly, null) != null ? { read_only = vm.readOnly } : {},
-          try(vm.readOnly, null) == null && try(local.volumes[vm.volumeName].persistentVolume.accessMode, "") != "" && lower(local.volumes[vm.volumeName].persistentVolume.accessMode) == "readonlymany" ? {
-            read_only = true
-          } : {}
-        )
-      ]
-
-      # Resources - Transform memoryInMib to memory format
-      resources = try(config.resources, null) != null ? {
-        limits = try(config.resources.limits, null) != null ? {
-          cpu    = try(config.resources.limits.cpu, null)
-          memory = try(config.resources.limits.memoryInMib, null) != null ? "${config.resources.limits.memoryInMib}Mi" : null
-        } : null
-        requests = try(config.resources.requests, null) != null ? {
-          cpu    = try(config.resources.requests.cpu, null)
-          memory = try(config.resources.requests.memoryInMib, null) != null ? "${config.resources.requests.memoryInMib}Mi" : null
-        } : null
-      } : null
-    }
+    for name, spec in local.container_specs : name => spec
+    if try(spec.is_init, false)
   }
 }
 
@@ -218,7 +165,7 @@ locals {
 locals {
   # Build services config - one service per container with ports
   services_config = {
-    for name, spec in local.container_specs : name => {
+    for name, spec in local.regular_container_specs : name => {
       container_name = name
       ports          = spec.ports
     }
@@ -276,8 +223,7 @@ resource "kubernetes_deployment" "deployment" {
 
     selector {
       match_labels = {
-        resource                 = local.resource_name
-        "app.kubernetes.io/name" = local.normalized_name
+        "radapp.io/resource" = local.resource_name
       }
     }
 
@@ -320,26 +266,6 @@ resource "kubernetes_deployment" "deployment" {
               }
             }
 
-            # Environment variables from valueFrom
-            dynamic "env" {
-              for_each = [for e in init_container.value.env : e if e.value_from != null]
-              content {
-                name = env.value.name
-
-                dynamic "value_from" {
-                  for_each = env.value.value_from != null ? [env.value.value_from] : []
-                  content {
-                    dynamic "secret_key_ref" {
-                      for_each = try(value_from.value.secretKeyRef, null) != null ? [value_from.value.secretKeyRef] : []
-                      content {
-                        name = secret_key_ref.value.name
-                        key  = secret_key_ref.value.key
-                      }
-                    }
-                  }
-                }
-              }
-            }
 
             # Volume mounts
             dynamic "volume_mount" {
@@ -365,7 +291,7 @@ resource "kubernetes_deployment" "deployment" {
 
         # Regular containers
         dynamic "container" {
-          for_each = local.container_specs
+          for_each = local.regular_container_specs
 
           content {
             name        = container.value.name
@@ -393,26 +319,6 @@ resource "kubernetes_deployment" "deployment" {
               }
             }
 
-            # Environment variables from valueFrom
-            dynamic "env" {
-              for_each = [for e in container.value.env : e if e.value_from != null]
-              content {
-                name = env.value.name
-
-                dynamic "value_from" {
-                  for_each = env.value.value_from != null ? [env.value.value_from] : []
-                  content {
-                    dynamic "secret_key_ref" {
-                      for_each = try(value_from.value.secretKeyRef, null) != null ? [value_from.value.secretKeyRef] : []
-                      content {
-                        name = secret_key_ref.value.name
-                        key  = secret_key_ref.value.key
-                      }
-                    }
-                  }
-                }
-              }
-            }
 
             # Volume mounts
             dynamic "volume_mount" {
@@ -582,8 +488,7 @@ resource "kubernetes_service" "services" {
     type = "ClusterIP"
 
     selector = {
-      resource                 = local.resource_name
-      "app.kubernetes.io/name" = local.normalized_name
+      "radapp.io/resource" = local.resource_name
     }
 
     dynamic "port" {

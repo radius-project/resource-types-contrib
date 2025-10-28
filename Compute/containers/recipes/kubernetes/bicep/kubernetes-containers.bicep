@@ -8,19 +8,20 @@ extension kubernetes with {
 
 var resourceName = context.resource.name
 var namespace = context.runtime.kubernetes.namespace
-var applicationName = context.application == null ? '' : context.application.name
-var normalizedName = toLower(replace(replace(replace(resourceName, '_', '-'), '.', '-'), ' ', '-'))
+var normalizedName = resourceName
 
 var resourceProperties = context.resource.properties ?? {}
 var containerItems = items(resourceProperties.containers ?? {})
 var volumesMap = resourceProperties.?volumes ?? {}
 
+var environmentSegments = context.resource.properties.environment != null ? split(string(context.resource.properties.environment), '/') : []
+var environmentLabel = length(environmentSegments) > 0 ? last(environmentSegments) : ''
+
 // Labels
 var labels = {
-  resource: resourceName
-  app: applicationName
-  'radapp.io/application': applicationName
-  'app.kubernetes.io/name': normalizedName
+  'radapp.io/resource': resourceName
+  'radapp.io/environment': environmentLabel
+  'radapp.io/application': context.application == null ? '' : context.application.name
 }
 
 // Extract connection data from linked resources
@@ -29,13 +30,14 @@ var resourceConnections = context.resource.connections ?? {}
 // Use replicas from properties, default to 1 if not specified
 var replicaCount = resourceProperties.?replicas != null ? int(resourceProperties.replicas) : 1
 
-// Build containers using reduce to handle all properties
-var podContainers = reduce(containerItems, [], (acc, item) => 
-  !(item.value.?initContainer ?? false) ? concat(acc, [union(
+// Build container specs once and partition into workload/init sets
+var containerSpecs = reduce(containerItems, [], (acc, item) => concat(acc, [{
+  isInit: item.value.?initContainer ?? false
+  spec: union(
     {
       name: item.key
       image: item.value.image
-  },
+    },
     // Add ports if they exist
     contains(item.value, 'ports') ? {
       ports: reduce(items(item.value.ports), [], (portAcc, port) => concat(portAcc, [{
@@ -50,8 +52,7 @@ var podContainers = reduce(containerItems, [], (acc, item) =>
         {
           name: envItem.key
         },
-        contains(envItem.value, 'value') ? { value: envItem.value.value } : {},
-        contains(envItem.value, 'valueFrom') ? { valueFrom: envItem.value.valueFrom } : {}
+        contains(envItem.value, 'value') ? { value: envItem.value.value } : {}
       )]))
     } : {},
     // Add volume mounts if they exist
@@ -61,9 +62,9 @@ var podContainers = reduce(containerItems, [], (acc, item) =>
           name: vm.volumeName
           mountPath: vm.mountPath
         },
-  contains(vm, 'subPath') ? { subPath: vm.subPath } : {},
-  contains(vm, 'readOnly') ? { readOnly: vm.readOnly } : {},
-  (!contains(vm, 'readOnly') && contains(volumesMap, vm.volumeName) && contains(volumesMap[vm.volumeName], 'persistentVolume') && contains(volumesMap[vm.volumeName].persistentVolume, 'accessMode') && toLower(volumesMap[vm.volumeName].persistentVolume.accessMode) == 'readonlymany') ? { readOnly: true } : {}
+        contains(vm, 'subPath') ? { subPath: vm.subPath } : {},
+        contains(vm, 'readOnly') ? { readOnly: vm.readOnly } : {},
+        (!contains(vm, 'readOnly') && contains(volumesMap, vm.volumeName) && contains(volumesMap[vm.volumeName], 'persistentVolume') && contains(volumesMap[vm.volumeName].persistentVolume, 'accessMode') && toLower(volumesMap[vm.volumeName].persistentVolume.accessMode) == 'readonlymany') ? { readOnly: true } : {}
       )]))
     } : {},
     // Add command if specified
@@ -75,13 +76,13 @@ var podContainers = reduce(containerItems, [], (acc, item) =>
     // Add resources if specified
     contains(item.value, 'resources') ? {
       resources: union(
-        contains(item.value.resources, 'limits') ? { 
+        contains(item.value.resources, 'limits') ? {
           limits: union(
             contains(item.value.resources.limits, 'cpu') ? { cpu: item.value.resources.limits.cpu } : {},
             contains(item.value.resources.limits, 'memoryInMib') ? { memory: '${item.value.resources.limits.memoryInMib}Mi' } : {}
           )
         } : {},
-        contains(item.value.resources, 'requests') ? { 
+        contains(item.value.resources, 'requests') ? {
           requests: union(
             contains(item.value.resources.requests, 'cpu') ? { cpu: item.value.resources.requests.cpu } : {},
             contains(item.value.resources.requests, 'memoryInMib') ? { memory: '${item.value.resources.requests.memoryInMib}Mi' } : {}
@@ -89,8 +90,8 @@ var podContainers = reduce(containerItems, [], (acc, item) =>
         } : {}
       )
     } : {},
-    // Add liveness probe if specified
-    contains(item.value, 'livenessProbe') ? {
+    // Add liveness probe if specified and this is not an init container
+    (!(item.value.?initContainer ?? false) && contains(item.value, 'livenessProbe')) ? {
       livenessProbe: union(
         contains(item.value.livenessProbe, 'exec') ? {
           exec: { command: item.value.livenessProbe.exec.command }
@@ -114,8 +115,8 @@ var podContainers = reduce(containerItems, [], (acc, item) =>
         contains(item.value.livenessProbe, 'terminationGracePeriodSeconds') ? { terminationGracePeriodSeconds: item.value.livenessProbe.terminationGracePeriodSeconds } : {}
       )
     } : {},
-    // Add readiness probe if specified
-    contains(item.value, 'readinessProbe') ? {
+    // Add readiness probe if specified and this is not an init container
+    (!(item.value.?initContainer ?? false) && contains(item.value, 'readinessProbe')) ? {
       readinessProbe: union(
         contains(item.value.readinessProbe, 'exec') ? {
           exec: { command: item.value.readinessProbe.exec.command }
@@ -139,66 +140,13 @@ var podContainers = reduce(containerItems, [], (acc, item) =>
         contains(item.value.readinessProbe, 'terminationGracePeriodSeconds') ? { terminationGracePeriodSeconds: item.value.readinessProbe.terminationGracePeriodSeconds } : {}
       )
     } : {},
-    // Add restart policy at container level if specified
-    contains(item.value, 'restartPolicy') ? { restartPolicy: item.value.restartPolicy } : {}
-  )]) : acc
-)
+    // Add restart policy at container level if specified and this is not an init container
+    (!(item.value.?initContainer ?? false) && contains(item.value, 'restartPolicy')) ? { restartPolicy: item.value.restartPolicy } : {}
+  )
+}]))
 
-// Build init containers separately
-var podInitContainers = reduce(containerItems, [], (acc, item) => 
-  (item.value.?initContainer ?? false) ? concat(acc, [union(
-    {
-      name: item.key
-      image: item.value.image
-    },
-    contains(item.value, 'ports') ? {
-      ports: reduce(items(item.value.ports), [], (portAcc, port) => concat(portAcc, [{
-        name: port.key
-        containerPort: port.value.containerPort
-        protocol: port.value.?protocol ?? 'TCP'
-      }]))
-    } : {},
-    contains(item.value, 'env') ? {
-      env: reduce(items(item.value.env), [], (envAcc, envItem) => concat(envAcc, [union(
-        {
-          name: envItem.key
-        },
-        contains(envItem.value, 'value') ? { value: envItem.value.value } : {},
-        contains(envItem.value, 'valueFrom') ? { valueFrom: envItem.value.valueFrom } : {}
-      )]))
-    } : {},
-    contains(item.value, 'volumeMounts') ? {
-      volumeMounts: reduce(item.value.volumeMounts, [], (vmAcc, vm) => concat(vmAcc, [union(
-        {
-          name: vm.volumeName
-          mountPath: vm.mountPath
-        },
-  contains(vm, 'subPath') ? { subPath: vm.subPath } : {},
-  contains(vm, 'readOnly') ? { readOnly: vm.readOnly } : {},
-  (!contains(vm, 'readOnly') && contains(volumesMap, vm.volumeName) && contains(volumesMap[vm.volumeName], 'persistentVolume') && contains(volumesMap[vm.volumeName].persistentVolume, 'accessMode') && toLower(volumesMap[vm.volumeName].persistentVolume.accessMode) == 'readonlymany') ? { readOnly: true } : {}
-      )]))
-    } : {},
-    contains(item.value, 'command') ? { command: item.value.command } : {},
-    contains(item.value, 'args') ? { args: item.value.args } : {},
-    contains(item.value, 'workingDir') ? { workingDir: item.value.workingDir } : {},
-    contains(item.value, 'resources') ? {
-      resources: union(
-        contains(item.value.resources, 'limits') ? { 
-          limits: union(
-            contains(item.value.resources.limits, 'cpu') ? { cpu: item.value.resources.limits.cpu } : {},
-            contains(item.value.resources.limits, 'memoryInMib') ? { memory: '${item.value.resources.limits.memoryInMib}Mi' } : {}
-          )
-        } : {},
-        contains(item.value.resources, 'requests') ? { 
-          requests: union(
-            contains(item.value.resources.requests, 'cpu') ? { cpu: item.value.resources.requests.cpu } : {},
-            contains(item.value.resources.requests, 'memoryInMib') ? { memory: '${item.value.resources.requests.memoryInMib}Mi' } : {}
-          )
-        } : {}
-      )
-    } : {}
-  )]) : acc
-)
+var podContainers = reduce(containerSpecs, [], (acc, container) => !(container.isInit ?? false) ? concat(acc, [container.spec]) : acc)
+var podInitContainers = reduce(containerSpecs, [], (acc, container) => (container.isInit ?? false) ? concat(acc, [container.spec]) : acc)
 
 // Add volume mounts
 var volumeItems = items(resourceProperties.?volumes ?? {})
@@ -240,8 +188,7 @@ resource deployment 'apps/Deployment@v1' = {
     replicas: replicaCount
     selector: {
       matchLabels: {
-        resource: resourceName
-        'app.kubernetes.io/name': normalizedName
+        'radapp.io/resource': resourceName
       }
     }
     template: {
@@ -284,8 +231,7 @@ resource services 'core/Service@v1' = [for svc in servicesConfig: {
   spec: {
     type: 'ClusterIP'
     selector: {
-      resource: resourceName
-      'app.kubernetes.io/name': normalizedName
+      'radapp.io/resource': resourceName
     }
     ports: svc.ports
   }
