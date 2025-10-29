@@ -1,0 +1,107 @@
+name: Validate Azure Recipes
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Radius version number to use (e.g. 0.51.0, 0.51.0-rc1, edge).'
+        required: false
+        default: 'edge'
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  validate-azure-recipes:
+    runs-on: ubuntu-latest
+    environment: azure
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_AUTH_MODE: wi
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set Azure Test Context
+        run: |
+          LOCATION="${AZURE_LOCATION:-${{ vars.AZURE_LOCATION }}}"
+          if [ -z "$LOCATION" ]; then
+            LOCATION="westus3"
+          fi
+          RG="radtest-${{ github.run_id }}-${{ github.run_attempt }}"
+          # Temporary override for targeted testing against an existing resource group.
+          RG="shruthikumar"
+          WORKSPACE="azure-ws-${{ github.run_id }}"
+          ENVIRONMENT="azure-env-${{ github.run_id }}"
+          CREDENTIAL="azure-sp-${{ github.run_id }}"
+          TARGET="azure-target-${{ github.run_id }}"
+          STATE_FILE=".azure-test-state"
+          echo "AZURE_LOCATION=$LOCATION" >> "$GITHUB_ENV"
+          echo "AZURE_RESOURCE_GROUP=$RG" >> "$GITHUB_ENV"
+          echo "AZURE_WORKSPACE_NAME=$WORKSPACE" >> "$GITHUB_ENV"
+          echo "AZURE_ENVIRONMENT_NAME=$ENVIRONMENT" >> "$GITHUB_ENV"
+          echo "AZURE_CREDENTIAL_NAME=$CREDENTIAL" >> "$GITHUB_ENV"
+          echo "AZURE_DEPLOYMENT_TARGET_NAME=$TARGET" >> "$GITHUB_ENV"
+          echo "AZURE_TEST_STATE_FILE=$STATE_FILE" >> "$GITHUB_ENV"
+
+      - name: Create Azure Resource Group
+        run: |
+          current_time=$(date +%s)
+          az group create \
+            --location "$AZURE_LOCATION" \
+            --name "$AZURE_RESOURCE_GROUP" \
+            --subscription "$AZURE_SUBSCRIPTION_ID" \
+            --tags creationTime=$current_time
+          while [ "$(az group exists --name "$AZURE_RESOURCE_GROUP" --subscription "$AZURE_SUBSCRIPTION_ID")" = "false" ]; do
+            sleep 2
+          done
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 16
+
+      - name: Set up k3d
+        run: wget -q -O - https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@v1
+        with:
+          version: '1.2.0'
+
+      - name: Install Radius CLI
+        run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
+
+      - name: Create Radius Cluster
+        run: make create-radius-cluster
+
+      - name: Configure Azure Provider
+        run: make configure-azure-provider
+
+      - name: Build Azure Recipes
+        run: make build-azure-recipes
+
+      - name: Test Azure Recipes
+        run: make test-azure-recipes
+
+      - name: Cleanup Azure Resources
+        if: always()
+        run: make cleanup-azure-resources
