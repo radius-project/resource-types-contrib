@@ -7,22 +7,27 @@ This guide explains how to test Resource Types and Recipes locally using the sta
 Before testing, ensure you have:
 
 - Docker installed (for running k3d)
+- `k3d` installed
 - `kubectl` installed
+- `helm` installed
+- `oras` installed
 - `make` available in your environment
 
 ## Quick Start
 
 ### 1. Set Up Your Environment
 
-Create a local Kubernetes cluster with Radius installed:
+Create a local Kubernetes cluster with Radius (and Dapr) installed:
 
 ```bash
 # Install Radius CLI (optional: specify version with RAD_VERSION=0.48.0)
 make install-radius-cli
 
-# Create k3d cluster with Radius configured
+# Create k3d cluster with Radius and Dapr configured
 make create-radius-cluster
 ```
+
+> The `make create-radius-cluster` target provisions Dapr in the cluster so recipes that depend on the Dapr sidecar work out of the box.
 
 ### 2. Build Your Resource Type
 

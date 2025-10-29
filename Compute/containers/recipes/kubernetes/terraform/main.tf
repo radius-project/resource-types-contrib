@@ -21,6 +21,20 @@ locals {
   containers          = try(local.resource_properties.containers, {})
   volumes             = try(local.resource_properties.volumes, {})
   restart_policy      = try(local.resource_properties.restartPolicy, null)
+  extensions          = try(local.resource_properties.extensions, {})
+  dapr_sidecar        = try(local.extensions.daprSidecar, null)
+  has_dapr_sidecar    = local.dapr_sidecar != null
+  dapr_app_id         = local.has_dapr_sidecar && try(tostring(local.dapr_sidecar.appId), "") != "" ? tostring(local.dapr_sidecar.appId) : local.normalized_name
+  dapr_app_port       = local.has_dapr_sidecar && try(local.dapr_sidecar.appPort, null) != null ? tostring(local.dapr_sidecar.appPort) : null
+  dapr_config_name    = local.has_dapr_sidecar && try(tostring(local.dapr_sidecar.config), "") != "" ? tostring(local.dapr_sidecar.config) : null
+  dapr_annotations    = local.has_dapr_sidecar ? merge(
+    {
+      "dapr.io/enabled" = "true"
+      "dapr.io/app-id"  = local.dapr_app_id
+    },
+    local.dapr_app_port != null ? { "dapr.io/app-port" = local.dapr_app_port } : {},
+    local.dapr_config_name != null ? { "dapr.io/config" = local.dapr_config_name } : {}
+  ) : {}
 
   # Connections - used for linked resources like persistent volumes
   connections = try(var.context.resource.connections, {})
@@ -87,7 +101,6 @@ locals {
             name       = vm.volumeName
             mount_path = vm.mountPath
           },
-          try(vm.subPath, null) != null ? { sub_path = vm.subPath } : {},
           try(vm.readOnly, null) != null ? { read_only = vm.readOnly } : {},
           try(vm.readOnly, null) == null && try(local.volumes[vm.volumeName].persistentVolume.accessMode, "") != "" && lower(local.volumes[vm.volumeName].persistentVolume.accessMode) == "readonlymany" ? {
             read_only = true
@@ -230,6 +243,7 @@ resource "kubernetes_deployment" "deployment" {
     template {
       metadata {
         labels = local.labels
+        annotations = local.has_dapr_sidecar ? local.dapr_annotations : null
       }
 
       spec {
@@ -273,7 +287,6 @@ resource "kubernetes_deployment" "deployment" {
               content {
                 name       = volume_mount.value.name
                 mount_path = volume_mount.value.mount_path
-                sub_path   = try(volume_mount.value.sub_path, null)
                 read_only  = try(volume_mount.value.read_only, null)
               }
             }
@@ -326,7 +339,6 @@ resource "kubernetes_deployment" "deployment" {
               content {
                 name       = volume_mount.value.name
                 mount_path = volume_mount.value.mount_path
-                sub_path   = try(volume_mount.value.sub_path, null)
                 read_only  = try(volume_mount.value.read_only, null)
               }
             }

@@ -52,6 +52,12 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
         }
       }
     }
+    extensions: {
+      daprSidecar: {
+        appId: 'myapp'
+        appPort: 80
+      }
+    }
     replicas: 1
     autoScaling: {
       maxReplicas: 3

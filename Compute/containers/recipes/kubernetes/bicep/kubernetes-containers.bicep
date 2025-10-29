@@ -14,6 +14,18 @@ var resourceProperties = context.resource.properties ?? {}
 var containerItems = items(resourceProperties.containers ?? {})
 var volumesMap = resourceProperties.?volumes ?? {}
 
+var daprSidecar = resourceProperties.?extensions.?daprSidecar
+var hasDaprSidecar = daprSidecar != null
+var effectiveDaprAppId = hasDaprSidecar && daprSidecar.?appId != null && string(daprSidecar.?appId) != '' ? string(daprSidecar.?appId) : normalizedName
+var podAnnotations = hasDaprSidecar ? union(
+  {
+    'dapr.io/enabled': 'true'
+    'dapr.io/app-id': effectiveDaprAppId
+  },
+  daprSidecar.?appPort != null ? { 'dapr.io/app-port': string(daprSidecar.?appPort) } : {},
+  (daprSidecar.?config != null && string(daprSidecar.?config) != '') ? { 'dapr.io/config': string(daprSidecar.?config) } : {}
+) : {}
+
 var environmentSegments = context.resource.properties.environment != null ? split(string(context.resource.properties.environment), '/') : []
 var environmentLabel = length(environmentSegments) > 0 ? last(environmentSegments) : ''
 
@@ -189,9 +201,12 @@ resource deployment 'apps/Deployment@v1' = {
       }
     }
     template: {
-      metadata: {
-        labels: labels
-      }
+      metadata: union(
+        {
+          labels: labels
+        },
+        hasDaprSidecar ? { annotations: podAnnotations } : {}
+      )
       spec: union(
         {
           containers: podContainers

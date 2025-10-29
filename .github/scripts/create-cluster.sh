@@ -35,6 +35,7 @@ validate_command() {
 echo "Validating required dependencies..."
 validate_command "k3d"
 validate_command "oras"
+validate_command "helm"
 
 echo "Setting up k3d cluster..."
 k3d cluster create \
@@ -46,6 +47,15 @@ k3d cluster create \
 
 echo "Installing Radius on Kubernetes..."
 rad install kubernetes --set rp.publicEndpointOverride=localhost:8081 --skip-contour-install --set dashboard.enabled=false
+
+echo "Installing Dapr on Kubernetes..."
+helm repo add dapr https://dapr.github.io/helm-charts --force-update >/dev/null 2>&1
+helm repo update >/dev/null 2>&1
+helm upgrade --install dapr dapr/dapr \
+  --namespace dapr-system \
+  --create-namespace \
+  --wait \
+  --set global.ha.enabled=false
 
 echo "Configuring RBAC for Radius dynamic-rp service account (HorizontalPodAutoscaler support)..."
 cat <<'EOF' | kubectl apply -f -
