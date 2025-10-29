@@ -61,13 +61,141 @@ CATEGORY=$(basename "$(dirname "$RESOURCE_TYPE_PATH")")
 RESOURCE_NAME=$(basename "$RESOURCE_TYPE_PATH")
 RESOURCE_TYPE="Radius.$CATEGORY/$RESOURCE_NAME"
 
+# Derive platform from recipe path (first segment after recipes/)
+RECIPES_RELATIVE="${RECIPE_PATH#${RESOURCE_TYPE_PATH}/recipes/}"
+PLATFORM="${RECIPES_RELATIVE%%/*}"
+
+# Determine workspace and environment names based on platform
+RADIUS_WORKSPACE_OVERRIDE="${RADIUS_WORKSPACE_OVERRIDE:-}"
+RADIUS_ENVIRONMENT_OVERRIDE="${RADIUS_ENVIRONMENT_OVERRIDE:-}"
+
+KUBERNETES_WORKSPACE_NAME="${KUBERNETES_WORKSPACE_NAME:-default}"
+KUBERNETES_ENVIRONMENT_NAME="${KUBERNETES_ENVIRONMENT_NAME:-default}"
+AZURE_WORKSPACE_NAME="${AZURE_WORKSPACE_NAME:-azure}"
+AZURE_ENVIRONMENT_NAME="${AZURE_ENVIRONMENT_NAME:-azure}"
+
+WORKSPACE_NAME="$KUBERNETES_WORKSPACE_NAME"
+ENVIRONMENT_NAME="$KUBERNETES_ENVIRONMENT_NAME"
+
+case "$PLATFORM" in
+    azure)
+        WORKSPACE_NAME="$AZURE_WORKSPACE_NAME"
+        ENVIRONMENT_NAME="$AZURE_ENVIRONMENT_NAME"
+        ;;
+    kubernetes)
+        WORKSPACE_NAME="$KUBERNETES_WORKSPACE_NAME"
+        ENVIRONMENT_NAME="$KUBERNETES_ENVIRONMENT_NAME"
+        ;;
+    "")
+        # Fallback to defaults when the platform segment is missing
+        WORKSPACE_NAME="$KUBERNETES_WORKSPACE_NAME"
+        ENVIRONMENT_NAME="$KUBERNETES_ENVIRONMENT_NAME"
+        ;;
+    *)
+        # Additional platforms default to Kubernetes workspace/environment unless overridden
+        WORKSPACE_NAME="$KUBERNETES_WORKSPACE_NAME"
+        ENVIRONMENT_NAME="$KUBERNETES_ENVIRONMENT_NAME"
+        ;;
+esac
+
+if [[ -n "$RADIUS_WORKSPACE_OVERRIDE" ]]; then
+    WORKSPACE_NAME="$RADIUS_WORKSPACE_OVERRIDE"
+fi
+
+if [[ -n "$RADIUS_ENVIRONMENT_OVERRIDE" ]]; then
+    ENVIRONMENT_NAME="$RADIUS_ENVIRONMENT_OVERRIDE"
+fi
+
+# Derive platform from recipe path (first segment after recipes/)
+RECIPES_RELATIVE="${RECIPE_PATH#${RESOURCE_TYPE_PATH}/recipes/}"
+PLATFORM="${RECIPES_RELATIVE%%/*}"
+
+# Determine workspace and environment names based on platform
+RADIUS_WORKSPACE_OVERRIDE="${RADIUS_WORKSPACE_OVERRIDE:-}"
+RADIUS_ENVIRONMENT_OVERRIDE="${RADIUS_ENVIRONMENT_OVERRIDE:-}"
+
+KUBERNETES_WORKSPACE_NAME="${KUBERNETES_WORKSPACE_NAME:-default}"
+KUBERNETES_ENVIRONMENT_NAME="${KUBERNETES_ENVIRONMENT_NAME:-default}"
+AZURE_WORKSPACE_NAME="${AZURE_WORKSPACE_NAME:-azure}"
+AZURE_ENVIRONMENT_NAME="${AZURE_ENVIRONMENT_NAME:-azure}"
+
+WORKSPACE_NAME="$KUBERNETES_WORKSPACE_NAME"
+ENVIRONMENT_NAME="$KUBERNETES_ENVIRONMENT_NAME"
+
+case "$PLATFORM" in
+    azure)
+        WORKSPACE_NAME="$AZURE_WORKSPACE_NAME"
+        ENVIRONMENT_NAME="$AZURE_ENVIRONMENT_NAME"
+        ;;
+    kubernetes)
+        WORKSPACE_NAME="$KUBERNETES_WORKSPACE_NAME"
+        ENVIRONMENT_NAME="$KUBERNETES_ENVIRONMENT_NAME"
+        ;;
+    "")
+        # Fallback to defaults when the platform segment is missing
+        WORKSPACE_NAME="$KUBERNETES_WORKSPACE_NAME"
+        ENVIRONMENT_NAME="$KUBERNETES_ENVIRONMENT_NAME"
+        ;;
+    *)
+        # Additional platforms default to Kubernetes workspace/environment unless overridden
+        WORKSPACE_NAME="$KUBERNETES_WORKSPACE_NAME"
+        ENVIRONMENT_NAME="$KUBERNETES_ENVIRONMENT_NAME"
+        ;;
+esac
+
+if [[ -n "$RADIUS_WORKSPACE_OVERRIDE" ]]; then
+    WORKSPACE_NAME="$RADIUS_WORKSPACE_OVERRIDE"
+fi
+
+if [[ -n "$RADIUS_ENVIRONMENT_OVERRIDE" ]]; then
+    ENVIRONMENT_NAME="$RADIUS_ENVIRONMENT_OVERRIDE"
+fi
+
 echo "==> Assuming recipe is already registered"
 echo "==> Resource type: $RESOURCE_TYPE"
+echo "==> Workspace: $WORKSPACE_NAME"
+echo "==> Environment: $ENVIRONMENT_NAME"
+
+# Determine template path based on recipe type
+RECIPE_NAME="default"
+
+if [[ "$RECIPE_TYPE" == "bicep" ]]; then
+    # For Bicep, use OCI registry path (match build-bicep-recipe.sh format)
+    # Path format: localhost:5000/radius-recipes/{category}/{resourcename}/{platform}/{language}/{recipe-filename}
+    # Find the .bicep file in the recipe directory
+    BICEP_FILE=$(ls "$RECIPE_PATH"/*.bicep 2>/dev/null | head -n 1)
+    RECIPE_FILENAME=$(basename "$BICEP_FILE" .bicep)
+
+    # Extract platform and language from path (e.g., recipes/kubernetes/bicep -> kubernetes/bicep)
+    RECIPES_SUBPATH="${RECIPE_PATH#*recipes/}"
+
+    # Build OCI path (use reciperegistry for in-cluster access)
+    CATEGORY_LOWER=$(echo "$CATEGORY" | tr '[:upper:]' '[:lower:]')
+    RESOURCE_LOWER=$(echo "$RESOURCE_NAME" | tr '[:upper:]' '[:lower:]')
+    TEMPLATE_PATH="reciperegistry:5000/radius-recipes/${CATEGORY_LOWER}/${RESOURCE_LOWER}/${RECIPES_SUBPATH}/${RECIPE_FILENAME}:latest"
+elif [[ "$RECIPE_TYPE" == "terraform" ]]; then
+    # For Terraform, use HTTP module server with format: resourcename-platform.zip
+    MODULE_NAME="${RESOURCE_NAME}-${PLATFORM}"
+    TEMPLATE_PATH="http://tf-module-server.radius-test-tf-module-server.svc.cluster.local/${MODULE_NAME}.zip"
+fi
+
+echo "==> Registering recipe: $RECIPE_NAME"
+rad recipe register "$RECIPE_NAME" \
+    --workspace "$WORKSPACE_NAME" \
+    --environment "$ENVIRONMENT_NAME" \
+    --resource-type "$RESOURCE_TYPE" \
+    --template-kind "$TEMPLATE_KIND" \
+    --template-path "$TEMPLATE_PATH" \
+    --plain-http
 
 # Check if test file exists
 TEST_FILE="$RESOURCE_TYPE_PATH/test/app.bicep"
 if [[ ! -f "$TEST_FILE" ]]; then
     echo "==> No test file found at $TEST_FILE, skipping deployment test"
+    rad recipe unregister "$RECIPE_NAME" \
+        --workspace "$WORKSPACE_NAME" \
+        --environment "$ENVIRONMENT_NAME" \
+        --resource-type "$RESOURCE_TYPE"
     exit 0
 fi
 
@@ -75,7 +203,7 @@ echo "==> Deploying test application from $TEST_FILE"
 APP_NAME="testapp-$(date +%s)"
 
 # Deploy the test app
-if rad deploy "$TEST_FILE" --application "$APP_NAME" --environment default; then
+if rad deploy "$TEST_FILE" --application "$APP_NAME" --environment "$ENVIRONMENT_NAME"; then
     echo "==> Test deployment successful"
     
     # Cleanup: delete the app
@@ -84,7 +212,18 @@ if rad deploy "$TEST_FILE" --application "$APP_NAME" --environment default; then
 else
     echo "==> Test deployment failed"
     rad app delete "$APP_NAME" --yes 2>/dev/null || true
+    rad recipe unregister "$RECIPE_NAME" \
+        --workspace "$WORKSPACE_NAME" \
+        --environment "$ENVIRONMENT_NAME" \
+        --resource-type "$RESOURCE_TYPE"
     exit 1
 fi
+
+# Unregister the recipe
+echo "==> Unregistering recipe"
+rad recipe unregister "$RECIPE_NAME" \
+    --workspace "$WORKSPACE_NAME" \
+    --environment "$ENVIRONMENT_NAME" \
+    --resource-type "$RESOURCE_TYPE"
 
 echo "==> Test completed successfully"
