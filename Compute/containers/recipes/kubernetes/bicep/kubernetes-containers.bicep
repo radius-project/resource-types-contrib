@@ -46,7 +46,7 @@ var containerSpecs = reduce(containerItems, [], (acc, item) => concat(acc, [{
         protocol: port.value.?protocol ?? 'TCP'
       }]))
     } : {},
-    // Add environment variables if they exist
+    // TODO: add environment variables from secrets resource
     contains(item.value, 'env') ? {
       env: reduce(items(item.value.env), [], (envAcc, envItem) => concat(envAcc, [union(
         {
@@ -62,7 +62,6 @@ var containerSpecs = reduce(containerItems, [], (acc, item) => concat(acc, [{
           name: vm.volumeName
           mountPath: vm.mountPath
         },
-        contains(vm, 'subPath') ? { subPath: vm.subPath } : {},
         contains(vm, 'readOnly') ? { readOnly: vm.readOnly } : {},
         (!contains(vm, 'readOnly') && contains(volumesMap, vm.volumeName) && contains(volumesMap[vm.volumeName], 'persistentVolume') && contains(volumesMap[vm.volumeName].persistentVolume, 'accessMode') && toLower(volumesMap[vm.volumeName].persistentVolume.accessMode) == 'readonlymany') ? { readOnly: true } : {}
       )]))
@@ -139,9 +138,7 @@ var containerSpecs = reduce(containerItems, [], (acc, item) => concat(acc, [{
         contains(item.value.readinessProbe, 'successThreshold') ? { successThreshold: item.value.readinessProbe.successThreshold } : {},
         contains(item.value.readinessProbe, 'terminationGracePeriodSeconds') ? { terminationGracePeriodSeconds: item.value.readinessProbe.terminationGracePeriodSeconds } : {}
       )
-    } : {},
-    // Add restart policy at container level if specified and this is not an init container
-    (!(item.value.?initContainer ?? false) && contains(item.value, 'restartPolicy')) ? { restartPolicy: item.value.restartPolicy } : {}
+    } : {}
   )
 }]))
 
