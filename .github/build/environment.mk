@@ -46,3 +46,11 @@ clean: ## Delete the local k3d cluster, Radius config, Bicep extensions (*.tgz),
 	@find . -name "bicepconfig.json" -type f -delete
 	@echo -e "$(ARROW) Deleting k3d cluster..."
 	@k3d cluster delete
+
+.PHONY: configure-azure-provider
+configure-azure-provider: ## Configure Radius Azure workspace, environment, credential, and deployment target (requires AZURE_* env vars)
+	@.github/scripts/configure-azure-provider.sh
+
+.PHONY: cleanup-azure-resources
+cleanup-azure-resources: ## Delete Azure resource group created for tests (uses AZURE_TEST_STATE_FILE or AZURE_RESOURCE_GROUP)
+	@.github/scripts/cleanup-azure-resources.sh
