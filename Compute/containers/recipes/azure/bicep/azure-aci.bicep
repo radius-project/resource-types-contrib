@@ -448,22 +448,38 @@ resource nGroups 'Microsoft.ContainerInstance/NGroups@2024-09-01-preview' = {
   ]
 }
 
-// Outputs
-output virtualNetworkId string = virtualNetwork.id
-output subnetId string = virtualNetwork.properties.subnets[0].id
-output loadBalancerId string = loadBalancer.id
-output frontendIPConfigurationId string = loadBalancer.properties.frontendIPConfigurations[0].id
-output backendAddressPoolId string = loadBalancer.properties.backendAddressPools[0].id
-output inboundPublicIPId string = inboundPublicIP.id
-output outboundPublicIPId string = outboundPublicIP.id
-output inboundPublicIPFQDN string = contains(inboundPublicIP.properties, 'dnsSettings') && inboundPublicIP.properties.dnsSettings != null ? inboundPublicIP.properties.dnsSettings.fqdn : ''
-output natGatewayId string = natGateway.id
-output networkSecurityGroupId string = networkSecurityGroup.id
-output ddosProtectionPlanId string = ddosProtectionPlan.id
-output containerGroupProfileId string = containerGroupProfile.id
-output nGroupsId string = nGroups.id
-output readinessProbeId string = hasReadinessProbe ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, 'readinessProbe') : ''
-output livenessProbeId string = hasLivenessProbe ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, 'livenessProbe') : ''
-output userAssignedIdentityId string = userAssignedIdentity.id
-output userAssignedIdentityClientId string = userAssignedIdentity.properties.clientId
-output userAssignedIdentityPrincipalId string = userAssignedIdentity.properties.principalId
+// Outputs - Required for Radius recipes
+output result object = {
+  resources: [
+    userAssignedIdentity.id
+    ddosProtectionPlan.id
+    networkSecurityGroup.id
+    inboundPublicIP.id
+    outboundPublicIP.id
+    natGateway.id
+    virtualNetwork.id
+    loadBalancer.id
+    containerGroupProfile.id
+    nGroups.id
+  ]
+}
+
+// Additional outputs for debugging/reference
+// output virtualNetworkId string = virtualNetwork.id
+// output subnetId string = virtualNetwork.properties.subnets[0].id
+// output loadBalancerId string = loadBalancer.id
+// output frontendIPConfigurationId string = loadBalancer.properties.frontendIPConfigurations[0].id
+// output backendAddressPoolId string = loadBalancer.properties.backendAddressPools[0].id
+// output inboundPublicIPId string = inboundPublicIP.id
+// output outboundPublicIPId string = outboundPublicIP.id
+// output inboundPublicIPFQDN string = contains(inboundPublicIP.properties, 'dnsSettings') && inboundPublicIP.properties.dnsSettings != null ? inboundPublicIP.properties.dnsSettings.fqdn : ''
+// output natGatewayId string = natGateway.id
+// output networkSecurityGroupId string = networkSecurityGroup.id
+// output ddosProtectionPlanId string = ddosProtectionPlan.id
+// output containerGroupProfileId string = containerGroupProfile.id
+// output nGroupsId string = nGroups.id
+// output readinessProbeId string = hasReadinessProbe ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, 'readinessProbe') : ''
+// output livenessProbeId string = hasLivenessProbe ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, 'livenessProbe') : ''
+// output userAssignedIdentityId string = userAssignedIdentity.id
+// output userAssignedIdentityClientId string = userAssignedIdentity.properties.clientId
+// output userAssignedIdentityPrincipalId string = userAssignedIdentity.properties.principalId

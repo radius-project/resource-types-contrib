@@ -38,7 +38,7 @@ if [[ -z "$AZURE_RESOURCE_GROUP" ]]; then
 fi
 
 if [[ "$AZURE_RESOURCE_GROUP" == "shruthikumar" ]]; then
-    echo "Resource group '$AZURE_RESOURCE_GROUP' is marked for retention; skipping cleanup."
+    echo "TODO REMOVE: Resource group '$AZURE_RESOURCE_GROUP' is marked for retention; skipping cleanup."
     exit 0
 fi
 

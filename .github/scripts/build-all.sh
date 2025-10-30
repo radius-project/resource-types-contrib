@@ -57,8 +57,10 @@ should_include_platform() {
         return 0
     fi
 
-    # Extract segment after /recipes/
-    local rel="${recipe_path#*/recipes/}"
+    # Extract segment after recipes/ (path is relative: recipes/platform/...)
+    # Remove "recipes/" prefix if present
+    local rel="${recipe_path#recipes/}"
+    # Get the first path segment (the platform)
     local platform="${rel%%/*}"
 
     for _filter in "${PLATFORM_FILTERS[@]}"; do
@@ -80,8 +82,12 @@ while IFS= read -r type_dir; do
     recipes_root="$type_dir/recipes"
     if [[ -d "$recipes_root" ]]; then
         while IFS= read -r -d '' recipe_file; do
-            if should_include_platform "${recipe_file#$type_dir/}"; then
+            recipe_rel_path="${recipe_file#$type_dir/}"
+            if should_include_platform "$recipe_rel_path"; then
+                echo "Building Bicep recipe: $recipe_file"
                 make -s build-bicep-recipe RECIPE_PATH="$recipe_file"
+            else
+                echo "Skipping Bicep recipe (platform filter): $recipe_file"
             fi
         done < <(find "$recipes_root" -type f -name '*.bicep' -print0)
     fi
@@ -89,8 +95,12 @@ while IFS= read -r type_dir; do
     # Build/publish all Terraform recipes under this resource type, if any
     if [[ -d "$recipes_root" ]]; then
         while IFS= read -r -d '' recipe_dir; do
-            if should_include_platform "${recipe_dir#$type_dir/}"; then
+            recipe_rel_path="${recipe_dir#$type_dir/}"
+            if should_include_platform "$recipe_rel_path"; then
+                echo "Building Terraform recipe: $recipe_dir"
                 make -s build-terraform-recipe RECIPE_PATH="$recipe_dir"
+            else
+                echo "Skipping Terraform recipe (platform filter): $recipe_dir"
             fi
         done < <(find "$recipes_root" -type d -name 'terraform' -print0)
     fi
