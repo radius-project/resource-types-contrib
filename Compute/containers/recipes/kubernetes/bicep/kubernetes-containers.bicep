@@ -12,7 +12,6 @@ var normalizedName = resourceName
 
 var resourceProperties = context.resource.properties ?? {}
 var containerItems = items(resourceProperties.containers ?? {})
-var volumesMap = resourceProperties.?volumes ?? {}
 
 var daprSidecar = resourceProperties.?extensions.?daprSidecar
 var hasDaprSidecar = daprSidecar != null
@@ -58,25 +57,25 @@ var containerSpecs = reduce(containerItems, [], (acc, item) => concat(acc, [{
         protocol: port.value.?protocol ?? 'TCP'
       }]))
     } : {},
-    // TODO: add environment variables from secrets resource
+    // TODO: Add support for environment variables from Radius secrets resource
+    // When a container references a Radius.Security/secrets resource via connections,
+    // the recipe should automatically populate environment variables from the secret values
+    // stored in the connected Radius secret resource.
     contains(item.value, 'env') ? {
       env: reduce(items(item.value.env), [], (envAcc, envItem) => concat(envAcc, [union(
         {
           name: envItem.key
         },
         contains(envItem.value, 'value') ? { value: envItem.value.value } : {}
+        // TODO: Add support for environment variables from Radius secrets resource
       )]))
     } : {},
     // Add volume mounts if they exist
     contains(item.value, 'volumeMounts') ? {
-      volumeMounts: reduce(item.value.volumeMounts, [], (vmAcc, vm) => concat(vmAcc, [union(
-        {
-          name: vm.volumeName
-          mountPath: vm.mountPath
-        },
-        contains(vm, 'readOnly') ? { readOnly: vm.readOnly } : {},
-        (!contains(vm, 'readOnly') && contains(volumesMap, vm.volumeName) && contains(volumesMap[vm.volumeName], 'persistentVolume') && contains(volumesMap[vm.volumeName].persistentVolume, 'accessMode') && toLower(volumesMap[vm.volumeName].persistentVolume.accessMode) == 'readonlymany') ? { readOnly: true } : {}
-      )]))
+      volumeMounts: reduce(item.value.volumeMounts, [], (vmAcc, vm) => concat(vmAcc, [{
+        name: vm.volumeName
+        mountPath: vm.mountPath
+      }]))
     } : {},
     // Add command if specified
     contains(item.value, 'command') ? { command: item.value.command } : {},
@@ -111,7 +110,7 @@ var containerSpecs = reduce(containerItems, [], (acc, item) => concat(acc, [{
           httpGet: union(
             { port: item.value.livenessProbe.httpGet.port },
             contains(item.value.livenessProbe.httpGet, 'path') ? { path: item.value.livenessProbe.httpGet.path } : {},
-            contains(item.value.livenessProbe.httpGet, 'scheme') ? { scheme: item.value.livenessProbe.httpGet.scheme } : {},
+            contains(item.value.livenessProbe.httpGet, 'scheme') ? { scheme: toUpper(string(item.value.livenessProbe.httpGet.scheme)) } : {},
             contains(item.value.livenessProbe.httpGet, 'httpHeaders') ? { httpHeaders: item.value.livenessProbe.httpGet.httpHeaders } : {}
           )
         } : {},
@@ -136,7 +135,7 @@ var containerSpecs = reduce(containerItems, [], (acc, item) => concat(acc, [{
           httpGet: union(
             { port: item.value.readinessProbe.httpGet.port },
             contains(item.value.readinessProbe.httpGet, 'path') ? { path: item.value.readinessProbe.httpGet.path } : {},
-            contains(item.value.readinessProbe.httpGet, 'scheme') ? { scheme: item.value.readinessProbe.httpGet.scheme } : {},
+            contains(item.value.readinessProbe.httpGet, 'scheme') ? { scheme: toUpper(string(item.value.readinessProbe.httpGet.scheme)) } : {},
             contains(item.value.readinessProbe.httpGet, 'httpHeaders') ? { httpHeaders: item.value.readinessProbe.httpGet.httpHeaders } : {}
           )
         } : {},
@@ -271,7 +270,7 @@ var hpaMetrics = hasAutoScaling && contains(autoScaling, 'metrics') ? reduce(aut
       )
     }
   } : {},
-  contains(metric, 'customMetric') ? {
+  (metric.kind == 'custom' && contains(metric, 'customMetric')) ? {
     external: {
       metric: {
         name: metric.customMetric

@@ -86,26 +86,26 @@ locals {
       ]
 
       # Environment variables
+      # TODO: Add support for environment variables from Radius secrets resource
+      # When a container references a Radius.Security/secrets resource via connections,
+      # the recipe should populate environment variables from the secret values
+      # stored in the connected Radius secret resource.
       env = [
         for env_name, env_config in try(config.env, {}) : {
           name       = env_name
           value      = try(env_config.value, null)
           value_from = try(env_config.valueFrom, null)
+          # TODO: Currently only 'value' is rendered in the deployment.
+          # Add support for 'valueFrom' to reference Kubernetes secrets/configmaps.
         }
       ]
 
       # Volume mounts
       volume_mounts = [
-        for vm in try(config.volumeMounts, []) : merge(
-          {
-            name       = vm.volumeName
-            mount_path = vm.mountPath
-          },
-          try(vm.readOnly, null) != null ? { read_only = vm.readOnly } : {},
-          try(vm.readOnly, null) == null && try(local.volumes[vm.volumeName].persistentVolume.accessMode, "") != "" && lower(local.volumes[vm.volumeName].persistentVolume.accessMode) == "readonlymany" ? {
-            read_only = true
-          } : {}
-        )
+        for vm in try(config.volumeMounts, []) : {
+          name       = vm.volumeName
+          mount_path = vm.mountPath
+        }
       ]
 
       # Resources - Transform memoryInMib to memory format
@@ -206,7 +206,7 @@ locals {
       } : null
 
       # External/Custom metrics
-      external = try(metric.customMetric, null) != null ? {
+      external = (metric.kind == "custom" && try(metric.customMetric, null) != null) ? {
         metric = {
           name = metric.customMetric
         }
@@ -376,7 +376,7 @@ resource "kubernetes_deployment" "deployment" {
                   content {
                     port   = http_get.value.port
                     path   = try(http_get.value.path, null)
-                    scheme = try(upper(http_get.value.scheme), "HTTP")
+                    scheme = try(http_get.value.scheme, null) != null ? upper(tostring(http_get.value.scheme)) : null
 
                     dynamic "http_header" {
                       for_each = try(http_get.value.httpHeaders, [])
@@ -422,7 +422,7 @@ resource "kubernetes_deployment" "deployment" {
                   content {
                     port   = http_get.value.port
                     path   = try(http_get.value.path, null)
-                    scheme = try(upper(http_get.value.scheme), "HTTP")
+                    scheme = try(http_get.value.scheme, null) != null ? upper(tostring(http_get.value.scheme)) : null
 
                     dynamic "http_header" {
                       for_each = try(http_get.value.httpHeaders, [])
@@ -587,20 +587,6 @@ output "result" {
       ["/planes/kubernetes/local/namespaces/${local.namespace}/providers/apps/Deployment/${local.normalized_name}"],
       [for svc_name, svc_config in local.services_config : "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Service/${local.normalized_name}-${svc_config.container_name}"],
       local.has_autoscaling ? ["/planes/kubernetes/local/namespaces/${local.namespace}/providers/autoscaling/HorizontalPodAutoscaler/${local.normalized_name}"] : []
-    )
-    values = merge(
-      {
-        deploymentName = local.normalized_name
-        namespace      = local.namespace
-      },
-      length(local.services_config) > 0 ? {
-        services = [
-          for svc_name, svc_config in local.services_config : {
-            name      = "${local.normalized_name}-${svc_config.container_name}"
-            namespace = local.namespace
-          }
-        ]
-      } : {}
     )
   }
 }
