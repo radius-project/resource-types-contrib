@@ -1,5 +1,8 @@
 param context object
 
+var resourceName = context.resource.name
+var environmentSegments = context.resource.properties.environment != null ? split(string(context.resource.properties.environment), '/') : []
+var environmentLabel = length(environmentSegments) > 0 ? last(environmentSegments) : ''
 
 @description('Storage Class for the persistent volume')
 param storageClass string = ''
@@ -12,16 +15,19 @@ extension kubernetes with {
 
 resource persistentVolumeClaim 'core/PersistentVolumeClaim@v1' = {
   metadata: {
-   name: context.resource.name
+    name: resourceName
     labels: {
-      'radapp.io/resource': context.resource.name
-      'radapp.io/environment': context.resource.properties.environment != null ? context.resource.properties.environment : ''
+      'radapp.io/resource': resourceName
+      'radapp.io/environment': environmentLabel
       // Label pods with the application name so `rad run` can find the logs.
       'radapp.io/application': context.application == null ? '' : context.application.name
     }
   }
-  spec: union({
-    storageClassName: storageClass
+  spec: union(
+    empty(storageClass) ? {} : {
+      storageClassName: storageClass
+    },
+    {
     resources: {
       requests: {
         storage: '${context.resource.properties.sizeInGib}Gi'
@@ -34,8 +40,6 @@ resource persistentVolumeClaim 'core/PersistentVolumeClaim@v1' = {
   } : {
     accessModes: [
       'ReadWriteOnce'
-      'ReadOnlyMany' 
-      'ReadWriteMany'
     ]
   })
 }
@@ -47,4 +51,7 @@ output result object = {
   resources: [
     '/planes/kubernetes/local/namespaces/${context.runtime.kubernetes.namespace}/providers/core/PersistentVolumeClaim/${persistentVolumeClaim.metadata.name}'
   ]
+  values: {
+    claimName: persistentVolumeClaim.metadata.name
+  }
 }
