@@ -19,7 +19,8 @@
 set -e
 
 # Script: Setup Kubernetes environment and initialize Radius
-# This script sets up k3d cluster, installs rad CLI, and initializes the default environment
+# This script sets up KinD cluster with OIDC support for Azure Workload Identity,
+# installs rad CLI, and initializes the default environment
 
 # Validation function
 validate_command() {
@@ -33,20 +34,127 @@ validate_command() {
 
 # Run validations
 echo "Validating required dependencies..."
-validate_command "k3d"
-validate_command "oras"
-validate_command "helm"
+validate_command "kind"
+validate_command "kubectl"
+validate_command "docker"
 
-echo "Setting up k3d cluster..."
-k3d cluster create \
-    -p "8081:80@loadbalancer" \
-    --k3s-arg "--disable=traefik@server:*" \
-    --k3s-arg "--disable=servicelb@server:*" \
-    --registry-create reciperegistry:5000 \
-    --wait
+echo "Setting up KinD cluster..."
+
+# Check if this is for Azure deployments by looking for AZURE_TENANT_ID
+AZURE_WORKLOAD_IDENTITY_ENABLED="false"
+KIND_CLUSTER_NAME="radius"
+
+if [[ -n "${AZURE_TENANT_ID:-}" ]]; then
+    echo "Azure Tenant ID detected. Setting up KinD cluster with OIDC support..."
+    AZURE_WORKLOAD_IDENTITY_ENABLED="true"
+    
+    # Populate the following environment variables for Azure workload identity from secrets.
+    # AZURE_OIDC_ISSUER_PUBLIC_KEY
+    # AZURE_OIDC_ISSUER_PRIVATE_KEY
+    # AZURE_OIDC_ISSUER
+    if [[ -n "${TEST_AZURE_OIDC_JSON:-}" ]]; then
+        echo "Extracting OIDC configuration from TEST_AZURE_OIDC_JSON..."
+        eval "export $(echo "$TEST_AZURE_OIDC_JSON" | jq -r 'to_entries | map("\(.key)=\(.value)") | @sh')"
+    fi
+    
+    # Validate required OIDC variables are set
+    if [[ -z "${AZURE_OIDC_ISSUER_PUBLIC_KEY:-}" ]] || [[ -z "${AZURE_OIDC_ISSUER_PRIVATE_KEY:-}" ]] || [[ -z "${AZURE_OIDC_ISSUER:-}" ]]; then
+        echo "Error: AZURE_OIDC_ISSUER_PUBLIC_KEY, AZURE_OIDC_ISSUER_PRIVATE_KEY, and AZURE_OIDC_ISSUER must be set for Azure Workload Identity."
+        echo "These should be provided via TEST_AZURE_OIDC_JSON secret or as individual environment variables."
+        exit 1
+    fi
+    
+    # Create KinD cluster with OIDC Issuer keys
+    echo "Decoding OIDC issuer keys..."
+    echo "$AZURE_OIDC_ISSUER_PUBLIC_KEY" | base64 -d > sa.pub
+    echo "$AZURE_OIDC_ISSUER_PRIVATE_KEY" | base64 -d > sa.key
+    
+    # Validate the keys were decoded successfully
+    if [[ ! -s sa.pub ]] || [[ ! -s sa.key ]]; then
+        echo "Error: Failed to decode OIDC issuer keys"
+        exit 1
+    fi
+    
+    echo "OIDC issuer keys successfully decoded"
+    
+    cat <<EOF | kind create cluster --name ${KIND_CLUSTER_NAME} --config=-
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  extraMounts:
+    - hostPath: ./sa.pub
+      containerPath: /etc/kubernetes/pki/sa.pub
+    - hostPath: ./sa.key
+      containerPath: /etc/kubernetes/pki/sa.key
+  kubeadmConfigPatches:
+  - |
+    kind: ClusterConfiguration
+    apiServer:
+      extraArgs:
+        service-account-issuer: $AZURE_OIDC_ISSUER
+        service-account-key-file: /etc/kubernetes/pki/sa.pub
+        service-account-signing-key-file: /etc/kubernetes/pki/sa.key
+    controllerManager:
+      extraArgs:
+        service-account-private-key-file: /etc/kubernetes/pki/sa.key
+EOF
+    
+    echo "Installing Azure Workload Identity webhook..."
+    # Install Azure Workload Identity webhook (requires Helm)
+    if command -v helm &> /dev/null; then
+        helm repo add azure-workload-identity https://azure.github.io/azure-workload-identity/charts || true
+        helm repo update
+        
+        helm install workload-identity-webhook \
+            azure-workload-identity/workload-identity-webhook \
+            --namespace radius-system \
+            --create-namespace \
+            --version 1.3.0 \
+            --set azureTenantID="${AZURE_TENANT_ID}" \
+            --wait || echo "Warning: Failed to install Azure Workload Identity webhook. Azure recipes may not work."
+    else
+        echo "Warning: Helm is not installed. Skipping Azure Workload Identity webhook installation."
+        echo "Azure recipes will not work without this component."
+    fi
+else
+    echo "No Azure Tenant ID found. Creating basic KinD cluster..."
+    kind create cluster --name ${KIND_CLUSTER_NAME}
+fi
+
+echo "Setting up local container registry..."
+# Create a local registry for recipes if it doesn't exist
+if ! docker ps | grep -q "reciperegistry"; then
+    docker run -d --restart=always -p 5000:5000 --name reciperegistry registry:2
+    
+    # Connect the registry to the KinD network so pods can access it
+    docker network connect kind reciperegistry || true
+    
+    # Document the local registry for KinD
+    kubectl apply -f - <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: local-registry-hosting
+  namespace: kube-public
+data:
+  localRegistryHosting.v1: |
+    host: "localhost:5000"
+    hostFromContainerRuntime: "reciperegistry:5000"
+    help: "https://kind.sigs.k8s.io/docs/user/local-registry/"
+EOF
+    
+    echo "✓ Local registry running at localhost:5000 (accessible from pods as reciperegistry:5000)"
+else
+    echo "✓ Local registry already running at localhost:5000"
+fi
 
 echo "Installing Radius on Kubernetes..."
-rad install kubernetes --set rp.publicEndpointOverride=localhost:8081 --skip-contour-install --set dashboard.enabled=false
+rad install kubernetes \
+    --set rp.publicEndpointOverride=localhost:8081 \
+    --skip-contour-install \
+    --set dashboard.enabled=false \
+    --set global.azureWorkloadIdentity.enabled=${AZURE_WORKLOAD_IDENTITY_ENABLED}
 
 echo "Installing Dapr on Kubernetes..."
 helm repo add dapr https://dapr.github.io/helm-charts --force-update >/dev/null 2>&1

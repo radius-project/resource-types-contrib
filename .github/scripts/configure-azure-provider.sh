@@ -69,15 +69,15 @@ if ! az group exists --name "$AZURE_RESOURCE_GROUP" --subscription "$AZURE_SUBSC
     exit 1
 fi
 
-printf "\033[34;1m=>\033[0m Registering Azure workload identity credential\n"
-rad credential register azure wi \
-    --tenant-id "$AZURE_TENANT_ID" \
-    --client-id "$AZURE_CLIENT_ID"
-
 printf "\033[34;1m=>\033[0m Updating environment '%s' with Azure provider settings\n" "$AZURE_ENVIRONMENT_NAME"
 rad env update "$AZURE_ENVIRONMENT_NAME" \
     --azure-subscription-id "$AZURE_SUBSCRIPTION_ID" \
     --azure-resource-group "$AZURE_RESOURCE_GROUP"
+
+printf "\033[34;1m=>\033[0m Registering Azure workload identity credential\n"
+rad credential register azure wi \
+    --tenant-id "$AZURE_TENANT_ID" \
+    --client-id "$AZURE_CLIENT_ID"
 
 cat <<EOF >"$AZURE_TEST_STATE_FILE"
 AZURE_RESOURCE_GROUP=$AZURE_RESOURCE_GROUP
