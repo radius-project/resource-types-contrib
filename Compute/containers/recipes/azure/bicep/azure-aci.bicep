@@ -83,7 +83,6 @@ output contextObject object = context
 // Variables
 var cgProfileName = containerGroupProfileName
 var nGroupsName = nGroupsParamName
-var resourcePrefix = '/subscriptions/${subscription().subscriptionId}/resourceGroups/${resourceGroup().name}/providers/'
 // var loadBalancerApiVersion = '2022-07-01'
 // var vnetApiVersion = '2022-07-01'
 // var publicIPVersion = '2022-07-01'
@@ -194,11 +193,13 @@ resource natGateway 'Microsoft.Network/natGateways@2022-07-01' = {
     idleTimeoutInMinutes: 4
     publicIpAddresses: [
       {
-        id: outboundPublicIP.id
+        id: resourceId('Microsoft.Network/publicIPAddresses', outboundPublicIPName)
       }
     ]
   }
-
+  dependsOn: [
+    outboundPublicIP
+  ]
 }
 
 // Virtual Network
@@ -230,10 +231,10 @@ resource virtualNetwork 'Microsoft.Network/virtualNetworks@2022-07-01' = {
           privateEndpointNetworkPolicies: 'Disabled'
           privateLinkServiceNetworkPolicies: 'Enabled'
           networkSecurityGroup: {
-            id: networkSecurityGroup.id
+            id: resourceId('Microsoft.Network/networkSecurityGroups', networkSecurityGroupName)
           }
           natGateway: {
-            id: natGateway.id
+            id: resourceId('Microsoft.Network/natGateways', natGatewayName)
           }
         }
         type: 'Microsoft.Network/virtualNetworks/subnets'
@@ -242,10 +243,9 @@ resource virtualNetwork 'Microsoft.Network/virtualNetworks@2022-07-01' = {
     virtualNetworkPeerings: []
     enableDdosProtection: true
     ddosProtectionPlan: {
-      id: ddosProtectionPlan.id
+      id: resourceId('Microsoft.Network/ddosProtectionPlans', ddosProtectionPlanName)
     }
   }
-
 }
 
 // Load Balancer
@@ -260,7 +260,7 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
       {
         properties: {
           publicIPAddress: {
-            id: inboundPublicIP.id
+            id: resourceId('Microsoft.Network/publicIPAddresses', inboundPublicIPName)
           }
           privateIPAllocationMethod: 'Dynamic'
         }
@@ -397,7 +397,7 @@ resource nGroups 'Microsoft.ContainerInstance/NGroups@2024-09-01-preview' = {
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: {
-      '${resourcePrefix}Microsoft.ManagedIdentity/userAssignedIdentities/${userAssignedIdentityName}': {}
+      '${resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', userAssignedIdentityName)}': {}
     }
   }
   properties: {
@@ -411,7 +411,7 @@ resource nGroups 'Microsoft.ContainerInstance/NGroups@2024-09-01-preview' = {
     containerGroupProfiles: [
       {
         resource: {
-          id: '${resourcePrefix}Microsoft.ContainerInstance/containerGroupProfiles/${cgProfileName}'
+          id: resourceId('Microsoft.ContainerInstance/containerGroupProfiles', containerGroupProfileName)
         }
         containerGroupProperties: {
           subnetIds: [
@@ -441,27 +441,28 @@ resource nGroups 'Microsoft.ContainerInstance/NGroups@2024-09-01-preview' = {
     'rollingupdate.replace.enabled': 'true'
   }
   dependsOn: [
-    containerGroupProfile
     loadBalancer
     virtualNetwork
-    userAssignedIdentity
   ]
 }
 
 // Outputs - Required for Radius recipes
 output result object = {
   resources: [
-    userAssignedIdentity.id
-    ddosProtectionPlan.id
-    networkSecurityGroup.id
-    inboundPublicIP.id
-    outboundPublicIP.id
-    natGateway.id
-    virtualNetwork.id
-    loadBalancer.id
-    containerGroupProfile.id
-    nGroups.id
+    resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', userAssignedIdentityName)
+    resourceId('Microsoft.Network/ddosProtectionPlans', ddosProtectionPlanName)
+    resourceId('Microsoft.Network/networkSecurityGroups', networkSecurityGroupName)
+    resourceId('Microsoft.Network/publicIPAddresses', inboundPublicIPName)
+    resourceId('Microsoft.Network/publicIPAddresses', outboundPublicIPName)
+    resourceId('Microsoft.Network/natGateways', natGatewayName)
+    resourceId('Microsoft.Network/virtualNetworks', vnetName)
+    resourceId('Microsoft.Network/loadBalancers', loadBalancerName)
+    resourceId('Microsoft.ContainerInstance/containerGroupProfiles', containerGroupProfileName)
+    resourceId('Microsoft.ContainerInstance/nGroups', nGroupsName)
   ]
+  values: {
+    contextObject: context
+  }
 }
 
 // Additional outputs for debugging/reference
