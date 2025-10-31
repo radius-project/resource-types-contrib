@@ -52,8 +52,8 @@ require_env "AZURE_CLIENT_ID"
 
 AZURE_LOCATION="${AZURE_LOCATION:-westus3}"
 AZURE_RESOURCE_GROUP="${AZURE_RESOURCE_GROUP:-}"
-AZURE_WORKSPACE_NAME="${AZURE_WORKSPACE_NAME:-azure}"
-AZURE_ENVIRONMENT_NAME="${AZURE_ENVIRONMENT_NAME:-azure}"
+AZURE_WORKSPACE_NAME="${AZURE_WORKSPACE_NAME:-default}"
+AZURE_ENVIRONMENT_NAME="${AZURE_ENVIRONMENT_NAME:-default}"
 AZURE_TEST_STATE_FILE="${AZURE_TEST_STATE_FILE:-.azure-test-state}"
 RADIUS_GROUP_NAME="${RADIUS_GROUP_NAME:-default}"
 
@@ -69,36 +69,15 @@ if ! az group exists --name "$AZURE_RESOURCE_GROUP" --subscription "$AZURE_SUBSC
     exit 1
 fi
 
-printf "\033[34;1m=>\033[0m Creating Radius group '%s' (if missing)\n" "$RADIUS_GROUP_NAME"
-rad group create "$RADIUS_GROUP_NAME" >/dev/null 2>&1 || true
-rad group switch "$RADIUS_GROUP_NAME"
-
-printf "\033[34;1m=>\033[0m Creating Radius workspace '%s'\n" "$AZURE_WORKSPACE_NAME"
-rad workspace create kubernetes "$AZURE_WORKSPACE_NAME" \
-    --group "$RADIUS_GROUP_NAME" \
-
-rad workspace switch "$AZURE_WORKSPACE_NAME"
-
 printf "\033[34;1m=>\033[0m Registering Azure workload identity credential\n"
 rad credential register azure wi \
     --tenant-id "$AZURE_TENANT_ID" \
-    --client-id "$AZURE_CLIENT_ID" \
-    --workspace "$AZURE_WORKSPACE_NAME"
-
-printf "\033[34;1m=>\033[0m Creating Radius environment '%s'\n" "$AZURE_ENVIRONMENT_NAME"
-if ! rad env show "$AZURE_ENVIRONMENT_NAME" --workspace "$AZURE_WORKSPACE_NAME" >/dev/null 2>&1; then
-    rad env create "$AZURE_ENVIRONMENT_NAME" \
-        --workspace "$AZURE_WORKSPACE_NAME"
-fi
+    --client-id "$AZURE_CLIENT_ID"
 
 printf "\033[34;1m=>\033[0m Updating environment '%s' with Azure provider settings\n" "$AZURE_ENVIRONMENT_NAME"
 rad env update "$AZURE_ENVIRONMENT_NAME" \
-    --workspace "$AZURE_WORKSPACE_NAME" \
     --azure-subscription-id "$AZURE_SUBSCRIPTION_ID" \
     --azure-resource-group "$AZURE_RESOURCE_GROUP"
-
-printf "\033[34;1m=>\033[0m Switching to environment '%s'\n" "$AZURE_ENVIRONMENT_NAME"
-rad env switch "$AZURE_ENVIRONMENT_NAME" --workspace "$AZURE_WORKSPACE_NAME"
 
 cat <<EOF >"$AZURE_TEST_STATE_FILE"
 AZURE_RESOURCE_GROUP=$AZURE_RESOURCE_GROUP
