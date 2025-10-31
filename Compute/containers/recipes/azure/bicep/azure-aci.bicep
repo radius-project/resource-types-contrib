@@ -77,9 +77,6 @@ param userAssignedIdentityName string = 'uai_1'
 @description('Radius ACI Container Context')
 param context object
 
-// Output the context object for debugging
-output contextObject object = context
-
 // Variables
 var cgProfileName = containerGroupProfileName
 var nGroupsName = nGroupsParamName
@@ -460,9 +457,6 @@ output result object = {
     resourceId('Microsoft.ContainerInstance/containerGroupProfiles', containerGroupProfileName)
     resourceId('Microsoft.ContainerInstance/nGroups', nGroupsName)
   ]
-  values: {
-    contextObject: context
-  }
 }
 
 // Additional outputs for debugging/reference
