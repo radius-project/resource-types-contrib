@@ -49,17 +49,11 @@ jobs:
           RG="radtest-${{ github.run_id }}-${{ github.run_attempt }}"
           # Temporary override for targeted testing against an existing resource group.
           RG="shruthikumar"
-          WORKSPACE="azure-ws-${{ github.run_id }}"
-          ENVIRONMENT="azure-env-${{ github.run_id }}"
-          CREDENTIAL="azure-sp-${{ github.run_id }}"
-          TARGET="azure-target-${{ github.run_id }}"
           STATE_FILE=".azure-test-state"
           echo "AZURE_LOCATION=$LOCATION" >> "$GITHUB_ENV"
           echo "AZURE_RESOURCE_GROUP=$RG" >> "$GITHUB_ENV"
-          echo "AZURE_WORKSPACE_NAME=$WORKSPACE" >> "$GITHUB_ENV"
-          echo "AZURE_ENVIRONMENT_NAME=$ENVIRONMENT" >> "$GITHUB_ENV"
-          echo "AZURE_CREDENTIAL_NAME=$CREDENTIAL" >> "$GITHUB_ENV"
-          echo "AZURE_DEPLOYMENT_TARGET_NAME=$TARGET" >> "$GITHUB_ENV"
+          echo "AZURE_WORKSPACE_NAME=default" >> "$GITHUB_ENV"
+          echo "AZURE_ENVIRONMENT_NAME=default" >> "$GITHUB_ENV"
           echo "AZURE_TEST_STATE_FILE=$STATE_FILE" >> "$GITHUB_ENV"
 
       - name: Create Azure Resource Group
