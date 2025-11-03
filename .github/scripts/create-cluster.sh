@@ -45,8 +45,7 @@ AZURE_WORKLOAD_IDENTITY_ENABLED="false"
 KIND_CLUSTER_NAME="radius"
 
 if [[ -n "${AZURE_TENANT_ID:-}" ]]; then
-    echo "Azure Tenant ID detected. Setting up KinD cluster with OIDC support..."
-    AZURE_WORKLOAD_IDENTITY_ENABLED="true"
+    echo "Azure Tenant ID detected. Checking for OIDC configuration..."
     
     # Populate the following environment variables for Azure workload identity from secrets.
     # AZURE_OIDC_ISSUER_PUBLIC_KEY
@@ -54,28 +53,37 @@ if [[ -n "${AZURE_TENANT_ID:-}" ]]; then
     # AZURE_OIDC_ISSUER
     if [[ -n "${TEST_AZURE_OIDC_JSON:-}" ]]; then
         echo "Extracting OIDC configuration from TEST_AZURE_OIDC_JSON..."
-        eval "export $(echo "$TEST_AZURE_OIDC_JSON" | jq -r 'to_entries | map("\(.key)=\(.value)") | @sh')"
+
+        # Safely parse JSON secret into environment variables
+        AZURE_OIDC_ISSUER_PUBLIC_KEY=$(echo "$TEST_AZURE_OIDC_JSON" | jq -r '.AZURE_OIDC_ISSUER_PUBLIC_KEY // empty')
+        AZURE_OIDC_ISSUER_PRIVATE_KEY=$(echo "$TEST_AZURE_OIDC_JSON" | jq -r '.AZURE_OIDC_ISSUER_PRIVATE_KEY // empty')
+        AZURE_OIDC_ISSUER=$(echo "$TEST_AZURE_OIDC_JSON" | jq -r '.AZURE_OIDC_ISSUER // empty')
     fi
     
     # Validate required OIDC variables are set
     if [[ -z "${AZURE_OIDC_ISSUER_PUBLIC_KEY:-}" ]] || [[ -z "${AZURE_OIDC_ISSUER_PRIVATE_KEY:-}" ]] || [[ -z "${AZURE_OIDC_ISSUER:-}" ]]; then
-        echo "Error: AZURE_OIDC_ISSUER_PUBLIC_KEY, AZURE_OIDC_ISSUER_PRIVATE_KEY, and AZURE_OIDC_ISSUER must be set for Azure Workload Identity."
-        echo "These should be provided via TEST_AZURE_OIDC_JSON secret or as individual environment variables."
+        echo "Error: OIDC configuration is required for Azure Workload Identity but not found."
+        echo ""
+        echo "Please ensure the TEST_AZURE_OIDC_JSON secret is set in GitHub with:"
+        echo "  - AZURE_OIDC_ISSUER_PUBLIC_KEY"
+        echo "  - AZURE_OIDC_ISSUER_PRIVATE_KEY"
+        echo "  - AZURE_OIDC_ISSUER"
+        echo ""
         exit 1
     fi
     
-    # Create KinD cluster with OIDC Issuer keys
-    echo "Decoding OIDC issuer keys..."
-    echo "$AZURE_OIDC_ISSUER_PUBLIC_KEY" | base64 -d > sa.pub
-    echo "$AZURE_OIDC_ISSUER_PRIVATE_KEY" | base64 -d > sa.key
-    
-    # Validate the keys were decoded successfully
-    if [[ ! -s sa.pub ]] || [[ ! -s sa.key ]]; then
-        echo "Error: Failed to decode OIDC issuer keys"
-        exit 1
+    echo "Using provided OIDC configuration..."
+    AZURE_WORKLOAD_IDENTITY_ENABLED="true"
+fi
+
+if [[ "${AZURE_WORKLOAD_IDENTITY_ENABLED}" == "true" ]]; then
+    # Decode OIDC issuer keys if they were provided as base64
+    if [[ -n "${AZURE_OIDC_ISSUER_PUBLIC_KEY:-}" ]] && [[ -n "${AZURE_OIDC_ISSUER_PRIVATE_KEY:-}" ]]; then
+        echo "$AZURE_OIDC_ISSUER_PUBLIC_KEY" | base64 -d > sa.pub
+        echo "$AZURE_OIDC_ISSUER_PRIVATE_KEY" | base64 -d > sa.key
     fi
     
-    echo "OIDC issuer keys successfully decoded"
+    echo "Creating KinD cluster with OIDC support..."
     
     cat <<EOF | kind create cluster --name ${KIND_CLUSTER_NAME} --config=-
 kind: Cluster
@@ -117,7 +125,9 @@ EOF
         echo "Warning: Helm is not installed. Skipping Azure Workload Identity webhook installation."
         echo "Azure recipes will not work without this component."
     fi
-else
+fi
+
+if [[ -z "${AZURE_TENANT_ID:-}" ]]; then
     echo "No Azure Tenant ID found. Creating basic KinD cluster..."
     kind create cluster --name ${KIND_CLUSTER_NAME}
 fi
