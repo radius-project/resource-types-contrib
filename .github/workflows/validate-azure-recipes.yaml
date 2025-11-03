@@ -86,6 +86,8 @@ jobs:
 
       - name: Create Radius Cluster
         run: make create-radius-cluster
+        env:
+          TEST_AZURE_OIDC_JSON: ${{ secrets.TEST_AZURE_OIDC_JSON }}
 
       - name: Configure Azure Provider
         run: make configure-azure-provider
