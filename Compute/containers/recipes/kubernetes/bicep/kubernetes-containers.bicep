@@ -38,6 +38,17 @@ var labels = {
 // Extract connection data from linked resources
 var resourceConnections = context.resource.connections ?? {}
 
+// Build environment variables from connections
+// Each connection's output values become CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>
+var connectionEnvVars = reduce(items(resourceConnections), [], (acc, conn) => 
+  concat(acc, reduce(items(conn.value.?status.?computedValues ?? {}), [], (envAcc, prop) => 
+    concat(envAcc, [{
+      name: toUpper('CONNECTION_${conn.key}_${prop.key}')
+      value: string(prop.value)
+    }])
+  ))
+)
+
 // Use replicas from properties, default to 1 if not specified
 var replicaCount = resourceProperties.?replicas != null ? int(resourceProperties.replicas) : 1
 
@@ -57,18 +68,20 @@ var containerSpecs = reduce(containerItems, [], (acc, item) => concat(acc, [{
         protocol: port.value.?protocol ?? 'TCP'
       }]))
     } : {},
-    // TODO: Add support for environment variables from Radius secrets resource
-    // When a container references a Radius.Security/secrets resource via connections,
-    // the recipe should automatically populate environment variables from the secret values
-    // stored in the connected Radius secret resource.
-    contains(item.value, 'env') ? {
-      env: reduce(items(item.value.env), [], (envAcc, envItem) => concat(envAcc, [union(
-        {
-          name: envItem.key
-        },
-        contains(envItem.value, 'value') ? { value: envItem.value.value } : {}
-        // TODO: Add support for environment variables from Radius secrets resource
-      )]))
+    // Add environment variables from container definition and connections
+    // Connection environment variables are automatically added from output values
+    (contains(item.value, 'env') || length(connectionEnvVars) > 0) ? {
+      env: concat(
+        // Container-defined env vars
+        reduce(items(item.value.?env ?? {}), [], (envAcc, envItem) => concat(envAcc, [union(
+          {
+            name: envItem.key
+          },
+          contains(envItem.value, 'value') ? { value: envItem.value.value } : {}
+        )])),
+        // Connection-derived env vars
+        connectionEnvVars
+      )
     } : {},
     // Add volume mounts if they exist
     contains(item.value, 'volumeMounts') ? {
