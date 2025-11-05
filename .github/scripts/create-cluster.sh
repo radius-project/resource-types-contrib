@@ -116,11 +116,22 @@ EOF
         
         helm install workload-identity-webhook \
             azure-workload-identity/workload-identity-webhook \
-            --namespace radius-system \
+            --namespace radius-default \
             --create-namespace \
             --version 1.3.0 \
             --set azureTenantID="${AZURE_TENANT_ID}" \
             --wait || echo "Warning: Failed to install Azure Workload Identity webhook. Azure recipes may not work."
+        
+        echo "Waiting for webhook to be fully registered..."
+        for i in {1..30}; do
+            if kubectl get mutatingwebhookconfiguration azure-wi-webhook-mutating-webhook-configuration &>/dev/null; then
+                echo "✓ Webhook configuration registered"
+                sleep 5  # Give it a few extra seconds to be fully functional
+                break
+            fi
+            echo "Waiting for webhook configuration... ($i/30)"
+            sleep 2
+        done
     else
         echo "Warning: Helm is not installed. Skipping Azure Workload Identity webhook installation."
         echo "Azure recipes will not work without this component."
@@ -164,7 +175,7 @@ rad install kubernetes \
     --set rp.publicEndpointOverride=localhost:8081 \
     --skip-contour-install \
     --set dashboard.enabled=false \
-    --set global.azureWorkloadIdentity.enabled=${AZURE_WORKLOAD_IDENTITY_ENABLED}
+    --set global.azureWorkloadIdentity.enabled=true \
 
 echo "Installing Dapr on Kubernetes..."
 helm repo add dapr https://dapr.github.io/helm-charts --force-update >/dev/null 2>&1
