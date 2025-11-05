@@ -6,8 +6,7 @@ This guide explains how to test Resource Types and Recipes locally using the sta
 
 Before testing, ensure you have:
 
-- Docker installed (for running k3d)
-- `k3d` installed
+- Docker installed (for running kind)
 - `kubectl` installed
 - `helm` installed
 - `oras` installed
@@ -23,7 +22,7 @@ Create a local Kubernetes cluster with Radius (and Dapr) installed:
 # Install Radius CLI (optional: specify version with RAD_VERSION=0.48.0)
 make install-radius-cli
 
-# Create k3d cluster with Radius and Dapr configured
+# Create kind cluster with Radius configured
 make create-radius-cluster
 ```
 
@@ -257,7 +256,7 @@ make test-recipe RECIPE_PATH=Security/secrets/recipes/kubernetes/bicep
 ```bash
 # Environment setup
 make install-radius-cli          # Install Radius CLI
-make create-radius-cluster       # Create k3d cluster with Radius
+make create-radius-cluster       # Create kind cluster with Radius
 make delete-radius-cluster       # Delete test cluster
 
 # Build commands

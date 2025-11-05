@@ -40,10 +40,6 @@ jobs:
         uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
           node-version: 16
-
-      - name: Set up k3d
-        run: wget -q -O - https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
-
       - name: Set up ORAS
         uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
         with:
