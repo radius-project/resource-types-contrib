@@ -1,7 +1,7 @@
 ## Overview
 The Radius.Compute/persistentVolumes Resource Type represents a persistent storage volume.
 
-Developer documentation is embedded in the Resource Type definition YAML file. Developer documentation is accessible via `rad resource-type show Radius.Compute/volumes`. 
+Developer documentation is embedded in the Resource Type definition YAML file. Developer documentation is accessible via `rad resource-type show Radius.Compute/persistentVolumes`. 
 
 ## Recipes
 
