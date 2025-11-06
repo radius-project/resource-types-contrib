@@ -22,6 +22,6 @@ Properties for PersistentVolumes are provided to the Recipe via the [Recipe Cont
 
 ## Recipe Output Properties
 
-There are no output properties that should be set by a Recipe for a Persistant Volume resource.
+There are no output properties that should be set by a Recipe for a Persistent Volume resource.
 
 
