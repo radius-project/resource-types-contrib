@@ -17,7 +17,8 @@
 		"ghcr.io/dapr/cli/dapr-cli:0": {},
 		"ghcr.io/devcontainers-extra/features/apt-packages:1": {
 			"packages": "socat"
-		}
+		},
+		"ghcr.io/devcontainers-extra/features/shellcheck:1": {}
 	},
 	"customizations": {
 		"vscode": {
