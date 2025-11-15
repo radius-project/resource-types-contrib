@@ -1,0 +1,42 @@
+{
+	"name": "Radius Resource Types & Recipes",
+	"image": "mcr.microsoft.com/devcontainers/javascript-node:20-bookworm",
+	
+	"features": {
+		"ghcr.io/devcontainers/features/azure-cli:1": {},
+		// Note : k3d doesn't run too nicely with docker-in-docker for some reason
+        "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {},
+		"ghcr.io/devcontainers/features/terraform:1": {},
+		"ghcr.io/jsburckhardt/devcontainer-features/k3d:1": {},
+		"ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
+			"minikube": "none",
+			"helm": "none",
+			"kubectl": "latest"
+		},
+		"ghcr.io/dhoeric/features/oras:1": {},
+		"ghcr.io/dapr/cli/dapr-cli:0": {},
+		"ghcr.io/devcontainers-extra/features/apt-packages:1": {
+			"packages": "socat"
+		},
+		"ghcr.io/devcontainers-extra/features/shellcheck:1": {}
+	},
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"davidanson.vscode-markdownlint",
+				"github.copilot",
+				"github.copilot-chat",
+				"github.vscode-pull-request-github",
+				"github.vscode-github-actions",
+				"hashicorp.terraform",
+				"ms-azuretools.vscode-azureterraform",
+				"ms-azuretools.vscode-bicep",
+				"ms-vscode.makefile-tools",
+				"redhat.vscode-yaml",
+				"timonwong.shellcheck"
+			]
+		}
+	},
+	"postCreateCommand": "bash .devcontainer/post-create.sh",
+	"postStartCommand": "bash .devcontainer/post-start.sh"
+}
