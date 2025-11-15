@@ -21,17 +21,22 @@
 # with automated setup, validation, and cleanup.
 #
 # Help:
-#   make help                    # Show all available targets
+#   make help                           # Show all available targets
 #
 # Environment Setup:
-#   make install-radius		     # Install Radius CLI
-#   make create-cluster		     # Create a local k3d Kubernetes cluster for testing
-#   make delete-cluster		     # Delete the local k3d Kubernetes cluster
+#   make install-radius-cli             # Install Radius CLI
+#   make create-radius-cluster          # Create a local k3d Kubernetes cluster for testing
+#   make clean                          # Delete the local k3d cluster, config, and build artifacts
 #
-# Developement and testing:
-#   make lint					# Lint all resource types and recipes
-#   make build		            # Build all resource types and recipes
-#   make test					# Run automated tests for all recipes
+# Development and Testing:
+#   make build                          # Build all resource types and recipes
+#   make build-resource-type            # Build single resource type (requires TYPE_FOLDER parameter)
+#   make build-bicep-recipe             # Build Bicep recipe (requires RECIPE_PATH parameter)
+#   make build-terraform-recipe         # Build Terraform recipe (requires RECIPE_PATH parameter)
+#   make test                           # Run automated tests for all recipes
+#   make test-recipe                    # Test single recipe (requires RECIPE_PATH parameter)
+#   make list-resource-types            # List resource type folders
+#   make list-recipes                   # List all recipe folders
 
 SHELL := /bin/bash
 ARROW := \033[34;1m=>\033[0m
