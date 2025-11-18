@@ -20,6 +20,7 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
     connections: {
       data: {
         source: myPersistentVolume.id
+        disableDefaultEnvVars: false
       }
     }
     containers: {
@@ -49,7 +50,11 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
           {
             volumeName: 'data'
             mountPath: '/app/data'
-          } 
+          }
+          {
+            volumeName: 'cache'
+            mountPath: '/tmp/cache'
+          }
         ] 
         resources: {
           requests: {
@@ -107,6 +112,11 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
         persistentVolume: {
           resourceId: myPersistentVolume.id
           accessMode: 'ReadWriteOnce'
+        }
+      }
+      cache: {
+        emptyDir: {
+          medium: 'memory'
         }
       }
     }

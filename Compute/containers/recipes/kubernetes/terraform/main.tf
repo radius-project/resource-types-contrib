@@ -39,6 +39,19 @@ locals {
   # Connections - used for linked resources like persistent volumes
   connections = try(var.context.resource.connections, {})
 
+  # Connection-derived environment variables, enabled when disableDefaultEnvVars is false
+  connection_env_vars = flatten([
+    for conn_name, conn in local.connections :
+    try(conn.disableDefaultEnvVars, false)
+      ? [
+          for prop_name, prop_value in try(conn.status.computedValues, {}) : {
+            name  = upper("CONNECTION_${conn_name}_${prop_name}")
+            value = tostring(prop_value)
+          }
+        ]
+      : []
+  ])
+
   # Replica count - use from properties or default to 1
   replica_count = try(local.resource_properties.replicas, 1)
 
@@ -90,15 +103,18 @@ locals {
       # When a container references a Radius.Security/secrets resource via connections,
       # the recipe should populate environment variables from the secret values
       # stored in the connected Radius secret resource.
-      env = [
-        for env_name, env_config in try(config.env, {}) : {
-          name       = env_name
-          value      = try(env_config.value, null)
-          value_from = try(env_config.valueFrom, null)
-          # TODO: Currently only 'value' is rendered in the deployment.
-          # Add support for 'valueFrom' to reference Kubernetes secrets/configmaps.
-        }
-      ]
+      env = concat(
+        [
+          for env_name, env_config in try(config.env, {}) : {
+            name       = env_name
+            value      = try(env_config.value, null)
+            value_from = try(env_config.valueFrom, null)
+            # TODO: Currently only 'value' is rendered in the deployment.
+            # Add support for 'valueFrom' to reference Kubernetes secrets/configmaps.
+          }
+        ],
+        local.connection_env_vars
+      )
 
       # Volume mounts
       volume_mounts = [

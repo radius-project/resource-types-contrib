@@ -38,15 +38,17 @@ var labels = {
 // Extract connection data from linked resources
 var resourceConnections = context.resource.connections ?? {}
 
-// Build environment variables from connections
+// Build environment variables from connections when explicitly enabled via disableDefaultEnvVars
 // Each connection's output values become CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>
 var connectionEnvVars = reduce(items(resourceConnections), [], (acc, conn) => 
-  concat(acc, reduce(items(conn.value.?status.?computedValues ?? {}), [], (envAcc, prop) => 
-    concat(envAcc, [{
-      name: toUpper('CONNECTION_${conn.key}_${prop.key}')
-      value: string(prop.value)
-    }])
-  ))
+  conn.value.?disableDefaultEnvVars == true
+    ? concat(acc, reduce(items(conn.value.?status.?computedValues ?? {}), [], (envAcc, prop) => 
+        concat(envAcc, [{
+          name: toUpper('CONNECTION_${conn.key}_${prop.key}')
+          value: string(prop.value)
+        }])
+      ))
+    : acc
 )
 
 // Use replicas from properties, default to 1 if not specified
