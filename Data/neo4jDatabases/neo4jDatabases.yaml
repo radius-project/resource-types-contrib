@@ -37,6 +37,12 @@ types:
         }
       }
       ```
+      Within your container, your application code can obtain the host, port, username, and password values via environment variables automatically created. 
+      - CONNECTION_NEO4JDB_HOST
+      - CONNECTION_NEO4JDB_PORT
+      - CONNECTION_NEO4JDB_DATABASE
+      - CONNECTION_NEO4JDB_USERNAME
+      - CONNECTION_NEO4JDB_PASSWORD
 
     apiVersions:
       '2025-09-11-preview':
