@@ -17,11 +17,13 @@
 # ------------------------------------------------------------
 
 # =============================================================================
-# Find and test all Radius recipes in the repository by calling test-recipe.sh
-# for each discovered recipe directory.
+# Register all Radius recipes in the repository by calling register-recipe.sh
+# for each discovered recipe directory. This should be run after building all
+# recipes but before testing them.
 #
-# Usage: ./test-all-recipes.sh [repo-root] [environment] [recipe-type]
-# Example: ./test-all-recipes.sh . bicep-env bicep
+# Usage: ./register-all-recipes.sh [repo-root] [environment] [recipe-type]
+# Example: ./register-all-recipes.sh . bicep-test bicep
+# Example: ./register-all-recipes.sh . terraform-test terraform
 # =============================================================================
 
 set -euo pipefail
@@ -31,7 +33,7 @@ ENVIRONMENT="${2:-default}"
 RECIPE_TYPE="${3:-all}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "==> Finding all recipes in $REPO_ROOT"
+echo "==> Finding $RECIPE_TYPE recipes in $REPO_ROOT for environment $ENVIRONMENT"
 
 # Use while read loop for better compatibility (mapfile requires bash 4+)
 RECIPE_DIRS=()
@@ -51,21 +53,21 @@ if [[ ${#RECIPE_DIRS[@]} -eq 0 ]]; then
     exit 0
 fi
 
-echo "==> Found ${#RECIPE_DIRS[@]} $RECIPE_TYPE recipe(s) to test"
+echo "==> Found ${#RECIPE_DIRS[@]} $RECIPE_TYPE recipe(s) to register"
 
 FAILED_RECIPES=()
 PASSED_RECIPES=()
 
-# Test each recipe
+# Register each recipe
 for recipe_dir in "${RECIPE_DIRS[@]}"; do
     # Convert to relative path for cleaner output
     RELATIVE_PATH="${recipe_dir#$REPO_ROOT/}"
     echo ""
     echo "================================================"
-    echo "Testing: $RELATIVE_PATH"
+    echo "Registering: $RELATIVE_PATH"
     echo "================================================"
     
-    if ./.github/scripts/test-recipe.sh "$recipe_dir" "$ENVIRONMENT"; then
+    if ./.github/scripts/register-recipe.sh "$recipe_dir" "$ENVIRONMENT"; then
         PASSED_RECIPES+=("$RELATIVE_PATH")
     else
         FAILED_RECIPES+=("$RELATIVE_PATH")
@@ -75,14 +77,14 @@ done
 # Print summary
 echo ""
 echo "================================================"
-echo "Test Summary"
+echo "Registration Summary"
 echo "================================================"
 echo "Passed: ${#PASSED_RECIPES[@]}"
 echo "Failed: ${#FAILED_RECIPES[@]}"
 
 if [[ ${#FAILED_RECIPES[@]} -gt 0 ]]; then
     echo ""
-    echo "Failed recipes:"
+    echo "Failed recipe registrations:"
     for recipe in "${FAILED_RECIPES[@]}"; do
         echo "  - $recipe"
     done
@@ -90,4 +92,11 @@ if [[ ${#FAILED_RECIPES[@]} -gt 0 ]]; then
 fi
 
 echo ""
-echo "==> All recipes passed!"
+echo "==> All recipes registered successfully!"
+
+# Log all registered recipes
+echo ""
+echo "================================================"
+echo "Currently Registered Recipes"  
+echo "================================================"
+rad recipe list --environment "$ENVIRONMENT" || echo "Warning: Could not list registered recipes"

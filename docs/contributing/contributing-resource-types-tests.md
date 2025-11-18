@@ -37,8 +37,8 @@ Repository Root
 
 ```bash
 make install-radius-cli          # Install Radius CLI
-make create-radius-cluster       # Create k3d cluster with Radius
-make clean                       # Delete cluster, config, and build artifacts
+make create-radius-cluster       # Create k3d cluster with Radius and Dapr
+make delete-radius-cluster       # Delete test cluster
 ```
 
 ### Building
@@ -57,6 +57,13 @@ make test                          # Test all recipes
 make test-recipe RECIPE_PATH=<path>  # Test single recipe
 make list-resource-types           # List resource type folders
 make list-recipes                  # List all recipes
+```
+
+To target a specific implementation, provide the `RECIPE_TYPE` variable (supported values: `bicep`, `terraform`). You can also override the Radius environment used during testing via `ENVIRONMENT`:
+
+```bash
+make test RECIPE_TYPE=bicep
+make test RECIPE_TYPE=terraform ENVIRONMENT=ci-terraform
 ```
 
 ## Using the Dev Container

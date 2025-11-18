@@ -144,9 +144,9 @@ types:
                               type: object
                               description: (Optional) Set the environment variable value based on a Radius Secrets resource.
                               properties:
-                                secretId:
+                                secretName:
                                   type: string
-                                  description: (Optional) The ID of the Radius Secrets resource.
+                                  description: (Optional) The name of the Radius Secrets resource.
                                 key:
                                   type: string
                                   description: (Optional) The key of the Radius Secrets resource. The value of the key will be used as the environment variable value.
@@ -355,9 +355,9 @@ types:
                         type: string
                         enum: [ReadWriteOnce, ReadOnlyMany, ReadWriteMany]
                         description: (Optional) Set to `ReadWriteOnce` if no other Containers can mount in read/write mode. Set to `ReadOnlyMany` to enable other Containers to mount in read-only mode. Set to `ReadWriteMany` to allow multiple containers to mount in read/write mode. Assumed to be `ReadWriteOnce` if not specified.
-                  secretId:
+                  secretName:
                     type: string
-                    description: (Optional) The Radius Secret resource ID.
+                    description: (Optional) The Radius Secret resource name.
                   emptyDir:
                     type: object
                     description: (Optional) An empty directory. 
@@ -406,7 +406,7 @@ types:
                             type: integer
                             description: (Optional) The absolute value of the metric as a quantity.
                     required: [kind, target]
-              required: [metric]
+              required: [metrics]
             extensions:
               type: object
               description: (Optional) Properties for additional functionality. daprSidecar is the only available option.

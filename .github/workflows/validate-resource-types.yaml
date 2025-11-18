@@ -17,7 +17,13 @@ jobs:
   validate-resource-types:
     runs-on: ubuntu-latest
     name: Validate Resource Types and Recipes
-    
+    strategy:
+      fail-fast: false
+      matrix:
+        recipe: [bicep, terraform]
+    env:
+      RAD_ENVIRONMENT_NAME: default
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -37,5 +43,7 @@ jobs:
         run: make create-radius-cluster
       - name: Build
         run: make build
-      - name: Test
-        run: make test
+      - name: Register ${{ matrix.recipe }} recipes
+        run: make register ENVIRONMENT=$RAD_ENVIRONMENT_NAME RECIPE_TYPE=${{ matrix.recipe }}
+      - name: Test ${{ matrix.recipe }} recipes
+        run: make test ENVIRONMENT=$RAD_ENVIRONMENT_NAME RECIPE_TYPE=${{ matrix.recipe }}

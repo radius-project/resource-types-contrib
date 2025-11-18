@@ -17,6 +17,8 @@
 ##@ Testing
 
 RESOURCE_TYPE_ROOT ?=$(shell pwd)
+ENVIRONMENT ?= default
+RECIPE_TYPE ?= all
 
 .PHONY: build
 build: ## Build all resource types and recipes
@@ -45,16 +47,27 @@ ifndef RECIPE_PATH
 endif
 	@./.github/scripts/build-terraform-recipe.sh "$(RECIPE_PATH)"
 
+.PHONY: register-recipe
+register-recipe: ## Register a single recipe (requires RECIPE_PATH parameter)
+ifndef RECIPE_PATH
+	$(error RECIPE_PATH parameter is required. Usage: make register-recipe RECIPE_PATH=<path-to-recipe-directory>)
+endif
+	@./.github/scripts/register-recipe.sh "$(RECIPE_PATH)"
+
+.PHONY: register
+register: ## Register built recipes (set ENVIRONMENT and/or RECIPE_TYPE to override defaults)
+	@./.github/scripts/register-all-recipes.sh "$(RESOURCE_TYPE_ROOT)" "$(ENVIRONMENT)" "$(RECIPE_TYPE)"
+
 .PHONY: test-recipe
-test-recipe: ## Test a single recipe by registering and deploying it (requires RECIPE_PATH parameter)
+test-recipe: ## Test a single recipe (assumes already registered, requires RECIPE_PATH parameter)
 ifndef RECIPE_PATH
 	$(error RECIPE_PATH parameter is required. Usage: make test-recipe RECIPE_PATH=<path-to-recipe-directory>)
 endif
 	@./.github/scripts/test-recipe.sh "$(RECIPE_PATH)"
 
 .PHONY: test
-test: ## Run all recipe tests
-	@./.github/scripts/test-all-recipes.sh "$(RESOURCE_TYPE_ROOT)"
+test: ## Run recipe tests (assumes already registered)
+	@./.github/scripts/test-all-recipes.sh "$(RESOURCE_TYPE_ROOT)" "$(ENVIRONMENT)" "$(RECIPE_TYPE)"
 
 .PHONY: list-resource-types
 list-resource-types: ## List resource type folders under the specified root

@@ -31,6 +31,8 @@
 set -euo pipefail
 
 ROOT_DIR="${1:-$(pwd)}"
+FILTER_TYPE="${2:-all}"
+FILTER_TYPE="$(echo "$FILTER_TYPE" | tr '[:upper:]' '[:lower:]')"
 
 if [[ ! -d "$ROOT_DIR" ]]; then
     echo "Error: Root directory '$ROOT_DIR' does not exist" >&2
@@ -40,26 +42,36 @@ fi
 # Convert ROOT_DIR to an absolute path
 ROOT_DIR="$(cd "$ROOT_DIR" && pwd)"
 
-declare -A RECIPE_DIRS=()
+# Validate filter type
+case "$FILTER_TYPE" in
+    all|bicep|terraform)
+        ;;
+    *)
+        echo "Error: Unsupported recipe type filter '$FILTER_TYPE'. Expected 'bicep', 'terraform', or 'all'." >&2
+        exit 1
+        ;;
+esac
 
-find_recipe_dirs() {
-    local -a find_expression=("$@")
+# Use a regular array and sort/uniq instead of associative array for bash 3.x compatibility
+RECIPE_DIRS=()
 
+# Find Bicep recipe directories (directories containing .bicep files under recipes/)
+if [[ "$FILTER_TYPE" == "all" || "$FILTER_TYPE" == "bicep" ]]; then
     while IFS= read -r -d '' matched_path; do
-        local dir
-        dir="$(dirname "$matched_path")"
-        RECIPE_DIRS["$dir"]=1
-    done < <(find "$ROOT_DIR" "${find_expression[@]}" -print0 2>/dev/null)
-}
+        RECIPE_DIRS+=("$(dirname "$matched_path")")
+    done < <(find "$ROOT_DIR" -type f -path "*/recipes/*/*.bicep" -print0 2>/dev/null)
+fi
 
-# Collect Bicep recipe directories (directories containing .bicep files under recipes/)
-find_recipe_dirs -type f -path "*/recipes/*/*.bicep"
-
-# Collect Terraform recipe directories (directories containing main.tf under recipes/terraform)
-find_recipe_dirs -type f -path "*/recipes/*/terraform/main.tf"
+# Find Terraform recipe directories (directories containing main.tf under recipes/terraform)
+if [[ "$FILTER_TYPE" == "all" || "$FILTER_TYPE" == "terraform" ]]; then
+    while IFS= read -r -d '' matched_path; do
+        RECIPE_DIRS+=("$(dirname "$matched_path")")
+    done < <(find "$ROOT_DIR" -type f -path "*/recipes/*/terraform/main.tf" -print0 2>/dev/null)
+fi
 
 if [[ ${#RECIPE_DIRS[@]} -eq 0 ]]; then
     exit 0
 fi
 
-printf '%s\n' "${!RECIPE_DIRS[@]}" | sort
+# Remove duplicates and sort
+printf '%s\n' "${RECIPE_DIRS[@]}" | sort -u
