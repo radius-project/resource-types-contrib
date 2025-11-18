@@ -182,7 +182,9 @@ locals {
 
       # EmptyDir
       empty_dir = try(vol_config.emptyDir, null) != null ? {
-        medium = try(vol_config.emptyDir.medium, "")
+        medium = try(vol_config.emptyDir.medium, null) != null ? (
+          lower(vol_config.emptyDir.medium) == "memory" ? "Memory" : lower(vol_config.emptyDir.medium) == "disk" ? "" : vol_config.emptyDir.medium
+        ) : ""
       } : null
     }
   ]
