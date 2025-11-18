@@ -2,47 +2,41 @@ namespace: Radius.Data
 types:
   neo4jDatabases:
     description: |
-      The Radius.Data/neo4jDatabases Resource Type deploys a Neo4j graph database. To create a new Neo4j database, define an Application and Container resource in your application definition Bicep file.
+      The Radius.Data/neo4jDatabases Resource Type deploys a Neo4j graph database. To create a new Neo4j database, 
+      define an Application and Container resource in your application definition Bicep file.
 
-        extension radius
-        param environment string
-
-        resource myapplication 'Radius.Core/applications@2025-08-01-preview' = { ... }
-        resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = { ... }
-
+         ```
+      extension radius
+      param environment string
+      resource myApplication 'Radius.Core/applications@2025-08-01-preview' = { ... }
+      resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = { ... }
+      ```
       Then add a `neo4jDatabases` resource.
-
-        resource neo4j 'Radius.Data/neo4jDatabases@2025-09-11-preview' = {
-          name: 'neo4j'
-          properties: {
-            application: myapplication.id
-            environment: environment
-          }
+      ```
+      resource neo4j 'Radius.Data/neo4jDatabases@2025-09-11-preview' = {
+        name: 'neo4j'
+        properties: {
+          application: myApplication.id
+          environment: environment
         }
-
+      }
+      ```
       To connect to the new Neo4j database, add a connection between the container and the new Neo4j database. The final Container resource should look similar to:
-
-        resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
-          name: 'myContainer'
-          properties: {
-            environment: environment
-            application: myapplication.id
-            containers: { ... }
-            connections: {
-              neo4jDb: {
-                source: neo4j.id
-              }
+        ```
+      resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
+        name: 'myContainer'
+        properties: {
+          environment: environment
+          application: myApplication.id
+          containers: { ... }
+          connections: {
+            neo4jDb: {
+              source: neo4j.id
             }
           }
         }
-
-      Within your container, your application code can obtain the host, port, username, and password values via environment variables automatically created. 
-
-        CONNECTION_NEO4JDB_HOST
-        CONNECTION_NEO4JDB_PORT
-        CONNECTION_NEO4JDB_DATABASE
-        CONNECTION_NEO4JDB_USERNAME
-        CONNECTION_NEO4JDB_PASSWORD
+      }
+      ```
 
     apiVersions:
       '2025-09-11-preview':
