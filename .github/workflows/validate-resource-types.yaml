@@ -1,16 +1,18 @@
+# yaml-language-server: $schema=https://www.schemastore.org/github-workflow.json
+---
 name: Validate Resource Types
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch:
     inputs:
       version:
-        description: 'Radius version number to use (e.g. 0.51.0, 0.51.0-rc1, edge).'
+        description: "Radius version number to use (e.g. 0.51.0, 0.51.0-rc1, edge)."
         required: false
-        default: 'edge'
+        default: "edge"
         type: string
 
 jobs:
@@ -26,24 +28,32 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
         with:
           node-version: 16
+
       - name: Set up k3d
         run: wget -q -O - https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+
       - name: Set up ORAS
-        uses: oras-project/setup-oras@v1
+        uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
         with:
-          version: '1.2.0'
+          version: "1.2.0"
+
       - name: Install Radius CLI
         run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
+
       - name: Create Radius Cluster
         run: make create-radius-cluster
+
       - name: Build
         run: make build
+
       - name: Register ${{ matrix.recipe }} recipes
         run: make register ENVIRONMENT=$RAD_ENVIRONMENT_NAME RECIPE_TYPE=${{ matrix.recipe }}
+
       - name: Test ${{ matrix.recipe }} recipes
         run: make test ENVIRONMENT=$RAD_ENVIRONMENT_NAME RECIPE_TYPE=${{ matrix.recipe }}
