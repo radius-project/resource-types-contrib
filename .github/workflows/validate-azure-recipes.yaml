@@ -142,14 +142,14 @@ jobs:
           fi
           
           echo ""
-          echo "=== 2. Checking service account labels ==="
+          echo "=== 2. Checking service account annotations ==="
           kubectl get serviceaccount -n radius-system -o json | \
-            jq -r '.items[] | "\(.metadata.name): " + (if (.metadata.labels // {})["azure.workload.identity/client-id"] then "LABEL_PRESENT" else "LABEL_MISSING" end)'
+            jq -r '.items[] | "\(.metadata.name): " + (if (.metadata.annotations // {})["azure.workload.identity/client-id"] then "ANNOTATION_PRESENT" else "ANNOTATION_MISSING" end)'
           
           echo ""
-          echo "=== 3. Checking pod annotations ==="
+          echo "=== 3. Checking pod labels ==="
           kubectl get pods -n radius-system -o json | \
-            jq -r '.items[] | "\(.metadata.name): " + (if (.metadata.annotations // {})["azure.workload.identity/use"] then "ANNOTATION_PRESENT" else "ANNOTATION_MISSING" end)'
+            jq -r '.items[] | "\(.metadata.name): " + (if (.metadata.labels // {})["azure.workload.identity/use"] == "true" then "LABEL_PRESENT" else "LABEL_MISSING" end)'
           
           echo ""
           echo "=== 4. Checking AZURE_CLIENT_ID environment variable ==="
