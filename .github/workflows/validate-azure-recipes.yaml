@@ -142,7 +142,7 @@ jobs:
           fi
           
           echo ""
-          echo "=== 2. Checking service account annotations ==="
+          echo "=== 2. Checking service account annotations kubectl ==="
           kubectl get serviceaccount -n radius-system -o json | \
             jq -r '.items[] | "\(.metadata.name): " + (if (.metadata.annotations // {})["azure.workload.identity/client-id"] then "ANNOTATION_PRESENT" else "ANNOTATION_MISSING" end)'
           
