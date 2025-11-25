@@ -1,6 +1,6 @@
 extension radius
 extension containers
-// extension persistentVolumes
+extension persistentVolumes
 
 param environment string
 
