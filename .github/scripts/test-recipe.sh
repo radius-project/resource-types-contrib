@@ -17,8 +17,8 @@
 # ------------------------------------------------------------
 
 # =============================================================================
-# Test a single Radius recipe by deploying a test app and cleaning up.
-# Assumes the recipe has already been registered.
+# Test a single Radius recipe by registering it, deploying a test app, and 
+# cleaning up. Automatically detects whether the recipe is Bicep or Terraform.
 #
 # Usage: ./test-recipe.sh <path-to-recipe-directory>
 # Example: ./test-recipe.sh Security/secrets/recipes/kubernetes/bicep
@@ -60,8 +60,10 @@ RECIPE_PATH="${RECIPE_PATH#./}"
 # Detect recipe type based on file presence
 if [[ -f "$RECIPE_PATH/main.tf" ]]; then
     RECIPE_TYPE="terraform"
+    TEMPLATE_KIND="terraform"
 elif ls "$RECIPE_PATH"/*.bicep &>/dev/null; then
     RECIPE_TYPE="bicep"
+    TEMPLATE_KIND="bicep"
 else
     echo "Error: Could not detect recipe type in $RECIPE_PATH"
     exit 1
@@ -116,56 +118,11 @@ if [[ -n "$RADIUS_WORKSPACE_OVERRIDE" ]]; then
     WORKSPACE_NAME="$RADIUS_WORKSPACE_OVERRIDE"
 fi
 
+# Normalize overrides (allow env vars to win)
 if [[ -n "$RADIUS_ENVIRONMENT_OVERRIDE" ]]; then
     ENVIRONMENT_NAME="$RADIUS_ENVIRONMENT_OVERRIDE"
 fi
 
-# Derive platform from recipe path (first segment after recipes/)
-RECIPES_RELATIVE="${RECIPE_PATH#${RESOURCE_TYPE_PATH}/recipes/}"
-PLATFORM="${RECIPES_RELATIVE%%/*}"
-
-# Determine workspace and environment names based on platform
-RADIUS_WORKSPACE_OVERRIDE="${RADIUS_WORKSPACE_OVERRIDE:-}"
-RADIUS_ENVIRONMENT_OVERRIDE="${RADIUS_ENVIRONMENT_OVERRIDE:-}"
-
-KUBERNETES_WORKSPACE_NAME="${KUBERNETES_WORKSPACE_NAME:-default}"
-KUBERNETES_ENVIRONMENT_NAME="${KUBERNETES_ENVIRONMENT_NAME:-default}"
-AZURE_WORKSPACE_NAME="${AZURE_WORKSPACE_NAME:-azure}"
-AZURE_ENVIRONMENT_NAME="${AZURE_ENVIRONMENT_NAME:-azure}"
-
-WORKSPACE_NAME="$KUBERNETES_WORKSPACE_NAME"
-ENVIRONMENT_NAME="$KUBERNETES_ENVIRONMENT_NAME"
-
-case "$PLATFORM" in
-    azure)
-        WORKSPACE_NAME="$AZURE_WORKSPACE_NAME"
-        ENVIRONMENT_NAME="$AZURE_ENVIRONMENT_NAME"
-        ;;
-    kubernetes)
-        WORKSPACE_NAME="$KUBERNETES_WORKSPACE_NAME"
-        ENVIRONMENT_NAME="$KUBERNETES_ENVIRONMENT_NAME"
-        ;;
-    "")
-        # Fallback to defaults when the platform segment is missing
-        WORKSPACE_NAME="$KUBERNETES_WORKSPACE_NAME"
-        ENVIRONMENT_NAME="$KUBERNETES_ENVIRONMENT_NAME"
-        ;;
-    *)
-        # Additional platforms default to Kubernetes workspace/environment unless overridden
-        WORKSPACE_NAME="$KUBERNETES_WORKSPACE_NAME"
-        ENVIRONMENT_NAME="$KUBERNETES_ENVIRONMENT_NAME"
-        ;;
-esac
-
-if [[ -n "$RADIUS_WORKSPACE_OVERRIDE" ]]; then
-    WORKSPACE_NAME="$RADIUS_WORKSPACE_OVERRIDE"
-fi
-
-if [[ -n "$RADIUS_ENVIRONMENT_OVERRIDE" ]]; then
-    ENVIRONMENT_NAME="$RADIUS_ENVIRONMENT_OVERRIDE"
-fi
-
-echo "==> Assuming recipe is already registered"
 echo "==> Resource type: $RESOURCE_TYPE"
 echo "==> Workspace: $WORKSPACE_NAME"
 echo "==> Environment: $ENVIRONMENT_NAME"

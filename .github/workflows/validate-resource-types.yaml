@@ -67,7 +67,8 @@ jobs:
         run: make update-env-recipe-pack RECIPE_PACK_NAME=${{ matrix.recipe }}recipepack ENVIRONMENT="${RAD_ENVIRONMENT_NAME}"
 
       - name: Build
-        run: make build
-
+        run: RECIPE_PLATFORM_FILTER=kubernetes make build
+      - name: Register ${{ matrix.recipe }} recipes
+        run: RECIPE_PLATFORM_FILTER=kubernetes make register ENVIRONMENT=$RAD_ENVIRONMENT_NAME RECIPE_TYPE=${{ matrix.recipe }}
       - name: Test ${{ matrix.recipe }} recipes
-        run: make test ENVIRONMENT="${RAD_ENVIRONMENT_NAME}" RECIPE_TYPE=${{ matrix.recipe }}
+        run: RECIPE_PLATFORM_FILTER=kubernetes make test ENVIRONMENT=$RAD_ENVIRONMENT_NAME RECIPE_TYPE=${{ matrix.recipe }}
