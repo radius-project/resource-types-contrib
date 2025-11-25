@@ -2,25 +2,40 @@ namespace: Radius.Data
 types:
   postgreSqlDatabases:  
     description: |
-      The Radius.Data/postgreSQLDatabases Resource Type deploys a PostgresSQL database. To deploy a new PostgresSQL database, add the postgreSQLDatabases resource to the application definition Bicep file.
+      The Radius.Data/postgreSQLDatabases Resource Type deploys a PostgresSQL database. The database resource must have a connection to a Radius.Security/secrets resource with a username and password. To deploy a new PostgresSQL database, first add a secret to the application definition Bicep file. See the Radius.Security/secrets resource type documentation for details. Then add the postgreSQLDatabases resource.
       
       ```
       extension radius
-      param environment string 
+      extension postgreSqlDatabases
+
+      @description('The Radius environment ID. Typically set by the Radius CLI.')
+      param environment
+
+      resource myApplication 'Radius.Core/applications@2025-08-01-preview' = {
+        name: 'myApplication'
+        properties: {
+          environment: environment
+        }
+      }
 
       resource database 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
         name: 'database'
         properties: {
           application: myApplication.id
           environment: environment
+          size: 'S'
+          connections: {
+            credentials: {
+              source: credentials.id  // Assumes the secret resource is named credentials
+            }
+          }
         }
       }
       ```
 
-      To connect your container to the database, create a connection from the Container resource to the database as shown below. 
-      ```
-      resource myApplication 'Applications.Core/Applications@2023-10-01-preview' = { ... }
+      To connect a container to the database, create a connection from the Container resource to the database and to the secret.
 
+      ```
       resource frontend 'Applications.Core/containers@2023-10-01-preview' = {
         name: 'frontend'
         properties: {
@@ -38,18 +53,21 @@ types:
             postgresql: {
               source: database.id
             }
+            credentials: {
+              source: credentials.id
+            }
           }
         }
       }
       ```
 
-      The connection automatically injects environment variables into the container for all properties from the database. The environment variables are named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>`. In this example, the connection name is `mysqldb` so the environment variables will be:
+      The connection automatically injects environment variables into the container for all properties from the database. The environment variables are named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>`. In this example, the environment variables will be:
  
       - CONNECTION_POSTGRESQL_DATABASE
-      - CONNECTION_POSTGRESQL_USERNAME
-      - CONNECTION_POSTGRESQL_PASSWORD
       - CONNECTION_POSTGRESQL_HOST
       - CONNECTION_POSTGRESQL_PORT
+      - CONNECTION_CREDENTIALS_USERNAME
+      - CONNECTION_CREDENTIALS_PASSWORD
     apiVersions:
       '2025-08-01-preview':
         schema: 
@@ -64,25 +82,27 @@ types:
             size:
               type: string
               enum: ['S', 'M', 'L']
-              description: "(Optional) The size of the PostgreSQL database."
-            database:
-              type: string
-              description: The name of the database.
-              readOnly: true
+              description: "(Optional) The relative size of the PostgreSQL database, actual size varies based on the Environment. If not specified, small is assumed."
+            connections:
+              type: object
+              description: (Required) A connection to a Secret resource. Secret must have username and password keys.
+              additionalProperties:
+                type: object
+                properties:
+                  source:
+                    type: string
+                    description: (Required) The resource ID of the Secret resource.
+                required: [source]
             host:
               type: string
-              description: The host name used to connect to the database.
+              description: (Read Only) The host name used to connect to the database.
               readOnly: true
             port:
               type: string
-              description: The port number used to connect to the database.
+              description: (Read Only) The port number used to connect to the database.
               readOnly: true
-            username:
+            database:
               type: string
-              description: The username for connecting to the database.
+              description: (Read Only) The name of the database.
               readOnly: true
-            password:
-              type: string
-              description: The password for connecting to the database.
-              readOnly: true
-          required: [environment]
+          required: [environment, connections]
