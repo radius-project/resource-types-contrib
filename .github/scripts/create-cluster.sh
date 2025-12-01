@@ -120,7 +120,7 @@ EOF
             --create-namespace \
             --version 1.3.0 \
             --set azureTenantID="${AZURE_TENANT_ID}" \
-            --wait || echo "Warning: Failed to install Azure Workload Identity webhook. Azure recipes may not work."
+            --wait || echo "Warning: Failed to install Azure Workload Identity webhook. Azure Recipes may not work."
         
         echo "Waiting for webhook to be fully registered..."
         for i in {1..30}; do
@@ -134,7 +134,7 @@ EOF
         done
     else
         echo "Warning: Helm is not installed. Skipping Azure Workload Identity webhook installation."
-        echo "Azure recipes will not work without this component."
+        echo "Azure Recipes will not work without this component."
     fi
 fi
 
@@ -170,12 +170,19 @@ else
     echo "✓ Local registry already running at localhost:5000"
 fi
 
+if [[ -z "${AZURE_CLIENT_ID:-}" ]]; then
+  echo "Error: AZURE_CLIENT_ID must be set to install Radius with Azure Workload Identity."
+  echo "Ensure the GitHub secret/environment variable is available before running make create-radius-cluster."
+  exit 1
+fi
+
 echo "Installing Radius on Kubernetes..."
 rad install kubernetes \
     --set rp.publicEndpointOverride=localhost:8081 \
     --skip-contour-install \
     --set dashboard.enabled=false \
-    --set global.azureWorkloadIdentity.enabled=true \
+  --set global.azureWorkloadIdentity.enabled=true \
+  --set global.azureWorkloadIdentity.clientId="${AZURE_CLIENT_ID}" \
 
 echo "Installing Dapr on Kubernetes..."
 helm repo add dapr https://dapr.github.io/helm-charts --force-update >/dev/null 2>&1
