@@ -102,17 +102,24 @@ jobs:
           echo "Helm releases:"
           helm list -n radius-default
           echo ""
+          echo "Helm manifest for workload-identity-webhook (to confirm resource names):"
+          helm get manifest workload-identity-webhook -n radius-default || echo "Unable to retrieve manifest"
+          echo ""
           echo "Deployments in radius-default:"
           kubectl get deployments -n radius-default
           echo ""
           echo "Pods in radius-default:"
           kubectl get pods -n radius-default
           echo ""
-          if kubectl get deployment -n radius-default workload-identity-webhook &>/dev/null; then
-            echo "Webhook deployment exists. Describing deployment:"
-            kubectl describe deployment workload-identity-webhook -n radius-default
+          WEBHOOK_DEPLOYMENT=$(kubectl get deployment -n radius-default -l app=workload-identity-webhook -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+          if [ -n "$WEBHOOK_DEPLOYMENT" ]; then
+            echo "Webhook deployment '$WEBHOOK_DEPLOYMENT' exists. Describing deployment:"
+            kubectl describe deployment "$WEBHOOK_DEPLOYMENT" -n radius-default
           else
             echo "❌ Webhook deployment not found"
+            echo "Listing all deployments/pods in radius-default for debugging:"
+            kubectl get deployments -n radius-default -o wide
+            kubectl get pods -n radius-default -o wide
           fi
           echo ""
           echo "Checking webhook configuration selectors:"
@@ -146,9 +153,8 @@ jobs:
           fi
           
           echo ""
-          echo "=== 2. Checking service account annotations kubectl ==="
-          kubectl get serviceaccount -n radius-system -o json | \
-            jq -r '.items[] | "\(.metadata.name): " + (if (.metadata.annotations // {})["azure.workload.identity/client-id"] then "ANNOTATION_PRESENT" else "ANNOTATION_MISSING" end)'
+          echo "=== 2. applications-rp pod annotations ==="
+          kubectl get pod -n radius-system -l app.kubernetes.io/name=applications-rp -o json | jq -r '.items[] | "--- " + .metadata.name + " ---\n" + (((.metadata.annotations // {}) | tojson))'
           
           echo ""
           echo "=== 3. Checking pod labels ==="
@@ -176,6 +182,31 @@ jobs:
 
       - name: Test Azure Recipes
         run: make test-azure-recipes
+
+      - name: Collect Radius pod logs
+        if: always()
+        run: |
+          mkdir -p radius-pod-logs
+          APP_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | startswith("applications-rp-")) | .metadata.name' | head -n1)
+          if [ -n "$APP_POD" ]; then
+            kubectl logs "$APP_POD" -n radius-system --all-containers > radius-pod-logs/applications-rp.log || true
+          else
+            echo "applications-rp pod not found" > radius-pod-logs/applications-rp.log
+          fi
+          DE_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | test("^(deployment-engine|bicep-de)-")) | .metadata.name' | head -n1)
+          if [ -n "$DE_POD" ]; then
+            kubectl logs "$DE_POD" -n radius-system --all-containers > radius-pod-logs/deployment-engine.log || true
+          else
+            echo "deployment engine pod not found" > radius-pod-logs/deployment-engine.log
+          fi
+
+      - name: Upload Radius pod logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: radius-pod-logs
+          path: radius-pod-logs
+          if-no-files-found: warn
 
       - name: Cleanup Azure Resources
         if: always()
