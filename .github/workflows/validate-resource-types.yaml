@@ -12,23 +12,29 @@ on:
       version:
         description: "Radius version number to use (e.g. 0.51.0, 0.51.0-rc1, edge)."
         required: false
-        default: "edge"
+        default: edge
         type: string
+
+permissions: {}
 
 jobs:
   validate-resource-types:
-    runs-on: ubuntu-latest
     name: Validate Resource Types and Recipes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:
         recipe: [bicep, terraform]
+    permissions:
+      contents: read
     env:
       RAD_ENVIRONMENT_NAME: default
-
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
@@ -53,7 +59,7 @@ jobs:
         run: make build
 
       - name: Register ${{ matrix.recipe }} recipes
-        run: make register ENVIRONMENT=$RAD_ENVIRONMENT_NAME RECIPE_TYPE=${{ matrix.recipe }}
+        run: make register ENVIRONMENT="${RAD_ENVIRONMENT_NAME}" RECIPE_TYPE=${{ matrix.recipe }}
 
       - name: Test ${{ matrix.recipe }} recipes
-        run: make test ENVIRONMENT=$RAD_ENVIRONMENT_NAME RECIPE_TYPE=${{ matrix.recipe }}
+        run: make test ENVIRONMENT="${RAD_ENVIRONMENT_NAME}" RECIPE_TYPE=${{ matrix.recipe }}
