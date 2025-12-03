@@ -172,7 +172,7 @@ fi
 
 if [[ -z "${AZURE_CLIENT_ID:-}" ]]; then
   echo "Error: AZURE_CLIENT_ID must be set to install Radius with Azure Workload Identity."
-  echo "Ensure the GitHub secret/environment variable is available before running make create-radius-cluster."
+  echo "Ensure the environment variable is available before running make create-radius-cluster."
   exit 1
 fi
 
@@ -181,8 +181,7 @@ rad install kubernetes \
     --set rp.publicEndpointOverride=localhost:8081 \
     --skip-contour-install \
     --set dashboard.enabled=false \
-  --set global.azureWorkloadIdentity.enabled=true \
-  --set global.azureWorkloadIdentity.clientId="${AZURE_CLIENT_ID}" \
+  --set global.azureWorkloadIdentity.enabled="${AZURE_WORKLOAD_IDENTITY_ENABLED}" \
 
 echo "Installing Dapr on Kubernetes..."
 helm repo add dapr https://dapr.github.io/helm-charts --force-update >/dev/null 2>&1
