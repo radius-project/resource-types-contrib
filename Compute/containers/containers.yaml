@@ -427,13 +427,7 @@ types:
             platformOptions:
               type: object
               description: (Optional) If enabled by the platform engineer, properties to be passed to the Recipe for the specified platform.
-              properties:
-                platformName: 
-                  type: string
-                  enum: [Kubernetes, ACI]
-                  description: (Required) The platform the specified properties applies to.
-                additionalProperties: 
-                  type: object
-                  description: (Required) Platform-specific properties.
-              required: [platformName]
+              additionalProperties: 
+                type: any
+                description: (Required) Platform-specific properties.
           required: [environment, application, containers]
