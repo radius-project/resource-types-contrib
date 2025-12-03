@@ -47,9 +47,7 @@ jobs:
           if [ -z "$LOCATION" ]; then
             LOCATION="westus3"
           fi
-          RG="radtest-${{ github.run_id }}-${{ github.run_attempt }}"
-          # Temporary override for targeted testing against an existing resource group.
-          RG="shruthikumar"
+          RG="rrttest-${{ github.run_id }}-${{ github.run_attempt }}"
           STATE_FILE=".azure-test-state"
           echo "AZURE_LOCATION=$LOCATION" >> "$GITHUB_ENV"
           echo "AZURE_RESOURCE_GROUP=$RG" >> "$GITHUB_ENV"
@@ -93,89 +91,6 @@ jobs:
 
       - name: Configure Azure Provider
         run: make configure-azure-provider
-
-      - name: Verify Azure Workload Identity Setup
-        env:
-          TEST_AZURE_OIDC_JSON: ${{ secrets.TEST_AZURE_OIDC_JSON }}
-        run: |
-          echo "=== 0. Checking webhook installation ==="
-          echo "Helm releases:"
-          helm list -n radius-default
-          echo ""
-          echo "Helm manifest for workload-identity-webhook (to confirm resource names):"
-          helm get manifest workload-identity-webhook -n radius-default || echo "Unable to retrieve manifest"
-          echo ""
-          echo "Deployments in radius-default:"
-          kubectl get deployments -n radius-default
-          echo ""
-          echo "Pods in radius-default:"
-          kubectl get pods -n radius-default
-          echo ""
-          WEBHOOK_DEPLOYMENT=$(kubectl get deployment -n radius-default -l app=workload-identity-webhook -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-          if [ -n "$WEBHOOK_DEPLOYMENT" ]; then
-            echo "Webhook deployment '$WEBHOOK_DEPLOYMENT' exists. Describing deployment:"
-            kubectl describe deployment "$WEBHOOK_DEPLOYMENT" -n radius-default
-          else
-            echo "❌ Webhook deployment not found"
-            echo "Listing all deployments/pods in radius-default for debugging:"
-            kubectl get deployments -n radius-default -o wide
-            kubectl get pods -n radius-default -o wide
-          fi
-          echo ""
-          echo "Checking webhook configuration selectors:"
-          kubectl get mutatingwebhookconfiguration azure-wi-webhook-mutating-webhook-configuration -o jsonpath='{.webhooks[0].namespaceSelector}'
-          echo ""
-          echo "Webhook object selector:"
-          kubectl get mutatingwebhookconfiguration azure-wi-webhook-mutating-webhook-configuration -o jsonpath='{.webhooks[0].objectSelector}'
-          echo ""
-          echo ""
-          echo "Checking radius-system namespace labels:"
-          kubectl get namespace radius-system -o jsonpath='{.metadata.labels}'
-          echo ""
-          echo ""
-          
-          echo "=== 1. Checking OIDC issuer accessibility ==="
-          if ! ISSUER=$(printf '%s' "$TEST_AZURE_OIDC_JSON" | jq -r '.AZURE_OIDC_ISSUER' 2>/dev/null); then
-            echo "❌ Failed to parse TEST_AZURE_OIDC_JSON - JSON is malformed"
-            exit 1
-          fi
-          echo "Testing discovery document..."
-          if curl -sf -o /dev/null "$ISSUER/.well-known/openid-configuration"; then
-            echo "✅ Discovery document reachable"
-          else
-            echo "❌ Discovery document not accessible"
-          fi
-          echo "Testing JWKS..."
-          if curl -sf -o /dev/null "$ISSUER/.well-known/openid-configuration/jwks"; then
-            echo "✅ JWKS endpoint reachable"
-          else
-            echo "❌ JWKS endpoint not accessible"
-          fi
-          
-          echo ""
-          echo "=== 2. applications-rp pod annotations ==="
-          kubectl get pod -n radius-system -l app.kubernetes.io/name=applications-rp -o json | jq -r '.items[] | "--- " + .metadata.name + " ---\n" + (((.metadata.annotations // {}) | tojson))'
-          
-          echo ""
-          echo "=== 3. Checking pod labels ==="
-          kubectl get pods -n radius-system -o json | \
-            jq -r '.items[] | "\(.metadata.name): " + (if (.metadata.labels // {})["azure.workload.identity/use"] == "true" then "LABEL_PRESENT" else "LABEL_MISSING" end)'
-          
-          echo ""
-          echo "=== 4. Checking AZURE_CLIENT_ID environment variable ==="
-          kubectl get pods -n radius-system -o json | \
-            jq -r '.items[] | (.metadata.name) as $name | {name: $name, env: [(.spec.containers[]?.env[]? | select(.name=="AZURE_CLIENT_ID"))]} | "\(.name): " + (if (.env | length) > 0 then "AZURE_CLIENT_ID_PRESENT" else "NOT_SET" end)'
-          
-          echo ""
-          echo "=== 5. Checking projected service account token ==="
-          kubectl get pods -n radius-system -o json | \
-            jq -r '.items[] | "\(.metadata.name): " + (if .spec.volumes[]? | select(.name=="azure-identity-token") then "TOKEN_VOLUME_MOUNTED" else "NO_TOKEN_VOLUME" end)'
-          
-          echo ""
-          echo "=== 6. Federated credential requirements ==="
-          echo "✓ Issuer must match AZURE_OIDC_ISSUER from secret"
-          echo "✓ Subject must be: system:serviceaccount:radius-system:<service-account-name>"
-          echo "✓ Audience must be: api://AzureADTokenExchange"
 
       - name: Build Azure Recipes
         run: make build-azure-recipes
