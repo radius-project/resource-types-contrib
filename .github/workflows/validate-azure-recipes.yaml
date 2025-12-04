@@ -29,13 +29,12 @@ jobs:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      AZURE_AUTH_MODE: wi
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
 
       - name: Azure Login
-        uses: azure/login@v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -48,12 +47,10 @@ jobs:
             LOCATION="westus3"
           fi
           RG="rrttest-${{ github.run_id }}-${{ github.run_attempt }}"
-          STATE_FILE=".azure-test-state"
           echo "AZURE_LOCATION=$LOCATION" >> "$GITHUB_ENV"
           echo "AZURE_RESOURCE_GROUP=$RG" >> "$GITHUB_ENV"
           echo "AZURE_WORKSPACE_NAME=default" >> "$GITHUB_ENV"
           echo "AZURE_ENVIRONMENT_NAME=default" >> "$GITHUB_ENV"
-          echo "AZURE_TEST_STATE_FILE=$STATE_FILE" >> "$GITHUB_ENV"
 
       - name: Create Azure Resource Group
         run: |
@@ -71,14 +68,14 @@ jobs:
           done
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
         with:
-          node-version: 16
+          node-version: 22
 
       - name: Set up ORAS
-        uses: oras-project/setup-oras@v1
+        uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6
         with:
-          version: '1.2.0'
+          version: '1.2.4'
 
       - name: Install Radius CLI
         run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
@@ -117,7 +114,7 @@ jobs:
 
       - name: Upload Radius pod logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: radius-pod-logs
           path: radius-pod-logs
