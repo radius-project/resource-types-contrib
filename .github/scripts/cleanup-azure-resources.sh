@@ -23,13 +23,6 @@
 
 set -euo pipefail
 
-STATE_FILE="${AZURE_TEST_STATE_FILE:-.azure-test-state}"
-
-if [[ -f "$STATE_FILE" ]]; then
-    # shellcheck disable=SC1090
-    source "$STATE_FILE"
-fi
-
 AZURE_RESOURCE_GROUP="${AZURE_RESOURCE_GROUP:-}"
 
 if [[ -z "$AZURE_RESOURCE_GROUP" ]]; then
