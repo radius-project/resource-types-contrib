@@ -170,18 +170,27 @@ else
     echo "✓ Local registry already running at localhost:5000"
 fi
 
-if [[ -z "${AZURE_CLIENT_ID:-}" ]]; then
-  echo "Error: AZURE_CLIENT_ID must be set to install Radius with Azure Workload Identity."
-  echo "Ensure the environment variable is available before running make create-radius-cluster."
-  exit 1
+if [[ "${AZURE_WORKLOAD_IDENTITY_ENABLED}" == "true" ]]; then
+  if [[ -z "${AZURE_CLIENT_ID:-}" ]]; then
+    echo "Error: AZURE_CLIENT_ID must be set to install Radius with Azure Workload Identity."
+    echo "Ensure the environment variable is available before running make create-radius-cluster."
+    exit 1
+  fi
 fi
 
 echo "Installing Radius on Kubernetes..."
-rad install kubernetes \
-    --set rp.publicEndpointOverride=localhost:8081 \
-    --skip-contour-install \
-    --set dashboard.enabled=false \
-  --set global.azureWorkloadIdentity.enabled="${AZURE_WORKLOAD_IDENTITY_ENABLED}" \
+if [[ "${AZURE_WORKLOAD_IDENTITY_ENABLED}" == "true" ]]; then
+  rad install kubernetes \
+      --set rp.publicEndpointOverride=localhost:8081 \
+      --skip-contour-install \
+      --set dashboard.enabled=false \
+      --set global.azureWorkloadIdentity.enabled=true
+else
+  rad install kubernetes \
+      --set rp.publicEndpointOverride=localhost:8081 \
+      --skip-contour-install \
+      --set dashboard.enabled=false
+fi
 
 echo "Installing Dapr on Kubernetes..."
 helm repo add dapr https://dapr.github.io/helm-charts --force-update >/dev/null 2>&1
