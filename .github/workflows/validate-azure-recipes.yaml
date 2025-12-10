@@ -1,0 +1,161 @@
+name: Validate Azure Recipes
+
+on:
+  push:
+    branches: [ main ]
+  workflow_run:
+    workflows: [ 'Approve Azure Recipe Tests' ]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Radius version number to use (e.g. 0.51.0, 0.51.0-rc1, edge).'
+        required: false
+        default: 'edge'
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  validate-azure-recipes:
+    # Run on push to main, manual dispatch, or when approval workflow succeeds
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    name: Validate Azure Recipes (${{ matrix.recipe }})
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        recipe: [bicep, terraform]
+    environment: azure
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      RAD_ENVIRONMENT_NAME: default
+    steps:
+      - name: Download PR number artifact
+        if: github.event_name == 'workflow_run'
+        uses: dawidd6/action-download-artifact@80620a5d27ce0ae443f0c73e90ed5c8896fc9f42 # v6.0.0
+        with:
+          workflow: azure-recipes-approval.yaml
+          run_id: ${{ github.event.workflow_run.id }}
+          name: pr_number
+          path: pr/
+
+      - name: Get PR number
+        if: github.event_name == 'workflow_run'
+        id: get-pr-number
+        run: |
+          PR_NUMBER=$(cat pr/pr_number)
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout (workflow_run)
+        if: github.event_name == 'workflow_run'
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          ref: refs/pull/${{ steps.get-pr-number.outputs.pr_number }}/merge
+
+      - name: Checkout
+        if: github.event_name != 'workflow_run'
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+
+      - name: Azure Login
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set Azure Test Context
+        run: |
+          LOCATION="${AZURE_LOCATION:-${{ vars.AZURE_LOCATION }}}"
+          if [ -z "$LOCATION" ]; then
+            LOCATION="westus3"
+          fi
+          RG="rrttest-${{ github.run_id }}-${{ github.run_attempt }}"
+          echo "AZURE_LOCATION=$LOCATION" >> "$GITHUB_ENV"
+          echo "AZURE_RESOURCE_GROUP=$RG" >> "$GITHUB_ENV"
+          echo "AZURE_WORKSPACE_NAME=default" >> "$GITHUB_ENV"
+          echo "AZURE_ENVIRONMENT_NAME=default" >> "$GITHUB_ENV"
+
+      - name: Create Azure Resource Group
+        run: |
+          set -euo pipefail
+          current_time=$(date +%s)
+          az group create \
+            --only-show-errors \
+            --output none \
+            --location "$AZURE_LOCATION" \
+            --name "$AZURE_RESOURCE_GROUP" \
+            --subscription "$AZURE_SUBSCRIPTION_ID" \
+            --tags creationTime=$current_time > /dev/null
+          while ! az group exists --name "$AZURE_RESOURCE_GROUP" --subscription "$AZURE_SUBSCRIPTION_ID" &>/dev/null; do
+            sleep 2
+          done
+
+      - name: Setup Node
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
+        with:
+          node-version: 22
+
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6
+        with:
+          version: '1.2.4'
+
+      - name: Install Radius CLI
+        run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
+
+      - name: Create Radius Cluster
+        run: make create-radius-cluster
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          TEST_AZURE_OIDC_JSON: ${{ secrets.TEST_AZURE_OIDC_JSON }}
+
+      - name: Configure Azure Provider
+        run: make configure-azure-provider
+
+      - name: Build Azure Recipes
+        run: make build-azure-recipes
+
+      - name: Register ${{ matrix.recipe }} recipes
+        run: make register ENVIRONMENT=$RAD_ENVIRONMENT_NAME RECIPE_TYPE=${{ matrix.recipe }} RECIPE_PLATFORM_FILTER=azure
+
+      - name: Test ${{ matrix.recipe }} recipes
+        run: make test ENVIRONMENT=$RAD_ENVIRONMENT_NAME RECIPE_TYPE=${{ matrix.recipe }} RECIPE_PLATFORM_FILTER=azure
+
+      - name: Collect Radius pod logs
+        if: always()
+        run: |
+          mkdir -p radius-pod-logs
+          APP_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | startswith("applications-rp-")) | .metadata.name' | head -n1)
+          if [ -n "$APP_POD" ]; then
+            kubectl logs "$APP_POD" -n radius-system --all-containers > radius-pod-logs/applications-rp.log || true
+          else
+            echo "applications-rp pod not found" > radius-pod-logs/applications-rp.log
+          fi
+          DE_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | test("^(deployment-engine|bicep-de)-")) | .metadata.name' | head -n1)
+          if [ -n "$DE_POD" ]; then
+            kubectl logs "$DE_POD" -n radius-system --all-containers > radius-pod-logs/deployment-engine.log || true
+          else
+            echo "deployment engine pod not found" > radius-pod-logs/deployment-engine.log
+          fi
+
+      - name: Upload Radius pod logs
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: radius-pod-logs-${{ matrix.recipe }}
+          path: radius-pod-logs
+          if-no-files-found: warn
+
+      - name: Cleanup Azure Resources
+        if: always()
+        run: make cleanup-azure-resources
