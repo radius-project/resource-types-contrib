@@ -3,8 +3,10 @@ name: Validate Azure Recipes
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
+  workflow_run:
+    workflows: [ 'Approve Azure Recipe Tests' ]
+    types:
+      - completed
   workflow_dispatch:
     inputs:
       version:
@@ -19,8 +21,15 @@ permissions:
 
 jobs:
   validate-azure-recipes:
+    # Run on push to main, manual dispatch, or when approval workflow succeeds
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
-    name: Validate Azure Recipes
+    name: Validate Azure Recipes (${{ matrix.recipe }})
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        recipe: [bicep, terraform]
     environment: azure
     permissions:
       id-token: write
@@ -29,8 +38,32 @@ jobs:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      RAD_ENVIRONMENT_NAME: default
     steps:
+      - name: Download PR number artifact
+        if: github.event_name == 'workflow_run'
+        uses: dawidd6/action-download-artifact@80620a5d27ce0ae443f0c73e90ed5c8896fc9f42 # v6.0.0
+        with:
+          workflow: azure-recipes-approval.yaml
+          run_id: ${{ github.event.workflow_run.id }}
+          name: pr_number
+          path: pr/
+
+      - name: Get PR number
+        if: github.event_name == 'workflow_run'
+        id: get-pr-number
+        run: |
+          PR_NUMBER=$(cat pr/pr_number)
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout (workflow_run)
+        if: github.event_name == 'workflow_run'
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          ref: refs/pull/${{ steps.get-pr-number.outputs.pr_number }}/merge
+
       - name: Checkout
+        if: github.event_name != 'workflow_run'
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
 
       - name: Azure Login
@@ -92,8 +125,11 @@ jobs:
       - name: Build Azure Recipes
         run: make build-azure-recipes
 
-      - name: Test Azure Recipes
-        run: make test-azure-recipes
+      - name: Register ${{ matrix.recipe }} recipes
+        run: make register ENVIRONMENT=$RAD_ENVIRONMENT_NAME RECIPE_TYPE=${{ matrix.recipe }} RECIPE_PLATFORM_FILTER=azure
+
+      - name: Test ${{ matrix.recipe }} recipes
+        run: make test ENVIRONMENT=$RAD_ENVIRONMENT_NAME RECIPE_TYPE=${{ matrix.recipe }} RECIPE_PLATFORM_FILTER=azure
 
       - name: Collect Radius pod logs
         if: always()
@@ -116,7 +152,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          name: radius-pod-logs
+          name: radius-pod-logs-${{ matrix.recipe }}
           path: radius-pod-logs
           if-no-files-found: warn
 
