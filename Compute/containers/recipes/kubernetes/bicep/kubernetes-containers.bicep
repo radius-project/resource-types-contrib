@@ -35,19 +35,41 @@ var labels = {
   'radapp.io/application': context.application == null ? '' : context.application.name
 }
 
-// Extract connection data from linked resources
+// Extract connection data from linked resources (merged with resource properties)
 var resourceConnections = context.resource.connections ?? {}
+var connectionDefinitions = context.resource.properties.connections ?? {}
 
-// Build environment variables from connections when explicitly enabled via disableDefaultEnvVars
-// Each connection's output values become CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>
+// Properties to exclude from connection environment variables
+var excludedProperties = ['application', 'environment', 'recipe', 'status', 'provisioningState']
+
+// Helper function to check if a connection is a secrets resource (using source from original connection definition)
+var isSecretsResource = reduce(items(connectionDefinitions), {}, (acc, conn) => union(acc, {
+  '${conn.key}': contains(string(conn.value.?source ?? ''), 'Radius.Security/secrets')
+}))
+
+// Build environment variables from connections when not explicitly disabled via disableDefaultEnvVars
+// Each connection's computed values and resource properties become CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>
 var connectionEnvVars = reduce(items(resourceConnections), [], (acc, conn) => 
-  conn.value.?disableDefaultEnvVars == true
-    ? concat(acc, reduce(items(conn.value.?status.?computedValues ?? {}), [], (envAcc, prop) => 
-        concat(envAcc, [{
-          name: toUpper('CONNECTION_${conn.key}_${prop.key}')
-          value: string(prop.value)
-        }])
-      ))
+  connectionDefinitions[conn.key].?disableDefaultEnvVars != true
+    ? concat(acc, 
+        // Add computed values from status
+        reduce(items(conn.value.?status.?computedValues ?? {}), [], (envAcc, prop) => 
+          concat(envAcc, [{
+            name: toUpper('CONNECTION_${conn.key}_${prop.key}')
+            value: string(prop.value)
+          }])
+        ),
+        // Add resource properties directly from connection (excluding metadata properties)
+        // TODO remove when Radius.Security/secrets rework is complete: exclude 'data' property specifically for secrets resources
+        reduce(items(conn.value ?? {}), [], (envAcc, prop) => 
+          contains(excludedProperties, prop.key) || (prop.key == 'data' && isSecretsResource[conn.key])
+            ? envAcc 
+            : concat(envAcc, [{
+                name: toUpper('CONNECTION_${conn.key}_${prop.key}')
+                value: string(prop.value)
+              }])
+        )
+      )
     : acc
 )
 
@@ -79,7 +101,15 @@ var containerSpecs = reduce(containerItems, [], (acc, item) => concat(acc, [{
           {
             name: envItem.key
           },
-          contains(envItem.value, 'value') ? { value: envItem.value.value } : {}
+          contains(envItem.value, 'value') ? { value: envItem.value.value } : {},
+          (contains(envItem.value, 'valueFrom') && contains(envItem.value.valueFrom, 'secretKeyRef')) ? {
+            valueFrom: {
+              secretKeyRef: {
+                name: envItem.value.valueFrom.secretKeyRef.secretName
+                key: envItem.value.valueFrom.secretKeyRef.key
+              }
+            }
+          } : {}
         )])),
         // Connection-derived env vars
         connectionEnvVars
@@ -177,26 +207,19 @@ var podVolumes = reduce(volumeItems, [], (acc, vol) => concat(acc, [union(
   {
     name: vol.key
   },
-  contains(vol.value, 'persistentVolume') ? union(
-    (contains(vol.value.persistentVolume, 'claimName') && vol.value.persistentVolume.claimName != '') ? {
-      persistentVolumeClaim: {
-        claimName: vol.value.persistentVolume.claimName
-      }
-    } : {},
-    (!(contains(vol.value.persistentVolume, 'claimName') && vol.value.persistentVolume.claimName != '') && contains(resourceConnections, vol.key) && (resourceConnections[vol.key].?status.?computedValues.?claimName ?? '') != '') ? {
-      persistentVolumeClaim: {
-        claimName: resourceConnections[vol.key].?status.?computedValues.?claimName
-      }
-    } : {}
-  ) : {},
-  contains(vol.value, 'secret') ? {
+  contains(vol.value, 'persistentVolume') ? {
+    persistentVolumeClaim: {
+      claimName: resourceConnections[vol.key].status.computedValues.claimName
+    }
+  } : {},
+  contains(vol.value, 'secretName') ? {
     secret: {
-      secretName: vol.value.secret.secretName
+      secretName: vol.value.secretName
     }
   } : {},
   contains(vol.value, 'emptyDir') ? {
     emptyDir: contains(vol.value.emptyDir, 'medium') ? {
-      medium: vol.value.emptyDir.medium
+      medium: vol.value.emptyDir.medium == 'memory' ? 'Memory' : ''
     } : {}
   } : {}
 )]))
