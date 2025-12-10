@@ -40,7 +40,7 @@ var resourceConnections = context.resource.connections ?? {}
 var connectionDefinitions = context.resource.properties.connections ?? {}
 
 // Properties to exclude from connection environment variables
-var excludedProperties = ['application', 'environment', 'recipe', 'status', 'provisioningState']
+var excludedProperties = ['recipe', 'status', 'provisioningState']
 
 // Helper function to check if a connection is a secrets resource (using source from original connection definition)
 var isSecretsResource = reduce(items(connectionDefinitions), {}, (acc, conn) => union(acc, {
