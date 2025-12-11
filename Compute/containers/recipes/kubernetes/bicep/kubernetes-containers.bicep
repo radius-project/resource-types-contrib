@@ -48,13 +48,14 @@ var isSecretsResource = reduce(items(connectionDefinitions), {}, (acc, conn) => 
 }))
 
 // Secrets connections to inject via envFrom.secretRef
-// Uses the Kubernetes secret created by the secrets resource (name = connection name)
+// The K8s secret name is the Radius resource name (last segment of the source ID)
 var secretsEnvFrom = reduce(items(resourceConnections), [], (acc, conn) => 
   isSecretsResource[conn.key] && connectionDefinitions[conn.key].?disableDefaultEnvVars != true
     ? concat(acc, [{
         prefix: toUpper('CONNECTION_${conn.key}_')
         secretRef: {
-          name: conn.key  // The Kubernetes secret name is the Radius resource name (same as connection name)
+          // Extract the secret name from the connection source (last segment of the resource ID)
+          name: last(split(string(connectionDefinitions[conn.key].source), '/'))
         }
       }])
     : acc
@@ -220,7 +221,8 @@ var podVolumes = reduce(volumeItems, [], (acc, vol) => concat(acc, [union(
   },
   contains(vol.value, 'persistentVolume') ? {
     persistentVolumeClaim: {
-      claimName: vol.key
+      // Extract the PVC name from the resourceId (last segment of the path)
+      claimName: last(split(string(vol.value.persistentVolume.resourceId), '/'))
     }
   } : {},
   contains(vol.value, 'secretName') ? {

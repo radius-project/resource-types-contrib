@@ -52,11 +52,12 @@ locals {
   }
 
   # Secrets connections to inject via envFrom.secretRef
-  # These use the Kubernetes secret created by the secrets resource (name = connection name)
+  # The K8s secret name is the Radius resource name (last segment of the source ID)
   secrets_env_from = [
     for conn_name, conn in local.connections :
     {
-      name   = conn_name  # The Kubernetes secret name is the Radius resource name (same as connection name)
+      # Extract the secret name from the connection source (last segment of the resource ID)
+      name   = element(split("/", local.connection_definitions[conn_name].source), length(split("/", local.connection_definitions[conn_name].source)) - 1)
       prefix = upper("CONNECTION_${conn_name}_")
     }
     if try(local.is_secrets_resource[conn_name], false) &&
@@ -199,9 +200,9 @@ locals {
     for vol_name, vol_config in local.volumes : {
       name = vol_name
 
-      # Persistent Volume Claim - claim name matches the volume name (Radius resource name)
+      # Persistent Volume Claim - extract PVC name from resourceId (last segment of the path)
       persistent_volume_claim = try(vol_config.persistentVolume, null) != null ? {
-        claim_name = vol_name
+        claim_name = element(split("/", vol_config.persistentVolume.resourceId), length(split("/", vol_config.persistentVolume.resourceId)) - 1)
       } : null
 
       # Secret volume - use secretName from volume config
