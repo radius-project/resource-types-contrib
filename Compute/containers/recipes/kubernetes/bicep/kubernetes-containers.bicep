@@ -47,22 +47,29 @@ var isSecretsResource = reduce(items(connectionDefinitions), {}, (acc, conn) => 
   '${conn.key}': contains(string(conn.value.?source ?? ''), 'Radius.Security/secrets')
 }))
 
-// Build environment variables from connections when not explicitly disabled via disableDefaultEnvVars
-// Each connection's computed values and resource properties become CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>
+// Secrets connections to inject via envFrom.secretRef
+// Uses the Kubernetes secret created by the secrets resource (name = connection name)
+var secretsEnvFrom = reduce(items(resourceConnections), [], (acc, conn) => 
+  isSecretsResource[conn.key] && connectionDefinitions[conn.key].?disableDefaultEnvVars != true
+    ? concat(acc, [{
+        prefix: toUpper('CONNECTION_${conn.key}_')
+        secretRef: {
+          name: conn.key  // The Kubernetes secret name is the Radius resource name (same as connection name)
+        }
+      }])
+    : acc
+)
+
+// Build environment variables from non-secrets connections when not explicitly disabled via disableDefaultEnvVars
+// Secrets connections use envFrom.secretRef instead for cleaner injection
+// Each connection's resource properties become CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>
 var connectionEnvVars = reduce(items(resourceConnections), [], (acc, conn) => 
-  connectionDefinitions[conn.key].?disableDefaultEnvVars != true
+  // Only process non-secrets connections here (secrets use envFrom)
+  !isSecretsResource[conn.key] && connectionDefinitions[conn.key].?disableDefaultEnvVars != true
     ? concat(acc, 
-        // Add computed values from status
-        reduce(items(conn.value.?status.?computedValues ?? {}), [], (envAcc, prop) => 
-          concat(envAcc, [{
-            name: toUpper('CONNECTION_${conn.key}_${prop.key}')
-            value: string(prop.value)
-          }])
-        ),
         // Add resource properties directly from connection (excluding metadata properties)
-        // TODO remove when Radius.Security/secrets rework is complete: exclude 'data' property specifically for secrets resources
         reduce(items(conn.value ?? {}), [], (envAcc, prop) => 
-          contains(excludedProperties, prop.key) || (prop.key == 'data' && isSecretsResource[conn.key])
+          contains(excludedProperties, prop.key)
             ? envAcc 
             : concat(envAcc, [{
                 name: toUpper('CONNECTION_${conn.key}_${prop.key}')
@@ -111,9 +118,13 @@ var containerSpecs = reduce(containerItems, [], (acc, item) => concat(acc, [{
             }
           } : {}
         )])),
-        // Connection-derived env vars
+        // Connection-derived env vars (non-secrets connections)
         connectionEnvVars
       )
+    } : {},
+    // Add envFrom for secrets connections (injects all keys from secret as env vars)
+    length(secretsEnvFrom) > 0 ? {
+      envFrom: secretsEnvFrom
     } : {},
     // Add volume mounts if they exist
     contains(item.value, 'volumeMounts') ? {
@@ -209,7 +220,7 @@ var podVolumes = reduce(volumeItems, [], (acc, vol) => concat(acc, [union(
   },
   contains(vol.value, 'persistentVolume') ? {
     persistentVolumeClaim: {
-      claimName: resourceConnections[vol.key].status.computedValues.claimName
+      claimName: vol.key
     }
   } : {},
   contains(vol.value, 'secretName') ? {

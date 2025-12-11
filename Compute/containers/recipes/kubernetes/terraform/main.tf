@@ -43,7 +43,7 @@ locals {
   connection_definitions = try(var.context.resource.properties.connections, {})
 
   # Properties to exclude from connection environment variables
-  excluded_properties = ["application", "environment", "recipe", "status", "provisioningState"]
+  excluded_properties = ["recipe", "status", "provisioningState"]
 
   # Helper to check if a connection is a secrets resource (from source in connection definition)
   is_secrets_resource = {
@@ -51,30 +51,35 @@ locals {
     conn_name => can(regex("Radius.Security/secrets", try(conn_def.source, "")))
   }
 
-  # Connection-derived environment variables, enabled when disableDefaultEnvVars is not true
+  # Secrets connections to inject via envFrom.secretRef
+  # These use the Kubernetes secret created by the secrets resource (name = connection name)
+  secrets_env_from = [
+    for conn_name, conn in local.connections :
+    {
+      name   = conn_name  # The Kubernetes secret name is the Radius resource name (same as connection name)
+      prefix = upper("CONNECTION_${conn_name}_")
+    }
+    if try(local.is_secrets_resource[conn_name], false) &&
+    try(local.connection_definitions[conn_name].disableDefaultEnvVars, false) != true
+  ]
+
+  # Connection-derived environment variables for non-secrets connections
+  # Secrets connections use envFrom.secretRef instead for cleaner injection
+  # Each connection's resource properties become CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>
   # Note: disableDefaultEnvVars is on connection_definitions, not the merged connections data
   connection_env_vars = flatten([
     for conn_name, conn in local.connections :
-    try(local.connection_definitions[conn_name].disableDefaultEnvVars, false) != true
-    ? concat(
-      # Add computed values from status
-      [
-        for prop_name, prop_value in try(conn.status.computedValues, {}) : {
-          name  = upper("CONNECTION_${conn_name}_${prop_name}")
-          value = tostring(prop_value)
-        }
-      ],
+    # Only process non-secrets connections here (secrets use envFrom)
+    !try(local.is_secrets_resource[conn_name], false) &&
+      try(local.connection_definitions[conn_name].disableDefaultEnvVars, false) != true
+    ? [
       # Add resource properties directly from connection (excluding metadata properties)
-      # TODO remove when Radius.Security/secrets rework is complete: exclude 'data' property specifically for secrets resources
-      [
-        for prop_name, prop_value in conn : {
-          name  = upper("CONNECTION_${conn_name}_${prop_name}")
-          value = tostring(prop_value)
-        }
-        if !contains(local.excluded_properties, prop_name) &&
-        !(prop_name == "data" && try(local.is_secrets_resource[conn_name], false))
-      ]
-    )
+      for prop_name, prop_value in conn : {
+        name  = upper("CONNECTION_${conn_name}_${prop_name}")
+        value = tostring(prop_value)
+      }
+      if !contains(local.excluded_properties, prop_name)
+    ]
     : []
   ])
 
@@ -142,6 +147,10 @@ locals {
         local.connection_env_vars
       )
 
+      # Environment variables from secrets (via envFrom.secretRef)
+      # Injects all keys from secrets connections as environment variables
+      env_from = local.secrets_env_from
+
       # Volume mounts
       volume_mounts = [
         for vm in try(config.volumeMounts, []) : {
@@ -190,34 +199,21 @@ locals {
     for vol_name, vol_config in local.volumes : {
       name = vol_name
 
-      # Persistent Volume Claim - get claimName from connection's computedValues
+      # Persistent Volume Claim - claim name matches the volume name (Radius resource name)
       persistent_volume_claim = try(vol_config.persistentVolume, null) != null ? {
-        claim_name = local.connections[vol_name].status.computedValues.claimName
+        claim_name = vol_name
       } : null
 
-      # Secret - support both direct secretName and getting it from connection's computedValues
-      secret = (
-        # First check for direct secretName at volume level
-        try(vol_config.secretName, null) != null ? {
-          secret_name = vol_config.secretName
-          } : (
-          # Then check for secret.secretName  
-          try(vol_config.secret.secretName, null) != null ? {
-            secret_name = vol_config.secret.secretName
-            } : (
-            # Finally, if this is a secrets resource connection, get from computedValues
-            try(local.connections[vol_name].status.computedValues.secretName, null) != null ? {
-              secret_name = local.connections[vol_name].status.computedValues.secretName
-            } : null
-          )
-        )
-      )
+      # Secret volume - use secretName from volume config
+      secret = try(vol_config.secretName, null) != null ? {
+        secret_name = vol_config.secretName
+      } : null
 
       # EmptyDir
       empty_dir = try(vol_config.emptyDir, null) != null ? {
         medium = try(vol_config.emptyDir.medium, null) != null ? (
-          lower(vol_config.emptyDir.medium) == "memory" ? "Memory" : lower(vol_config.emptyDir.medium) == "disk" ? "" : vol_config.emptyDir.medium
-        ) : ""
+          lower(vol_config.emptyDir.medium) == "memory" ? "Memory" : ""
+        ) : null
       } : null
     }
   ]
@@ -345,6 +341,16 @@ resource "kubernetes_deployment" "deployment" {
               }
             }
 
+            # Environment variables from secrets (via envFrom.secretRef)
+            dynamic "env_from" {
+              for_each = init_container.value.env_from
+              content {
+                prefix = env_from.value.prefix
+                secret_ref {
+                  name = env_from.value.name
+                }
+              }
+            }
 
             # Volume mounts
             dynamic "volume_mount" {
@@ -411,6 +417,16 @@ resource "kubernetes_deployment" "deployment" {
               }
             }
 
+            # Environment variables from secrets (via envFrom.secretRef)
+            dynamic "env_from" {
+              for_each = container.value.env_from
+              content {
+                prefix = env_from.value.prefix
+                secret_ref {
+                  name = env_from.value.name
+                }
+              }
+            }
 
             # Volume mounts
             dynamic "volume_mount" {
