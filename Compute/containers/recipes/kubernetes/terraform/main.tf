@@ -27,7 +27,7 @@ locals {
   dapr_app_id         = local.has_dapr_sidecar && try(tostring(local.dapr_sidecar.appId), "") != "" ? tostring(local.dapr_sidecar.appId) : local.normalized_name
   dapr_app_port       = local.has_dapr_sidecar && try(local.dapr_sidecar.appPort, null) != null ? tostring(local.dapr_sidecar.appPort) : null
   dapr_config_name    = local.has_dapr_sidecar && try(tostring(local.dapr_sidecar.config), "") != "" ? tostring(local.dapr_sidecar.config) : null
-  dapr_annotations    = local.has_dapr_sidecar ? merge(
+  dapr_annotations = local.has_dapr_sidecar ? merge(
     {
       "dapr.io/enabled" = "true"
       "dapr.io/app-id"  = local.dapr_app_id
@@ -36,20 +36,52 @@ locals {
     local.dapr_config_name != null ? { "dapr.io/config" = local.dapr_config_name } : {}
   ) : {}
 
-  # Connections - used for linked resources like persistent volumes
+  # Connections - merged resource data from linked resources
   connections = try(var.context.resource.connections, {})
 
-  # Connection-derived environment variables, enabled when disableDefaultEnvVars is false
+  # Connection definitions - original connection config (has source, disableDefaultEnvVars)
+  connection_definitions = try(var.context.resource.properties.connections, {})
+
+  # Properties to exclude from connection environment variables
+  excluded_properties = ["recipe", "status", "provisioningState"]
+
+  # Helper to check if a connection is a secrets resource (from source in connection definition)
+  is_secrets_resource = {
+    for conn_name, conn_def in local.connection_definitions :
+    conn_name => can(regex("Radius.Security/secrets", try(conn_def.source, "")))
+  }
+
+  # Secrets connections to inject via envFrom.secretRef
+  # The K8s secret name is the Radius resource name (last segment of the source ID)
+  secrets_env_from = [
+    for conn_name, conn in local.connections :
+    {
+      # Extract the secret name from the connection source (last segment of the resource ID)
+      name   = element(split("/", local.connection_definitions[conn_name].source), length(split("/", local.connection_definitions[conn_name].source)) - 1)
+      prefix = upper("CONNECTION_${conn_name}_")
+    }
+    if try(local.is_secrets_resource[conn_name], false) &&
+    try(local.connection_definitions[conn_name].disableDefaultEnvVars, false) != true
+  ]
+
+  # Connection-derived environment variables for non-secrets connections
+  # Secrets connections use envFrom.secretRef instead for cleaner injection
+  # Each connection's resource properties become CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>
+  # Note: disableDefaultEnvVars is on connection_definitions, not the merged connections data
   connection_env_vars = flatten([
     for conn_name, conn in local.connections :
-    try(conn.disableDefaultEnvVars, false)
-      ? [
-          for prop_name, prop_value in try(conn.status.computedValues, {}) : {
-            name  = upper("CONNECTION_${conn_name}_${prop_name}")
-            value = tostring(prop_value)
-          }
-        ]
-      : []
+    # Only process non-secrets connections here (secrets use envFrom)
+    !try(local.is_secrets_resource[conn_name], false) &&
+      try(local.connection_definitions[conn_name].disableDefaultEnvVars, false) != true
+    ? [
+      # Add resource properties directly from connection (excluding metadata properties)
+      for prop_name, prop_value in conn : {
+        name  = upper("CONNECTION_${conn_name}_${prop_name}")
+        value = tostring(prop_value)
+      }
+      if !contains(local.excluded_properties, prop_name)
+    ]
+    : []
   ])
 
   # Replica count - use from properties or default to 1
@@ -99,22 +131,26 @@ locals {
       ]
 
       # Environment variables
-      # TODO: Add support for environment variables from Radius secrets resource
-      # When a container references a Radius.Security/secrets resource via connections,
-      # the recipe should populate environment variables from the secret values
-      # stored in the connected Radius secret resource.
+      # Supports direct values and secretKeyRef for referencing Kubernetes secrets
       env = concat(
         [
           for env_name, env_config in try(config.env, {}) : {
-            name       = env_name
-            value      = try(env_config.value, null)
-            value_from = try(env_config.valueFrom, null)
-            # TODO: Currently only 'value' is rendered in the deployment.
-            # Add support for 'valueFrom' to reference Kubernetes secrets/configmaps.
+            name  = env_name
+            value = try(env_config.value, null)
+            value_from = try(env_config.valueFrom, null) != null ? {
+              secret_key_ref = try(env_config.valueFrom.secretKeyRef, null) != null ? {
+                name = env_config.valueFrom.secretKeyRef.secretName
+                key  = env_config.valueFrom.secretKeyRef.key
+              } : null
+            } : null
           }
         ],
         local.connection_env_vars
       )
+
+      # Environment variables from secrets (via envFrom.secretRef)
+      # Injects all keys from secrets connections as environment variables
+      env_from = local.secrets_env_from
 
       # Volume mounts
       volume_mounts = [
@@ -164,27 +200,21 @@ locals {
     for vol_name, vol_config in local.volumes : {
       name = vol_name
 
-      # Persistent Volume Claim
-      persistent_volume_claim = try(vol_config.persistentVolume, null) != null ? (
-        try(vol_config.persistentVolume.claimName, "") != "" ? {
-          claim_name = vol_config.persistentVolume.claimName
-          } : (
-          try(local.connections[vol_name].status.computedValues.claimName, "") != "" ? {
-            claim_name = local.connections[vol_name].status.computedValues.claimName
-          } : null
-        )
-      ) : null
+      # Persistent Volume Claim - extract PVC name from resourceId (last segment of the path)
+      persistent_volume_claim = try(vol_config.persistentVolume, null) != null ? {
+        claim_name = element(split("/", vol_config.persistentVolume.resourceId), length(split("/", vol_config.persistentVolume.resourceId)) - 1)
+      } : null
 
-      # Secret
-      secret = try(vol_config.secret, null) != null ? {
-        secret_name = vol_config.secret.secretName
+      # Secret volume - use secretName from volume config
+      secret = try(vol_config.secretName, null) != null ? {
+        secret_name = vol_config.secretName
       } : null
 
       # EmptyDir
       empty_dir = try(vol_config.emptyDir, null) != null ? {
         medium = try(vol_config.emptyDir.medium, null) != null ? (
-          lower(vol_config.emptyDir.medium) == "memory" ? "Memory" : lower(vol_config.emptyDir.medium) == "disk" ? "" : vol_config.emptyDir.medium
-        ) : ""
+          lower(vol_config.emptyDir.medium) == "memory" ? "Memory" : ""
+        ) : null
       } : null
     }
   ]
@@ -260,7 +290,7 @@ resource "kubernetes_deployment" "deployment" {
 
     template {
       metadata {
-        labels = local.labels
+        labels      = local.labels
         annotations = local.has_dapr_sidecar ? local.dapr_annotations : null
       }
 
@@ -289,7 +319,7 @@ resource "kubernetes_deployment" "deployment" {
               }
             }
 
-            # Environment variables
+            # Environment variables with direct values
             dynamic "env" {
               for_each = [for e in init_container.value.env : e if e.value != null]
               content {
@@ -298,6 +328,30 @@ resource "kubernetes_deployment" "deployment" {
               }
             }
 
+            # Environment variables with secretKeyRef
+            dynamic "env" {
+              for_each = [for e in init_container.value.env : e if e.value == null && try(e.value_from.secret_key_ref, null) != null]
+              content {
+                name = env.value.name
+                value_from {
+                  secret_key_ref {
+                    name = env.value.value_from.secret_key_ref.name
+                    key  = env.value.value_from.secret_key_ref.key
+                  }
+                }
+              }
+            }
+
+            # Environment variables from secrets (via envFrom.secretRef)
+            dynamic "env_from" {
+              for_each = init_container.value.env_from
+              content {
+                prefix = env_from.value.prefix
+                secret_ref {
+                  name = env_from.value.name
+                }
+              }
+            }
 
             # Volume mounts
             dynamic "volume_mount" {
@@ -350,6 +404,30 @@ resource "kubernetes_deployment" "deployment" {
               }
             }
 
+            # Environment variables with secretKeyRef
+            dynamic "env" {
+              for_each = [for e in container.value.env : e if e.value == null && try(e.value_from.secret_key_ref, null) != null]
+              content {
+                name = env.value.name
+                value_from {
+                  secret_key_ref {
+                    name = env.value.value_from.secret_key_ref.name
+                    key  = env.value.value_from.secret_key_ref.key
+                  }
+                }
+              }
+            }
+
+            # Environment variables from secrets (via envFrom.secretRef)
+            dynamic "env_from" {
+              for_each = container.value.env_from
+              content {
+                prefix = env_from.value.prefix
+                secret_ref {
+                  name = env_from.value.name
+                }
+              }
+            }
 
             # Volume mounts
             dynamic "volume_mount" {
