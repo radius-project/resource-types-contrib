@@ -75,6 +75,7 @@ echo "==> Deploying test application from $TEST_FILE"
 APP_NAME="testapp-$(date +%s)"
 
 # Deploy the test app
+echo "going to deploy app: $APP_NAME"
 if rad deploy "$TEST_FILE" --application "$APP_NAME" --environment /planes/radius/local/resourceGroups/default/providers/Radius.Core/environments/default; then
     echo "==> Test deployment successful"
     
