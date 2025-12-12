@@ -4,7 +4,7 @@ extension persistentVolumes
 
 param environment string
 
-resource app 'Radius.Core/applications@2023-10-01-preview' = {
+resource app 'Applications.Core/applications@2023-10-01-preview' = {
   name: 'containers-testapp'
   properties: {
     environment: environment
