@@ -5,6 +5,14 @@ extension secrets
 
 param environment string
 
+// Secure parameters with test defaults 
+#disable-next-line secure-parameter-default @secure()
+param username string = 'admin'
+#disable-next-line secure-parameter-default @secure()
+param password string = 'c2VjcmV0cGFzc3dvcmQ='
+#disable-next-line secure-parameter-default @secure()
+param apiKey string = 'abc123xyz'
+
 resource app 'Applications.Core/applications@2023-10-01-preview' = {
   name: 'containers-testapp'
   properties: {
@@ -184,14 +192,14 @@ resource secret 'Radius.Security/secrets@2025-08-01-preview' = {
     application: app.id
     data: {
       username: {
-        value: 'admin'
+        value: username
       }
       password: {
-        value: 'c2VjcmV0cGFzc3dvcmQ='
+        value: password
         encoding: 'base64'
       }
       apikey: {
-        value: 'abc123xyz'
+        value: apiKey
       }
     }
   }
