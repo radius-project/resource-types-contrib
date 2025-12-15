@@ -65,11 +65,8 @@ if [[ -z "$RECIPE_PACK_NAME" ]]; then
     RECIPE_PACK_NAME="biceprecipepack"
 fi
 
-# Get current resource group and subscription
-CURRENT_RG=$(rad group show --output table | grep -v "NAME" | awk '{print $1}' | head -1)
-if [[ -z "$CURRENT_RG" ]]; then
-    CURRENT_RG="default"
-fi
+# Use resource group from parameter or default to "default"
+CURRENT_RG="default"
 
 # Build recipe pack resource ID
 RECIPE_PACK_ID="/planes/radius/local/resourcegroups/${CURRENT_RG}/providers/Radius.Core/recipePacks/${RECIPE_PACK_NAME}"
@@ -78,10 +75,10 @@ echo "==> Updating environment to use recipe pack"
 echo "==> Recipe pack ID: $RECIPE_PACK_ID"
 
 # Update the environment with the recipe pack
-rad env update default --recipe-packs "$RECIPE_PACK_ID"
+rad env update default --recipe-packs "$RECIPE_PACK_ID" --preview
 
 echo "==> Environment updated successfully"
 
 # Verify deployment by listing recipe packs
-echo "==> Verifying deployment..."
-rad recipe list --environment default || echo "Warning: Could not verify recipe pack deployment"
+echo "==> Verifying environment..."
+rad env show -o json --preview || echo "Warning: Could not verify recipe pack deployment"
