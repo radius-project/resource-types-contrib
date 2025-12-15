@@ -49,6 +49,8 @@ echo "==> Found ${#RECIPE_DIRS[@]} Bicep recipe(s)"
 
 # Start building the Bicep template
 cat > "$OUTPUT_FILE" << 'EOF'
+extension radius
+
 resource biceprecipepack 'Radius.Core/recipePacks@2025-08-01-preview' = {
   name: 'biceprecipepack'
   location: 'global'
