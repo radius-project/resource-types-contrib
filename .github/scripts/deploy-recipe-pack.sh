@@ -58,27 +58,3 @@ rad "${DEPLOY_ARGS[@]}"
 
 echo "==> Recipe pack deployed successfully"
 
-# Extract recipe pack name from the Bicep file
-RECIPE_PACK_NAME=$(grep -E "name: '[^']*'" "$BICEP_FILE" | sed -E "s/.*name: '([^']*)'.*/\1/" | head -1)
-if [[ -z "$RECIPE_PACK_NAME" ]]; then
-    echo "Warning: Could not extract recipe pack name from $BICEP_FILE"
-    RECIPE_PACK_NAME="biceprecipepack"
-fi
-
-# Use resource group from parameter or default to "default"
-CURRENT_RG="default"
-
-# Build recipe pack resource ID
-RECIPE_PACK_ID="/planes/radius/local/resourcegroups/${CURRENT_RG}/providers/Radius.Core/recipePacks/${RECIPE_PACK_NAME}"
-
-echo "==> Updating environment to use recipe pack"
-echo "==> Recipe pack ID: $RECIPE_PACK_ID"
-
-# Update the environment with the recipe pack
-rad env update default --recipe-packs "$RECIPE_PACK_ID" --preview
-
-echo "==> Environment updated successfully"
-
-# Verify deployment by listing recipe packs
-echo "==> Verifying environment..."
-rad env show -o json --preview || echo "Warning: Could not verify recipe pack deployment"
