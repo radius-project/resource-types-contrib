@@ -68,7 +68,7 @@ jobs:
         run: make deploy-recipe-pack BICEP_FILE=recipe-pack.bicep
 
       - name: Update Environment with Recipe Pack
-        run: make update-env-recipe-pack RECIPE_PACK_NAME=kuberecipepack ENVIRONMENT="${RAD_ENVIRONMENT_NAME}"
+        run: make update-env-recipe-pack RECIPE_PACK_NAME=biceprecipepack ENVIRONMENT="${RAD_ENVIRONMENT_NAME}"
 
       - name: Test ${{ matrix.recipe }} recipes
         run: make test ENVIRONMENT="${RAD_ENVIRONMENT_NAME}" RECIPE_TYPE=${{ matrix.recipe }}
