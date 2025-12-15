@@ -27,5 +27,6 @@ rad workspace create kubernetes default --group default --force
 rad group switch default
 rad env create default --preview
 rad env switch default --preview
-
+echo "Showing the created environment details:"
+rad env show -o json --preview
 echo "✅ Workspace and environment initialization completed successfully"
