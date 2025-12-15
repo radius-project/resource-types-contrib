@@ -74,6 +74,10 @@ fi
 echo "==> Deploying test application from $TEST_FILE"
 APP_NAME="testapp-$(date +%s)"
 
+# Show environment details
+echo "==> Showing environment details"
+rad env show /planes/radius/local/resourceGroups/default/providers/Radius.Core/environments/default -o json --preview || true
+ 
 # Deploy the test app
 echo "going to deploy app: $APP_NAME"
 if rad deploy "$TEST_FILE" --application "$APP_NAME" --parameters environment=/planes/radius/local/resourceGroups/default/providers/Radius.Core/environments/default; then
