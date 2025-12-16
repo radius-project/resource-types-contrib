@@ -76,7 +76,7 @@ for recipe_dir in "${RECIPE_DIRS[@]}"; do
     # Build OCI path
     CATEGORY_LOWER=$(echo "$CATEGORY" | tr '[:upper:]' '[:lower:]')
     RESOURCE_LOWER=$(echo "$RESOURCE_NAME" | tr '[:upper:]' '[:lower:]')
-    TEMPLATE_PATH="reciperegistry:5000/radius-recipes/${CATEGORY_LOWER}/${RESOURCE_LOWER}/${RECIPES_SUBPATH}/${RECIPE_FILENAME}:latest"
+    TEMPLATE_PATH="localhost:5000/radius-recipes/${CATEGORY_LOWER}/${RESOURCE_LOWER}/${RECIPES_SUBPATH}/${RECIPE_FILENAME}:latest"
     
     echo "==> Adding recipe: $RESOURCE_TYPE -> $TEMPLATE_PATH"
     

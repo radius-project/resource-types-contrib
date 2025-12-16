@@ -77,12 +77,11 @@ if [[ "$RECIPE_TYPE" == "bicep" ]]; then
     # Extract platform and language from path (e.g., recipes/kubernetes/bicep -> kubernetes/bicep)
     RECIPES_SUBPATH="${RECIPE_PATH#*recipes/}"
     
-    # Build OCI path (use reciperegistry for in-cluster access)
-    # Note: Build script pushes to localhost:5000 (which is port-forwarded to reciperegistry)
-    # But Radius running in-cluster needs to pull from reciperegistry:5000
+    # Build OCI path (use localhost for consistency)
+    # Note: Both build and runtime use localhost:5000 
     CATEGORY_LOWER=$(echo "$CATEGORY" | tr '[:upper:]' '[:lower:]')
     RESOURCE_LOWER=$(echo "$RESOURCE_NAME" | tr '[:upper:]' '[:lower:]')
-    TEMPLATE_PATH="reciperegistry:5000/radius-recipes/${CATEGORY_LOWER}/${RESOURCE_LOWER}/${RECIPES_SUBPATH}/${RECIPE_FILENAME}:latest"
+    TEMPLATE_PATH="localhost:5000/radius-recipes/${CATEGORY_LOWER}/${RESOURCE_LOWER}/${RECIPES_SUBPATH}/${RECIPE_FILENAME}:latest"
 elif [[ "$RECIPE_TYPE" == "terraform" ]]; then
     # For Terraform, use HTTP module server with format: resourcename-platform.zip
     PLATFORM=$(basename "$(dirname "$RECIPE_PATH")")
