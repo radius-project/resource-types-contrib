@@ -70,5 +70,11 @@ jobs:
       - name: Update Environment with Recipe Pack
         run: make update-env-recipe-pack RECIPE_PACK_NAME=biceprecipepack ENVIRONMENT="${RAD_ENVIRONMENT_NAME}"
 
+      - name: Verify Environment
+        run: |
+          echo "Verifying environment exists..."
+          rad env show --preview
+          rad env list --preview
+
       - name: Test ${{ matrix.recipe }} recipes
         run: make test ENVIRONMENT="${RAD_ENVIRONMENT_NAME}" RECIPE_TYPE=${{ matrix.recipe }}
