@@ -54,9 +54,9 @@ while IFS= read -r type_dir; do
     fi
 
     # Build/publish all Terraform recipes under this resource type, if any
-    if [[ -d "$recipes_root" ]]; then
-        while IFS= read -r -d '' recipe_dir; do
-            make -s build-terraform-recipe RECIPE_PATH="$recipe_dir"
-        done < <(find "$recipes_root" -type d -name 'terraform' -print0)
-    fi
+    # if [[ -d "$recipes_root" ]]; then
+    #     while IFS= read -r -d '' recipe_dir; do
+    #         make -s build-terraform-recipe RECIPE_PATH="$recipe_dir"
+    #     done < <(find "$recipes_root" -type d -name 'terraform' -print0)
+    # fi
 done < <(./.github/scripts/list-resource-type-folders.sh ${ROOT_DIR:+"$ROOT_DIR"})

@@ -25,7 +25,7 @@
 
 set -euo pipefail
 
-REGISTRY_BASE="localhost:5000/radius-recipes"
+REGISTRY_BASE="${REGISTRY_BASE:-reciperegistry:5000/radius-recipes}"
 REGISTRY_TAG="latest"
 
 # Normalize an individual path segment to lowercase and OCI-safe characters.

@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        recipe: [bicep, terraform]
+        recipe: [bicep] # terraform commented out
     permissions:
       contents: read
     env:
