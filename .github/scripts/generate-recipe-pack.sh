@@ -85,7 +85,7 @@ for recipe_dir in "${RECIPE_DIRS[@]}"; do
       '$RESOURCE_TYPE': {
         recipeKind: 'bicep'
         recipeLocation: '$TEMPLATE_PATH'
-         plainHttp: true
+        plainHttp: true
       }
 EOF
 done
