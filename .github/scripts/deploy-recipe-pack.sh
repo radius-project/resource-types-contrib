@@ -61,7 +61,7 @@ if [[ -n "$SUBSCRIPTION" ]]; then
 fi
 
 echo "==> Running: rad ${DEPLOY_ARGS[*]}"
-rad "${DEPLOY_ARGS[@]}"
+rad "${DEPLOY_ARGS[@]}" --parameters environment=/planes/radius/local/resourceGroups/default/providers/Radius.Core/environments/default
 
 echo "==> Recipe pack deployed successfully"
 
