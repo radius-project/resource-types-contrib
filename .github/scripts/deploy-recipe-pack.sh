@@ -29,6 +29,13 @@ BICEP_FILE="${1:-}"
 RESOURCE_GROUP="${2:-}"
 SUBSCRIPTION="${3:-}"
 
+rad group switch default
+rad env create default --preview
+rad env switch default --preview
+echo "Showing the created environment details:"
+rad env show -o json --preview
+echo "✅ Workspace and environment initialization completed successfully"
+
 if [[ -z "$BICEP_FILE" ]]; then
     echo "Error: Bicep file is required"
     echo "Usage: $0 <bicep-file> [resource-group] [subscription]"
