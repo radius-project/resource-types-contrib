@@ -58,6 +58,18 @@ jobs:
       - name: Build
         run: make build
 
+      - name: Ensure Environment Exists
+        run: |
+          echo "Creating/verifying environment ${RAD_ENVIRONMENT_NAME}..."
+          rad group list
+          if ! rad env show "${RAD_ENVIRONMENT_NAME}" --preview >/dev/null 2>&1; then
+            echo "Environment does not exist, creating it..."
+            rad env create "${RAD_ENVIRONMENT_NAME}" --preview
+          else
+            echo "Environment ${RAD_ENVIRONMENT_NAME} already exists"
+          fi
+          rad env switch "${RAD_ENVIRONMENT_NAME}" --preview
+
       - name: Generate Recipe Pack
         run: make generate-recipe-pack PACK_NAME=kuberecipepack OUTPUT_FILE=recipe-pack.bicep
 
@@ -66,17 +78,6 @@ jobs:
 
       - name: Deploy Recipe Pack
         run: make deploy-recipe-pack BICEP_FILE=recipe-pack.bicep
-
-      - name: Ensure Environment Exists
-        run: |
-          echo "Creating/verifying environment ${RAD_ENVIRONMENT_NAME}..."
-          if ! rad env show "${RAD_ENVIRONMENT_NAME}" --preview >/dev/null 2>&1; then
-            echo "Environment does not exist, creating it..."
-            rad env create "${RAD_ENVIRONMENT_NAME}" --preview
-          else
-            echo "Environment ${RAD_ENVIRONMENT_NAME} already exists"
-          fi
-          rad env switch "${RAD_ENVIRONMENT_NAME}" --preview
 
       - name: Update Environment with Recipe Pack
         run: make update-env-recipe-pack RECIPE_PACK_NAME=biceprecipepack ENVIRONMENT="${RAD_ENVIRONMENT_NAME}"
