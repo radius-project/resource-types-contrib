@@ -40,10 +40,6 @@ jobs:
         uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
         with:
           node-version: 16
-
-      - name: Set up k3d
-        run: wget -q -O - https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
-
       - name: Set up ORAS
         uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
         with:
@@ -56,10 +52,8 @@ jobs:
         run: make create-radius-cluster
 
       - name: Build
-        run: make build
-
+        run: RECIPE_PLATFORM_FILTER=kubernetes make build
       - name: Register ${{ matrix.recipe }} recipes
-        run: make register ENVIRONMENT="${RAD_ENVIRONMENT_NAME}" RECIPE_TYPE=${{ matrix.recipe }}
-
+        run: RECIPE_PLATFORM_FILTER=kubernetes make register ENVIRONMENT=$RAD_ENVIRONMENT_NAME RECIPE_TYPE=${{ matrix.recipe }}
       - name: Test ${{ matrix.recipe }} recipes
-        run: make test ENVIRONMENT="${RAD_ENVIRONMENT_NAME}" RECIPE_TYPE=${{ matrix.recipe }}
+        run: RECIPE_PLATFORM_FILTER=kubernetes make test ENVIRONMENT=$RAD_ENVIRONMENT_NAME RECIPE_TYPE=${{ matrix.recipe }}
