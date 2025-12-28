@@ -8,6 +8,46 @@ terraform {
   }
 }
 
+# ========================================
+# Common Radius variables
+# ========================================
+
+variable "context" {
+  description = "The Radius Recipe context variable. See https://docs.radapp.io/reference/context-schema/."
+  type = any
+}
+
+locals {
+  resource_name = var.context.resource.name
+  namespace     = var.context.runtime.kubernetes.namespace
+  resource_properties = try(var.context.resource.properties, {})
+
+  # Extract last segment from environment path for labels
+  environment_id    = try(local.resource_properties.environment, "")
+  environment_parts = local.environment_id != "" ? split("/", local.environment_id) : []
+  environment_label = length(local.environment_parts) > 0 ? local.environment_parts[length(local.environment_parts) - 1] : ""
+
+  # Extract resource group name
+  # Index 4 is the resource group name
+  resource_group_name = split("/", var.context.resource.id)[4]
+
+  # Application name
+  application_name = var.context.application != null ? var.context.application.name : ""
+
+  # Common labels
+  labels = {
+    "radapp.io/resource"       = local.resource_name
+    "radapp.io/application"    = local.application_name
+    "radapp.io/environment"    = local.environment_label
+    "radapp.io/resource-type"  = replace(var.context.resource.type, "/", "-")
+    "radapp.io/resource-group" = local.resource_group_name
+  }
+}
+
+# ========================================
+# Kubernetes Secret variables
+# ========================================
+
 # Local values for processing secret data
 locals {
   secret_data = var.context.resource.properties.data
@@ -21,7 +61,7 @@ locals {
   }
   
   string_data = {
-    for k, v in local.secret_data : k => base64encode(v.value)
+    for k, v in local.secret_data : k => v.value
     if try(v.encoding, "") != "base64"
   }
   
@@ -31,8 +71,11 @@ locals {
     local.secret_kind == "basicAuthentication" ? "kubernetes.io/basic-auth" :
     "Opaque"
   )
-  
 }
+
+# ========================================
+# Kubernetes Secret resource
+# ========================================
 
 resource "kubernetes_secret" "secret" {
   # Validation preconditions - these will stop deployment if they fail
@@ -74,16 +117,24 @@ resource "kubernetes_secret" "secret" {
   }
   
   metadata {
-    name      = local.secret_name
-    namespace = var.context.runtime.kubernetes.namespace
-    
-    labels = {
-      resource = var.context.resource.name
-      app      = var.context.application != null ? var.context.application.name : ""
-    }
+    name      = local.resource_name
+    namespace = local.namespace
+    labels    = local.labels
   }
   
   type = local.secret_type
   data = length(local.string_data) > 0 ? local.string_data : {}
   binary_data = length(local.base64_data) > 0 ? local.base64_data : {}
+}
+
+# ========================================
+# Output Radius result 
+# ========================================
+
+output "result" {
+  value = {
+    resources = [
+        "/planes/kubernetes/local/namespaces/${kubernetes_secret.secret.metadata[0].namespace}/providers/core/Secret/${kubernetes_secret.secret.metadata[0].name}"
+    ]
+  }
 }
