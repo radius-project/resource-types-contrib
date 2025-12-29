@@ -150,4 +150,4 @@ echo "==> Recipe registered successfully"
 
 # Log the registered recipe details
 echo "==> Verifying registration..."
-rad recipe show "$RECIPE_NAME" --resource-type "$RESOURCE_TYPE" --environment "$ENVIRONMENT_NAME" || echo "Warning: Could not verify recipe registration"
+rad recipe show default --resource-type "$RESOURCE_TYPE" --environment "$ENVIRONMENT_NAME" || echo "Warning: Could not verify recipe registration"

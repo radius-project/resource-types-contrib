@@ -58,17 +58,19 @@ if [[ -n "${AZURE_TENANT_ID:-}" ]]; then
         AZURE_OIDC_ISSUER_PUBLIC_KEY=$(echo "$TEST_AZURE_OIDC_JSON" | jq -r '.AZURE_OIDC_ISSUER_PUBLIC_KEY // empty')
         AZURE_OIDC_ISSUER_PRIVATE_KEY=$(echo "$TEST_AZURE_OIDC_JSON" | jq -r '.AZURE_OIDC_ISSUER_PRIVATE_KEY // empty')
         AZURE_OIDC_ISSUER=$(echo "$TEST_AZURE_OIDC_JSON" | jq -r '.AZURE_OIDC_ISSUER // empty')
+        
+        # Mask derived secrets in GitHub Actions logs
+        if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+            echo "::add-mask::$AZURE_OIDC_ISSUER_PUBLIC_KEY"
+            echo "::add-mask::$AZURE_OIDC_ISSUER_PRIVATE_KEY"
+            echo "::add-mask::$AZURE_OIDC_ISSUER"
+        fi
     fi
     
     # Validate required OIDC variables are set
     if [[ -z "${AZURE_OIDC_ISSUER_PUBLIC_KEY:-}" ]] || [[ -z "${AZURE_OIDC_ISSUER_PRIVATE_KEY:-}" ]] || [[ -z "${AZURE_OIDC_ISSUER:-}" ]]; then
         echo "Error: OIDC configuration is required for Azure Workload Identity but not found."
-        echo ""
-        echo "Please ensure the TEST_AZURE_OIDC_JSON secret is set in GitHub with:"
-        echo "  - AZURE_OIDC_ISSUER_PUBLIC_KEY"
-        echo "  - AZURE_OIDC_ISSUER_PRIVATE_KEY"
-        echo "  - AZURE_OIDC_ISSUER"
-        echo ""
+        echo "Please ensure the TEST_AZURE_OIDC_JSON secret is set correctly in GitHub."
         exit 1
     fi
     

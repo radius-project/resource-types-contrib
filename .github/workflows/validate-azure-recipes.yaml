@@ -21,8 +21,12 @@ jobs:
   validate-azure-recipes:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    name: Validate Azure Recipes
+    name: Validate Azure ${{ matrix.recipe }} Recipes
     environment: azure
+    strategy:
+      fail-fast: false
+      matrix:
+        recipe: [bicep, terraform]
     permissions:
       id-token: write
       contents: read
@@ -95,11 +99,17 @@ jobs:
       - name: Build Azure Recipes
         run: make build-azure-recipes
 
-      - name: Register Azure Recipes
-        run: RECIPE_PLATFORM_FILTER=azure make register ENVIRONMENT=${{ env.AZURE_ENVIRONMENT_NAME }} RECIPE_TYPE=bicep
+      - name: Register Azure ${{ matrix.recipe }} Recipes
+        run: RECIPE_PLATFORM_FILTER=azure make register ENVIRONMENT=${{ env.AZURE_ENVIRONMENT_NAME }} RECIPE_TYPE=${{ matrix.recipe }}
+        env:
+          AZURE_WORKSPACE_NAME: ${{ env.AZURE_WORKSPACE_NAME }}
+          AZURE_ENVIRONMENT_NAME: ${{ env.AZURE_ENVIRONMENT_NAME }}
 
-      - name: Test Azure Recipes
-        run: make test-azure-recipes
+      - name: Test Azure ${{ matrix.recipe }} Recipes
+        run: RECIPE_PLATFORM_FILTER=azure make test ENVIRONMENT=${{ env.AZURE_ENVIRONMENT_NAME }} RECIPE_TYPE=${{ matrix.recipe }}
+        env:
+          AZURE_WORKSPACE_NAME: ${{ env.AZURE_WORKSPACE_NAME }}
+          AZURE_ENVIRONMENT_NAME: ${{ env.AZURE_ENVIRONMENT_NAME }}
 
       - name: Collect Radius pod logs
         if: always()
