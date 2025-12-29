@@ -47,8 +47,5 @@ output "result" {
     resources = [
       "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/PersistentVolumeClaim/${local.resource_name}"
     ]
-    values = {
-      claimName = local.resource_name
-    }
   }
 }
