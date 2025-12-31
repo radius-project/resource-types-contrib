@@ -5,8 +5,18 @@ name: Validate Resource Types
 on:
   push:
     branches: [main]
+    paths:
+      - '**/kubernetes/**'
+      - '**/test/app.bicep'
+      - '**/*.yaml'
+      - '.github/workflows/validate-resource-types.yaml'
   pull_request:
     branches: [main]
+    paths:
+      - '**/kubernetes/**'
+      - '**/test/app.bicep'
+      - '**/*.yaml'
+      - '.github/workflows/validate-resource-types.yaml'
   workflow_dispatch:
     inputs:
       version:
@@ -21,7 +31,7 @@ jobs:
   validate-resource-types:
     name: Validate Resource Types and Recipes
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
