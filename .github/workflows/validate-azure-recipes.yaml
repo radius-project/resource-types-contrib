@@ -3,8 +3,16 @@ name: Validate Azure Recipes
 on:
   push:
     branches: [ main ]
+    paths:
+      - '**/azure/**'
+      - '**/test/app.bicep'
+      - '.github/workflows/validate-azure-recipes.yaml'
   pull_request:
     branches: [ main ]
+    paths:
+      - '**/azure/**'
+      - '**/test/app.bicep'
+      - '.github/workflows/validate-azure-recipes.yaml'
   workflow_dispatch:
     inputs:
       version:
@@ -48,12 +56,14 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Set Azure Test Context
+        id: set-context
         run: |
           LOCATION="${AZURE_LOCATION:-${{ vars.AZURE_LOCATION }}}"
           if [ -z "$LOCATION" ]; then
             LOCATION="westus3"
           fi
-          RG="rrttest-${{ github.run_id }}-${{ github.run_attempt }}"
+          RG="rrttest-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.recipe }}"
+          echo "location=$LOCATION" >> "$GITHUB_OUTPUT"
           echo "AZURE_LOCATION=$LOCATION" >> "$GITHUB_ENV"
           echo "AZURE_RESOURCE_GROUP=$RG" >> "$GITHUB_ENV"
           echo "AZURE_WORKSPACE_NAME=default" >> "$GITHUB_ENV"
@@ -62,17 +72,22 @@ jobs:
       - name: Create Azure Resource Group
         run: |
           set -euo pipefail
+          RG="${{ env.AZURE_RESOURCE_GROUP }}"
+          LOCATION="${{ env.AZURE_LOCATION }}"
           current_time=$(date +%s)
           az group create \
             --only-show-errors \
             --output none \
-            --location "$AZURE_LOCATION" \
-            --name "$AZURE_RESOURCE_GROUP" \
+            --location "$LOCATION" \
+            --name "$RG" \
             --subscription "$AZURE_SUBSCRIPTION_ID" \
             --tags creationTime=$current_time > /dev/null
-          while ! az group exists --name "$AZURE_RESOURCE_GROUP" --subscription "$AZURE_SUBSCRIPTION_ID" &>/dev/null; do
-            sleep 2
+          # Wait for resource group to be fully available
+          while [[ "$(az group exists --name "$RG" --subscription "$AZURE_SUBSCRIPTION_ID")" != "true" ]]; do
+            echo "Waiting for resource group '$RG' to be available..."
+            sleep 5
           done
+          echo "Resource group '$RG' is ready"
 
       - name: Setup Node
         uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
@@ -101,15 +116,9 @@ jobs:
 
       - name: Register Azure ${{ matrix.recipe }} Recipes
         run: RECIPE_PLATFORM_FILTER=azure make register ENVIRONMENT=${{ env.AZURE_ENVIRONMENT_NAME }} RECIPE_TYPE=${{ matrix.recipe }}
-        env:
-          AZURE_WORKSPACE_NAME: ${{ env.AZURE_WORKSPACE_NAME }}
-          AZURE_ENVIRONMENT_NAME: ${{ env.AZURE_ENVIRONMENT_NAME }}
 
       - name: Test Azure ${{ matrix.recipe }} Recipes
         run: RECIPE_PLATFORM_FILTER=azure make test ENVIRONMENT=${{ env.AZURE_ENVIRONMENT_NAME }} RECIPE_TYPE=${{ matrix.recipe }}
-        env:
-          AZURE_WORKSPACE_NAME: ${{ env.AZURE_WORKSPACE_NAME }}
-          AZURE_ENVIRONMENT_NAME: ${{ env.AZURE_ENVIRONMENT_NAME }}
 
       - name: Collect Radius pod logs
         if: always()
@@ -132,7 +141,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          name: radius-pod-logs
+          name: radius-pod-logs-${{ matrix.recipe }}
           path: radius-pod-logs
           if-no-files-found: warn
 
