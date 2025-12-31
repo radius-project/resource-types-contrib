@@ -62,7 +62,8 @@ fi
 
 printf "\033[34;1m=>\033[0m Configuring Azure provider for Radius tests\n"
 
-if ! az group exists --name "$AZURE_RESOURCE_GROUP" --subscription "$AZURE_SUBSCRIPTION_ID" >/dev/null 2>&1; then
+# az group exists returns "true" or "false" as text, not an exit code
+if [[ "$(az group exists --name "$AZURE_RESOURCE_GROUP" --subscription "$AZURE_SUBSCRIPTION_ID" 2>/dev/null)" != "true" ]]; then
     echo "Error: Azure resource group '$AZURE_RESOURCE_GROUP' not found. Create it before running configure-azure-provider." >&2
     exit 1
 fi
