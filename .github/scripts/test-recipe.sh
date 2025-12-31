@@ -27,6 +27,30 @@
 set -euo pipefail
 
 RECIPE_PATH="${1:-}"
+ENVIRONMENT_PATH="${2:-/planes/radius/local/resourceGroups/default/providers/Radius.Core/environments/default}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+ensure_env_and_namespace_ready() {
+    if rad env show "$ENVIRONMENT_PATH" -o json --preview >/dev/null 2>&1; then
+        echo "==> Environment exists: $ENVIRONMENT_PATH"
+    else
+        echo "==> Environment not found. Initializing workspace and environment"
+        bash "$SCRIPT_DIR/create-workspace.sh"
+        # Best-effort re-check; do not fail if preview flag is unsupported
+        rad env show "$ENVIRONMENT_PATH" -o json --preview || true
+    fi
+
+    # Ensure the test namespace exists before deploying
+    if ! kubectl get namespace testapp >/dev/null 2>&1; then
+        kubectl create namespace testapp
+    fi
+
+    # Update the env with kubernetes provider
+    rad env update default --kubernetes-namespace testapp --preview
+
+    echo "==> Environment and namespace are ready"
+    rad env show "$ENVIRONMENT_PATH" -o json --preview || true
+}
 
 if [[ -z "$RECIPE_PATH" ]]; then
     echo "Error: Recipe path is required"
@@ -74,8 +98,16 @@ fi
 echo "==> Deploying test application from $TEST_FILE"
 APP_NAME="testapp-$(date +%s)"
 
+# Ensure the target environment and namespace exist before deploying
+ensure_env_and_namespace_ready
+
+# Show environment details
+echo "==> Showing environment details"
+rad env show "$ENVIRONMENT_PATH" -o json --preview || true
+ 
 # Deploy the test app
-if rad deploy "$TEST_FILE" --application "$APP_NAME" --environment default; then
+echo "going to deploy app: $APP_NAME"
+if rad deploy "$TEST_FILE" --application "$APP_NAME" -e "/planes/radius/local/resourceGroups/default/providers/Radius.Core/environments/default"; then
     echo "==> Test deployment successful"
     
     # Cleanup: delete the app

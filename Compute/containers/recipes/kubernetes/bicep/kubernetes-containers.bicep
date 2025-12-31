@@ -35,49 +35,19 @@ var labels = {
   'radapp.io/application': context.application == null ? '' : context.application.name
 }
 
-// Extract connection data from linked resources (merged with resource properties)
+// Extract connection data from linked resources
 var resourceConnections = context.resource.connections ?? {}
-var connectionDefinitions = context.resource.properties.connections ?? {}
 
-// Properties to exclude from connection environment variables
-var excludedProperties = ['recipe', 'status', 'provisioningState']
-
-// Helper function to check if a connection is a secrets resource (using source from original connection definition)
-var isSecretsResource = reduce(items(connectionDefinitions), {}, (acc, conn) => union(acc, {
-  '${conn.key}': contains(string(conn.value.?source ?? ''), 'Radius.Security/secrets')
-}))
-
-// Secrets connections to inject via envFrom.secretRef
-// The K8s secret name is the Radius resource name (last segment of the source ID)
-var secretsEnvFrom = reduce(items(resourceConnections), [], (acc, conn) => 
-  isSecretsResource[conn.key] && connectionDefinitions[conn.key].?disableDefaultEnvVars != true
-    ? concat(acc, [{
-        prefix: toUpper('CONNECTION_${conn.key}_')
-        secretRef: {
-          // Extract the secret name from the connection source (last segment of the resource ID)
-          name: last(split(string(connectionDefinitions[conn.key].source), '/'))
-        }
-      }])
-    : acc
-)
-
-// Build environment variables from non-secrets connections when not explicitly disabled via disableDefaultEnvVars
-// Secrets connections use envFrom.secretRef instead for cleaner injection
-// Each connection's resource properties become CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>
+// Build environment variables from connections when explicitly enabled via disableDefaultEnvVars
+// Each connection's output values become CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>
 var connectionEnvVars = reduce(items(resourceConnections), [], (acc, conn) => 
-  // Only process non-secrets connections here (secrets use envFrom)
-  !isSecretsResource[conn.key] && connectionDefinitions[conn.key].?disableDefaultEnvVars != true
-    ? concat(acc, 
-        // Add resource properties directly from connection (excluding metadata properties)
-        reduce(items(conn.value ?? {}), [], (envAcc, prop) => 
-          contains(excludedProperties, prop.key)
-            ? envAcc 
-            : concat(envAcc, [{
-                name: toUpper('CONNECTION_${conn.key}_${prop.key}')
-                value: string(prop.value)
-              }])
-        )
-      )
+  conn.value.?disableDefaultEnvVars == true
+    ? concat(acc, reduce(items(conn.value.?status.?computedValues ?? {}), [], (envAcc, prop) => 
+        concat(envAcc, [{
+          name: toUpper('CONNECTION_${conn.key}_${prop.key}')
+          value: string(prop.value)
+        }])
+      ))
     : acc
 )
 
@@ -109,23 +79,11 @@ var containerSpecs = reduce(containerItems, [], (acc, item) => concat(acc, [{
           {
             name: envItem.key
           },
-          contains(envItem.value, 'value') ? { value: envItem.value.value } : {},
-          (contains(envItem.value, 'valueFrom') && contains(envItem.value.valueFrom, 'secretKeyRef')) ? {
-            valueFrom: {
-              secretKeyRef: {
-                name: envItem.value.valueFrom.secretKeyRef.secretName
-                key: envItem.value.valueFrom.secretKeyRef.key
-              }
-            }
-          } : {}
+          contains(envItem.value, 'value') ? { value: envItem.value.value } : {}
         )])),
-        // Connection-derived env vars (non-secrets connections)
+        // Connection-derived env vars
         connectionEnvVars
       )
-    } : {},
-    // Add envFrom for secrets connections (injects all keys from secret as env vars)
-    length(secretsEnvFrom) > 0 ? {
-      envFrom: secretsEnvFrom
     } : {},
     // Add volume mounts if they exist
     contains(item.value, 'volumeMounts') ? {
@@ -219,20 +177,26 @@ var podVolumes = reduce(volumeItems, [], (acc, vol) => concat(acc, [union(
   {
     name: vol.key
   },
-  contains(vol.value, 'persistentVolume') ? {
-    persistentVolumeClaim: {
-      // Extract the PVC name from the resourceId (last segment of the path)
-      claimName: last(split(string(vol.value.persistentVolume.resourceId), '/'))
-    }
-  } : {},
-  contains(vol.value, 'secretName') ? {
+  contains(vol.value, 'persistentVolume') ? union(
+    (contains(vol.value.persistentVolume, 'claimName') && vol.value.persistentVolume.claimName != '') ? {
+      persistentVolumeClaim: {
+        claimName: vol.value.persistentVolume.claimName
+      }
+    } : {},
+    (!(contains(vol.value.persistentVolume, 'claimName') && vol.value.persistentVolume.claimName != '') && contains(resourceConnections, vol.key) && (resourceConnections[vol.key].?status.?computedValues.?claimName ?? '') != '') ? {
+      persistentVolumeClaim: {
+        claimName: resourceConnections[vol.key].?status.?computedValues.?claimName
+      }
+    } : {}
+  ) : {},
+  contains(vol.value, 'secret') ? {
     secret: {
-      secretName: vol.value.secretName
+      secretName: vol.value.secret.secretName
     }
   } : {},
   contains(vol.value, 'emptyDir') ? {
     emptyDir: contains(vol.value.emptyDir, 'medium') ? {
-      medium: vol.value.emptyDir.medium == 'memory' ? 'Memory' : ''
+      medium: vol.value.emptyDir.medium
     } : {}
   } : {}
 )]))

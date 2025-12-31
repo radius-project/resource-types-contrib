@@ -1,19 +1,10 @@
 extension radius
 extension containers
 extension persistentVolumes
-extension secrets
 
 param environment string
 
-// Secure parameters with test defaults 
-#disable-next-line secure-parameter-default @secure()
-param username string = 'admin'
-#disable-next-line secure-parameter-default @secure()
-param password string = 'c2VjcmV0cGFzc3dvcmQ='
-#disable-next-line secure-parameter-default @secure()
-param apiKey string = 'abc123xyz'
-
-resource app 'Applications.Core/applications@2023-10-01-preview' = {
+resource app 'Radius.Core/applications@2025-08-01-preview' = {
   name: 'containers-testapp'
   properties: {
     environment: environment
@@ -31,10 +22,6 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
         source: myPersistentVolume.id
         disableDefaultEnvVars: false
       }
-      secrets: {
-        source: secret.id
-        disableDefaultEnvVars: false
-      }
     }
     containers: {
       web: {
@@ -49,29 +36,14 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
           }
         }
         env: {
-          CONNECTIONS_SECRET_USERNAME: {
-            valueFrom: {
-              secretKeyRef: {
-                secretName: secret.name
-                key: 'username'
-              }
-            }
+          TEST_ENV: {
+            value: 'testenv'
           }
-          CONNECTIONS_SECRET_APIKEY: {
-            valueFrom: {
-              secretKeyRef: {
-                secretName: secret.name
-                key: 'apikey'
-              }
-            }
+          MAX_CONNECTIONS: {
+            value: '100'
           }
-          CONNECTIONS_SECRET_PASSWORD: {
-            valueFrom: {
-              secretKeyRef: {
-                secretName: secret.name
-                key: 'password'
-              }
-            }
+          NGINX_HOST: {
+            value: 'localhost'
           }
         }
         volumeMounts: [
@@ -82,10 +54,6 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
           {
             volumeName: 'cache'
             mountPath: '/tmp/cache'
-          }
-          {
-            volumeName: 'secrets'
-            mountPath: '/etc/secrets'
           }
         ] 
         resources: {
@@ -151,9 +119,6 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
           medium: 'memory'
         }
       }
-      secrets: {
-        secretName: secret.name
-      }
     }
     extensions: {
       daprSidecar: {
@@ -182,25 +147,5 @@ resource myPersistentVolume 'Radius.Compute/persistentVolumes@2025-08-01-preview
     environment: environment
     application: app.id
     sizeInGib: 1
-  }
-}
-
-resource secret 'Radius.Security/secrets@2025-08-01-preview' = {
-  name: 'app-secrets-${uniqueString(deployment().name)}'
-  properties: {
-    environment: environment
-    application: app.id
-    data: {
-      username: {
-        value: username
-      }
-      password: {
-        value: password
-        encoding: 'base64'
-      }
-      apikey: {
-        value: apiKey
-      }
-    }
   }
 }

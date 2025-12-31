@@ -73,8 +73,8 @@ if [[ "$RECIPE_TYPE" == "bicep" ]]; then
     BICEP_FILE=$(ls "$RECIPE_PATH"/*.bicep 2>/dev/null | head -n 1)
     RECIPE_FILENAME=$(basename "$BICEP_FILE" .bicep)
     RECIPE_NAME="$RECIPE_FILENAME"
-    
-    # Extract platform and language from path (e.g., recipes/kubernetes/bicep -> kubernetes/bicep)
+ 
+ # Extract platform and language from path (e.g., recipes/kubernetes/bicep -> kubernetes/bicep)
     RECIPES_SUBPATH="${RECIPE_PATH#*recipes/}"
     
     # Build OCI path (use reciperegistry for in-cluster access)
@@ -83,6 +83,7 @@ if [[ "$RECIPE_TYPE" == "bicep" ]]; then
     CATEGORY_LOWER=$(echo "$CATEGORY" | tr '[:upper:]' '[:lower:]')
     RESOURCE_LOWER=$(echo "$RESOURCE_NAME" | tr '[:upper:]' '[:lower:]')
     TEMPLATE_PATH="reciperegistry:5000/radius-recipes/${CATEGORY_LOWER}/${RESOURCE_LOWER}/${RECIPES_SUBPATH}/${RECIPE_FILENAME}:latest"
+
 elif [[ "$RECIPE_TYPE" == "terraform" ]]; then
     # For Terraform, use HTTP module server with format: resourcename-platform.zip
     PLATFORM=$(basename "$(dirname "$RECIPE_PATH")")
