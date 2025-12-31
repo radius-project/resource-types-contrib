@@ -25,19 +25,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        recipe: [bicep, terraform]
+        recipe: [bicep] # terraform commented out
     permissions:
       contents: read
     env:
       RAD_ENVIRONMENT_NAME: default
     steps:
       - name: Checkout
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
         with:
           node-version: 16
 
@@ -52,14 +52,24 @@ jobs:
       - name: Install Radius CLI
         run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
 
+      # this setups a local k3d cluster for testing purposes, creates workspace, group and  env preview
       - name: Create Radius Cluster
         run: make create-radius-cluster
+
+      - name: Generate Recipe Pack
+        run: make generate-recipe-pack PACK_NAME=kuberecipepack OUTPUT_FILE=recipe-pack.bicep
+
+      - name: Show Recipe Pack Content
+        run: cat recipe-pack.bicep
+
+      - name: Deploy Recipe Pack
+        run: make deploy-recipe-pack BICEP_FILE=recipe-pack.bicep
 
       - name: Build
         run: make build
 
-      - name: Register ${{ matrix.recipe }} recipes
-        run: make register ENVIRONMENT="${RAD_ENVIRONMENT_NAME}" RECIPE_TYPE=${{ matrix.recipe }}
+      - name: Update Environment with Recipe Pack
+        run: make update-env-recipe-pack RECIPE_PACK_NAME=biceprecipepack ENVIRONMENT="${RAD_ENVIRONMENT_NAME}"
 
       - name: Test ${{ matrix.recipe }} recipes
         run: make test ENVIRONMENT="${RAD_ENVIRONMENT_NAME}" RECIPE_TYPE=${{ matrix.recipe }}

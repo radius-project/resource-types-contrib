@@ -27,5 +27,5 @@ rad workspace create kubernetes default --group default --force
 rad group switch default
 rad env create default
 rad env switch default
+echo "✅ environment initialization completed successfully"
 
-echo "✅ Workspace and environment initialization completed successfully"
