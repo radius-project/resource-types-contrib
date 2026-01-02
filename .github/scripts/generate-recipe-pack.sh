@@ -81,7 +81,7 @@ for recipe_dir in "${RECIPE_DIRS[@]}"; do
     # Extract platform and language from path (e.g., recipes/kubernetes/bicep -> kubernetes/bicep)
     RECIPES_SUBPATH="${recipe_dir#*recipes/}"
     
-    # Build OCI path and recipe filename based on recipe type
+    # Build template path based on recipe type
     CATEGORY_LOWER=$(echo "$CATEGORY" | tr '[:upper:]' '[:lower:]')
     RESOURCE_LOWER=$(echo "$RESOURCE_NAME" | tr '[:upper:]' '[:lower:]')
     
@@ -89,12 +89,15 @@ for recipe_dir in "${RECIPE_DIRS[@]}"; do
         # Find the .bicep file in the recipe directory
         BICEP_FILE=$(ls "$recipe_dir"/*.bicep 2>/dev/null | head -n 1)
         RECIPE_FILENAME=$(basename "$BICEP_FILE" .bicep)
+        # OCI registry path for bicep recipes
+        TEMPLATE_PATH="reciperegistry:5000/radius-recipes/${CATEGORY_LOWER}/${RESOURCE_LOWER}/${RECIPES_SUBPATH}/${RECIPE_FILENAME}:latest"
     else
-        # For terraform, use the directory name as recipe name
-        RECIPE_FILENAME=$(basename "$recipe_dir")
+        # For terraform, use cluster-internal HTTP URL to module server
+        # Recipe name format: {RESOURCE_TYPE}-{PLATFORM} (e.g., postgreSqlDatabases-kubernetes)
+        PLATFORM=$(basename "$(dirname "$recipe_dir")")  # Extract platform (e.g., kubernetes)
+        RECIPE_NAME="${RESOURCE_NAME}-${PLATFORM}"
+        TEMPLATE_PATH="http://tf-module-server.radius-test-tf-module-server.svc.cluster.local/${RECIPE_NAME}.zip"
     fi
-    
-    TEMPLATE_PATH="reciperegistry:5000/radius-recipes/${CATEGORY_LOWER}/${RESOURCE_LOWER}/${RECIPES_SUBPATH}/${RECIPE_FILENAME}:latest"
     
     echo "==> Adding recipe: $RESOURCE_TYPE -> $TEMPLATE_PATH"
     
