@@ -17,42 +17,54 @@
 # ------------------------------------------------------------
 
 # =============================================================================
-# Generate a Recipe Pack Bicep template from all available Bicep recipes
+# Generate a Recipe Pack Bicep template from available recipes
 #
 # Usage: ./generate-recipe-pack.sh [repo-root] [pack-name] [output-file]
-# Example: ./generate-recipe-pack.sh . kuberecipepack recipe-pack.bicep
+# Example: ./generate-recipe-pack.sh . biceprecipepack recipe-pack.bicep
+# Example: ./generate-recipe-pack.sh . terraformrecipepack recipe-pack.bicep
 # =============================================================================
 
 set -euo pipefail
 
 REPO_ROOT="${1:-$(pwd)}"
-PACK_NAME="${2:-kuberecipepack}"
+PACK_NAME="${2:-biceprecipepack}"
 OUTPUT_FILE="${3:-recipe-pack.bicep}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "==> Generating recipe pack '$PACK_NAME' from Bicep recipes in $REPO_ROOT"
+# Determine recipe type from pack name
+if [[ "$PACK_NAME" == *"terraform"* ]]; then
+    RECIPE_TYPE="terraform"
+    RECIPE_KIND="terraform"
+else
+    RECIPE_TYPE="bicep"
+    RECIPE_KIND="bicep"
+fi
 
-# Find all Bicep recipe directories
+echo "==> Generating recipe pack '$PACK_NAME' from $RECIPE_TYPE recipes in $REPO_ROOT"
+
+# Find recipe directories based on type
 RECIPE_DIRS=()
 while IFS= read -r line; do
-    if [[ "$line" == *"/bicep" ]] && ls "$line"/*.bicep &>/dev/null; then
+    if [[ "$RECIPE_TYPE" == "bicep" ]] && [[ "$line" == *"/bicep" ]] && ls "$line"/*.bicep &>/dev/null; then
+        RECIPE_DIRS+=("$line")
+    elif [[ "$RECIPE_TYPE" == "terraform" ]] && [[ "$line" == *"/terraform" ]] && [[ -f "$line/main.tf" ]]; then
         RECIPE_DIRS+=("$line")
     fi
-done < <("$SCRIPT_DIR"/list-recipe-folders.sh "$REPO_ROOT" "bicep")
+done < <("$SCRIPT_DIR"/list-recipe-folders.sh "$REPO_ROOT" "$RECIPE_TYPE")
 
 if [[ ${#RECIPE_DIRS[@]} -eq 0 ]]; then
-    echo "==> No Bicep recipes found"
+    echo "==> No $RECIPE_TYPE recipes found"
     exit 1
 fi
 
-echo "==> Found ${#RECIPE_DIRS[@]} Bicep recipe(s)"
+echo "==> Found ${#RECIPE_DIRS[@]} $RECIPE_TYPE recipe(s)"
 
 # Start building the Bicep template
-cat > "$OUTPUT_FILE" << 'EOF'
+cat > "$OUTPUT_FILE" << EOF
 extension radius
 
-resource biceprecipepack 'Radius.Core/recipePacks@2025-08-01-preview' = {
-  name: 'biceprecipepack'
+resource $PACK_NAME 'Radius.Core/recipePacks@2025-08-01-preview' = {
+  name: '$PACK_NAME'
   location: 'global'
   properties: {
     recipes: {
@@ -66,16 +78,22 @@ for recipe_dir in "${RECIPE_DIRS[@]}"; do
     RESOURCE_NAME=$(basename "$RESOURCE_TYPE_PATH")
     RESOURCE_TYPE="Radius.$CATEGORY/$RESOURCE_NAME"
     
-    # Find the .bicep file in the recipe directory
-    BICEP_FILE=$(ls "$recipe_dir"/*.bicep 2>/dev/null | head -n 1)
-    RECIPE_FILENAME=$(basename "$BICEP_FILE" .bicep)
-    
     # Extract platform and language from path (e.g., recipes/kubernetes/bicep -> kubernetes/bicep)
     RECIPES_SUBPATH="${recipe_dir#*recipes/}"
     
-    # Build OCI path
+    # Build OCI path and recipe filename based on recipe type
     CATEGORY_LOWER=$(echo "$CATEGORY" | tr '[:upper:]' '[:lower:]')
     RESOURCE_LOWER=$(echo "$RESOURCE_NAME" | tr '[:upper:]' '[:lower:]')
+    
+    if [[ "$RECIPE_TYPE" == "bicep" ]]; then
+        # Find the .bicep file in the recipe directory
+        BICEP_FILE=$(ls "$recipe_dir"/*.bicep 2>/dev/null | head -n 1)
+        RECIPE_FILENAME=$(basename "$BICEP_FILE" .bicep)
+    else
+        # For terraform, use the directory name as recipe name
+        RECIPE_FILENAME=$(basename "$recipe_dir")
+    fi
+    
     TEMPLATE_PATH="reciperegistry:5000/radius-recipes/${CATEGORY_LOWER}/${RESOURCE_LOWER}/${RECIPES_SUBPATH}/${RECIPE_FILENAME}:latest"
     
     echo "==> Adding recipe: $RESOURCE_TYPE -> $TEMPLATE_PATH"
@@ -83,7 +101,7 @@ for recipe_dir in "${RECIPE_DIRS[@]}"; do
     # Add recipe entry to the template
     cat >> "$OUTPUT_FILE" << EOF
       '$RESOURCE_TYPE': {
-        recipeKind: 'bicep'
+        recipeKind: '$RECIPE_KIND'
         recipeLocation: '$TEMPLATE_PATH'
         plainHttp: true
       }
