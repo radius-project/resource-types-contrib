@@ -57,13 +57,13 @@ jobs:
         run: make create-radius-cluster
 
       - name: Generate Recipe Pack
-        run: make generate-recipe-pack PACK_NAME=${{ matrix.recipe }}recipepack OUTPUT_FILE=recipe-pack.bicep
+        run: make generate-recipe-pack PACK_NAME=${{ matrix.recipe }}recipepack OUTPUT_FILE=recipe-pack-${{ matrix.recipe }}.bicep
 
       - name: Show Recipe Pack Content
-        run: cat recipe-pack.bicep
+        run: cat recipe-pack-${{ matrix.recipe }}.bicep
 
       - name: Deploy Recipe Pack
-        run: make deploy-recipe-pack BICEP_FILE=recipe-pack.bicep
+        run: make deploy-recipe-pack BICEP_FILE=recipe-pack-${{ matrix.recipe }}.bicep
 
       - name: Build
         run: make build

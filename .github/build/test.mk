@@ -49,7 +49,7 @@ endif
 
 .PHONY: generate-recipe-pack
 generate-recipe-pack: ## Generate a recipe pack Bicep template from available recipes (set PACK_NAME and OUTPUT_FILE to override defaults)
-	@./.github/scripts/generate-recipe-pack.sh "$(RESOURCE_TYPE_ROOT)" "${PACK_NAME:-kuberecipepack}" "${OUTPUT_FILE:-recipe-pack.bicep}"
+	@./.github/scripts/generate-recipe-pack.sh "$(RESOURCE_TYPE_ROOT)" "$(PACK_NAME)" "$(OUTPUT_FILE)"
 
 .PHONY: deploy-recipe-pack
 deploy-recipe-pack: ## Deploy a recipe pack using Bicep template and update environment (requires BICEP_FILE parameter)
