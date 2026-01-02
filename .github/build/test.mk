@@ -66,7 +66,7 @@ endif
 	@RESOURCE_GROUP=$${RESOURCE_GROUP:-default} ENVIRONMENT=$${ENVIRONMENT:-default} && \
 	RECIPE_PACK_ID="/planes/radius/local/resourcegroups/$$RESOURCE_GROUP/providers/Radius.Core/recipePacks/$(RECIPE_PACK_NAME)" && \
 	echo "==> Updating environment $$ENVIRONMENT with recipe pack ID: $$RECIPE_PACK_ID" && \
-	rad env update "$$ENVIRONMENT" --recipe-packs biceprecipepack --preview
+	rad env update "$$ENVIRONMENT" --recipe-packs $(RECIPE_PACK_NAME) --preview
 
 
 # .PHONY: test-recipe

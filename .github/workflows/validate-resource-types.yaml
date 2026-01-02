@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        recipe: [bicep] # terraform commented out
+        recipe: [bicep, terraform]
     permissions:
       contents: read
     env:
@@ -57,7 +57,7 @@ jobs:
         run: make create-radius-cluster
 
       - name: Generate Recipe Pack
-        run: make generate-recipe-pack PACK_NAME=kuberecipepack OUTPUT_FILE=recipe-pack.bicep
+        run: make generate-recipe-pack PACK_NAME=${{ matrix.recipe }}recipepack OUTPUT_FILE=recipe-pack.bicep
 
       - name: Show Recipe Pack Content
         run: cat recipe-pack.bicep
@@ -69,7 +69,7 @@ jobs:
         run: make build
 
       - name: Update Environment with Recipe Pack
-        run: make update-env-recipe-pack RECIPE_PACK_NAME=biceprecipepack ENVIRONMENT="${RAD_ENVIRONMENT_NAME}"
+        run: make update-env-recipe-pack RECIPE_PACK_NAME=${{ matrix.recipe }}recipepack ENVIRONMENT="${RAD_ENVIRONMENT_NAME}"
 
       - name: Test ${{ matrix.recipe }} recipes
         run: make test ENVIRONMENT="${RAD_ENVIRONMENT_NAME}" RECIPE_TYPE=${{ matrix.recipe }}
