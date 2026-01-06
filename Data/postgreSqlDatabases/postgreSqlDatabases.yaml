@@ -65,6 +65,9 @@ types:
               type: string
               enum: ['S', 'M', 'L']
               description: "(Optional) The size of the PostgreSQL database."
+            secretName:
+              type: string
+              description: "The name of the secret containing the database crdentials"
             database:
               type: string
               description: The name of the database.
@@ -76,13 +79,5 @@ types:
             port:
               type: string
               description: The port number used to connect to the database.
-              readOnly: true
-            username:
-              type: string
-              description: The username for connecting to the database.
-              readOnly: true
-            password:
-              type: string
-              description: The password for connecting to the database.
               readOnly: true
           required: [environment]
