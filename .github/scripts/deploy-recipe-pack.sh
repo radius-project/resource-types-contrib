@@ -79,8 +79,6 @@ rad "${DEPLOY_ARGS[@]}"
 
 echo "==> Recipe pack deployed successfully"
 
-rad env create default --preview
-rad env switch default --preview
 
 
 
