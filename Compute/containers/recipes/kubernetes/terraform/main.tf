@@ -75,11 +75,12 @@ locals {
       try(local.connection_definitions[conn_name].disableDefaultEnvVars, false) != true
     ? [
       # Add resource properties directly from connection (excluding metadata properties)
+      # Only include scalar values (strings, numbers, bools) - skip objects/lists
       for prop_name, prop_value in conn : {
         name  = upper("CONNECTION_${conn_name}_${prop_name}")
         value = tostring(prop_value)
       }
-      if !contains(local.excluded_properties, prop_name)
+      if !contains(local.excluded_properties, prop_name) && can(tostring(prop_value))
     ]
     : []
   ])
