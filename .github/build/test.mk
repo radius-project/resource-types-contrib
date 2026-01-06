@@ -68,14 +68,6 @@ endif
 	echo "==> Updating environment $$ENVIRONMENT with recipe pack ID: $$RECIPE_PACK_ID" && \
 	rad env update "$$ENVIRONMENT" --recipe-packs $(RECIPE_PACK_NAME) --preview
 
-
-# .PHONY: test-recipe
-# test-recipe: ## Test a single recipe (assumes already registered, requires RECIPE_PATH parameter)
-# ifndef RECIPE_PATH
-# 	$(error RECIPE_PATH parameter is required. Usage: make test-recipe RECIPE_PATH=<path-to-recipe-directory>)
-# endif
-# 	@./.github/scripts/test-recipe.sh "$(RECIPE_PATH)"
-
 .PHONY: test
 test: ## Run recipe tests (assumes already registered)
 	@./.github/scripts/test-all-recipes.sh "$(RESOURCE_TYPE_ROOT)" "$(ENVIRONMENT)" "$(RECIPE_TYPE)"

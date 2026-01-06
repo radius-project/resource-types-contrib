@@ -36,8 +36,6 @@ ensure_env_and_namespace_ready() {
     else
         echo "==> Environment not found. Initializing workspace and environment"
         bash "$SCRIPT_DIR/create-workspace.sh"
-        # Best-effort re-check; do not fail if preview flag is unsupported
-        rad env show "$ENVIRONMENT_PATH" -o json --preview || true
     fi
 
     # Ensure the test namespace exists before deploying
@@ -100,13 +98,8 @@ APP_NAME="testapp-$(date +%s)"
 
 # Ensure the target environment and namespace exist before deploying
 ensure_env_and_namespace_ready
-
-# Show environment details
-echo "==> Showing environment details"
-rad env show "$ENVIRONMENT_PATH" -o json --preview || true
  
 # Deploy the test app
-echo "going to deploy app: $APP_NAME"
 if rad deploy "$TEST_FILE" --application "$APP_NAME" -e "/planes/radius/local/resourceGroups/default/providers/Radius.Core/environments/default"; then
     echo "==> Test deployment successful"
     

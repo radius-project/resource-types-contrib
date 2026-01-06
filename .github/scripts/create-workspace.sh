@@ -19,7 +19,7 @@
 set -e
 
 # Script: Initialize Radius workspace and environment
-# This script creates the default group, workspace, and environment.
+# This script creates the default group, workspace, and environment
 
 echo "Initializing Radius workspace and environment..."
 rad group create default

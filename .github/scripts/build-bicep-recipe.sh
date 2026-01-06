@@ -82,7 +82,7 @@ sanitize_path() {
 # Check if the registry is accessible
 check_registry_connectivity() {
     local registry_host="${REGISTRY_BASE%%/*}"
-    local max_attempts=30
+    local max_attempts=3
     local attempt=1
     
     echo "Checking connectivity to registry: $registry_host"
@@ -108,7 +108,6 @@ publish_recipe() {
     local recipes_dir="$3"
     local recipe_name="$4"
 
-    # Check registry connectivity before attempting to publish
     if ! check_registry_connectivity; then
         exit 1
     fi
