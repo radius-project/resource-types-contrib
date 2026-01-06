@@ -41,10 +41,6 @@ cat > bicepconfig.json << 'EOF'
 }
 EOF
 
-echo "Current Radius Workspace and Environment, Before Recipe Pack Deployment:"
-rad workspace show -o json
-echo "----------------------------------------"
-
 if [[ -z "$BICEP_FILE" ]]; then
     echo "Error: Bicep file is required"
     echo "Usage: $0 <bicep-file> [resource-group] [subscription]"
@@ -55,10 +51,6 @@ if [[ ! -f "$BICEP_FILE" ]]; then
     echo "Error: Bicep file not found: $BICEP_FILE"
     exit 1
 fi
-
-# display conetnt of bicep file 
-echo "==> Recipe Pack Bicep file content:"
-cat "$BICEP_FILE"
 
 # Use rad deploy command with Bicep file
 DEPLOY_ARGS=("deploy" "$BICEP_FILE")
@@ -79,8 +71,8 @@ rad "${DEPLOY_ARGS[@]}"
 
 echo "==> Recipe pack deployed successfully"
 
-rad env create default --preview
-rad env switch default --preview
+# rad env create default --preview
+# rad env switch default --preview
 
 
 

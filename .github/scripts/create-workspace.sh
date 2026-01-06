@@ -25,7 +25,7 @@ echo "Initializing Radius workspace and environment..."
 rad group create default
 rad workspace create kubernetes default --group default --force
 rad group switch default
-rad env create default
-rad env switch default
+rad env create default --preview
+rad env switch default --preview
 echo "✅ environment initialization completed successfully"
 
