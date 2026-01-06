@@ -78,7 +78,7 @@ locals {
       # Only include scalar values (strings, numbers, bools) - skip objects/lists
       for prop_name, prop_value in conn : {
         name  = upper("CONNECTION_${conn_name}_${prop_name}")
-        value = contains(["object", "map", "list", "set", "tuple"], tostring(type(prop_value))) ? jsonencode(prop_value) : tostring(prop_value)
+        value = tostring(prop_value)
       }
       if !contains(local.excluded_properties, prop_name) && can(tostring(prop_value))
     ]
