@@ -10,7 +10,7 @@
 		"ghcr.io/jsburckhardt/devcontainer-features/k3d:1": {},
 		"ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
 			"minikube": "none",
-			"helm": "none",
+			"helm": "3.19.4",
 			"kubectl": "latest"
 		},
 		"ghcr.io/dhoeric/features/oras:1": {},
