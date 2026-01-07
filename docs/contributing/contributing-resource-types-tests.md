@@ -81,7 +81,7 @@ The dev container includes:
 - Radius CLI (latest version)
 - Azure CLI
 - Terraform
-- k3d (Kubernetes in Docker)
+- kind (Kubernetes in Docker)
 - kubectl
 - Bicep
 - All required VS Code extensions
@@ -114,7 +114,7 @@ If you encounter a "Connection refused" error on `localhost:5000` while building
 3. Keep this terminal running in the background
 4. In a new terminal, retry your build or test command
 
-This creates a port forward that allows the container to access the OCI registry running on your host machine. The registry is created when you run `make create-radius-cluster`, which uses the k3d option to set up a local registry at `localhost:5000`, which is accessible from within the cluster as `reciperegistry:5000`. See the script [`.github/scripts/create-cluster.sh`](../../.github/scripts/create-cluster.sh) for more details on how the `make create-radius-cluster` command sets up the registry.
+This creates a port forward that allows the container to access the OCI registry running on your host machine. The registry is created when you run `make create-radius-cluster`, which uses the kind option to set up a local registry at `localhost:5000`, which is accessible from within the cluster as `reciperegistry:5000`. See the script [`.github/scripts/create-cluster.sh`](../../.github/scripts/create-cluster.sh) for more details on how the `make create-radius-cluster` command sets up the registry.
 
 **Note**: You may need to run this `socat` command each time you start the dev container if the connection issue persists.
 

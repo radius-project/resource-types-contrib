@@ -30,11 +30,6 @@ if [[ -z "$AZURE_RESOURCE_GROUP" ]]; then
     exit 0
 fi
 
-if [[ "$AZURE_RESOURCE_GROUP" == "shruthikumar" ]]; then
-    echo "TODO REMOVE: Resource group '$AZURE_RESOURCE_GROUP' is marked for retention; skipping cleanup."
-    exit 0
-fi
-
 if ! command -v az >/dev/null 2>&1; then
     echo "Azure CLI not available; cannot delete resource group '$AZURE_RESOURCE_GROUP'." >&2
     exit 1

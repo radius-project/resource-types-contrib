@@ -38,10 +38,6 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    env:
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
     steps:
       - name: Checkout
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
@@ -70,6 +66,8 @@ jobs:
           echo "AZURE_ENVIRONMENT_NAME=default" >> "$GITHUB_ENV"
 
       - name: Create Azure Resource Group
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
           set -euo pipefail
           RG="${{ env.AZURE_RESOURCE_GROUP }}"
@@ -103,12 +101,17 @@ jobs:
         run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
 
       - name: Create Radius Cluster
-        run: make create-radius-cluster
         env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           TEST_AZURE_OIDC_JSON: ${{ secrets.TEST_AZURE_OIDC_JSON }}
+        run: make create-radius-cluster
 
       - name: Configure Azure Provider
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: make configure-azure-provider
 
       - name: Build Azure Recipes
