@@ -18,8 +18,8 @@
 
 # Environment Setup:
 #   make install-radius		     # Install Radius CLI
-#   make create-cluster		     # Create a local k3d Kubernetes cluster for testing
-#   make delete-cluster		     # Delete the local k3d Kubernetes cluster
+#   make create-cluster		     # Create a local kind Kubernetes cluster for testing
+#   make delete-cluster		     # Delete the local kind Kubernetes cluster
 
 RAD_VERSION ?=
 
@@ -29,23 +29,23 @@ install-radius-cli: ## Install the Radius CLI. Optionally specify a version numb
 	wget -q "https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh" -O - | /bin/bash $(if $(RAD_VERSION),-s $(RAD_VERSION))
 
 .PHONY: create-radius-cluster
-create-radius-cluster: ## Create a local k3d Kubernetes cluster with a default Radius workspace/group/environment.
-	@echo -e "$(ARROW) Creating local k3d cluster and installing Radius..."
+create-radius-cluster: ## Create a local kind Kubernetes cluster with a default Radius workspace/group/environment.
+	@echo -e "$(ARROW) Creating local kind cluster and installing Radius..."
 	@.github/scripts/create-cluster.sh
 	@.github/scripts/verify-ucp-readiness.sh
 	@echo -e "$(ARROW) Creating workspace and environment..."
 	@.github/scripts/create-workspace.sh
 
 .PHONY: clean
-clean: ## Delete the local k3d cluster, Radius config, Bicep extensions (*.tgz), and bicepconfig.json files
+clean: ## Delete the local kind cluster, Radius config, Bicep extensions (*.tgz), and bicepconfig.json files
 	@echo -e "$(ARROW) Deleting Radius config file at ~/.rad/config.yaml..."
 	@rm -f ~/.rad/config.yaml
 	@echo -e "$(ARROW) Deleting Bicep extension files (*.tgz)..."
 	@find . -name "*.tgz" -type f -delete
 	@echo -e "$(ARROW) Deleting bicepconfig.json files..."
 	@find . -name "bicepconfig.json" -type f -delete
-	@echo -e "$(ARROW) Deleting k3d cluster..."
-	@k3d cluster delete
+	@echo -e "$(ARROW) Deleting kind cluster..."
+	@kind delete cluster
 
 .PHONY: configure-azure-provider
 configure-azure-provider: ## Configure Radius Azure workspace, environment, credential, and deployment target (requires AZURE_* env vars)
