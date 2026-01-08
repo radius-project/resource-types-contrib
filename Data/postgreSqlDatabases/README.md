@@ -19,6 +19,7 @@ A list of available Recipes for this resource type, including links to the Bicep
 Properties for the **Radius.Data/postgreSqlDatabases** resource type are provided via the [Recipe Context](https://docs.radapp.io/reference/context-schema/) object. These properties include:
 
 - `context.properties.size`(string, optional): The size of the database. Defaults to `S` if not provided.
+- `context.resource.connections`: A connection to a Radius.Security/secret is required. The secret must have a username and password.
 
 ## Recipe Output Properties
 

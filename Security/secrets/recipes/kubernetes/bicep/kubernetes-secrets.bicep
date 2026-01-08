@@ -1,9 +1,44 @@
 extension kubernetes with {
-  namespace: context.runtime.kubernetes.namespace
+  namespace: namespace
   kubeConfig: ''
 } as kubernetes
 
+//////////////////////////////////////////
+// Common Radius variables
+//////////////////////////////////////////
+
 param context object
+
+var resourceName       = context.resource.name
+var namespace          = context.runtime.kubernetes.namespace
+var resourceProperties = context.resource.properties ?? {}
+
+// Extract last segment from environment path for labels
+var environmentId     = resourceProperties.?environment ?? ''
+var environmentParts  = environmentId != '' ? split(environmentId, '/') : []
+var environmentLabel  = length(environmentParts) > 0
+  ? environmentParts[length(environmentParts) - 1]
+  : ''
+
+// Extract resource group name
+// Index 4 is the resource group name
+var resourceGroupName = split(context.resource.id, '/')[4]
+
+// Application name (safe)
+var applicationName = context.application != null ? context.application.name : ''
+
+// Common labels 
+var labels = {
+  'radapp.io/resource':       resourceName
+  'radapp.io/application':    applicationName
+  'radapp.io/environment':    environmentLabel
+  'radapp.io/resource-type':  replace(context.resource.type, '/', '-')
+  'radapp.io/resource-group': resourceGroupName
+}
+
+//////////////////////////////////////////
+// Kubernetes Secret variables
+//////////////////////////////////////////
 
 // If secretKind is not set, set to 'generic'
 var secretKind = context.resource.properties.?kind ?? 'generic'
@@ -31,24 +66,28 @@ var stringData = reduce(items(secretData), {}, (acc, item) =>
 
 // Determine secret type based on kind
 var secretType = secretKind == 'certificate-pem' ? 'kubernetes.io/tls' : (secretKind == 'basicAuthentication' ? 'kubernetes.io/basic-auth' : 'Opaque')
-var secretName = length(missingFields) > 0 ? missingFields : context.resource.name
-    
+
+//////////////////////////////////////////
+// Kubernetes Secret resource
+//////////////////////////////////////////
+
 resource secret 'core/Secret@v1' = {
   metadata: {
-    name: secretName
-    namespace: context.runtime.kubernetes.namespace
-    labels: {
-      resource: context.resource.name
-      app: context.application == null ? '' : context.application.name
-    }
+    name: resourceName
+    namespace: namespace
+    labels: labels
   }
   type: secretType
   data: base64Data
   stringData: stringData
 }
 
+//////////////////////////////////////////
+// Output Radius result 
+//////////////////////////////////////////
+
 output result object = {
   resources: [
-    '/planes/kubernetes/local/namespaces/${context.runtime.kubernetes.namespace}/providers/core/Secret/${secretName}'
+    '/planes/kubernetes/local/namespaces/${context.runtime.kubernetes.namespace}/providers/core/Secret/${resourceName}'
   ]
 }
