@@ -52,14 +52,26 @@ jobs:
       - name: Install Radius CLI
         run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
 
+      # this setups a local k3d cluster for testing purposes, creates workspace, group and  env preview
       - name: Create Radius Cluster
         run: make create-radius-cluster
+      
+      # Generates the bicep definition for recipe pack in recipe-pack-{bicep|terraform}.bicep
+      - name: Generate Recipe Pack
+        run: make generate-recipe-pack PACK_NAME=${{ matrix.recipe }}recipepack OUTPUT_FILE=recipe-pack-${{ matrix.recipe }}.bicep
+
+      # Useful for debugging
+      # - name: Show Recipe Pack Content
+      #   run: cat recipe-pack-${{ matrix.recipe }}.bicep
+
+      - name: Deploy Recipe Pack
+        run: make deploy-recipe-pack BICEP_FILE=recipe-pack-${{ matrix.recipe }}.bicep
+
+      - name: Update Environment with Recipe Pack
+        run: make update-env-recipe-pack RECIPE_PACK_NAME=${{ matrix.recipe }}recipepack ENVIRONMENT="${RAD_ENVIRONMENT_NAME}"
 
       - name: Build
         run: make build
-
-      - name: Register ${{ matrix.recipe }} recipes
-        run: make register ENVIRONMENT="${RAD_ENVIRONMENT_NAME}" RECIPE_TYPE=${{ matrix.recipe }}
 
       - name: Test ${{ matrix.recipe }} recipes
         run: make test ENVIRONMENT="${RAD_ENVIRONMENT_NAME}" RECIPE_TYPE=${{ matrix.recipe }}

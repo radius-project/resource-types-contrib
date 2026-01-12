@@ -22,8 +22,9 @@ set -e
 
 echo "Creating bicepconfig.json with published extensions..."
 
-# Create base bicepconfig.json with required experimental features
-cat > bicepconfig.json << 'EOF'
+# Create base bicepconfig.json with required experimental features if it does not exist
+if [[ ! -f bicepconfig.json ]]; then
+  cat > bicepconfig.json << 'EOF'
 {
   "extensions": {
     "radius": "br:biceptypes.azurecr.io/radius:latest",
@@ -31,6 +32,9 @@ cat > bicepconfig.json << 'EOF'
   }
 }
 EOF
+else
+  echo "bicepconfig.json already exists; leaving base config untouched"
+fi
 
 # Find all published .tgz files and add them to bicepconfig.json (safe handling)
 tgz_files=()

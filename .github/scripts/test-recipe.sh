@@ -27,6 +27,20 @@
 set -euo pipefail
 
 RECIPE_PATH="${1:-}"
+ENVIRONMENT_PATH="${2:-/planes/radius/local/resourceGroups/default/providers/Radius.Core/environments/default}"
+
+ensure_namespace_ready() {
+    # Ensure the test namespace exists before deploying
+    if ! kubectl get namespace testapp >/dev/null 2>&1; then
+        kubectl create namespace testapp
+    fi
+
+    # Update the env with kubernetes provider
+    rad env update default --kubernetes-namespace testapp --preview
+
+    echo "==> Environment Updated with Kubernetes provider:"
+    rad env show "$ENVIRONMENT_PATH" -o json --preview || true
+}
 
 if [[ -z "$RECIPE_PATH" ]]; then
     echo "Error: Recipe path is required"
@@ -74,8 +88,11 @@ fi
 echo "==> Deploying test application from $TEST_FILE"
 APP_NAME="testapp-$(date +%s)"
 
+# Ensure the target namespace exist before deploying
+ensure_namespace_ready
+ 
 # Deploy the test app
-if rad deploy "$TEST_FILE" --application "$APP_NAME" --environment default; then
+if rad deploy "$TEST_FILE" --application "$APP_NAME" -e "/planes/radius/local/resourceGroups/default/providers/Radius.Core/environments/default"; then
     echo "==> Test deployment successful"
     
     # Cleanup: delete the app
