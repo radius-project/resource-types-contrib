@@ -28,7 +28,6 @@ set -euo pipefail
 
 RECIPE_PATH="${1:-}"
 ENVIRONMENT_PATH="${2:-/planes/radius/local/resourceGroups/default/providers/Radius.Core/environments/default}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 ensure_namespace_ready() {
     # Ensure the test namespace exists before deploying
