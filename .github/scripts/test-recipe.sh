@@ -27,7 +27,8 @@
 set -euo pipefail
 
 RECIPE_PATH="${1:-}"
-ENVIRONMENT_PATH="${2:-/planes/radius/local/resourceGroups/default/providers/Radius.Core/environments/default}"
+ENVIRONMENT_NAME_OVERRIDE="${2:-}"
+ENVIRONMENT_PATH=""
 
 ensure_namespace_ready() {
     # Ensure the test namespace exists before deploying
@@ -36,10 +37,31 @@ ensure_namespace_ready() {
     fi
 
     # Update the env with kubernetes provider
-    rad env update default --kubernetes-namespace testapp --preview
+    rad env update "$ENVIRONMENT_PATH" --kubernetes-namespace testapp --preview
 
     echo "==> Environment Updated with Kubernetes provider:"
     rad env show "$ENVIRONMENT_PATH" -o json --preview || true
+}
+
+ensure_workspace_context() {
+    # Ensure we are operating in the expected workspace context
+    rad workspace switch "$WORKSPACE_NAME" >/dev/null 2>&1 || true
+}
+
+resolve_environment_path() {
+    # Resolve the full environment resource ID to avoid hardcoding the provider path
+    if ! ENVIRONMENT_JSON=$(rad env show "$ENVIRONMENT_NAME" --workspace "$WORKSPACE_NAME" -o json --preview 2>/dev/null); then
+        echo "Error: Environment '$ENVIRONMENT_NAME' was not found in workspace '$WORKSPACE_NAME'."
+        exit 1
+    fi
+
+    ENVIRONMENT_PATH=$(echo "$ENVIRONMENT_JSON" | jq -r 'if type=="object" then (.id // "") elif type=="array" and length>0 then (.[0].id // "") else "" end')
+    if [[ -z "$ENVIRONMENT_PATH" ]]; then
+        echo "Error: Could not determine environment id from rad env show output."
+        echo "$ENVIRONMENT_JSON"
+        exit 1
+    fi
+    echo "==> Environment path: $ENVIRONMENT_PATH"
 }
 
 if [[ -z "$RECIPE_PATH" ]]; then
@@ -81,7 +103,7 @@ RESOURCE_TYPE="Radius.$CATEGORY/$RESOURCE_NAME"
 RECIPES_RELATIVE="${RECIPE_PATH#${RESOURCE_TYPE_PATH}/recipes/}"
 PLATFORM="${RECIPES_RELATIVE%%/*}"
 
-# Determine workspace and environment names based on platform
+# Determine workspace and environment names based on platform (with overrides)
 RADIUS_WORKSPACE_OVERRIDE="${RADIUS_WORKSPACE_OVERRIDE:-}"
 RADIUS_ENVIRONMENT_OVERRIDE="${RADIUS_ENVIRONMENT_OVERRIDE:-}"
 
@@ -118,55 +140,26 @@ if [[ -n "$RADIUS_WORKSPACE_OVERRIDE" ]]; then
     WORKSPACE_NAME="$RADIUS_WORKSPACE_OVERRIDE"
 fi
 
-# Normalize overrides (allow env vars to win)
 if [[ -n "$RADIUS_ENVIRONMENT_OVERRIDE" ]]; then
     ENVIRONMENT_NAME="$RADIUS_ENVIRONMENT_OVERRIDE"
+fi
+
+if [[ -n "$ENVIRONMENT_NAME_OVERRIDE" ]]; then
+    ENVIRONMENT_NAME="$ENVIRONMENT_NAME_OVERRIDE"
 fi
 
 echo "==> Resource type: $RESOURCE_TYPE"
 echo "==> Workspace: $WORKSPACE_NAME"
 echo "==> Environment: $ENVIRONMENT_NAME"
 
-# Determine template path based on recipe type
-RECIPE_NAME="default"
-
-if [[ "$RECIPE_TYPE" == "bicep" ]]; then
-    # For Bicep, use OCI registry path (match build-bicep-recipe.sh format)
-    # Path format: localhost:5000/radius-recipes/{category}/{resourcename}/{platform}/{language}/{recipe-filename}
-    # Find the .bicep file in the recipe directory
-    BICEP_FILE=$(ls "$RECIPE_PATH"/*.bicep 2>/dev/null | head -n 1)
-    RECIPE_FILENAME=$(basename "$BICEP_FILE" .bicep)
-
-    # Extract platform and language from path (e.g., recipes/kubernetes/bicep -> kubernetes/bicep)
-    RECIPES_SUBPATH="${RECIPE_PATH#*recipes/}"
-
-    # Build OCI path (use reciperegistry for in-cluster access)
-    CATEGORY_LOWER=$(echo "$CATEGORY" | tr '[:upper:]' '[:lower:]')
-    RESOURCE_LOWER=$(echo "$RESOURCE_NAME" | tr '[:upper:]' '[:lower:]')
-    TEMPLATE_PATH="reciperegistry:5000/radius-recipes/${CATEGORY_LOWER}/${RESOURCE_LOWER}/${RECIPES_SUBPATH}/${RECIPE_FILENAME}:latest"
-elif [[ "$RECIPE_TYPE" == "terraform" ]]; then
-    # For Terraform, use HTTP module server with format: resourcename-platform.zip
-    MODULE_NAME="${RESOURCE_NAME}-${PLATFORM}"
-    TEMPLATE_PATH="http://tf-module-server.radius-test-tf-module-server.svc.cluster.local/${MODULE_NAME}.zip"
-fi
-
-echo "==> Registering recipe: $RECIPE_NAME"
-rad recipe register "$RECIPE_NAME" \
-    --workspace "$WORKSPACE_NAME" \
-    --environment "$ENVIRONMENT_NAME" \
-    --resource-type "$RESOURCE_TYPE" \
-    --template-kind "$TEMPLATE_KIND" \
-    --template-path "$TEMPLATE_PATH" \
-    --plain-http
+ensure_workspace_context
+resolve_environment_path
+ENVIRONMENT_ARG="$ENVIRONMENT_PATH"
 
 # Check if test file exists
 TEST_FILE="$RESOURCE_TYPE_PATH/test/app.bicep"
 if [[ ! -f "$TEST_FILE" ]]; then
     echo "==> No test file found at $TEST_FILE, skipping deployment test"
-    rad recipe unregister "$RECIPE_NAME" \
-        --workspace "$WORKSPACE_NAME" \
-        --environment "$ENVIRONMENT_NAME" \
-        --resource-type "$RESOURCE_TYPE"
     exit 0
 fi
 
@@ -177,7 +170,7 @@ APP_NAME="testapp-$(date +%s)"
 ensure_namespace_ready
  
 # Deploy the test app
-if rad deploy "$TEST_FILE" --application "$APP_NAME" -e "/planes/radius/local/resourceGroups/default/providers/Radius.Core/environments/default"; then
+if rad deploy "$TEST_FILE" --application "$APP_NAME" -e "$ENVIRONMENT_PATH"; then
     echo "==> Test deployment successful"
     
     # Cleanup: delete the app
@@ -186,18 +179,7 @@ if rad deploy "$TEST_FILE" --application "$APP_NAME" -e "/planes/radius/local/re
 else
     echo "==> Test deployment failed"
     rad app delete "$APP_NAME" --yes 2>/dev/null || true
-    rad recipe unregister "$RECIPE_NAME" \
-        --workspace "$WORKSPACE_NAME" \
-        --environment "$ENVIRONMENT_NAME" \
-        --resource-type "$RESOURCE_TYPE"
     exit 1
 fi
-
-# Unregister the recipe
-echo "==> Unregistering recipe"
-rad recipe unregister "$RECIPE_NAME" \
-    --workspace "$WORKSPACE_NAME" \
-    --environment "$ENVIRONMENT_NAME" \
-    --resource-type "$RESOURCE_TYPE"
 
 echo "==> Test completed successfully"
