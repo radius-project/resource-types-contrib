@@ -59,7 +59,7 @@ PASSED_RECIPES=()
 # Test each recipe
 for recipe_dir in "${RECIPE_DIRS[@]}"; do
     # Convert to relative path for cleaner output
-    RELATIVE_PATH="${recipe_dir#$REPO_ROOT/}"
+    RELATIVE_PATH="${recipe_dir#$/}"
     echo ""
     echo "================================================"
     echo "Testing: $RELATIVE_PATH"

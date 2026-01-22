@@ -79,12 +79,38 @@ sanitize_path() {
     echo "${sanitized#/}"
 }
 
+# Check if the registry is accessible
+check_registry_connectivity() {
+    local registry_host="${REGISTRY_BASE%%/*}"
+    local max_attempts=3
+    local attempt=1
+    
+    echo "Checking connectivity to registry: $registry_host"
+    
+    while [ $attempt -le $max_attempts ]; do
+        if curl -sSf "http://$registry_host/v2/" > /dev/null 2>&1; then
+            echo "Registry is accessible"
+            return 0
+        fi
+        echo "Attempt $attempt/$max_attempts: Registry not ready, waiting 2 seconds..."
+        sleep 2
+        attempt=$((attempt + 1))
+    done
+    
+    echo "❌ Registry $registry_host is not accessible after $max_attempts attempts" >&2
+    return 1
+}
+
 # Publish the provided recipe file to the fixed local registry target.
 publish_recipe() {
     local recipe_file="$1"
     local resource_relpath="$2"
     local recipes_dir="$3"
     local recipe_name="$4"
+
+    if ! check_registry_connectivity; then
+        exit 1
+    fi
 
     local target_path="$REGISTRY_BASE"
     local sanitized_resource

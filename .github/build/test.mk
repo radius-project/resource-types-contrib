@@ -47,23 +47,26 @@ ifndef RECIPE_PATH
 endif
 	@./.github/scripts/build-terraform-recipe.sh "$(RECIPE_PATH)"
 
-.PHONY: register-recipe
-register-recipe: ## Register a single recipe (requires RECIPE_PATH parameter)
-ifndef RECIPE_PATH
-	$(error RECIPE_PATH parameter is required. Usage: make register-recipe RECIPE_PATH=<path-to-recipe-directory>)
-endif
-	@./.github/scripts/register-recipe.sh "$(RECIPE_PATH)"
+.PHONY: generate-recipe-pack
+generate-recipe-pack: ## Generate a recipe pack Bicep template from available recipes (set PACK_NAME and OUTPUT_FILE to override defaults)
+	@./.github/scripts/generate-recipe-pack.sh "$(RESOURCE_TYPE_ROOT)" "$(PACK_NAME)" "$(OUTPUT_FILE)"
 
-.PHONY: register
-register: ## Register built recipes (set ENVIRONMENT and/or RECIPE_TYPE to override defaults)
-	@./.github/scripts/register-all-recipes.sh "$(RESOURCE_TYPE_ROOT)" "$(ENVIRONMENT)" "$(RECIPE_TYPE)"
-
-.PHONY: test-recipe
-test-recipe: ## Test a single recipe (assumes already registered, requires RECIPE_PATH parameter)
-ifndef RECIPE_PATH
-	$(error RECIPE_PATH parameter is required. Usage: make test-recipe RECIPE_PATH=<path-to-recipe-directory>)
+.PHONY: deploy-recipe-pack
+deploy-recipe-pack: ## Deploy a recipe pack using Bicep template and update environment (requires BICEP_FILE parameter)
+ifndef BICEP_FILE
+	$(error BICEP_FILE parameter is required. Usage: make deploy-recipe-pack BICEP_FILE=<path-to-bicep-file>)
 endif
-	@./.github/scripts/test-recipe.sh "$(RECIPE_PATH)"
+	@./.github/scripts/deploy-recipe-pack.sh "$(BICEP_FILE)" "$(RESOURCE_GROUP)" "$(SUBSCRIPTION)"
+
+.PHONY: update-env-recipe-pack
+update-env-recipe-pack: ## Update environment with recipe pack ID (requires RECIPE_PACK_NAME and optionally RESOURCE_GROUP and ENVIRONMENT)
+ifndef RECIPE_PACK_NAME
+	$(error RECIPE_PACK_NAME parameter is required. Usage: make update-env-recipe-pack RECIPE_PACK_NAME=<pack-name>)
+endif
+	@RESOURCE_GROUP=$${RESOURCE_GROUP:-default} ENVIRONMENT=$${ENVIRONMENT:-default} && \
+	RECIPE_PACK_ID="/planes/radius/local/resourcegroups/$$RESOURCE_GROUP/providers/Radius.Core/recipePacks/$(RECIPE_PACK_NAME)" && \
+	echo "==> Updating environment $$ENVIRONMENT with recipe pack ID: $$RECIPE_PACK_ID" && \
+	rad env update "$$ENVIRONMENT" --recipe-packs $(RECIPE_PACK_NAME) --preview
 
 .PHONY: test
 test: ## Run recipe tests (assumes already registered)
