@@ -2,26 +2,42 @@ namespace: Radius.Data
 types:
   postgreSqlDatabases:  
     description: |
-      The Radius.Data/postgreSQLDatabases Resource Type deploys a PostgresSQL database. To deploy a new PostgresSQL database, add the postgreSQLDatabases resource to the application definition Bicep file.
-      
+      The Radius.Data/postgreSQLDatabases Resource Type deploys a PostgresSQL database. To deploy a new PostgresSQL database add the postgreSQLDatabases resource and the secret resource to the application definition Bicep file.
       ```
-      extension radius
-      param environment string 
-
-      resource database 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
-        name: 'database'
-        properties: {
-          application: myApplication.id
-          environment: environment
+        resource postgresql 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
+          name: 'postgresql'
+          properties: {
+            environment: environment
+            application: myapp.id
+            size: 'S'
+            secretName: dbSecret.name
+          }
         }
-      }
+
+        resource dbSecret 'Radius.Security/secrets@2025-08-01-preview' = {
+          name: 'dbsecret'
+          properties: {
+            environment: environment
+            application: myapp.id
+            data: {
+              username: {
+                value: 'admin'
+              }
+              password: {
+                value: password
+              }
+            }
+          }
+        }
       ```
+      
+      When deploying the application definition, specify the secret value as a command-line parameter. It is recommended to use a password generator such as `openssl` or equivalent. For example, `rad deploy app.bicep -p password=$(openssl rand -hex 16)`.
 
       To connect your container to the database, create a connection from the Container resource to the database as shown below. 
       ```
       resource myApplication 'Applications.Core/Applications@2023-10-01-preview' = { ... }
 
-      resource frontend 'Applications.Core/containers@2023-10-01-preview' = {
+      resource frontend 'Radius.Compute/containers@2025-08-01-preview' = {
         name: 'frontend'
         properties: {
           application: myApplication.id
@@ -43,13 +59,12 @@ types:
       }
       ```
 
-      The connection automatically injects environment variables into the container for all properties from the database. The environment variables are named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>`. In this example, the connection name is `mysqldb` so the environment variables will be:
+      The connection automatically injects environment variables into the container for all properties from the database. The environment variables are named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>`. In this example, the connection name is `postgresql` so the environment variables will be:
  
       - CONNECTION_POSTGRESQL_DATABASE
-      - CONNECTION_POSTGRESQL_USERNAME
-      - CONNECTION_POSTGRESQL_PASSWORD
       - CONNECTION_POSTGRESQL_HOST
       - CONNECTION_POSTGRESQL_PORT
+
     apiVersions:
       '2025-08-01-preview':
         schema: 
@@ -67,7 +82,7 @@ types:
               description: "(Optional) The size of the PostgreSQL database."
             secretName:
               type: string
-              description: "The name of the secret containing the database crdentials"
+              description: "(Required) The name of the secret containing the database crdentials"
             database:
               type: string
               description: The name of the database.
@@ -80,4 +95,4 @@ types:
               type: string
               description: The port number used to connect to the database.
               readOnly: true
-          required: [environment]
+          required: [environment,secretName]

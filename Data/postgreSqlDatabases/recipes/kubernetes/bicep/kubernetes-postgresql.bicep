@@ -17,7 +17,7 @@ param context object
 
 var resourceName = context.resource.name
 var namespace = context.runtime.kubernetes.namespace 
-var radiusSecretName = context.resource.properties.secretName
+var dbSecretName = context.resource.properties.secretName
 var database string = 'postgres_db'
 var tag string = '16-alpine'
 var port = 5432
@@ -76,7 +76,7 @@ resource postgresql 'apps/Deployment@v1' = {
                 name: 'POSTGRES_USER'
                 valueFrom: {
                   secretKeyRef: {
-                    name: radiusSecretName
+                    name: dbSecretName
                     key: 'username'
                   }
                 }
@@ -85,7 +85,7 @@ resource postgresql 'apps/Deployment@v1' = {
                 name: 'POSTGRES_PASSWORD'
                 valueFrom: {
                   secretKeyRef: {
-                    name: radiusSecretName
+                    name: dbSecretName
                     key: 'password'
                   }
                 }
