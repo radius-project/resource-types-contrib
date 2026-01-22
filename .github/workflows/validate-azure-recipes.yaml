@@ -117,8 +117,17 @@ jobs:
       - name: Build Azure Recipes
         run: make build-azure-recipes
 
-      - name: Register Azure ${{ matrix.recipe }} Recipes
-        run: RECIPE_PLATFORM_FILTER=azure make register ENVIRONMENT=${{ env.AZURE_ENVIRONMENT_NAME }} RECIPE_TYPE=${{ matrix.recipe }}
+      - name: Generate Azure Recipe Pack
+        run: RECIPE_PLATFORM_FILTER=azure make generate-recipe-pack PACK_NAME=azure${{ matrix.recipe }}recipepack OUTPUT_FILE=recipe-pack-azure-${{ matrix.recipe }}.bicep
+
+      - name: Deploy Azure Recipe Pack
+        env:
+          RESOURCE_GROUP: ${{ env.AZURE_RESOURCE_GROUP }}
+          SUBSCRIPTION: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: make deploy-recipe-pack BICEP_FILE=recipe-pack-azure-${{ matrix.recipe }}.bicep
+
+      - name: Update Azure Environment with Recipe Pack
+        run: make update-env-recipe-pack RECIPE_PACK_NAME=azure${{ matrix.recipe }}recipepack ENVIRONMENT=${{ env.AZURE_ENVIRONMENT_NAME }}
 
       - name: Test Azure ${{ matrix.recipe }} Recipes
         run: RECIPE_PLATFORM_FILTER=azure make test ENVIRONMENT=${{ env.AZURE_ENVIRONMENT_NAME }} RECIPE_TYPE=${{ matrix.recipe }}
