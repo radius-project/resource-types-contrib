@@ -27,10 +27,12 @@
 set -euo pipefail
 
 RECIPE_PATH="${1:-}"
+ENVIRONMENT_OVERRIDE="${2:-}"
+WORKSPACE_OVERRIDE="${3:-}"
 
 if [[ -z "$RECIPE_PATH" ]]; then
     echo "Error: Recipe path is required"
-    echo "Usage: $0 <path-to-recipe-directory>"
+    echo "Usage: $0 <path-to-recipe-directory> [environment] [workspace]"
     exit 1
 fi
 
@@ -63,7 +65,49 @@ CATEGORY=$(basename "$(dirname "$RESOURCE_TYPE_PATH")")
 RESOURCE_NAME=$(basename "$RESOURCE_TYPE_PATH")
 RESOURCE_TYPE="Radius.$CATEGORY/$RESOURCE_NAME"
 
+# Derive platform from recipe path (first segment after recipes/)
+RECIPES_RELATIVE="${RECIPE_PATH#${RESOURCE_TYPE_PATH}/recipes/}"
+PLATFORM="${RECIPES_RELATIVE%%/*}"
+
+# Determine workspace and environment names based on platform
+KUBERNETES_WORKSPACE_NAME="${KUBERNETES_WORKSPACE_NAME:-default}"
+KUBERNETES_ENVIRONMENT_NAME="${KUBERNETES_ENVIRONMENT_NAME:-default}"
+AZURE_WORKSPACE_NAME="${AZURE_WORKSPACE_NAME:-azure}"
+AZURE_ENVIRONMENT_NAME="${AZURE_ENVIRONMENT_NAME:-azure}"
+
+WORKSPACE_NAME="$KUBERNETES_WORKSPACE_NAME"
+ENVIRONMENT_NAME="$KUBERNETES_ENVIRONMENT_NAME"
+
+case "$PLATFORM" in
+    azure)
+        WORKSPACE_NAME="$AZURE_WORKSPACE_NAME"
+        ENVIRONMENT_NAME="$AZURE_ENVIRONMENT_NAME"
+        ;;
+    kubernetes)
+        WORKSPACE_NAME="$KUBERNETES_WORKSPACE_NAME"
+        ENVIRONMENT_NAME="$KUBERNETES_ENVIRONMENT_NAME"
+        ;;
+    "")
+        : # fall back to defaults
+        ;;
+    *)
+        : # other platforms default to Kubernetes values unless overridden
+        ;;
+esac
+
+if [[ -n "$ENVIRONMENT_OVERRIDE" ]]; then
+    ENVIRONMENT_NAME="$ENVIRONMENT_OVERRIDE"
+fi
+
+if [[ -n "$WORKSPACE_OVERRIDE" ]]; then
+    WORKSPACE_NAME="$WORKSPACE_OVERRIDE"
+elif [[ -n "$ENVIRONMENT_OVERRIDE" ]]; then
+    WORKSPACE_NAME="$ENVIRONMENT_OVERRIDE"
+fi
+
 echo "==> Resource type: $RESOURCE_TYPE"
+echo "==> Workspace: $WORKSPACE_NAME"
+echo "==> Environment: $ENVIRONMENT_NAME"
 
 # Determine template path based on recipe type
 if [[ "$RECIPE_TYPE" == "bicep" ]]; then
@@ -86,8 +130,8 @@ if [[ "$RECIPE_TYPE" == "bicep" ]]; then
 
 elif [[ "$RECIPE_TYPE" == "terraform" ]]; then
     # For Terraform, use HTTP module server with format: resourcename-platform.zip
-    PLATFORM=$(basename "$(dirname "$RECIPE_PATH")")
-    RECIPE_NAME="${RESOURCE_NAME}-${PLATFORM}"
+    MODULE_PLATFORM=$(basename "$(dirname "$RECIPE_PATH")")
+    RECIPE_NAME="${RESOURCE_NAME}-${MODULE_PLATFORM}"
     TEMPLATE_PATH="http://tf-module-server.radius-test-tf-module-server.svc.cluster.local/${RECIPE_NAME}.zip"
 fi
 
@@ -95,7 +139,8 @@ echo "==> Registering recipe: $RECIPE_NAME"
 echo "==> Template path: $TEMPLATE_PATH"
 
 rad recipe register default \
-    --environment default \
+    --workspace "$WORKSPACE_NAME" \
+    --environment "$ENVIRONMENT_NAME" \
     --resource-type "$RESOURCE_TYPE" \
     --template-kind "$TEMPLATE_KIND" \
     --template-path "$TEMPLATE_PATH" \
@@ -105,4 +150,4 @@ echo "==> Recipe registered successfully"
 
 # Log the registered recipe details
 echo "==> Verifying registration..."
-rad recipe show default --resource-type "$RESOURCE_TYPE" --environment default || echo "Warning: Could not verify recipe registration"
+rad recipe show default --resource-type "$RESOURCE_TYPE" --environment "$ENVIRONMENT_NAME" || echo "Warning: Could not verify recipe registration"
