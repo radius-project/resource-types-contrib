@@ -31,8 +31,9 @@
 set -euo pipefail
 
 ROOT_DIR="${1:-$(pwd)}"
-FILTER_TYPE="${2:-all}"
-FILTER_TYPE="$(echo "$FILTER_TYPE" | tr '[:upper:]' '[:lower:]')"
+RECIPE_TYPE_FILTER="${2:-all}"
+RECIPE_TYPE_FILTER="$(echo "$RECIPE_TYPE_FILTER" | tr '[:upper:]' '[:lower:]')"
+PLATFORM_FILTER_RAW="${RECIPE_PLATFORM_FILTER:-}"
 
 if [[ ! -d "$ROOT_DIR" ]]; then
     echo "Error: Root directory '$ROOT_DIR' does not exist" >&2
@@ -42,30 +43,96 @@ fi
 # Convert ROOT_DIR to an absolute path
 ROOT_DIR="$(cd "$ROOT_DIR" && pwd)"
 
-# Validate filter type
-case "$FILTER_TYPE" in
+# Validate recipe type filter
+case "$RECIPE_TYPE_FILTER" in
     all|bicep|terraform)
         ;;
     *)
-        echo "Error: Unsupported recipe type filter '$FILTER_TYPE'. Expected 'bicep', 'terraform', or 'all'." >&2
+        echo "Error: Unsupported recipe type filter '$RECIPE_TYPE_FILTER'. Expected 'bicep', 'terraform', or 'all'." >&2
         exit 1
         ;;
 esac
+
+# Parse optional platform filter (comma or space separated values)
+PLATFORM_FILTERS=()
+if [[ -n "$PLATFORM_FILTER_RAW" ]]; then
+    IFS=',' read -ra _raw_filters <<< "$PLATFORM_FILTER_RAW"
+    for _entry in "${_raw_filters[@]}"; do
+        _trimmed="$(printf '%s' "$_entry" | xargs)"
+        if [[ -n "$_trimmed" ]]; then
+            PLATFORM_FILTERS+=("$(echo "$_trimmed" | tr '[:upper:]' '[:lower:]')")
+        fi
+    done
+fi
+
+matches_platform() {
+    local platform_lower="$1"
+    if [[ ${#PLATFORM_FILTERS[@]} -eq 0 ]]; then
+        return 0
+    fi
+
+    for filter in "${PLATFORM_FILTERS[@]}"; do
+        if [[ "$platform_lower" == "$filter" ]]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+should_include_type() {
+    local recipe_type="$1"
+    case "$RECIPE_TYPE_FILTER" in
+        all)
+            return 0
+            ;;
+        bicep)
+            [[ "$recipe_type" == "bicep" ]]
+            return
+            ;;
+        terraform)
+            [[ "$recipe_type" == "terraform" ]]
+            return
+            ;;
+    esac
+}
+
+add_recipe_dir() {
+    local dir="$1"
+    local recipe_type="$2"
+
+    if ! should_include_type "$recipe_type"; then
+        return
+    fi
+
+    local platform=""
+    if [[ "$dir" =~ /recipes/([^/]+)/ ]]; then
+        platform="${BASH_REMATCH[1]}"
+    fi
+    local platform_lower
+    platform_lower="$(echo "$platform" | tr '[:upper:]' '[:lower:]')"
+
+    if ! matches_platform "$platform_lower"; then
+        return
+    fi
+
+    RECIPE_DIRS+=("$dir")
+}
 
 # Use a regular array and sort/uniq instead of associative array for bash 3.x compatibility
 RECIPE_DIRS=()
 
 # Find Bicep recipe directories (directories containing .bicep files under recipes/)
-if [[ "$FILTER_TYPE" == "all" || "$FILTER_TYPE" == "bicep" ]]; then
+if [[ "$RECIPE_TYPE_FILTER" == "all" || "$RECIPE_TYPE_FILTER" == "bicep" ]]; then
     while IFS= read -r -d '' matched_path; do
-        RECIPE_DIRS+=("$(dirname "$matched_path")")
+        add_recipe_dir "$(dirname "$matched_path")" "bicep"
     done < <(find "$ROOT_DIR" -type f -path "*/recipes/*/*.bicep" -print0 2>/dev/null)
 fi
 
 # Find Terraform recipe directories (directories containing main.tf under recipes/terraform)
-if [[ "$FILTER_TYPE" == "all" || "$FILTER_TYPE" == "terraform" ]]; then
+if [[ "$RECIPE_TYPE_FILTER" == "all" || "$RECIPE_TYPE_FILTER" == "terraform" ]]; then
     while IFS= read -r -d '' matched_path; do
-        RECIPE_DIRS+=("$(dirname "$matched_path")")
+        add_recipe_dir "$(dirname "$matched_path")" "terraform"
     done < <(find "$ROOT_DIR" -type f -path "*/recipes/*/terraform/main.tf" -print0 2>/dev/null)
 fi
 
