@@ -28,18 +28,13 @@ set -euo pipefail
 BICEP_FILE="${1:-}"
 RESOURCE_GROUP="${2:-}"
 SUBSCRIPTION="${3:-}"
-
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "Creating bicepconfig.json with published extensions..."
-# Create base bicepconfig.json with required experimental features
-cat > bicepconfig.json << 'EOF'
-{
-  "extensions": {
-    "radius": "br:biceptypes.azurecr.io/radius:latest",
-    "aws": "br:biceptypes.azurecr.io/aws:latest"
-  }
-}
-EOF
+# Ensure bicepconfig.json has the base extensions and all published resource-type extensions.
+# update-bicepconfig.sh creates the base config only if it doesn't already exist, then merges
+# in any *-extension.tgz files that were published during the build step.
+"$SCRIPT_DIR/update-bicepconfig.sh"
 
 if [[ -z "$BICEP_FILE" ]]; then
     echo "Error: Bicep file is required"

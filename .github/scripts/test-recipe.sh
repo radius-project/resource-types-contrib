@@ -37,10 +37,10 @@ ensure_namespace_ready() {
     fi
 
     # Update the env with kubernetes provider
-    rad env update "$ENVIRONMENT_PATH" --kubernetes-namespace testapp --preview
+    rad env update "$ENVIRONMENT_NAME" --kubernetes-namespace testapp --preview
 
     echo "==> Environment Updated with Kubernetes provider:"
-    rad env show "$ENVIRONMENT_PATH" -o json --preview || true
+    rad env show "$ENVIRONMENT_NAME" -o json --preview || true
 }
 
 ensure_workspace_context() {
@@ -154,7 +154,6 @@ echo "==> Environment: $ENVIRONMENT_NAME"
 
 ensure_workspace_context
 resolve_environment_path
-ENVIRONMENT_ARG="$ENVIRONMENT_PATH"
 
 # Check if test file exists
 TEST_FILE="$RESOURCE_TYPE_PATH/test/app.bicep"
@@ -170,7 +169,7 @@ APP_NAME="testapp-$(date +%s)"
 ensure_namespace_ready
  
 # Deploy the test app
-if rad deploy "$TEST_FILE" --application "$APP_NAME" -e "$ENVIRONMENT_PATH"; then
+if rad deploy "$TEST_FILE" --application "$APP_NAME" -e "$ENVIRONMENT_NAME"; then
     echo "==> Test deployment successful"
     
     # Cleanup: delete the app
