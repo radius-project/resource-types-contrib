@@ -71,7 +71,8 @@ fi
 printf "\033[34;1m=>\033[0m Updating environment '%s' with Azure provider settings\n" "$AZURE_ENVIRONMENT_NAME"
 rad env update "$AZURE_ENVIRONMENT_NAME" \
     --azure-subscription-id "$AZURE_SUBSCRIPTION_ID" \
-    --azure-resource-group "$AZURE_RESOURCE_GROUP"
+    --azure-resource-group "$AZURE_RESOURCE_GROUP" \
+    --preview
 
 printf "\033[34;1m=>\033[0m Registering Azure workload identity credential\n"
 rad credential register azure wi \
