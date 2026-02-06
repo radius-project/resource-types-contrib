@@ -2,28 +2,29 @@ namespace: Radius.Data
 types:
   postgreSqlDatabases:  
     description: |
-      The Radius.Data/postgreSQLDatabases Resource Type deploys a PostgresSQL database. To deploy a new PostgresSQL database add the postgreSQLDatabases resource and the secret resource to the application definition Bicep file.
+      The Radius.Data/postgreSqlDatabases Resource Type deploys a PostgreSQL database. To deploy a new PostgreSQL database add the postgreSqlDatabases resource and the secret resource to the application definition Bicep file.
       ```
-        resource postgresql 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
+      resource postgresql 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
           name: 'postgresql'
           properties: {
             environment: environment
-            application: myapp.id
+            application: myApplication.id
             size: 'S'
-            secretName: dbSecret.name
+            secretName: dbCredentials.name
           }
         }
 
-        resource dbSecret 'Radius.Security/secrets@2025-08-01-preview' = {
-          name: 'dbsecret'
+        resource dbCredentials 'Radius.Security/secrets@2025-08-01-preview' = {
+          name: 'db-creds'
           properties: {
             environment: environment
-            application: myapp.id
+            application: myApplication.id
             data: {
               username: {
                 value: 'admin'
               }
               password: {
+                // From password parameter passed in via CLI
                 value: password
               }
             }
@@ -82,7 +83,7 @@ types:
               description: "(Optional) The size of the PostgreSQL database."
             secretName:
               type: string
-              description: "(Required) The name of the secret containing the database crdentials"
+              description: "(Required) The name of the secret containing the database credentials."
             database:
               type: string
               description: The name of the database.
