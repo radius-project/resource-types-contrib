@@ -10,9 +10,15 @@ A list of available Recipes for this Resource Type, including links to the Bicep
 
 |Platform| IaC Language| Recipe Name | Stage |
 |---|---|---|---|
-| TODO | TODO | TODO | Alpha |
+| Kubernetes | Bicep | recipes/kubernetes/bicep/kubernetes-routes.bicep | Alpha |
+| Kubernetes | Terraform | recipes/kubernetes/terraform/main.tf | Alpha |
 
 ## Recipe Input Properties
+
+The Kubernetes Bicep and Terraform recipes require the following parameters to be provided by the user (no defaults are set). It is expected that the user will have their desired Gateway controller set up before using a Radius.Compute/routes resource. 
+
+- `gatewayName`: Name of the Gateway resource the routes attach to.
+- `gatewayNamespace`: Namespace where that Gateway exists.
 
 | Radius Property | Kubernetes Property |
 |---|---|
@@ -27,7 +33,7 @@ A list of available Recipes for this Resource Type, including links to the Bicep
 | context.properties.rules[].destinationContainer | N/A |
 | context.properties.rules[].destinationContainer.resourceId |  N/A |
 | context.properties.rules[].destinationContainer.containerName |  N/A |
-| context.properties.rules[].destinationContainer.containerPortName |  N/A |
+| context.properties.rules[].destinationContainer.containerPort |  N/A |
 
 ## Recipe Output Properties
 
