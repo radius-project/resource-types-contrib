@@ -172,6 +172,7 @@ The following guidelines should be followed when contributing new Resource Types
     - Properties that are required must be listed in the `required` block.
     - Properties that are set by the Recipe only after the resource is deployed must be marked as `readOnly: true`.
     - Have a `type`. Valid types are:`integer`, `string`, `object`, `enum`, and `array`.
+    - Properties that contain sensitive data such as passwords, tokens, or keys must be marked with `x-radius-sensitive: true`. This annotation can be applied to properties of type `string` or `object`. Radius will automatically encrypt these fields before database storage and redact them during deployment. Internally, when generating Bicep types, these properties of type `string` will map to `secureString`, and `object` map to `secureObject`.
     
 - Resource Types are made for developers and must be application-oriented. Avoid infrastructure-specific or platform-specific properties. Make sure the schema is simple and intuitive, avoiding unnecessary complexity.
 
