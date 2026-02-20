@@ -1,0 +1,65 @@
+# yaml-language-server: $schema=https://www.schemastore.org/github-workflow.json
+---
+name: Publish Bicep Recipes
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Release version to use as the image tag (e.g. 0.51.0). Defaults to 'latest' if not specified."
+        required: false
+        default: ""
+        type: string
+
+permissions: {}
+
+env:
+  REGISTRY: ghcr.io/radius-project/kube-recipes
+  TAG: ${{ inputs.release_version || 'latest' }}
+
+jobs:
+  publish-bicep-recipes:
+    name: Publish Bicep Recipes to GHCR
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: containers
+            path: Compute/containers/recipes/kubernetes/bicep/kubernetes-containers.bicep
+          - name: persistentvolumes
+            path: Compute/persistentVolumes/recipes/kubernetes/bicep/kubernetes-volumes.bicep
+          - name: routes
+            path: Compute/routes/recipes/kubernetes/bicep/kubernetes-routes.bicep
+          - name: secrets
+            path: Security/secrets/recipes/kubernetes/bicep/kubernetes-secrets.bicep
+          - name: mysqldatabases
+            path: Data/mySqlDatabases/recipes/kubernetes/bicep/kubernetes-mysql.bicep
+          - name: postgresqldatabases
+            path: Data/postgreSqlDatabases/recipes/kubernetes/bicep/kubernetes-postgresql.bicep
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Log in to GHCR
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Radius CLI
+        run: |
+          wget -q "https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh" -O - | /bin/bash
+
+      - name: Publish ${{ matrix.name }} recipe
+        run: |
+          echo "Publishing ${{ matrix.name }} recipe to ${{ env.REGISTRY }}/${{ matrix.name }}:${{ env.TAG }}"
+          rad bicep publish \
+            --file ${{ matrix.path }} \
+            --target "br:${{ env.REGISTRY }}/${{ matrix.name }}:${{ env.TAG }}"
