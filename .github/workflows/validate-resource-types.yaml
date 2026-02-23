@@ -5,8 +5,18 @@ name: Validate Resource Types
 on:
   push:
     branches: [main]
+    paths:
+      - '**/kubernetes/**'
+      - '**/test/app.bicep'
+      - '**/*.yaml'
+      - '.github/workflows/validate-resource-types.yaml'
   pull_request:
     branches: [main]
+    paths:
+      - '**/kubernetes/**'
+      - '**/test/app.bicep'
+      - '**/*.yaml'
+      - '.github/workflows/validate-resource-types.yaml'
   workflow_dispatch:
     inputs:
       version:
@@ -21,7 +31,7 @@ jobs:
   validate-resource-types:
     name: Validate Resource Types and Recipes
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -39,13 +49,9 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
-          node-version: 16
-
-      - name: Set up k3d
-        run: wget -q -O - https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
-
+          node-version: 22
       - name: Set up ORAS
-        uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
+        uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.0
         with:
           version: "1.2.0"
 
@@ -55,10 +61,13 @@ jobs:
       # this setups a local k3d cluster for testing purposes, creates workspace, group and  env preview
       - name: Create Radius Cluster
         run: make create-radius-cluster
+
+      - name: Build Recipes
+        run: RECIPE_PLATFORM_FILTER=kubernetes make build
       
       # Generates the bicep definition for recipe pack in recipe-pack-{bicep|terraform}.bicep
       - name: Generate Recipe Pack
-        run: make generate-recipe-pack PACK_NAME=${{ matrix.recipe }}recipepack OUTPUT_FILE=recipe-pack-${{ matrix.recipe }}.bicep
+        run: RECIPE_PLATFORM_FILTER=kubernetes make generate-recipe-pack PACK_NAME=${{ matrix.recipe }}recipepack OUTPUT_FILE=recipe-pack-${{ matrix.recipe }}.bicep
 
       # Useful for debugging
       # - name: Show Recipe Pack Content
@@ -69,9 +78,5 @@ jobs:
 
       - name: Update Environment with Recipe Pack
         run: make update-env-recipe-pack RECIPE_PACK_NAME=${{ matrix.recipe }}recipepack ENVIRONMENT="${RAD_ENVIRONMENT_NAME}"
-
-      - name: Build
-        run: make build
-
       - name: Test ${{ matrix.recipe }} recipes
-        run: make test ENVIRONMENT="${RAD_ENVIRONMENT_NAME}" RECIPE_TYPE=${{ matrix.recipe }}
+        run: RECIPE_PLATFORM_FILTER=kubernetes make test ENVIRONMENT=$RAD_ENVIRONMENT_NAME RECIPE_TYPE=${{ matrix.recipe }}

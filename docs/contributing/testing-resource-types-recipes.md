@@ -6,8 +6,7 @@ This guide explains how to test Resource Types and Recipes locally using the sta
 
 Before testing, ensure you have:
 
-- Docker installed (for running k3d)
-- `k3d` installed
+- Docker installed (for running kind)
 - `kubectl` installed
 - `helm` installed
 - `oras` installed
@@ -23,7 +22,7 @@ Create a local Kubernetes cluster with Radius (and Dapr) installed:
 # Install Radius CLI (optional: specify version with RAD_VERSION=0.48.0)
 make install-radius-cli
 
-# Create k3d cluster with Radius and Dapr configured
+# Create kind cluster with Radius configured
 make create-radius-cluster
 ```
 
@@ -257,7 +256,7 @@ make test-recipe RECIPE_PATH=Security/secrets/recipes/kubernetes/bicep
 ```bash
 # Environment setup
 make install-radius-cli          # Install Radius CLI
-make create-radius-cluster       # Create k3d cluster with Radius
+make create-radius-cluster       # Create kind cluster with Radius
 make delete-radius-cluster       # Delete test cluster
 
 # Build commands
@@ -322,3 +321,202 @@ Ensure the recipe is built before testing:
 - **Alpha**: Manual testing using `make test-recipe` is sufficient
 - **Beta**: Automated testing with `test/app.bicep` files required for all recipes
 - **Stable**: Full CI/CD integration (see [Contributing Tests](contributing-resource-types-tests.md))
+
+## Testing Azure Recipes
+
+Azure recipes require additional setup since they deploy resources to Azure.
+
+### Prerequisites for Azure Recipes
+
+Before testing Azure recipes, ensure you have:
+
+- Azure CLI installed and authenticated (`az login`)
+- An Azure subscription with appropriate permissions (Contributor role recommended)
+- A service principal for Radius to use when deploying Azure resources
+
+### Local Testing
+
+#### 1. Create a Service Principal
+
+Radius needs a service principal to deploy Azure resources. Create one with the Azure CLI:
+
+```bash
+az ad sp create-for-rbac --name "radius-test-sp" --role Contributor --scopes /subscriptions/<your-subscription-id>
+```
+
+This outputs credentials you'll need:
+```json
+{
+  "appId": "<client-id>",
+  "displayName": "radius-test-sp",
+  "password": "<client-secret>",
+  "tenant": "<tenant-id>"
+}
+```
+
+#### 2. Set Up Azure Environment Variables
+
+Export the required environment variables for Azure authentication and resource configuration:
+
+```bash
+# Azure authentication (from service principal output)
+export AZURE_CLIENT_ID="<appId from above>"
+export AZURE_CLIENT_SECRET="<password from above>"
+export AZURE_TENANT_ID="<tenant from above>"
+export AZURE_SUBSCRIPTION_ID="<your-subscription-id>"
+
+# Azure resource configuration
+export AZURE_LOCATION="westus3"  # or your preferred region
+export AZURE_RESOURCE_GROUP="rrttest-local"  # unique name for testing
+```
+
+#### 3. Create an Azure Resource Group
+
+```bash
+az group create \
+  --name "$AZURE_RESOURCE_GROUP" \
+  --location "$AZURE_LOCATION" \
+  --subscription "$AZURE_SUBSCRIPTION_ID"
+```
+
+#### 4. Create a Radius Cluster with Azure Provider
+
+Azure recipes use **Azure Workload Identity** for authentication, which requires OIDC configuration. When `AZURE_TENANT_ID` is set, the cluster setup script automatically configures the KinD cluster with OIDC support and installs the Azure Workload Identity webhook.
+
+Follow the [Azure Workload Identity documentation for self-managed clusters](https://azure.github.io/azure-workload-identity/docs/installation/self-managed-clusters.html) to set up OIDC.
+
+Once OIDC is configured, set the `TEST_AZURE_OIDC_JSON` environment variable with your OIDC configuration:
+
+```bash
+export TEST_AZURE_OIDC_JSON='{
+  "AZURE_OIDC_ISSUER": "https://your-oidc-issuer-url",
+  "AZURE_OIDC_ISSUER_PUBLIC_KEY": "<base64-encoded-public-key>",
+  "AZURE_OIDC_ISSUER_PRIVATE_KEY": "<base64-encoded-private-key>"
+}'
+```
+
+**Create the cluster:**
+
+```bash
+# Install Radius CLI
+make install-radius-cli
+
+# Create kind cluster with OIDC support and Radius installed
+# AZURE_TENANT_ID triggers OIDC/Workload Identity setup
+make create-radius-cluster
+
+# Configure the Azure cloud provider in Radius
+make configure-azure-provider
+```
+
+#### 5. Build and Test Azure Recipes
+
+```bash
+# Build all Azure recipes
+make build-azure-recipes
+
+# Register Azure Bicep recipes
+RECIPE_PLATFORM_FILTER=azure make register ENVIRONMENT=default RECIPE_TYPE=bicep
+
+# Test Azure Bicep recipes
+RECIPE_PLATFORM_FILTER=azure make test ENVIRONMENT=default RECIPE_TYPE=bicep
+
+# Register Azure Terraform recipes
+RECIPE_PLATFORM_FILTER=azure make register ENVIRONMENT=default RECIPE_TYPE=terraform
+
+# Test Azure Terraform recipes
+RECIPE_PLATFORM_FILTER=azure make test ENVIRONMENT=default RECIPE_TYPE=terraform
+```
+
+#### 6. Cleanup
+
+```bash
+# Clean up Azure resources created by recipes
+make cleanup-azure-resources
+
+# Delete the resource group
+az group delete --name "$AZURE_RESOURCE_GROUP" --yes --no-wait
+
+# Delete the local Kubernetes cluster
+make delete-radius-cluster
+```
+
+### Required Environment Variables Reference
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `AZURE_CLIENT_ID` | Service principal application (client) ID | `12345678-1234-1234-1234-123456789012` |
+| `AZURE_CLIENT_SECRET` | Service principal password/secret | `your-secret-value` |
+| `AZURE_TENANT_ID` | Azure AD tenant ID | `12345678-1234-1234-1234-123456789012` |
+| `AZURE_SUBSCRIPTION_ID` | Azure subscription ID | `12345678-1234-1234-1234-123456789012` |
+| `AZURE_LOCATION` | Azure region for resources | `westus3`, `eastus`, `westeurope` |
+| `AZURE_RESOURCE_GROUP` | Resource group name for test resources | `rrttest-local` |
+
+### Azure Recipe Directory Structure
+
+Azure recipes should follow this structure:
+
+```
+Data/mySqlDatabases/
+├── mySqlDatabases.yaml
+├── README.md
+├── recipes/
+│   ├── azure/
+│   │   ├── bicep/
+│   │   │   └── azure-mysql.bicep
+│   │   └── terraform/
+│   │       ├── main.tf
+│   │       └── var.tf
+│   └── kubernetes/
+│       └── ...
+└── test/
+    └── app.bicep
+```
+
+### Troubleshooting Azure Recipe Tests
+
+#### "ResourceGroupNotFound" Error
+
+Ensure the resource group exists before running tests:
+```bash
+az group show --name "$AZURE_RESOURCE_GROUP"
+```
+
+If it doesn't exist, create it:
+```bash
+az group create --name "$AZURE_RESOURCE_GROUP" --location "$AZURE_LOCATION"
+```
+
+#### Azure Authentication Fails
+
+Verify your environment variables are set correctly:
+```bash
+echo "Client ID: $AZURE_CLIENT_ID"
+echo "Tenant ID: $AZURE_TENANT_ID"
+echo "Subscription ID: $AZURE_SUBSCRIPTION_ID"
+```
+
+Test authentication with the Azure CLI:
+```bash
+az login --service-principal \
+  --username "$AZURE_CLIENT_ID" \
+  --password "$AZURE_CLIENT_SECRET" \
+  --tenant "$AZURE_TENANT_ID"
+```
+
+#### Service Principal Permission Issues
+
+Ensure your service principal has `Contributor` role on the subscription or resource group:
+```bash
+az role assignment create \
+  --assignee "$AZURE_CLIENT_ID" \
+  --role Contributor \
+  --scope "/subscriptions/$AZURE_SUBSCRIPTION_ID"
+```
+
+#### Recipe Deployment Timeout
+
+Azure resource provisioning can take longer than Kubernetes. If deployments time out:
+- Check the Azure portal for deployment status
+- Review Radius pod logs 
+- Some Azure resources (e.g., databases) may take 10-20 minutes to provision
