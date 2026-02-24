@@ -180,7 +180,9 @@ The following guidelines should be followed when contributing new Resource Types
 Each Resource Type has two types of documentation written specifically for developers, and separately, for platform engineers.
 
 ### Developers
-Developer documentation is embedded in the Resource Type definition. Each Resource Type definition must have documentation on how and when to use the resource in the top-level description property. Each property must also include:
+Developer documentation is embedded in the Resource Type definition. Each Resource Type definition must have documentation on how and when to use the resource in the top-level description property. When writing developer documentation, use Markdown. This is especially important for code blocks which must be quoted using triple backquotes. Output from `rad resource-type show` is shown in text only, but the Radius Dashboard formats the Markdown property including the ability to single-click copy code blocks.
+
+Each property must also include:
  - The overall description of the property including example values.
  - Whether the property is required or optional.
 
@@ -516,3 +518,64 @@ output "result" {
 - Provide outputs required to connect to the resource provisioned by the Recipe.
 - Use core Radius Resource Types like `containers`, `gateway` and `secrets` where applicable to ensure consistency and reusability.
 - Use comments to explain complex logic or important decisions in your Recipe code.
+
+## Testing Your Contribution
+
+After creating your Resource Type and Recipes, test them locally using the provided `make` commands.
+
+### Quick Testing Workflow
+
+1. **Set up your environment** (one-time setup):
+   ```bash
+   make install-radius-cli
+   make create-radius-cluster
+   ```
+
+2. **Build your Resource Type**:
+   ```bash
+   make build-resource-type TYPE_FOLDER=Data/redisCaches
+   ```
+
+3. **Build your recipes**:
+   ```bash
+   # For Bicep recipes
+   make build-bicep-recipe RECIPE_PATH=Data/redisCaches/recipes/kubernetes/bicep
+   
+   # For Terraform recipes
+   make build-terraform-recipe RECIPE_PATH=Data/redisCaches/recipes/kubernetes/terraform
+   ```
+
+4. **Register your recipes** (required before testing):
+  ```bash
+  # Register Bicep recipes you've built
+  make register RECIPE_TYPE=bicep
+
+  # Register Terraform recipes in a separate environment or after cleanup
+  make register RECIPE_TYPE=terraform ENVIRONMENT=my-terraform-env
+  ```
+
+  If you rely on a single Radius environment, run the register → test flow for one IaC format, clean up (or switch environments), and only then repeat for the other format so the two template kinds do not overwrite each other's registrations.
+
+5. **Test individual recipes**:
+   ```bash
+   make test-recipe RECIPE_PATH=Data/redisCaches/recipes/kubernetes/bicep
+   ```
+
+6. **Test all recipes** (if you have multiple):
+  ```bash
+  make test
+  ```
+
+  To scope testing to a specific implementation, set `RECIPE_TYPE` to `bicep` or `terraform` (and optionally override the Radius environment with `ENVIRONMENT`):
+  ```bash
+  make test RECIPE_TYPE=bicep
+  make test RECIPE_TYPE=terraform ENVIRONMENT=my-terraform-env
+  ```
+
+  Remember that `make test` assumes recipes are already registered. To validate both Bicep and Terraform recipes for the same resource type, run those register/test cycles sequentially or in distinct environments to avoid template registration conflicts.
+
+For detailed testing instructions, see [Testing Resource Types and Recipes](testing-resource-types-recipes.md).
+
+## Integration with CI/CD Testing for Stable Resource Types
+
+For resource types categorized in the "Stable" maturity level, automated test coverage is required in the repository's CI/CD pipeline. The contribution guide with the steps to follow to update the automated tests can be found in [Contributing Tests for Stable Resource Types](contributing-resource-types-tests.md)

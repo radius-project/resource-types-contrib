@@ -1,6 +1,8 @@
 {
   "recommendations": [
     "davidanson.vscode-markdownlint",
+    "github.copilot",
+		"github.copilot-chat",
     "github.vscode-pull-request-github",
     "github.vscode-github-actions",
     "hashicorp.terraform",
