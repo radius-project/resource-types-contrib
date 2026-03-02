@@ -1,4 +1,4 @@
-# Radius.Data/mySqlDatabases
+# Radius.Data/postgreSqlDatabases
 
 ## Overview
 
