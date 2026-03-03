@@ -53,7 +53,7 @@ types:
           }
           connections: {
             postgresql: {
-              source: database.id
+              source: postgresql.id
             }
           }
         }
