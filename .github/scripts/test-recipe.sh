@@ -91,17 +91,17 @@ APP_NAME="testapp-$(date +%s)"
 # Ensure the target namespace exist before deploying
 ensure_namespace_ready
 
-# Build extra parameters if the test template requires them
+# Build parameters if the test template requires them
 # Detect @secure() param password by scanning the Bicep file
-EXTRA_PARAMS=""
+PARAMS=""
 if grep -q 'param password' "$TEST_FILE" 2>/dev/null; then
     GENERATED_PASSWORD=$(openssl rand -hex 16 2>/dev/null || echo "testpassword$(date +%s)")
-    EXTRA_PARAMS="--parameters password=${GENERATED_PASSWORD}"
+    PARAMS="--parameters password=${GENERATED_PASSWORD}"
     echo "==> Detected 'password' parameter in test template, auto-generating value"
 fi
 
 # Deploy the test app
-if rad deploy "$TEST_FILE" --application "$APP_NAME" -e "/planes/radius/local/resourceGroups/default/providers/Radius.Core/environments/default" $EXTRA_PARAMS; then
+if rad deploy "$TEST_FILE" --application "$APP_NAME" -e "/planes/radius/local/resourceGroups/default/providers/Radius.Core/environments/default" $PARAMS; then
     echo "==> Test deployment successful"
     
     # Cleanup: delete the app
