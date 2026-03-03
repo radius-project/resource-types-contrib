@@ -107,9 +107,21 @@ if rad deploy "$TEST_FILE" --application "$APP_NAME" -e "/planes/radius/local/re
     # Cleanup: delete the app
     echo "==> Cleaning up test application"
     rad app delete "$APP_NAME" --yes
+
+    # Clean up any leftover K8s resources in the test namespace to avoid conflicts
+    # with subsequent tests (e.g., secrets created by Bicep recipes that persist after app deletion)
+    echo "==> Cleaning up leftover K8s resources in testapp namespace"
+    kubectl delete secrets --all -n testapp 2>/dev/null || true
+    kubectl delete deployments --all -n testapp 2>/dev/null || true
+    kubectl delete services --all -n testapp 2>/dev/null || true
 else
     echo "==> Test deployment failed"
     rad app delete "$APP_NAME" --yes 2>/dev/null || true
+
+    # Clean up leftover K8s resources even on failure
+    kubectl delete secrets --all -n testapp 2>/dev/null || true
+    kubectl delete deployments --all -n testapp 2>/dev/null || true
+    kubectl delete services --all -n testapp 2>/dev/null || true
     exit 1
 fi
 
