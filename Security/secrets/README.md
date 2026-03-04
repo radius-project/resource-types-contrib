@@ -20,7 +20,7 @@ Properties for the Secrets resource are provided to the recipe via the [Recipe C
 - `context.properties.kind` (string, optional): The kind of content of the Secret. This optional property allows the developer to specify what kind of data is stored in the Secret. When not specified, Recipes should assume `generic`. Recipes may store Secrets as key-value pairs or use secret store-specific features to store as other types. For example, certificates may be stored as Kubernetes secrets of type `tls`. 
 
 - `context.properties.data` (object, required): A map of secret names to objects containing values and optional encoding. Each key in the `data` object maps to an object with:
-  - `value` (string, required): The secret value.
+  - `value` (string, required): The secret value. This field is annotated with `x-radius-sensitive`, which means Radius will encrypt it before database storage and redact it during deployment.
   - `encoding` (string, optional): Content encoding of the value. Recipes should assume `string` unless `base64` is specified.
 
 
