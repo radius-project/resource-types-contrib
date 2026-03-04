@@ -56,10 +56,10 @@ resource dbSecret 'Radius.Security/secrets@2025-08-01-preview' = {
     environment: environment
     application: myapp.id
     data: {
-      username: {
+      USERNAME: {
         value: 'admin'
       }
-      password: {
+      PASSWORD: {
         value: password
       }
     }

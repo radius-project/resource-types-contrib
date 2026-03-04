@@ -80,14 +80,13 @@ types:
             size:
               type: string
               enum: ['S', 'M', 'L']
-              description: "(Optional) The size of the PostgreSQL database."
+              description: "(Optional) The size of the PostgreSQL database. Defaults to `S` if not provided"
             secretName:
               type: string
               description: "(Required) The name of the secret containing the database credentials."
             database:
               type: string
-              description: The name of the database.
-              readOnly: true
+              description: "(Optional) The name of the database. Defaults to `postgres_db` if not provided"
             host:
               type: string
               description: The host name used to connect to the database.
