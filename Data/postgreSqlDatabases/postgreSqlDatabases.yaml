@@ -2,7 +2,7 @@ namespace: Radius.Data
 types:
   postgreSqlDatabases:  
     description: |
-      The Radius.Data/postgreSqlDatabases Resource Type deploys a PostgreSQL database. To deploy a new PostgreSQL database add the postgreSqlDatabases resource and the secret resource to the application definition Bicep file.
+      The Radius.Data/postgreSqlDatabases Resource Type deploys a PostgreSQL database. To deploy a PostgreSQL database, first add a secret resource with the database credentials to the application definition Bicep file, then add a postgreSqlDatabases resource referencing the secret name.
       ```
       resource postgresql 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
           name: 'postgresql'
@@ -32,7 +32,7 @@ types:
         }
       ```
       
-      When deploying the application definition, specify the secret value as a command-line parameter. It is recommended to use a password generator such as `openssl` or equivalent. For example, `rad deploy app.bicep -p password=$(openssl rand -hex 16)`.
+      When deploying the application definition, provide the database password value as a parameter. It is recommended to use a password generator such as `openssl` or equivalent. For example, `rad deploy app.bicep -p password=$(openssl rand -hex 16)`.
 
       To connect your container to the database, create a connection from the Container resource to the database as shown below. 
       ```
@@ -80,13 +80,13 @@ types:
             size:
               type: string
               enum: ['S', 'M', 'L']
-              description: "(Optional) The size of the PostgreSQL database. Defaults to `S` if not provided"
+              description: "(Optional) The size of the PostgreSQL database. Defaults to `S` if not provided."
             secretName:
               type: string
               description: "(Required) The name of the secret containing the database credentials."
             database:
               type: string
-              description: "(Optional) The name of the database. Defaults to `postgres_db` if not provided"
+              description: "(Optional) The name of the database. Defaults to `postgres_db` if not provided."
             host:
               type: string
               description: The host name used to connect to the database.
