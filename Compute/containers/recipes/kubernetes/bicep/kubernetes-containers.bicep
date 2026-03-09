@@ -47,30 +47,60 @@ var isSecretsResource = reduce(items(connectionDefinitions), {}, (acc, conn) => 
   '${conn.key}': contains(string(conn.value.?source ?? ''), 'Radius.Security/secrets')
 }))
 
-// Secrets connections to inject via envFrom.secretRef
-// The K8s secret name is the Radius resource name (last segment of the source ID)
+// When a connection is to Radius.Security/secrets. The K8s secret name is the Radius resource name (last segment of the source ID) or a surfaced secretName property on the connection
 var secretsEnvFrom = reduce(items(resourceConnections), [], (acc, conn) => 
-  isSecretsResource[conn.key] && connectionDefinitions[conn.key].?disableDefaultEnvVars != true
-    ? concat(acc, [{
-        prefix: toUpper('CONNECTION_${conn.key}_')
-        secretRef: {
-          // Extract the secret name from the connection source (last segment of the resource ID)
-          name: last(split(string(connectionDefinitions[conn.key].source), '/'))
-        }
-      }])
-    : acc
+  connectionDefinitions[conn.key].?disableDefaultEnvVars == true
+    ? acc
+    : isSecretsResource[conn.key]
+      ? concat(acc, [{
+          prefix: toUpper('CONNECTION_${conn.key}_')
+          secretRef: {
+            // Extract the secret name from the connection source (last segment of the resource ID)
+            name: last(split(string(connectionDefinitions[conn.key].source), '/'))
+          }
+        }])
+      : acc
 )
 
-// Build environment variables from non-secrets connections when not explicitly disabled via disableDefaultEnvVars
-// Secrets connections use envFrom.secretRef instead for cleaner injection
-// Each connection's resource properties become CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>
+// When a connection has a secretName property, inject all secret keys via envFrom.secretRef
+var secretNameEnvFrom = reduce(items(resourceConnections), [], (acc, conn) => 
+  connectionDefinitions[conn.key].?disableDefaultEnvVars == true
+    ? acc
+    : contains(conn.value ?? {}, 'secretName')
+      ? concat(acc, [{
+          prefix: toUpper('CONNECTION_${conn.key}_')
+          secretRef: {
+            name: string(conn.value.secretName)
+          }
+        }])
+      : contains(conn.value.?properties ?? {}, 'secretName')
+        ? concat(acc, [{
+            prefix: toUpper('CONNECTION_${conn.key}_')
+            secretRef: {
+              name: string(conn.value.properties.secretName)
+            }
+          }])
+        : acc
+)
+
+// Each connection's resource properties (including the nested properties bag) become CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>
 var connectionEnvVars = reduce(items(resourceConnections), [], (acc, conn) => 
-  // Only process non-secrets connections here (secrets use envFrom)
+// Only process non-secrets connections here (secrets use envFrom)
   !isSecretsResource[conn.key] && connectionDefinitions[conn.key].?disableDefaultEnvVars != true
-    ? concat(acc, 
-        // Add resource properties directly from connection (excluding metadata properties)
+    ? concat(
+        acc,
+        // Add top-level connection properties (excluding metadata and the nested properties bag)
         reduce(items(conn.value ?? {}), [], (envAcc, prop) => 
-          contains(excludedProperties, prop.key)
+          (prop.key == 'properties' || prop.key == 'secretName' || contains(excludedProperties, prop.key))
+            ? envAcc 
+            : concat(envAcc, [{
+                name: toUpper('CONNECTION_${conn.key}_${prop.key}')
+                value: string(prop.value)
+              }])
+        ),
+        // Flatten the nested connection.properties bag so values like host/port become their own env vars
+        reduce(items(conn.value.?properties ?? {}), [], (envAcc, prop) => 
+          (prop.key == 'secretName' || contains(excludedProperties, prop.key))
             ? envAcc 
             : concat(envAcc, [{
                 name: toUpper('CONNECTION_${conn.key}_${prop.key}')
@@ -123,9 +153,11 @@ var containerSpecs = reduce(containerItems, [], (acc, item) => concat(acc, [{
         connectionEnvVars
       )
     } : {},
-    // Add envFrom for secrets connections (injects all keys from secret as env vars)
-    length(secretsEnvFrom) > 0 ? {
-      envFrom: secretsEnvFrom
+    // Add envFrom for secrets connections and secretName-based connections
+    // secretsEnvFrom: injects all keys from a Radius.Security/secrets source
+    // secretNameEnvFrom: injects all keys from a K8s secret referenced by secretName property
+    (length(secretsEnvFrom) > 0 || length(secretNameEnvFrom) > 0) ? {
+      envFrom: concat(secretsEnvFrom, secretNameEnvFrom)
     } : {},
     // Add volume mounts if they exist
     contains(item.value, 'volumeMounts') ? {
