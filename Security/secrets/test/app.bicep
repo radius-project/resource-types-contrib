@@ -7,7 +7,7 @@ param environment string
 @secure()
 param password string
 
-resource testapp 'Applications.Core/applications@2023-10-01-preview' = {
+resource testapp 'Radius.Core/applications@2025-08-01-preview' = {
   name: 'testapp'
   location: 'global'
   properties: {

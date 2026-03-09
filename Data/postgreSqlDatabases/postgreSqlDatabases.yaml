@@ -36,7 +36,7 @@ types:
 
       To connect your container to the database, create a connection from the Container resource to the database as shown below. 
       ```
-      resource myApplication 'Applications.Core/Applications@2023-10-01-preview' = { ... }
+      resource myApplication 'Radius.Core/Applications@2025-08-01-preview' = { ... }
 
       resource frontend 'Radius.Compute/containers@2025-08-01-preview' = {
         name: 'frontend'
