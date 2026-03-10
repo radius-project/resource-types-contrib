@@ -83,7 +83,6 @@ locals {
   # Connection-derived environment variables for non-secrets connections
   # Secrets connections use envFrom.secretRef instead for cleaner injection
   # Each connection's resource properties become CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>
-  # Also flattens nested connection.properties bag so values like host/port become env vars
   # Note: disableDefaultEnvVars is on connection_definitions, not the merged connections data
   connection_env_vars = flatten([
     for conn_name, conn in local.connections :
@@ -176,7 +175,7 @@ locals {
       )
 
       # Environment variables from secrets (via envFrom.secretRef)
-      # Injects all keys from secrets connections and secretName-based connections
+      # Injects all keys from direct connections to secrets and connections with secretName property
       env_from = concat(local.secrets_env_from, local.secret_name_env_from)
 
       # Volume mounts
