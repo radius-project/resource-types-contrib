@@ -74,7 +74,7 @@ locals {
     }
     if !try(local.is_secrets_resource[conn_name], false) &&
     try(local.connection_definitions[conn_name].disableDefaultEnvVars, false) != true &&
-    (can(tostring(conn.secretName)) || can(tostring(try(conn.properties.secretName, null))))
+    (can(tostring(conn.secretName)) || can(tostring(conn.properties.secretName)))
   ]
 
   # Properties to exclude at the top level of a connection (metadata + nested bags)
