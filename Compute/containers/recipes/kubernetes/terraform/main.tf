@@ -64,6 +64,22 @@ locals {
     try(local.connection_definitions[conn_name].disableDefaultEnvVars, false) != true
   ]
 
+  # Connections with a secretName property - inject all keys via envFrom.secretRef
+  # Checks both top-level conn.secretName and nested conn.properties.secretName
+  secret_name_env_from = [
+    for conn_name, conn in local.connections :
+    {
+      name   = try(tostring(conn.secretName), tostring(conn.properties.secretName))
+      prefix = upper("CONNECTION_${conn_name}_")
+    }
+    if !try(local.is_secrets_resource[conn_name], false) &&
+    try(local.connection_definitions[conn_name].disableDefaultEnvVars, false) != true &&
+    (can(tostring(conn.secretName)) || can(tostring(conn.properties.secretName)))
+  ]
+
+  # Properties to exclude at the top level of a connection (metadata + nested bags)
+  top_level_excluded = ["recipe", "status", "provisioningState", "properties", "secretName"]
+
   # Connection-derived environment variables for non-secrets connections
   # Secrets connections use envFrom.secretRef instead for cleaner injection
   # Each connection's resource properties become CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>
@@ -73,15 +89,24 @@ locals {
     # Only process non-secrets connections here (secrets use envFrom)
     !try(local.is_secrets_resource[conn_name], false) &&
       try(local.connection_definitions[conn_name].disableDefaultEnvVars, false) != true
-    ? [
-      # Add resource properties directly from connection (excluding metadata properties)
-      # Only include scalar values (strings, numbers, bools) - skip objects/lists
-      for prop_name, prop_value in conn : {
-        name  = upper("CONNECTION_${conn_name}_${prop_name}")
-        value = tostring(prop_value)
-      }
-      if !contains(local.excluded_properties, prop_name) && can(tostring(prop_value))
-    ]
+    ? concat(
+      # Add top-level connection properties (excluding metadata, nested properties bag, and secretName)
+      [
+        for prop_name, prop_value in conn : {
+          name  = upper("CONNECTION_${conn_name}_${prop_name}")
+          value = tostring(prop_value)
+        }
+        if !contains(local.top_level_excluded, prop_name) && can(tostring(prop_value))
+      ],
+      # Flatten nested connection.properties bag
+      [
+        for prop_name, prop_value in try(conn.properties, {}) : {
+          name  = upper("CONNECTION_${conn_name}_${prop_name}")
+          value = tostring(prop_value)
+        }
+        if prop_name != "secretName" && !contains(local.excluded_properties, prop_name) && can(tostring(prop_value))
+      ]
+    )
     : []
   ])
 
@@ -150,8 +175,8 @@ locals {
       )
 
       # Environment variables from secrets (via envFrom.secretRef)
-      # Injects all keys from secrets connections as environment variables
-      env_from = local.secrets_env_from
+      # Injects all keys from direct connections to secrets and connections with secretName property
+      env_from = concat(local.secrets_env_from, local.secret_name_env_from)
 
       # Volume mounts
       volume_mounts = [

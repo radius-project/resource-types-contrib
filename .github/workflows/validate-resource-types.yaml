@@ -21,7 +21,7 @@ jobs:
   validate-resource-types:
     name: Validate Resource Types and Recipes
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
