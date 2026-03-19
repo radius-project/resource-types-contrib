@@ -24,6 +24,7 @@ jobs:
   publish-bicep-recipes:
     name: Publish Bicep Recipes to GHCR
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write
