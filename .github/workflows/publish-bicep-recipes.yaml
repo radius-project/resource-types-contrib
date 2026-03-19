@@ -3,9 +3,6 @@
 name: Publish Bicep Recipes
 
 on:
-  push:
-    branches:
-      - release_workflow
   workflow_dispatch:
     inputs:
       release_version:
