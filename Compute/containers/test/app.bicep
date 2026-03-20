@@ -37,11 +37,9 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
       // }
     }
     containers: {
-      web: {
-        image: 'nginx:alpine'
+      demo: {
+        image: 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
         command: ['/bin/sh', '-c']
-        args: ['nginx -g "daemon off;"']
-        workingDir: '/usr/share/nginx/html'
         ports: {
           http: {
             containerPort: 80
@@ -121,7 +119,7 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
       }
       init: {
         initContainer: true
-        image: 'busybox:latest'
+        image: 'mcr.microsoft.com/azure-cli:latest'
         command: ['sh', '-c']
         args: ['echo "Initializing..." && sleep 5']
         workingDir: '/tmp'

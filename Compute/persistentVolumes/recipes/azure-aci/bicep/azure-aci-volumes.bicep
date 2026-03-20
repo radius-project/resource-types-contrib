@@ -1,3 +1,4 @@
+
 targetScope = 'resourceGroup'
 
 @description('Radius context object passed into the recipe.')

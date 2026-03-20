@@ -4,7 +4,9 @@ extension persistentVolumes
 
 param environment string
 
-resource app 'Radius.Core/applications@2025-08-01-preview' = {
+// This is simple application with only contianer and persistent volume
+// resources to test PV creation and mounting in container.
+resource app 'Applications.Core/applications@2023-10-01-preview' = {
   name: 'acipvtest-app'
   properties: {
     environment: environment
@@ -36,7 +38,7 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
         }
         volumeMounts: [
           {
-            volumeName: 'data'
+            volumeName: 'data' // should match with the name of the volume defined in the container spec/recipe (eg. azure-aci-containers.bicep)
             mountPath: '/mnt/fileshare'
           }
         ]
@@ -49,11 +51,11 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
           accessMode: 'ReadWriteOnce'
         }
       }
-    }
+    }  
     connections: {
       data: {
         source: pv.id
       }
-    }
-  }
+    }  
+  }  
 }
