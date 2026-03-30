@@ -20,10 +20,10 @@
       "resolved": "ghcr.io/devcontainers/features/azure-cli@sha256:4549175fbfd3475d1d62e82f6e5425d03954a6ae06027b2515b0ba41a8206417",
       "integrity": "sha256:4549175fbfd3475d1d62e82f6e5425d03954a6ae06027b2515b0ba41a8206417"
     },
-    "ghcr.io/devcontainers/features/docker-outside-of-docker:1.9.0": {
-      "version": "1.9.0",
-      "resolved": "ghcr.io/devcontainers/features/docker-outside-of-docker@sha256:c5eaf82e4f6af2ac7ed82f569447b79a70a572d5a378eced1d389db158dc9a67",
-      "integrity": "sha256:c5eaf82e4f6af2ac7ed82f569447b79a70a572d5a378eced1d389db158dc9a67"
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1.9.1": {
+      "version": "1.9.1",
+      "resolved": "ghcr.io/devcontainers/features/docker-outside-of-docker@sha256:dc89605f01ff2f24252c61f7c8ba2a58ccdbc14f2ebf87a7952d9e2b89834850",
+      "integrity": "sha256:dc89605f01ff2f24252c61f7c8ba2a58ccdbc14f2ebf87a7952d9e2b89834850"
     },
     "ghcr.io/devcontainers/features/kubectl-helm-minikube:1.3.1": {
       "version": "1.3.1",
