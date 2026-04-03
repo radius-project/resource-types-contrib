@@ -64,7 +64,7 @@ deploy-recipe-pack: ## Deploy a recipe pack using Bicep template and update envi
 ifndef BICEP_FILE
 	$(error BICEP_FILE parameter is required. Usage: make deploy-recipe-pack BICEP_FILE=<path-to-bicep-file>)
 endif
-	@./.github/scripts/deploy-recipe-pack.sh "$(BICEP_FILE)" "$(RESOURCE_GROUP)" "$(SUBSCRIPTION)"
+	@./.github/scripts/deploy-recipe-pack.sh "$(BICEP_FILE)" "$(RESOURCE_GROUP)"
 
 .PHONY: update-env-recipe-pack
 update-env-recipe-pack: ## Update environment with recipe pack ID (requires RECIPE_PACK_NAME and optionally RESOURCE_GROUP and ENVIRONMENT)
