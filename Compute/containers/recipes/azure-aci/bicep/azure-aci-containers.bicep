@@ -102,26 +102,12 @@ var isSecretsResource = reduce(items(connectionDefinitions), {}, (acc, conn) => 
   '${conn.key}': contains(string(conn.value.?source ?? ''), 'Radius.Security/secrets')
 }))
 
-// Secrets connections to inject via envFrom.secretRef
-// The K8s secret name is the Radius resource name (last segment of the source ID)
-var secretsEnvFrom = reduce(items(resourceConnections), [], (acc, conn) => 
-  isSecretsResource[conn.key] && connectionDefinitions[conn.key].?disableDefaultEnvVars != true
-    ? concat(acc, [{
-        prefix: toUpper('CONNECTION_${conn.key}_')
-        secretRef: {
-          // Extract the secret name from the connection source (last segment of the resource ID)
-          name: last(split(string(connectionDefinitions[conn.key].source), '/'))
-        }
-      }])
-    : acc
-)
-
-// Build environment variables from non-secrets connections when not explicitly disabled via disableDefaultEnvVars
-// Secrets connections use envFrom.secretRef instead for cleaner injection
-// Each connection's resource properties become CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>
+// Build environment variables from ALL connections (including secrets) when not explicitly disabled.
+// Unlike K8s which uses envFrom.secretRef for secrets connections, ACI does not support that mechanism.
+// Instead, secrets connection metadata (keyVaultUri, UAI client ID, etc.) is injected as plain env vars
+// so the container can use the Azure SDK with ManagedIdentityCredential to fetch secrets at runtime.
 var connectionEnvVars = reduce(items(resourceConnections), [], (acc, conn) => 
-  // Only process non-secrets connections here (secrets use envFrom)
-  !isSecretsResource[conn.key] && connectionDefinitions[conn.key].?disableDefaultEnvVars != true
+  connectionDefinitions[conn.key].?disableDefaultEnvVars != true
     ? concat(acc, 
         // Add resource properties directly from connection (excluding metadata properties)
         reduce(items(conn.value ?? {}), [], (envAcc, prop) => 
@@ -462,9 +448,15 @@ resource nGroups 'Microsoft.ContainerInstance/NGroups@2024-09-01-preview' = {
   name: nGroupsName
   location: resourceGroup().location
   zones: zones
-  identity: {
-    type: 'SystemAssigned'
-  }
+  // Run under the UAI created by the secrets recipe so containers can
+  // access Key Vault via ManagedIdentityCredential. Only set when a
+  // secrets connection provides a UAI.
+  identity: secretsUaiId != '' ? {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${secretsUaiId}': {}
+    }
+  } : null
   properties: {
     elasticProfile: {
       desiredCount: desiredCount
