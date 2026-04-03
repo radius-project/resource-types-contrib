@@ -24,9 +24,9 @@
 #   make help                           # Show all available targets
 #
 # Environment Setup:
-#   make install-radius		     # Install Radius CLI
-#   make create-cluster		     # Create a local kind Kubernetes cluster for testing
-#   make delete-cluster		     # Delete the local kind Kubernetes cluster
+#   make install-radius-cli	     # Install Radius CLI
+#   make create-radius-cluster	     # Create a local kind Kubernetes cluster for testing
+#   make clean			     # Delete the local kind cluster and clean up artifacts
 #
 # Development and Testing:
 #   make build                          # Build all resource types and recipes
