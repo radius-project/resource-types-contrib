@@ -19,7 +19,7 @@
 # =============================================================================
 # Deploy a Recipe Pack using Bicep template
 #
-# Usage: ./deploy-recipe-pack.sh <bicep-file> [resource-group] [subscription]
+# Usage: ./deploy-recipe-pack.sh <bicep-file> [resource-group]
 # Example: ./deploy-recipe-pack.sh recipe-pack.bicep
 # =============================================================================
 
@@ -27,7 +27,6 @@ set -euo pipefail
 
 BICEP_FILE="${1:-}"
 RESOURCE_GROUP="${2:-}"
-SUBSCRIPTION="${3:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "Creating bicepconfig.json with published extensions..."
@@ -38,7 +37,7 @@ echo "Creating bicepconfig.json with published extensions..."
 
 if [[ -z "$BICEP_FILE" ]]; then
     echo "Error: Bicep file is required"
-    echo "Usage: $0 <bicep-file> [resource-group] [subscription]"
+    echo "Usage: $0 <bicep-file> [resource-group]"
     exit 1
 fi
 
@@ -54,10 +53,6 @@ DEPLOY_ARGS=("deploy" "$BICEP_FILE")
 
 if [[ -n "$RESOURCE_GROUP" ]]; then
     DEPLOY_ARGS+=("--group" "$RESOURCE_GROUP")
-fi
-
-if [[ -n "$SUBSCRIPTION" ]]; then
-    DEPLOY_ARGS+=("--subscription" "$SUBSCRIPTION")
 fi
 
 #workaround until we allow recipe packs to be deployed without an environment
