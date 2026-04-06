@@ -1,5 +1,5 @@
 # ------------------------------------------------------------
-# Copyright 2023 The Radius Authors.
+# Copyright 2025 The Radius Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,19 +20,26 @@
 # locally and in CI/CD pipelines. It supports Kubernetes recipe testing
 # with automated setup, validation, and cleanup.
 #
-# Quick Start:
-#   make help                    # Show all available targets
-#   make install-radius          # Set up local test environment  
-#   make test-bicep-recipes      # Test Kubernetes Bicep recipes
+# Help:
+#   make help                           # Show all available targets
 #
-# Common Workflow:
-#   make install-radius VERSION=edge
-#   make create-workspace
-#   make create-resource-types
-#   make test-bicep-recipes
+# Environment Setup:
+#   make install-radius-cli             # Install Radius CLI
+#   make create-radius-cluster          # Create a local k3d Kubernetes cluster for testing
+#   make clean                          # Delete the local k3d cluster, config, and build artifacts
+#
+# Development and Testing:
+#   make build                          # Build all resource types and recipes
+#   make build-resource-type            # Build single resource type (requires TYPE_FOLDER parameter)
+#   make build-bicep-recipe             # Build Bicep recipe (requires RECIPE_PATH parameter)
+#   make build-terraform-recipe         # Build Terraform recipe (requires RECIPE_PATH parameter)
+#   make test                           # Run automated tests for all recipes
+#   make test-recipe                    # Test single recipe (requires RECIPE_PATH parameter)
+#   make list-resource-types            # List resource type folders
+#   make list-recipes                   # List all recipe folders
 
 SHELL := /bin/bash
 ARROW := \033[34;1m=>\033[0m
 
 # order matters for these
-include ./.github/build/help.mk ./.github/build/validation.mk
+include ./.github/build/help.mk ./.github/build/environment.mk ./.github/build/test.mk
