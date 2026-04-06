@@ -53,7 +53,7 @@ types:
               destinationContainer: {
                 resourceId: myContainer.id
                 containerName: 'frontend'
-                containerPortName: 'web'
+                containerPort: myContainer.properties.containers.frontend.ports.web.containerPort
               }
             }
           ]
@@ -80,7 +80,7 @@ types:
               destinationContainer: {
                 resourceId: myContainer.id
                 containerName: 'frontend'
-                containerPortName: 'web'
+                containerPort: myContainer.properties.containers.frontend.ports.web.containerPort
               }
             }
             {
@@ -92,7 +92,7 @@ types:
               destinationContainer: {
                 resourceId: myContainer.id
                 containerName: 'accounts'
-                containerPortName: 'web'
+                containerPort: myContainer.properties.containers.accounts.ports.web.containerPort
               }
             }
           ]
@@ -173,10 +173,10 @@ types:
                       containerName:
                         type: string
                         description: (Required) The specific container to target within the Container resource.
-                      containerPortName:
-                        type: string
-                        description: (Required) The port name to target from the container.
-                    required: [resourceId, containerName, containerPortName]
+                      containerPort:
+                        type: integer
+                        description: (Required) The port to target from the container. 
+                    required: [resourceId, containerName, containerPort]
                 required: [matches, destinationContainer]
             listener:
               type: object

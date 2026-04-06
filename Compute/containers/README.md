@@ -23,7 +23,7 @@ A list of available Recipes for this Resource Type, including links to the Bicep
 | context.properties.containers.env | PodSpec.containers.env |
 | context.properties.containers.env.value | PodSpec.containers.env.value |
 | context.properties.containers.env.valueFrom.secretKeyRef | PodSpec.containers.env.valueFrom.secretKeyRef |
-| context.properties.containers.env.valueFrom.secretKeyRef.secretId | N/A (Radius Secret) |
+| context.properties.containers.env.valueFrom.secretKeyRef.secretName | N/A (Radius Secret) |
 | context.properties.containers.env.valueFrom.secretKeyRef.key | N/A (Radius Secret) |
 | context.properties.containers.workingDir | PodSpec.containers.workingDir |
 | context.properties.containers.resources.requests.cpu | PodSpec.containers.resources.requests.cpu |
@@ -41,7 +41,7 @@ A list of available Recipes for this Resource Type, including links to the Bicep
 | context.properties.volumes.persistentVolume | PersistentVolumeClaim |
 | context.properties.volumes.persistentVolume.resourceId | N/A (Radius PersistentVolume) |
 | context.properties.volumes.persistentVolume.accessMode | PersistentVolumeClaim.accessModes |
-| context.properties.volumes.secretId | N/A (Radius Secret) |
+| context.properties.volumes.secretName | N/A (Radius Secret) |
 | context.properties.volumes.emptyDir | PodSpec.volumes.emptyDir |
 | context.properties.restartPolicy | PodSpec.restartPolicy |
 | context.properties.replicas | DeploymentSpec.replicas |
