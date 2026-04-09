@@ -106,6 +106,7 @@ resource neo4j 'apps/StatefulSet@v1' = {
         labels: labels
       }
       spec: {
+        enableServiceLinks: false
         containers: [
           {
             name: 'neo4j'
@@ -122,7 +123,7 @@ resource neo4j 'apps/StatefulSet@v1' = {
             ]
             env: [
               {
-                name: 'NEO4J_USERNAME'
+                name: 'DB_USERNAME'
                 valueFrom: {
                   secretKeyRef: {
                     name: dbSecretName
@@ -131,7 +132,7 @@ resource neo4j 'apps/StatefulSet@v1' = {
                 }
               }
               {
-                name: 'NEO4J_PASSWORD'
+                name: 'DB_PASSWORD'
                 valueFrom: {
                   secretKeyRef: {
                     name: dbSecretName
@@ -141,7 +142,7 @@ resource neo4j 'apps/StatefulSet@v1' = {
               }
               {
                 name: 'NEO4J_AUTH'
-                value: '$(NEO4J_USERNAME)/$(NEO4J_PASSWORD)'
+                value: '$(DB_USERNAME)/$(DB_PASSWORD)'
               }
             ]
             volumeMounts: [
