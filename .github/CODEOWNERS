@@ -9,5 +9,5 @@
 * @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib
 
 # Allows on-call members to respond to dependabot updates to workflows.
-.github/* @radius-project/on-call @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib
-.devcontainer/* @radius-project/on-call @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib
+.github/** @radius-project/on-call @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib
+.devcontainer/** @radius-project/on-call @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib
