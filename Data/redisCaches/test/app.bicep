@@ -9,9 +9,6 @@ param environment string
 @secure()
 param password string
 
-@description('The container image for the test app')
-param testImage string = 'ghcr.io/reshrahim/redis-test:latest'
-
 resource myapp 'Applications.Core/applications@2023-10-01-preview' = {
   name: 'myapp'
   properties: {
@@ -26,7 +23,7 @@ resource mycontainer 'Radius.Compute/containers@2025-08-01-preview' = {
     application: myapp.id
     containers: {
       redistest: {
-        image: testImage
+        image: 'ghcr.io/radius-project/samples/demo:latest'
         ports: {
           web: {
             containerPort: 3000
