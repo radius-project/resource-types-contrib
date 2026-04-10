@@ -79,7 +79,7 @@ echo "==> Found ${#RECIPE_DIRS[@]} $RECIPE_TYPE recipe(s)"
 cat > "$OUTPUT_FILE" << EOF
 extension radius
 
-resource PACK_NAME_PLACEHOLDER 'Radius.Core/recipePacks@2025-08-01-preview' = {
+resource recipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
   name: 'PACK_NAME_PLACEHOLDER'
   location: 'global'
   properties: {
