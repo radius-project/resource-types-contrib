@@ -60,13 +60,8 @@ resource mySql 'apps/Deployment@v1' = {
             ]
             env: [
               {
-                name: 'MYSQL_ROOT_PASSWORD'
-                valueFrom: {
-                  secretKeyRef: {
-                    name: dbSecretName
-                    key: 'PASSWORD'
-                  }
-                }
+                name: 'MYSQL_RANDOM_ROOT_PASSWORD'
+                value: 'yes'
               }
               {
                 name: 'MYSQL_USER'
