@@ -120,7 +120,7 @@ for recipe_dir in "${RECIPE_DIRS[@]}"; do
 
     if printf '%s\n' "${SEEN_RESOURCE_TYPES[@]}" | grep -qx "$RESOURCE_TYPE"; then
         echo "Error: Duplicate resource type '$RESOURCE_TYPE' found while generating '$PACK_NAME'." >&2
-        echo "Hint: Set a platform filter (4th argument), for example: kubernetes or azure-database-for-mysql." >&2
+        echo "Hint: Set a platform filter (4th argument), for example: kubernetes or <platform-name>." >&2
         exit 1
     fi
     SEEN_RESOURCE_TYPES+=("$RESOURCE_TYPE")
