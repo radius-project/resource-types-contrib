@@ -9,8 +9,8 @@ extension kubernetes with {
 @description('Name of the MySQL database. Defaults to the application name.')
 param database string = context.resource.properties.?database ?? '${context.application.name}'
 
-@description('MySQL username. Defaults to <application-name>-user')
-param username string = context.resource.properties.?username ?? '${context.application.name}-user'
+@description('Name of the secret containing the MySQL credentials.')
+param dbSecretName string = context.resource.properties.secretName
 
 @description('The major MySQL server version in the X.Y format. Defaults to the version 8.4 if not provided.')
 @allowed([
@@ -28,12 +28,6 @@ var mySqlImage = 'mysql:${version}'
 
 @description('The port the MySQL server listens on.')
 var port = 3306
-
-@description('MySQL user password. Defaults to a unique generated value.')
-var password string = uniqueString(context.resource.id, guid(uniqueName, username))
-
-@description('MySQL server root password.')
-var root_password string = uniqueString(context.resource.id, guid(uniqueName, 'root'))
 
 resource mySql 'apps/Deployment@v1' = {
   metadata: {
@@ -67,15 +61,30 @@ resource mySql 'apps/Deployment@v1' = {
             env: [
               {
                 name: 'MYSQL_ROOT_PASSWORD'
-                value: root_password
+                valueFrom: {
+                  secretKeyRef: {
+                    name: dbSecretName
+                    key: 'PASSWORD'
+                  }
+                }
               }
               {
                 name: 'MYSQL_USER'
-                value: username
+                valueFrom: {
+                  secretKeyRef: {
+                    name: dbSecretName
+                    key: 'USERNAME'
+                  }
+                }
               }
               {
                 name: 'MYSQL_PASSWORD'
-                value: password
+                valueFrom: {
+                  secretKeyRef: {
+                    name: dbSecretName
+                    key: 'PASSWORD'
+                  }
+                }
               }
               {
                 name: 'MYSQL_DATABASE'
@@ -121,10 +130,5 @@ output result object = {
     host: '${svc.metadata.name}.${svc.metadata.namespace}.svc.cluster.local'
     port: port
     database: database
-    username: username
-  }
-  secrets: {
-    #disable-next-line outputs-should-not-contain-secrets
-    password: password
   }
 }
