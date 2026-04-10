@@ -19,8 +19,8 @@
 # =============================================================================
 # Generate a Recipe Pack Bicep template from available recipes
 #
-# Usage: ./generate-recipe-pack.sh [repo-root] [pack-name] [output-file]
-# Example: ./generate-recipe-pack.sh . biceprecipepack recipe-pack.bicep
+# Usage: ./generate-recipe-pack.sh [repo-root] [pack-name] [output-file] [recipe-platform]
+# Example: ./generate-recipe-pack.sh . biceprecipepack-kubernetes recipe-pack.bicep kubernetes
 # Example: ./generate-recipe-pack.sh . terraformrecipepack recipe-pack.bicep
 # =============================================================================
 
@@ -30,6 +30,11 @@ REPO_ROOT="${1:-$(pwd)}"
 PACK_NAME="${2:-biceprecipepack}"
 OUTPUT_FILE="${3:-recipe-pack.bicep}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RECIPE_PLATFORM="${4:-}"
+
+if [[ -n "$RECIPE_PLATFORM" ]]; then
+    RECIPE_PLATFORM="$(echo "$RECIPE_PLATFORM" | tr '[:upper:]' '[:lower:]')"
+fi
 
 # Determine recipe type from pack name
 if [[ "$PACK_NAME" == *"terraform"* ]]; then
@@ -41,10 +46,17 @@ else
 fi
 
 echo "==> Generating recipe pack '$PACK_NAME' from $RECIPE_TYPE recipes in $REPO_ROOT"
+if [[ -n "$RECIPE_PLATFORM" ]]; then
+    echo "==> Filtering recipes by platform: $RECIPE_PLATFORM"
+fi
 
 # Find recipe directories based on type
 RECIPE_DIRS=()
 while IFS= read -r line; do
+    if [[ -n "$RECIPE_PLATFORM" ]] && [[ "$line" != *"/recipes/${RECIPE_PLATFORM}/"* ]]; then
+        continue
+    fi
+
     if [[ "$RECIPE_TYPE" == "bicep" ]] && [[ "$line" == *"/bicep" ]] && ls "$line"/*.bicep &>/dev/null; then
         RECIPE_DIRS+=("$line")
     elif [[ "$RECIPE_TYPE" == "terraform" ]] && [[ "$line" == *"/terraform" ]] && [[ -f "$line/main.tf" ]]; then
@@ -53,7 +65,11 @@ while IFS= read -r line; do
 done < <("$SCRIPT_DIR"/list-recipe-folders.sh "$REPO_ROOT" "$RECIPE_TYPE")
 
 if [[ ${#RECIPE_DIRS[@]} -eq 0 ]]; then
-    echo "==> No $RECIPE_TYPE recipes found"
+    if [[ -n "$RECIPE_PLATFORM" ]]; then
+        echo "==> No $RECIPE_TYPE recipes found for platform '$RECIPE_PLATFORM'"
+    else
+        echo "==> No $RECIPE_TYPE recipes found"
+    fi
     exit 1
 fi
 
@@ -71,6 +87,7 @@ resource PACK_NAME_PLACEHOLDER 'Radius.Core/recipePacks@2025-08-01-preview' = {
 EOF
 
 # Process each recipe directory
+SEEN_RESOURCE_TYPES=()
 for recipe_dir in "${RECIPE_DIRS[@]}"; do
     # Extract resource type from path
     RESOURCE_TYPE_PATH=$(echo "$recipe_dir" | sed -E 's|/recipes/.*||')
@@ -100,6 +117,13 @@ for recipe_dir in "${RECIPE_DIRS[@]}"; do
     fi
     
     echo "==> Adding recipe: $RESOURCE_TYPE -> $TEMPLATE_PATH"
+
+    if printf '%s\n' "${SEEN_RESOURCE_TYPES[@]}" | grep -qx "$RESOURCE_TYPE"; then
+        echo "Error: Duplicate resource type '$RESOURCE_TYPE' found while generating '$PACK_NAME'." >&2
+        echo "Hint: Set a platform filter (4th argument), for example: kubernetes or azure-database-for-mysql." >&2
+        exit 1
+    fi
+    SEEN_RESOURCE_TYPES+=("$RESOURCE_TYPE")
     
     # Add recipe entry to the template
     cat >> "$OUTPUT_FILE" << EOF

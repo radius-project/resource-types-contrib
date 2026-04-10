@@ -58,7 +58,7 @@ jobs:
       
       # Generates the bicep definition for recipe pack in recipe-pack-{bicep|terraform}.bicep
       - name: Generate Recipe Pack
-        run: make generate-recipe-pack PACK_NAME=${{ matrix.recipe }}recipepack OUTPUT_FILE=recipe-pack-${{ matrix.recipe }}.bicep
+        run: make generate-recipe-pack PACK_NAME=${{ matrix.recipe }}recipepack-kubernetes OUTPUT_FILE=recipe-pack-${{ matrix.recipe }}.bicep RECIPE_PLATFORM=kubernetes
 
       # Useful for debugging
       # - name: Show Recipe Pack Content
@@ -68,7 +68,7 @@ jobs:
         run: make deploy-recipe-pack BICEP_FILE=recipe-pack-${{ matrix.recipe }}.bicep
 
       - name: Update Environment with Recipe Pack
-        run: make update-env-recipe-pack RECIPE_PACK_NAME=${{ matrix.recipe }}recipepack ENVIRONMENT="${RAD_ENVIRONMENT_NAME}"
+        run: make update-env-recipe-pack RECIPE_PACK_NAME=${{ matrix.recipe }}recipepack-kubernetes ENVIRONMENT="${RAD_ENVIRONMENT_NAME}"
 
       - name: Build
         run: make build
