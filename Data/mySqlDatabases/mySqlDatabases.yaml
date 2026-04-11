@@ -88,10 +88,10 @@ types:
               description: "(Optional) The major MySQL server version in the X.Y format. Assumed to be 8.4 if not specified." 
             host:
               type: string
-              description: The host name used to connect to the database.
+              description: "(Read-only) The host name used to connect to the database."
               readOnly: true
             port:
               type: integer
-              description: The port number used to connect to the database.
+              description: "(Read-only) The port number used to connect to the database."
               readOnly: true
           required: [environment,secretName]
