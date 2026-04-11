@@ -23,7 +23,7 @@ types:
               value: 'admin'
             }
             PASSWORD: {
-              // From password parameter passed in via CLI
+              # From password parameter passed in via CLI
               value: password
             }
           }
