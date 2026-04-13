@@ -40,7 +40,7 @@ locals {
 
 locals {
   port        = 3306
-  database    = try(var.context.resource.properties.database, local.application_name)
+  database    = try(var.context.resource.properties.database, "mysql_db")
   secret_name = var.context.resource.properties.secretName
   version     = try(var.context.resource.properties.version, "8.4")
 
