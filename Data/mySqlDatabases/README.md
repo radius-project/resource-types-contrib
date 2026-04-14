@@ -10,9 +10,10 @@ Developer documentation is embedded in the resource type definition YAML file, a
 
 A list of available Recipes for this resource type, including links to the Bicep and Terraform templates:
 
-|Platform| IaC Language| Recipe Name | Stage |
-|---|---|---|---|
-| Kubernetes | Bicep | kubernetes-mysql.bicep | Alpha |
+|Platform| IaC Language| Recipe Name | Recipe parameters | Pre-requisites |
+|---|---|---|---|---|
+| Kubernetes | Bicep | kubernetes-mysql.bicep | Alpha | |
+| AWS | Terraform | main.tf | Alpha | VPC ID, Subnet IDs|
 
 ## Recipe Input Properties
 
