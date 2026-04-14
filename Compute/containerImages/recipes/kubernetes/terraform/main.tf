@@ -9,8 +9,12 @@ terraform {
 }
 
 provider "docker" {
-  # Uses credentials from ~/.docker/config.json (set via `docker login`
+  # Reads credentials from ~/.docker/config.json (set via `docker login`
   # on the dynamic-rp pod by the platform engineer).
+  registry_auth {
+    address     = var.registry_server
+    config_file = pathexpand("~/.docker/config.json")
+  }
 }
 
 # ── Locals ───────────────────────────────────────────────────────────
