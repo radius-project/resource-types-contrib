@@ -1,5 +1,6 @@
 terraform {
   required_version = ">= 1.5"
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -16,21 +17,10 @@ terraform {
 // Common Radius variables
 //////////////////////////////////////////
 
-variable "context" {
-  description = "This variable contains Radius Recipe context."
-  type        = any
-}
-
-variable "eksClusterName" {
-  description = "Name of the EKS cluster. Used to discover VPC, subnets, and security groups."
-  type        = string
-}
-
 locals {
   resource_name    = var.context.resource.name
   application_name = var.context.application != null ? var.context.application.name : ""
   environment_name = var.context.environment != null ? var.context.environment.name : ""
-  resource_group   = element(split("/", var.context.resource.id), 5)
   namespace        = var.context.runtime.kubernetes.namespace
 }
 
@@ -44,13 +34,13 @@ locals {
   secret_name = var.context.resource.properties.secretName
   version     = try(var.context.resource.properties.version, "8.4")
 
-  unique_suffix = substr(md5("${local.resource_name}-${var.eksClusterName}"), 0, 13)
+  unique_suffix = substr(md5(local.resource_name), 0, 13)
 
-  # RDS identifier must be lowercase alphanumeric and hyphens, max 63 chars
+  # RDS identifier: lowercase alphanumeric and hyphens, max 63 chars
   sanitized_identifier = "rds-dbinstance-${local.unique_suffix}"
 
-  # Database name must be alphanumeric and underscores
-  sanitized_database = replace(local.database, "/[^a-zA-Z0-9_]/", "_")
+  # Database name: alphanumeric and underscores only
+  sanitized_database = replace(local.database, "/[^0-9A-Za-z_]/", "_")
 
   tags = {
     "radapp.io/resource"    = local.resource_name
@@ -60,18 +50,9 @@ locals {
 }
 
 //////////////////////////////////////////
-// EKS cluster networking
-//////////////////////////////////////////
-
-data "aws_eks_cluster" "cluster" {
-  name = var.eksClusterName
-}
-
-//////////////////////////////////////////
 // Credentials
 //////////////////////////////////////////
 
-# Read credentials from the Kubernetes secret provided by the developer
 data "kubernetes_secret" "db_credentials" {
   metadata {
     name      = local.secret_name
@@ -80,39 +61,79 @@ data "kubernetes_secret" "db_credentials" {
 }
 
 //////////////////////////////////////////
-// RDS Deployment
+// RDS security group
 //////////////////////////////////////////
 
-resource "aws_db_subnet_group" "mysql" {
-  name        = "rds-dbsubnetgroup-${local.unique_suffix}"
-  description = "rds-dbsubnetgroup-${local.unique_suffix}"
-  subnet_ids  = data.aws_eks_cluster.cluster.vpc_config[0].subnet_ids
+data "aws_vpc" "selected" {
+  id = var.vpcId
+}
+
+module "rds_security_group" {
+  source  = "terraform-aws-modules/security-group/aws"
+  version = "~> 5.0"
+
+  name        = "rds-sg-${local.unique_suffix}"
+  description = "Security group for RDS MySQL - ${local.resource_name}"
+  vpc_id      = var.vpcId
+
+  ingress_with_cidr_blocks = [
+    {
+      from_port   = local.port
+      to_port     = local.port
+      protocol    = "tcp"
+      description = "MySQL access"
+      cidr_blocks = data.aws_vpc.selected.cidr_block
+    }
+  ]
+
+  egress_rules = ["all-all"]
 
   tags = local.tags
 }
 
-resource "aws_db_instance" "mysql" {
-  identifier     = local.sanitized_identifier
-  engine         = "mysql"
-  engine_version = local.version
-  instance_class = "db.t3.micro"
+//////////////////////////////////////////
+// RDS instance
+//////////////////////////////////////////
+
+module "db" {
+  source  = "terraform-aws-modules/rds/aws"
+  version = "~> 6.0"
+
+  identifier = local.sanitized_identifier
+
+  engine               = "mysql"
+  engine_version       = local.version
+  family               = "mysql${local.version}"
+  major_engine_version = local.version
+  instance_class       = var.instanceClass
 
   db_name  = local.sanitized_database
-  username = data.kubernetes_secret.db_credentials.data["USERNAME"]
-  password = data.kubernetes_secret.db_credentials.data["PASSWORD"]
+  username = try(data.kubernetes_secret.db_credentials.data["USERNAME"], "")
+  password = try(data.kubernetes_secret.db_credentials.data["PASSWORD"], "")
   port     = local.port
 
-  allocated_storage = 20
+  allocated_storage = var.allocatedStorage
   storage_type      = "gp3"
-  storage_encrypted = true
 
-  db_subnet_group_name   = aws_db_subnet_group.mysql.name
-  vpc_security_group_ids = [data.aws_eks_cluster.cluster.vpc_config[0].cluster_security_group_id]
-  publicly_accessible    = false
+  create_db_subnet_group = true
+  db_subnet_group_name   = "rds-dbsubnetgroup-${local.unique_suffix}"
+  subnet_ids             = jsondecode(var.subnetIds)
 
-  backup_retention_period   = 1
-  skip_final_snapshot       = true
-  final_snapshot_identifier = "${local.sanitized_identifier}-final"
+  vpc_security_group_ids = [module.rds_security_group.security_group_id]
+
+  skip_final_snapshot = true
+  apply_immediately   = true
+
+  parameters = [
+    {
+      name  = "character_set_client"
+      value = "utf8mb4"
+    },
+    {
+      name  = "character_set_server"
+      value = "utf8mb4"
+    }
+  ]
 
   tags = local.tags
 }
@@ -125,8 +146,8 @@ output "result" {
   value = {
     resources = []
     values = {
-      host     = aws_db_instance.mysql.address
-      port     = aws_db_instance.mysql.port
+      host     = module.db.db_instance_address
+      port     = module.db.db_instance_port
       database = local.sanitized_database
     }
   }
