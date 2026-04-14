@@ -1,8 +1,9 @@
 terraform {
+  required_version = ">= 1.5"
   required_providers {
     kubernetes = {
       source  = "hashicorp/kubernetes"
-      version = ">= 2.0"
+      version = ">= 2.37.1"
     }
   }
 }
@@ -41,6 +42,17 @@ locals {
   environment_segments = try(split("/", local.properties.environment), [])
   environment_label    = length(local.environment_segments) > 0 ? element(local.environment_segments, length(local.environment_segments) - 1) : ""
 
+  # Hash of build inputs to ensure Job name changes when inputs change.
+  # Kubernetes Jobs are immutable — this forces recreation on re-deploy.
+  build_hash = substr(md5(jsonencode({
+    image      = local.image
+    context    = local.build_context
+    dockerfile = local.dockerfile
+    server     = local.registry_server
+    username   = local.registry_username
+    token      = local.registry_token
+  })), 0, 8)
+
   labels = {
     "radapp.io/resource"    = local.resource_name
     "radapp.io/environment" = local.environment_label
@@ -76,7 +88,7 @@ resource "kubernetes_secret_v1" "docker_config" {
 
 resource "kubernetes_job_v1" "build" {
   metadata {
-    name      = "${local.normalized_name}-build"
+    name      = "${local.normalized_name}-build-${local.build_hash}"
     namespace = local.namespace
     labels    = local.labels
   }
@@ -166,7 +178,7 @@ resource "kubernetes_job_v1" "build" {
 output "result" {
   value = {
     resources = concat(
-      ["/planes/kubernetes/local/namespaces/${local.namespace}/providers/batch/Job/${local.normalized_name}-build"],
+      ["/planes/kubernetes/local/namespaces/${local.namespace}/providers/batch/Job/${local.normalized_name}-build-${local.build_hash}"],
       local.has_credentials ? ["/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Secret/${local.normalized_name}-registry"] : []
     )
   }
