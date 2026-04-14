@@ -9,14 +9,8 @@ terraform {
 }
 
 provider "docker" {
-  # Uses the Docker socket mounted into the dynamic-rp pod.
-  # Enabled via: rad install kubernetes --set dynamicrp.docker.enabled=true
-
-  registry_auth {
-    address  = local.registry_server
-    username = local.registry_username
-    password = local.registry_token
-  }
+  # Uses credentials from ~/.docker/config.json (set via `docker login`
+  # on the dynamic-rp pod by the platform engineer).
 }
 
 # ── Locals ───────────────────────────────────────────────────────────
@@ -30,11 +24,6 @@ locals {
   image         = local.properties.image
   build_context = local.properties.build.context
   dockerfile    = try(local.properties.build.dockerfile, "Dockerfile")
-
-  # Registry credentials from resource properties or recipe parameters
-  registry_server   = try(local.properties.registry.server, var.ghcr_server)
-  registry_username = try(local.properties.registry.username, var.ghcr_username)
-  registry_token    = try(local.properties.registry.token, var.ghcr_token)
 }
 
 # ── Build and push ───────────────────────────────────────────────────
