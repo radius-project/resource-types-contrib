@@ -194,7 +194,7 @@ if rad deploy "$TEST_FILE" --application "$APP_NAME" -e "$ENVIRONMENT_NAME" $PAR
 else
     echo "==> Test deployment failed"
     rad app delete "$APP_NAME" --yes 2>/dev/null || true
-    rad recipe unregister "$RECIPE_NAME" \
+    rad recipe unregister default \
         --workspace "$WORKSPACE_NAME" \
         --environment "$ENVIRONMENT_NAME" \
         --resource-type "$RESOURCE_TYPE"

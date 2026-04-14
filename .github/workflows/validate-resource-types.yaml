@@ -80,3 +80,40 @@ jobs:
         run: make update-env-recipe-pack RECIPE_PACK_NAME=${{ matrix.recipe }}recipepack ENVIRONMENT="${RAD_ENVIRONMENT_NAME}"
       - name: Test ${{ matrix.recipe }} recipes
         run: RECIPE_PLATFORM_FILTER=kubernetes make test ENVIRONMENT=$RAD_ENVIRONMENT_NAME RECIPE_TYPE=${{ matrix.recipe }}
+
+      - name: Collect Radius pod logs
+        if: always()
+        run: |
+          mkdir -p radius-pod-logs
+          APP_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | startswith("applications-rp-")) | .metadata.name' | head -n1)
+          if [ -n "$APP_POD" ]; then
+            kubectl logs "$APP_POD" -n radius-system --all-containers > radius-pod-logs/applications-rp.log || true
+          else
+            echo "applications-rp pod not found" > radius-pod-logs/applications-rp.log
+          fi
+          DE_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | test("^(deployment-engine|bicep-de)-")) | .metadata.name' | head -n1)
+          if [ -n "$DE_POD" ]; then
+            kubectl logs "$DE_POD" -n radius-system --all-containers > radius-pod-logs/deployment-engine.log || true
+          else
+            echo "deployment engine pod not found" > radius-pod-logs/deployment-engine.log
+          fi
+          UCP_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | startswith("ucp-")) | .metadata.name' | head -n1)
+          if [ -n "$UCP_POD" ]; then
+            kubectl logs "$UCP_POD" -n radius-system --all-containers > radius-pod-logs/ucp.log || true
+          else
+            echo "ucp pod not found" > radius-pod-logs/ucp.log
+          fi
+          DRP_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | startswith("dynamic-rp-")) | .metadata.name' | head -n1)
+          if [ -n "$DRP_POD" ]; then
+            kubectl logs "$DRP_POD" -n radius-system --all-containers > radius-pod-logs/dynamic-rp.log || true
+          else
+            echo "dynamic-rp pod not found" > radius-pod-logs/dynamic-rp.log
+          fi
+
+      - name: Upload Radius pod logs
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: radius-pod-logs-${{ matrix.recipe }}
+          path: radius-pod-logs
+          if-no-files-found: warn
