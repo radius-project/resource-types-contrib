@@ -1,13 +1,57 @@
-# Documentation and examples for what this does:
-#
-#  https://docs.github.com/en/github/creating-cloning-and-archiving-repositories/about-code-owners
+# Code Owners for github.com/radius-project/resource-types-contrib
+# Generated from template - do not edit directly
 
-# This file is a list of rules, with the last rule being most specific
-# All of the people (and only those people) from the matching rule will be notified
-
-# Default rule: anything that doesn't match a more specific rule goes here
+# General maintainers and approvers for the entire repository
 * @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib
 
-# Allows on-call members to respond to dependabot updates to workflows.
-.github/** @radius-project/on-call @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib
-.devcontainer/** @radius-project/on-call @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib
+# Dependency files - on-call can also approve these (Dependabot, etc.)
+
+# Node.js
+**/package.json           @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/package-lock.json      @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/pnpm-lock.yaml         @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/yarn.lock              @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/.nvmrc                 @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/.npmrc                 @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/.node-version          @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/tsconfig.json          @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/tsconfig.*.json        @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/*.tsconfig.json        @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+
+# Go
+**/go.mod                 @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/go.sum                 @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/go.work                @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/go.work.sum            @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/.go-version            @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+
+# .NET
+**/*.csproj               @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/*.sln                  @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/nuget.config           @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/global.json            @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+
+# Python
+**/requirements.txt       @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/pyproject.toml         @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/uv.lock                @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/poetry.lock            @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/Pipfile                @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/Pipfile.lock           @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/.python-version        @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+
+# Rust
+**/Cargo.toml             @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/Cargo.lock             @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+
+# Bicep
+**/bicepconfig.json       @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+
+# Container files
+**/Dockerfile             @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/*.Dockerfile           @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+**/.devcontainer/*.json   @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+
+# GitHub workflows
+.github/workflows/*.yml   @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
+.github/workflows/*.yaml  @radius-project/maintainers-resource-types-contrib @radius-project/approvers-resource-types-contrib @radius-project/on-call
