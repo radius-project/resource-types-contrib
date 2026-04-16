@@ -8,14 +8,14 @@ var secretData = context.resource.properties.data
 // secret.  Secrets are created via the ARM management plane (child resources),
 // so no access policies or RBAC are needed – Contributor on the RG suffices.
 // ---------------------------------------------------------------------------
-resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
+resource vault 'Microsoft.KeyVault/vaults@2022-07-01' = {
   name: 'kv-${uniqueString(secretName, resourceGroup().id)}'
   location: resourceGroup().location
-  sku: {
-    name: 'standard'
-    family: 'A'
-  }
   properties: {
+    sku: {
+      family: 'A'
+      name: 'standard'
+    }
     tenantId: subscription().tenantId
     enableSoftDelete: true
     enableRbacAuthorization: false
@@ -24,7 +24,7 @@ resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
 }
 
 // Store each entry from the Radius secret data map as a Key Vault secret.
-resource kvSecrets 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = [
+resource kvSecrets 'Microsoft.KeyVault/vaults/secrets@2022-07-01' = [
   for item in items(secretData): {
     parent: vault
     name: item.key
