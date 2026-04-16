@@ -108,8 +108,8 @@ module "db" {
   instance_class       = var.instanceClass
 
   db_name  = local.sanitized_database
-  username = try(data.kubernetes_secret.db_credentials.data["USERNAME"], "")
-  password = try(data.kubernetes_secret.db_credentials.data["PASSWORD"], "")
+  username = try(base64decode(data.kubernetes_secret.db_credentials.data["USERNAME"]), data.kubernetes_secret.db_credentials.data["USERNAME"], "")
+  password = try(base64decode(data.kubernetes_secret.db_credentials.data["PASSWORD"]), data.kubernetes_secret.db_credentials.data["PASSWORD"], "")
   port     = local.port
 
   allocated_storage = var.allocatedStorage
