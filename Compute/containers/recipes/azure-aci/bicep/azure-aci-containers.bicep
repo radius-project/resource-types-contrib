@@ -82,6 +82,14 @@ var vnetApiVersion = '2022-07-01'
 var publicIPVersion = '2022-07-01'
 var ddosProtectionPlanName = 'ddosProtectionPlan'
 
+// Extract container items from context
+var containerItems = items(context.resource.properties.?containers ?? {})
+
+// Find the first container with a readiness probe for load balancer probe reference
+var firstContainerWithReadinessProbe = length(filter(containerItems, item => contains(item.value, 'readinessProbe') && item.value.readinessProbe != null)) > 0 
+  ? filter(containerItems, item => contains(item.value, 'readinessProbe') && item.value.readinessProbe != null)[0]
+  : null
+
 // Extract connection data from linked resources (merged with resource properties)
 var resourceConnections = context.resource.?connections ?? {}
 var connectionDefinitions = context.resource.properties.?connections ?? {}
@@ -291,32 +299,32 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
         }
       }
     ]
-    probes: union(
-      context.resource.properties.?containers.?demo.?readinessProbe != null ? [
-        {
-          name: 'readinessProbe'
+    probes: reduce(containerItems, [], (acc, item) => concat(acc, 
+      union(
+        // Add readiness probe if exists for this container
+        contains(item.value, 'readinessProbe') && item.value.readinessProbe != null ? [{
+          name: '${item.key}-readinessProbe'
           properties: {
             protocol: 'Tcp'
-            port: context.resource.properties.containers.demo.readinessProbe.?tcpSocket.?port ?? 80
-            intervalInSeconds: context.resource.properties.containers.demo.readinessProbe.?periodSeconds ?? 5
-            numberOfProbes: context.resource.properties.containers.demo.readinessProbe.?failureThreshold ?? 3
-            probeThreshold: context.resource.properties.containers.demo.readinessProbe.?successThreshold ?? 1
+            port: item.value.readinessProbe.?tcpSocket.?port ?? 80
+            intervalInSeconds: item.value.readinessProbe.?periodSeconds ?? 5
+            numberOfProbes: item.value.readinessProbe.?failureThreshold ?? 3
+            probeThreshold: item.value.readinessProbe.?successThreshold ?? 1
           }
-        }
-      ] : [],
-      context.resource.properties.?containers.?demo.?livenessProbe != null ? [
-        {
-          name: 'livenessProbe'
+        }] : [],
+        // Add liveness probe if exists for this container
+        contains(item.value, 'livenessProbe') && item.value.livenessProbe != null ? [{
+          name: '${item.key}-livenessProbe'
           properties: {
             protocol: 'Tcp'
-            port: context.resource.properties.containers.demo.livenessProbe.?tcpSocket.?port ?? 80
-            intervalInSeconds: context.resource.properties.containers.demo.livenessProbe.?periodSeconds ?? 10
-            numberOfProbes: context.resource.properties.containers.demo.livenessProbe.?failureThreshold ?? 3
-            probeThreshold: context.resource.properties.containers.demo.livenessProbe.?successThreshold ?? 1
+            port: item.value.livenessProbe.?tcpSocket.?port ?? 80
+            intervalInSeconds: item.value.livenessProbe.?periodSeconds ?? 10
+            numberOfProbes: item.value.livenessProbe.?failureThreshold ?? 3
+            probeThreshold: item.value.livenessProbe.?successThreshold ?? 1
           }
-        }
-      ] : []
-    )
+        }] : []
+      )
+    ))
     loadBalancingRules: [
       {
         name: httpRuleName
@@ -337,8 +345,8 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
               id: resourceId('Microsoft.Network/loadBalancers/backendAddressPools', loadBalancerName, backendAddressPoolName)
             }
           ]
-          probe: context.resource.properties.?containers.?demo.?readinessProbe != null ? {
-            id: resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, 'readinessProbe')
+          probe: firstContainerWithReadinessProbe != null ? {
+            id: resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, '${firstContainerWithReadinessProbe.key}-readinessProbe')
           } : null
         }
       }
@@ -378,49 +386,50 @@ resource containerGroupProfile 'Microsoft.ContainerInstance/containerGroupProfil
   location: resourceGroup().location
   properties: union(
     {
-      sku: toLower(string(context.resource.properties.?platformOptions.?sku ?? 'standard')) == 'confidential' ? 'Confidential' : 'Standard'
-      containers: [
-        {
-          name: 'web'
-          properties: union(
-            {
-              image: context.resource.properties.?containers.?demo.?image ?? 'nginx:latest'
-              ports: [
-                {
-                  protocol: context.resource.properties.?containers.?demo.?ports != null ? context.resource.properties.?containers.?demo.?ports.?additionalProperties.?properties.?protocol ?? 'TCP' : 'TCP'
-                  port: context.resource.properties.?containers.?demo.?ports != null ? context.resource.properties.?containers.?demo.?ports.?additionalProperties.?properties.?containerPort ?? 80 : 80
-                }
-              ]
-              resources: {
-                requests: {
-                  memoryInGB: (context.resource.properties.containers.demo.?resources.?requests.?memoryInMib ?? 1024) / 1024
-                  cpu: context.resource.properties.?containers.?demo.?resources.?requests.?cpu ?? json('1.0')
-                }
+      sku: toLower(string(context.resource.properties.?platformOptions.?sku ?? 'Standard')) == 'Confidential' ? 'Confidential' : 'Standard'
+      containers: reduce(containerItems, [], (acc, item) => concat(acc, [{
+        name: item.key
+        properties: union(
+          {
+            image: item.value.image
+            ports: contains(item.value, 'ports') ? reduce(items(item.value.ports), [], (portAcc, port) => concat(portAcc, [{
+              protocol: port.value.?protocol ?? 'TCP'
+              port: port.value.containerPort
+            }])) : []
+            resources: {
+              requests: {
+                memoryInGB: (item.value.?resources.?requests.?memoryInMib ?? 1024) / 1024
+                cpu: item.value.?resources.?requests.?cpu ?? json('1.0')
               }
-            },
-            // Add environment variables from container definition and connections
-            (contains(context.resource.properties.?containers.?demo ?? {}, 'env') || length(connectionEnvVars) > 0) ? {
-              environmentVariables: concat(
-                // Container-defined env vars
-                reduce(items(context.resource.properties.?containers.?demo.?env ?? {}), [], (envAcc, envItem) => concat(envAcc, [{
-                  name: envItem.key
-                  value: envItem.value.?value ?? string(envItem.value)
-                }])),
-                // Connection-derived env vars
-                connectionEnvVars
-              )
-            } : {},
-            {
-              volumeMounts: [
-                {
-                  name: 'cachevolume'
-                  mountPath: '/mnt/cache' // ephemeral volume path in container filesystem
-                }
-              ]
             }
-          )
-        }
-      ]
+          },
+          // Add environment variables from container definition and connections
+          (contains(item.value, 'env') || length(connectionEnvVars) > 0) ? {
+            environmentVariables: concat(
+              // Container-defined env vars
+              reduce(items(item.value.?env ?? {}), [], (envAcc, envItem) => concat(envAcc, [{
+                name: envItem.key
+                value: envItem.value.?value ?? string(envItem.value)
+              }])),
+              // Connection-derived env vars
+              connectionEnvVars
+            )
+          } : {},
+          // Add volume mounts if they exist
+          contains(item.value, 'volumeMounts') ? {
+            volumeMounts: reduce(item.value.volumeMounts, [], (vmAcc, vm) => concat(vmAcc, [{
+              name: vm.volumeName
+              mountPath: vm.mountPath
+            }]))
+          } : {},
+          // Add command if specified
+          contains(item.value, 'command') ? { command: item.value.command } : {},
+          // Add args if specified
+          contains(item.value, 'args') ? { args: item.value.args } : {},
+          // Add working directory if specified
+          contains(item.value, 'workingDir') ? { workingDir: item.value.workingDir } : {}
+        )
+      }]))
       volumes: [
         {
           name: 'cachevolume'
@@ -517,5 +526,5 @@ output networkSecurityGroupId string = networkSecurityGroup.id
 output ddosProtectionPlanId string = ddosProtectionPlan.id
 output containerGroupProfileId string = containerGroupProfile.id
 output nGroupsId string = nGroups.id
-output readinessProbeId string = context.resource.properties.?containers.?demo.?readinessProbe != null ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, 'readinessProbe') : ''
-output livenessProbeId string = context.resource.properties.?containers.?demo.?livenessProbe != null ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, 'livenessProbe') : ''
+output readinessProbeId string = firstContainerWithReadinessProbe != null ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, '${firstContainerWithReadinessProbe.key}-readinessProbe') : ''
+output livenessProbeId string = length(filter(containerItems, item => contains(item.value, 'livenessProbe') && item.value.livenessProbe != null)) > 0 ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, '${filter(containerItems, item => contains(item.value, 'livenessProbe') && item.value.livenessProbe != null)[0].key}-livenessProbe') : ''

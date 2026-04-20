@@ -1,7 +1,7 @@
 extension radius
-extension containers
-extension persistentVolumes
-extension secrets
+extension radiusResources
+// extension persistentVolumes
+// extension secrets
 
 param environment string
 
@@ -13,7 +13,7 @@ param password string = 'c2VjcmV0cGFzc3dvcmQ='
 #disable-next-line secure-parameter-default @secure()
 param apiKey string = 'abc123xyz'
 
-resource app 'Radius.Core/applications@2025-08-01-preview' = {
+resource app 'Applications.Core/applications@2023-10-01-preview' = {
   name: 'containers-testapp'
   properties: {
     environment: environment
@@ -27,14 +27,14 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
     environment: environment
     application: app.id
     connections: {
-      data: {
-        source: myPersistentVolume.id
-        disableDefaultEnvVars: false
-      }
-      secrets: {
-        source: secret.id
-        disableDefaultEnvVars: false
-      }
+      // data: {
+      //   source: myPersistentVolume.id
+      //   disableDefaultEnvVars: false
+      // }
+      // secrets: {
+      //   source: secret.id
+      //   disableDefaultEnvVars: false
+      // }
     }
     containers: {
       web: {
@@ -52,7 +52,7 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
           CONNECTIONS_SECRET_USERNAME: {
             valueFrom: {
               secretKeyRef: {
-                secretName: secret.name
+                secretName: 'secret.name1'
                 key: 'username'
               }
             }
@@ -60,7 +60,7 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
           CONNECTIONS_SECRET_APIKEY: {
             valueFrom: {
               secretKeyRef: {
-                secretName: secret.name
+                secretName: 'secret.name2'
                 key: 'apikey'
               }
             }
@@ -68,34 +68,34 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
           CONNECTIONS_SECRET_PASSWORD: {
             valueFrom: {
               secretKeyRef: {
-                secretName: secret.name
+                secretName: 'secret.name3'
                 key: 'password'
               }
             }
           }
         }
         volumeMounts: [
-          {
-            volumeName: 'data'
-            mountPath: '/app/data'
-          }
-          {
-            volumeName: 'cache'
-            mountPath: '/tmp/cache'
-          }
-          {
-            volumeName: 'secrets'
-            mountPath: '/etc/secrets'
-          }
+          // {
+          //   volumeName: 'data'
+          //   mountPath: '/app/data'
+          // }
+          // {
+          //   volumeName: 'cache'
+          //   mountPath: '/tmp/cache'
+          // }
+          // {
+          //   volumeName: 'secrets'
+          //   mountPath: '/etc/secrets'
+          // }
         ] 
         resources: {
           requests: {
             cpu: '0.1'       
-            memoryInMib: 128   
+            memoryInMib: 2048   
           }
           limits: {
             cpu: '0.5'
-            memoryInMib: 512
+            memoryInMib: 2048
           }
         }
         livenessProbe: {
@@ -133,27 +133,27 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
         resources: {
           requests: {
             cpu: '0.1'
-            memoryInMib: 64
+            memoryInMib: 1024
           }
         }
       }
     }
     restartPolicy: 'Always'
     volumes: {
-      data: {
-        persistentVolume: {
-          resourceId: myPersistentVolume.id
-          accessMode: 'ReadWriteOnce'
-        }
-      }
+      // data: {
+      //   persistentVolume: {
+      //     resourceId: myPersistentVolume.id
+      //     accessMode: 'ReadWriteOnce'
+      //   }
+      // }
       cache: {
         emptyDir: {
           medium: 'memory'
         }
       }
-      secrets: {
-        secretName: secret.name
-      }
+      // secrets: {
+      //   secretName: secret.name
+      // }
     }
     extensions: {
       daprSidecar: {
@@ -176,31 +176,31 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
   }
 }
 
-resource myPersistentVolume 'Radius.Compute/persistentVolumes@2025-08-01-preview' = {
-  name: 'mypersistentvolume'
-  properties: {
-    environment: environment
-    application: app.id
-    sizeInGib: 1
-  }
-}
+// resource myPersistentVolume 'Radius.Compute/persistentVolumes@2025-08-01-preview' = {
+//   name: 'mypersistentvolume'
+//   properties: {
+//     environment: environment
+//     application: app.id
+//     sizeInGib: 1
+//   }
+// }
 
-resource secret 'Radius.Security/secrets@2025-08-01-preview' = {
-  name: 'app-secrets-${uniqueString(deployment().name)}'
-  properties: {
-    environment: environment
-    application: app.id
-    data: {
-      username: {
-        value: username
-      }
-      password: {
-        value: password
-        encoding: 'base64'
-      }
-      apikey: {
-        value: apiKey
-      }
-    }
-  }
-}
+// resource secret 'Radius.Security/secrets@2025-08-01-preview' = {
+//   name: 'app-secrets-${uniqueString(deployment().name)}'
+//   properties: {
+//     environment: environment
+//     application: app.id
+//     data: {
+//       username: {
+//         value: username
+//       }
+//       password: {
+//         value: password
+//         encoding: 'base64'
+//       }
+//       apikey: {
+//         value: apiKey
+//       }
+//     }
+//   }
+// }
