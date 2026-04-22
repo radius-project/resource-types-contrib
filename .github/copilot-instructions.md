@@ -180,7 +180,7 @@ Pay attention to `BCP318` (null safety) and `BCP120` (deploy-time constant) warn
 
 ### `test/app.bicep` template
 
-Required for CI:
+Recommended for meaningful automated deployment tests:
 
 ```bicep
 extension radius
