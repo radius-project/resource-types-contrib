@@ -16,9 +16,9 @@ resource testImage 'Radius.Compute/containerImages@2025-08-01-preview' = {
   properties: {
     environment: environment
     application: app.id
-    image: 'ghcr.io/radius-project/samples/demo:latest'
+    tag: 'test'
     build: {
-      context: '/app/test'
+      context: 'git::https://github.com/radius-project/samples.git//demo'
     }
   }
 }
