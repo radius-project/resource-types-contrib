@@ -83,7 +83,7 @@ output "result" {
     values    = { ... }
     secrets   = { ... }
   }
-  sensitive = true
+  # Add `sensitive = true` only when `result` includes secret material.
 }
 ```
 
