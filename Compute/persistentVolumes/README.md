@@ -17,9 +17,9 @@ A list of available Recipes for this Resource Type, including links to the Bicep
 
 Properties for PersistentVolumes are provided to the Recipe via the [Recipe Context](https://docs.radapp.io/reference/context-schema/) object. These properties include:
 
-- `context.properties.sizeInGib` (integer, required): Size in gibibyte of the PersistentVolume to be deployed.
-- `context.properties.allowedAccessModes` (string, optional): Restricts which access mode a consuming container may request. If omitted, the Kubernetes recipes default to `ReadWriteOnce` so that dynamic provisioners such as Azure Disk can bind the claim.
-- `context.properties.environment` (string, optional): Used for labeling. The recipes shorten the environment resource ID to the final segment to satisfy Kubernetes label length and character restrictions.
+- `context.resource.properties.sizeInGib` (integer, required): Size in gibibyte of the PersistentVolume to be deployed.
+- `context.resource.properties.allowedAccessModes` (string, optional): Restricts which access mode a consuming container may request. If omitted, the Kubernetes recipes default to `ReadWriteOnce` so that dynamic provisioners such as Azure Disk can bind the claim.
+- `context.resource.properties.environment` (string, optional): Used for labeling. The recipes shorten the environment resource ID to the final segment to satisfy Kubernetes label length and character restrictions.
 
 
 ## Recipe Output Properties
