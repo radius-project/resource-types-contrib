@@ -20,7 +20,7 @@ For deeper background, see:
     │   └── <platform-service>/       # e.g., kubernetes/, aws-memorydb/, azure-cache/
     │       ├── bicep/*.bicep
     │       └── terraform/{main.tf, var.tf}
-    └── test/app.bicep                # Test application (required for CI)
+    └── test/app.bicep                # Test application (used for automated recipe tests)
 ```
 
 ## Resource Type Definitions
