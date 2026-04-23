@@ -5,7 +5,7 @@ types:
       The Radius.Data/neo4jDatabases Resource Type deploys a Neo4j graph database. To create a new Neo4j database, 
       define an Application and Container resource in your application definition Bicep file.
 
-         ```
+      ```
       extension radius
       param environment string
       resource myApplication 'Radius.Core/applications@2025-08-01-preview' = { ... }
@@ -22,7 +22,7 @@ types:
       }
       ```
       To connect to the new Neo4j database, add a connection between the container and the new Neo4j database. The final Container resource should look similar to:
-        ```
+      ```
       resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
         name: 'myContainer'
         properties: {

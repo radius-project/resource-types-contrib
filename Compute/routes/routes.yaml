@@ -3,12 +3,12 @@ types:
   routes:
     description: |
       The Radius.Compute/routes Resource Type defines network routes for responding to external clients. Note that a Routes resource is not required for service-to-service communication. To use Routes, define a Container and ensure a `containerPort` is specified.
-
+      ```
       extension radius
       param environment string
 
       resource myApplication 'Radius.Core/applications@2025-08-01-preview' = { ... }
-      
+
       resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
         name: 'myContainer'
         properties: {
@@ -34,9 +34,10 @@ types:
           }
         }
       }
+      ```
 
       Then define a Routes resource.
-
+      ```
       resource ingressRule 'Radius.Compute/routes@2025-08-01-preview' = {
         name: 'ingressRule'
         properties: {
@@ -59,11 +60,12 @@ types:
           ]
         }
       }
+      ```
 
       The hostname is determined by the Recipe. 
 
       Multiple rules can be included in Routes.
-
+      ```
       resource ingressRule 'Radius.Compute/routes@2025-08-01-preview' = {
         name: 'ingressRule'
         properties: {
@@ -98,6 +100,7 @@ types:
           ]
         }
       }
+      ```
 
     apiVersions:
       '2025-08-01-preview':
