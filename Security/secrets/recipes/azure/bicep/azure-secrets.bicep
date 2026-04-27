@@ -11,15 +11,14 @@ var secretData = context.resource.properties.data
 resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   name: 'kv-${uniqueString(secretName, resourceGroup().id)}'
   location: resourceGroup().location
-  sku: {
-    name: 'standard'
-    family: 'A'
-  }
   properties: {
     tenantId: subscription().tenantId
+    sku: {
+      family: 'A'
+      name: 'standard'
+    }
+    enableRbacAuthorization: true
     enableSoftDelete: true
-    enableRbacAuthorization: false
-    accessPolicies: []
   }
 }
 

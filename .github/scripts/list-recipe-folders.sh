@@ -72,7 +72,8 @@ matches_platform() {
     fi
 
     for filter in "${PLATFORM_FILTERS[@]}"; do
-        if [[ "$platform_lower" == "$filter" ]]; then
+        # Support prefix matching: "azure" matches "azure", "azure-aci", "azure-aks"
+        if [[ "$platform_lower" == "$filter"* ]]; then
             return 0
         fi
     done
