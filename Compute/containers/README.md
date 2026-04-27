@@ -16,38 +16,38 @@ A list of available Recipes for this Resource Type, including links to the Bicep
 
 | Radius Property | Kubernetes Property |
 |---|---|
-| context.properties.containers | PodSpec.containers |
-| context.properties.containers.image | PodSpec.containers.image |
-| context.properties.containers.cmd | PodSpec.containers.cmd |
-| context.properties.containers.args | PodSpec.containers.args |
-| context.properties.containers.env | PodSpec.containers.env |
-| context.properties.containers.env.value | PodSpec.containers.env.value |
-| context.properties.containers.env.valueFrom.secretKeyRef | PodSpec.containers.env.valueFrom.secretKeyRef |
-| context.properties.containers.env.valueFrom.secretKeyRef.secretName | N/A (Radius Secret) |
-| context.properties.containers.env.valueFrom.secretKeyRef.key | N/A (Radius Secret) |
-| context.properties.containers.workingDir | PodSpec.containers.workingDir |
-| context.properties.containers.resources.requests.cpu | PodSpec.containers.resources.requests.cpu |
-| context.properties.containers.resources.requests.memoryInMib | PodSpec.containers.resources.requests.memory |
-| context.properties.containers.resources.limits.cpu | PodSpec.containers.resources.limits.cpu |
-| context.properties.containers.resources.limits.memoryInMib | PodSpec.containers.resources.limits.memory |
-| context.properties.containers.ports.* | PodSpec.containers.ports.* |
-| context.properties.containers.volumeMounts | PodSpec.containers.volumeMounts |
-| context.properties.containers.volumeMounts.volumeName | PodSpec.containers.volumeMounts.name |
-| context.properties.containers.volumeMounts.mountPath | PodSpec.containers.volumeMounts.mountPath |
-| context.properties.containers.readinessProbe.* | PodSpec.containers.readinessProbe.* |
-| context.properties.containers.livenessProbe.* | PodSpec.containers.livenessProbe.* |
-| context.properties.initContainers (same as containers) | PodSpec.initContainers (same as containers) |
-| context.properties.volumes | PodSpec.volumes |
-| context.properties.volumes.persistentVolume | PersistentVolumeClaim |
-| context.properties.volumes.persistentVolume.resourceId | N/A (Radius PersistentVolume) |
-| context.properties.volumes.persistentVolume.accessMode | PersistentVolumeClaim.accessModes |
-| context.properties.volumes.secretName | N/A (Radius Secret) |
-| context.properties.volumes.emptyDir | PodSpec.volumes.emptyDir |
-| context.properties.restartPolicy | PodSpec.restartPolicy |
-| context.properties.replicas | DeploymentSpec.replicas |
-| context.properties.autoScaling.* | HorizontalPodAutoscalerSpec.* |
-| context.properties.extensions | Dapr extension for Radius |
-| context.properties.platformOptions | Kubernetes Deployment and Pod override properties |
+| context.resource.properties.containers | PodSpec.containers |
+| context.resource.properties.containers.image | PodSpec.containers.image |
+| context.resource.properties.containers.cmd | PodSpec.containers.cmd |
+| context.resource.properties.containers.args | PodSpec.containers.args |
+| context.resource.properties.containers.env | PodSpec.containers.env |
+| context.resource.properties.containers.env.value | PodSpec.containers.env.value |
+| context.resource.properties.containers.env.valueFrom.secretKeyRef | PodSpec.containers.env.valueFrom.secretKeyRef |
+| context.resource.properties.containers.env.valueFrom.secretKeyRef.secretName | N/A (Radius Secret) |
+| context.resource.properties.containers.env.valueFrom.secretKeyRef.key | N/A (Radius Secret) |
+| context.resource.properties.containers.workingDir | PodSpec.containers.workingDir |
+| context.resource.properties.containers.resources.requests.cpu | PodSpec.containers.resources.requests.cpu |
+| context.resource.properties.containers.resources.requests.memoryInMib | PodSpec.containers.resources.requests.memory |
+| context.resource.properties.containers.resources.limits.cpu | PodSpec.containers.resources.limits.cpu |
+| context.resource.properties.containers.resources.limits.memoryInMib | PodSpec.containers.resources.limits.memory |
+| context.resource.properties.containers.ports.* | PodSpec.containers.ports.* |
+| context.resource.properties.containers.volumeMounts | PodSpec.containers.volumeMounts |
+| context.resource.properties.containers.volumeMounts.volumeName | PodSpec.containers.volumeMounts.name |
+| context.resource.properties.containers.volumeMounts.mountPath | PodSpec.containers.volumeMounts.mountPath |
+| context.resource.properties.containers.readinessProbe.* | PodSpec.containers.readinessProbe.* |
+| context.resource.properties.containers.livenessProbe.* | PodSpec.containers.livenessProbe.* |
+| context.resource.properties.initContainers (same as containers) | PodSpec.initContainers (same as containers) |
+| context.resource.properties.volumes | PodSpec.volumes |
+| context.resource.properties.volumes.persistentVolume | PersistentVolumeClaim |
+| context.resource.properties.volumes.persistentVolume.resourceId | N/A (Radius PersistentVolume) |
+| context.resource.properties.volumes.persistentVolume.accessMode | PersistentVolumeClaim.accessModes |
+| context.resource.properties.volumes.secretName | N/A (Radius Secret) |
+| context.resource.properties.volumes.emptyDir | PodSpec.volumes.emptyDir |
+| context.resource.properties.restartPolicy | PodSpec.restartPolicy |
+| context.resource.properties.replicas | DeploymentSpec.replicas |
+| context.resource.properties.autoScaling.* | HorizontalPodAutoscalerSpec.* |
+| context.resource.properties.extensions | Dapr extension for Radius |
+| context.resource.properties.platformOptions | Kubernetes Deployment and Pod override properties |
 
 ## Recipe Output Properties
 
