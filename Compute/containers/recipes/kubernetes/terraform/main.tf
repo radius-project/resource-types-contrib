@@ -299,6 +299,8 @@ locals {
 # Kubernetes Deployment
 # ========================================
 resource "kubernetes_deployment" "deployment" {
+  wait_for_rollout = false
+
   metadata {
     name      = local.normalized_name
     namespace = local.namespace

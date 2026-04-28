@@ -22,18 +22,18 @@ The Kubernetes Bicep and Terraform recipes require the following parameters to b
 
 | Radius Property | Kubernetes Property |
 |---|---|
-| context.properties.kind | Used by Recipe to determine which Kubernetes resource type to create (HTTPRoute, TCPRoute, TLSRoute, or UDPRoute). |
-| context.properties.hostnames[] | HTTPRoute.spec.hostnames[] |
-| context.properties.rules[] | HTTPRoute.spec.rules[] |
-| context.properties.rules[].matches[] | HTTPRoute.spec.rules[].matches[] |
-| context.properties.rules[].matches[].httpHeaders[].* | HTTPRoute.spec.rules[].matches[].headers[].* |
-| context.properties.rules[].matches[].httpMethod | HTTPRoute.spec.rules[].matches[].method |
-| context.properties.rules[].matches[].httpPath | HTTPRoute.spec.rules[].matches[].path.value |
-| context.properties.rules[].matches[].httpQueryParams[].* | HTTPRoute.spec.rules[].matches[].queryParams[].* |
-| context.properties.rules[].destinationContainer | N/A |
-| context.properties.rules[].destinationContainer.resourceId |  N/A |
-| context.properties.rules[].destinationContainer.containerName |  N/A |
-| context.properties.rules[].destinationContainer.containerPort |  N/A |
+| context.resource.properties.kind | Used by Recipe to determine which Kubernetes resource type to create (HTTPRoute, TCPRoute, TLSRoute, or UDPRoute). |
+| context.resource.properties.hostnames[] | HTTPRoute.spec.hostnames[] |
+| context.resource.properties.rules[] | HTTPRoute.spec.rules[] |
+| context.resource.properties.rules[].matches[] | HTTPRoute.spec.rules[].matches[] |
+| context.resource.properties.rules[].matches[].httpHeaders[].* | HTTPRoute.spec.rules[].matches[].headers[].* |
+| context.resource.properties.rules[].matches[].httpMethod | HTTPRoute.spec.rules[].matches[].method |
+| context.resource.properties.rules[].matches[].httpPath | HTTPRoute.spec.rules[].matches[].path.value |
+| context.resource.properties.rules[].matches[].httpQueryParams[].* | HTTPRoute.spec.rules[].matches[].queryParams[].* |
+| context.resource.properties.rules[].destinationContainer | N/A |
+| context.resource.properties.rules[].destinationContainer.resourceId |  N/A |
+| context.resource.properties.rules[].destinationContainer.containerName |  N/A |
+| context.resource.properties.rules[].destinationContainer.containerPort |  N/A |
 
 ## Recipe Output Properties
 
