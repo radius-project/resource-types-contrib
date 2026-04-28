@@ -13,8 +13,8 @@ param storageSku string = 'Standard_LRS'
 @description('Storage account kind.')
 param storageKind string = 'StorageV2'
 
-var storageAccountName = toLower('pv${take(uniqueString(context.resource.id), 22)}')
-var fileShareName = toLower('pv${take(uniqueString('${context.resource.id}/share'), 22)}')
+var storageAccountName = toLower('pv${take(uniqueString(context.resource.id, resourceGroup().id), 22)}')
+var fileShareName = toLower('pv${take(uniqueString('${context.resource.id}/share', resourceGroup().id), 22)}')
 var shareQuotaGiB = int(context.resource.properties.sizeInGib)
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {

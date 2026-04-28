@@ -12,9 +12,17 @@ param username string = 'admin'
 param password string = 'c2VjcmV0cGFzc3dvcmQ='
 #disable-next-line secure-parameter-default @secure()
 param apiKey string = 'abc123xyz'
+@description('Container image. Must define a valid ENTRYPOINT/CMD. Defaults to nginx image.')
+param image string = 'nginx:latest'
 
-resource app 'Radius.Core/applications@2025-08-01-preview' = {
+@description('Optional init container image. If empty, init container is not used.')
+param initImage string = 'busybox:latest'
+
+// TODO: Switch to Radius.Core/applications once runtime resolves Radius.Core app references
+// Tracked in: https://github.com/radius-project/resource-types-contrib/issues/109
+resource app 'Applications.Core/applications@2023-10-01-preview' = {
   name: 'containers-testapp'
+  location: 'global'
   properties: {
     environment: environment
   }
@@ -37,11 +45,8 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
       }
     }
     containers: {
-      web: {
-        image: 'nginx:alpine'
-        command: ['/bin/sh', '-c']
-        args: ['nginx -g "daemon off;"']
-        workingDir: '/usr/share/nginx/html'
+      demo: {        
+        image: image        
         ports: {
           http: {
             containerPort: 80
@@ -52,7 +57,7 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
           CONNECTIONS_SECRET_USERNAME: {
             valueFrom: {
               secretKeyRef: {
-                secretName: secret.name
+                secretName: 'secret.name1'
                 key: 'username'
               }
             }
@@ -60,7 +65,7 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
           CONNECTIONS_SECRET_APIKEY: {
             valueFrom: {
               secretKeyRef: {
-                secretName: secret.name
+                secretName: 'secret.name2'
                 key: 'apikey'
               }
             }
@@ -68,7 +73,7 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
           CONNECTIONS_SECRET_PASSWORD: {
             valueFrom: {
               secretKeyRef: {
-                secretName: secret.name
+                secretName: 'secret.name3'
                 key: 'password'
               }
             }
@@ -90,11 +95,11 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
         ] 
         resources: {
           requests: {
-            cpu: '0.1'       
-            memoryInMib: 2048   
+            cpu: '1.0'       
+            memoryInMib: 1024   
           }
           limits: {
-            cpu: '0.5'
+            cpu: '2.0'
             memoryInMib: 2048
           }
         }
@@ -121,7 +126,7 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
       }
       init: {
         initContainer: true
-        image: 'busybox:latest'
+        image: initImage
         command: ['sh', '-c']
         args: ['echo "Initializing..." && sleep 5']
         workingDir: '/tmp'
@@ -132,7 +137,7 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
         }
         resources: {
           requests: {
-            cpu: '0.1'
+            cpu: '1.0'
             memoryInMib: 1024
           }
         }
