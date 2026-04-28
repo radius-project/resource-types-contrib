@@ -1,5 +1,5 @@
 extension radius
-extension radiusResources
+extension containers
 extension persistentVolumes
 extension secrets
 
