@@ -24,6 +24,14 @@ RECIPE_TYPE ?= all
 build: ## Build all resource types and recipes
 	@./.github/scripts/build-all.sh "$(RESOURCE_TYPE_ROOT)"
 
+.PHONY: build-kubernetes-recipes
+build-kubernetes-recipes: ## Build Kubernetes recipes only
+	@RECIPE_PLATFORM_FILTER=kubernetes ./.github/scripts/build-all.sh "$(RESOURCE_TYPE_ROOT)"
+
+.PHONY: build-azure-recipes
+build-azure-recipes: ## Build Azure recipes only
+	@RECIPE_PLATFORM_FILTER=azure ./.github/scripts/build-all.sh "$(RESOURCE_TYPE_ROOT)"
+
 .PHONY: build-resource-type
 build-resource-type: ## Validate a resource type by running the 'rad resource-type create' and 'bicep publish-extension' commands (requires TYPE_FOLDER parameter)
 ifndef TYPE_FOLDER
@@ -56,7 +64,7 @@ deploy-recipe-pack: ## Deploy a recipe pack using Bicep template and update envi
 ifndef BICEP_FILE
 	$(error BICEP_FILE parameter is required. Usage: make deploy-recipe-pack BICEP_FILE=<path-to-bicep-file>)
 endif
-	@./.github/scripts/deploy-recipe-pack.sh "$(BICEP_FILE)" "$(RESOURCE_GROUP)" "$(SUBSCRIPTION)"
+	@./.github/scripts/deploy-recipe-pack.sh "$(BICEP_FILE)" "$(RESOURCE_GROUP)"
 
 .PHONY: update-env-recipe-pack
 update-env-recipe-pack: ## Update environment with recipe pack ID (requires RECIPE_PACK_NAME and optionally RESOURCE_GROUP and ENVIRONMENT)
@@ -71,6 +79,14 @@ endif
 .PHONY: test
 test: ## Run recipe tests (assumes already registered)
 	@./.github/scripts/test-all-recipes.sh "$(RESOURCE_TYPE_ROOT)" "$(ENVIRONMENT)" "$(RECIPE_TYPE)"
+
+.PHONY: test-kubernetes-recipes
+test-kubernetes-recipes: ## Run recipe tests for Kubernetes platform only
+	@RECIPE_PLATFORM_FILTER=kubernetes ./.github/scripts/test-all-recipes.sh "$(RESOURCE_TYPE_ROOT)"
+
+.PHONY: test-azure-recipes
+test-azure-recipes: ## Run recipe tests for Azure platform only (requires Azure configuration)
+	@RECIPE_PLATFORM_FILTER=azure ./.github/scripts/test-all-recipes.sh "$(RESOURCE_TYPE_ROOT)"
 
 .PHONY: list-resource-types
 list-resource-types: ## List resource type folders under the specified root
