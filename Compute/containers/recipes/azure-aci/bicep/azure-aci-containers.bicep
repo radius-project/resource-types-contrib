@@ -142,9 +142,9 @@ var aciVolumes = reduce(volumeItems, [], (acc, vol) => concat(acc, [
     { name: vol.key },
     contains(vol.value, 'persistentVolume') && contains(resolvedConnections, vol.key) ? {
       azureFile: {
-        shareName: string(resolvedConnections[vol.key].?properties.?status.?computedValues.?shareName ?? '')
-        storageAccountName: string(resolvedConnections[vol.key].?properties.?status.?computedValues.?storageAccountName ?? '')
-        storageAccountKey: string(resolvedConnections[vol.key].?properties.?status.?secrets.?storageAccountKey.?Value ?? '')
+        shareName: string(resolvedConnections[vol.key].?status.?computedValues.?shareName ?? '')
+        storageAccountName: string(resolvedConnections[vol.key].?status.?computedValues.?storageAccountName ?? '')
+        storageAccountKey: string(resolvedConnections[vol.key].?status.?secrets.?storageAccountKey.?Value ?? '')
         readOnly: string(vol.value.persistentVolume.?accessMode ?? '') == 'ReadOnlyMany'
       }
     } : {},
