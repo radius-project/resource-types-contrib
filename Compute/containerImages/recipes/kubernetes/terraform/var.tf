@@ -1,6 +1,7 @@
 variable "context" {
   description = "This variable contains Radius recipe context."
   type        = any
+  default     = null
 }
 
 variable "registry_server" {
