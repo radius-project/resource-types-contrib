@@ -14,6 +14,7 @@ A list of available Recipes for this resource type, including links to the Bicep
 |--------|-------------|-------------|-------|------------------|
 | Kubernetes | Bicep | kubernetes-mysql.bicep | Alpha | |
 | AWS | Terraform | main.tf | Alpha | VPC ID, Subnet IDs|
+| Azure | Bicep | azure-database-for-mysql.bicep | Alpha |
 
 ## Recipe Input Properties
 
@@ -22,6 +23,7 @@ Properties for the **Radius.Data/mySqlDatabases** resource type are provided via
 - `context.resource.properties.database`(string, optional): The name of the database. Defaults to `mysql_db` if not provided.
 - `context.resource.properties.secretName`(string, required): Name of the secret containing the database credentials.
 - `context.resource.properties.version`(string, optional): The major MySQL server version in the X.Y format. Defaults to the version `8.4` if not provided.
+- `context.properties.tags`(object, optional): The user-defined tags that will be applied to the resource. Default is null.
 
 ## Recipe Output Properties
 
