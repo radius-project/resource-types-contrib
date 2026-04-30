@@ -161,6 +161,9 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
         appPort: 80
       }
     }
+    platformOptions: {
+      sku: 'Confidential'
+    }
     replicas: 1
     autoScaling: {
       maxReplicas: 3
