@@ -1,7 +1,3 @@
-@description('Container Instance API version')
-@maxLength(32)
-param apiVersion string = '2024-09-01-preview'
-
 @description('NGroups parameter name')
 @maxLength(64)
 param nGroupsParamName string = 'ngroups-${uniqueString(resourceGroup().id)}'
@@ -82,10 +78,6 @@ param context object
 // Variables
 var cgProfileName = containerGroupProfileName
 var nGroupsName = nGroupsParamName
-var resourcePrefix = '/subscriptions/${subscription().subscriptionId}/resourceGroups/${resourceGroup().name}/providers/'
-var loadBalancerApiVersion = '2022-07-01'
-var vnetApiVersion = '2022-07-01'
-var publicIPVersion = '2022-07-01'
 var resourceProperties = context.resource.properties ?? {}
 var resourceVolumes = resourceProperties.?volumes ?? {}
 var resolvedConnections = context.resource.?connections ?? {}
@@ -104,11 +96,6 @@ var connectionDefinitions = context.resource.properties.?connections ?? {}
 
 // Properties to exclude from connection environment variables
 var excludedProperties = ['recipe', 'status', 'provisioningState']
-
-// Helper function to check if a connection is a secrets resource (using source from original connection definition)
-var isSecretsResource = reduce(items(connectionDefinitions), {}, (acc, conn) => union(acc, {
-  '${conn.key}': contains(string(conn.value.?source ?? ''), 'Radius.Security/secrets')
-}))
 
 // Build environment variables from ALL connections (including secrets) when not explicitly disabled.
 // Unlike K8s which uses envFrom.secretRef for secrets connections, ACI does not support that mechanism.
@@ -149,19 +136,6 @@ var aciVolumes = reduce(volumeItems, [], (acc, vol) => concat(acc, [
       }
     } : {},
     contains(vol.value, 'emptyDir') ? { emptyDir: {} } : {}
-  )
-]))
-
-// Build volume mounts from demo container definition
-// volumeMounts is an array: [{name, containerPath, readOnly}]
-var rawVolumeMounts = resourceProperties.?containers.?demo.?volumeMounts ?? []
-var aciVolumeMounts = reduce(rawVolumeMounts, [], (acc, vm) => concat(acc, [
-  union(
-    {
-      name: vm.volumeName      
-      mountPath: vm.mountPath
-    },
-    (vm.?readOnly ?? false) == true ? { readOnly: true } : {}
   )
 ]))
 
