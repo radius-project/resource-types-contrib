@@ -11,6 +11,7 @@ A list of available Recipes for this Resource Type, including links to the Bicep
 |---|---|---|---|
 | Kubernetes | Bicep | recipes/kubernetes/bicep/kubernetes-secrets.bicep | Alpha |
 | Kubernetes | Terraform | recipes/kubernetes/terraform/main.tf | Alpha |
+| Azure (ACI) | Bicep | recipes/azure-aci/bicep/azure-aci-keyvault-secrets.bicep | Alpha |
 
 
 ## Recipe Input Properties
@@ -27,6 +28,31 @@ Properties for the Secrets resource are provided to the recipe via the [Recipe C
 ## Recipe Output Properties
 
 The Secrets resource does not have any properties which must be set by a Recipe.
+
+### Azure ACI Key Vault Recipe Outputs
+
+The Azure ACI recipe (`azure-aci-keyvault-secrets.bicep`) provisions an Azure Key Vault and a User Assigned Managed Identity (UAI) with Key Vault Administrator access. It outputs the following values via the Radius `result` object:
+
+| Output Property | Description |
+|---|---|
+| `keyVaultId` | Resource ID of the created Azure Key Vault |
+| `keyVaultUri` | URI of the Key Vault (used by Azure SDK to connect) |
+| `userAssignedIdentityId` | Resource ID of the UAI |
+| `userAssignedIdentityClientId` | Client ID of the UAI (used in application code) |
+| `userAssignedIdentityPrincipalId` | Principal (object) ID of the UAI |
+
+### Azure ACI Recipe Details
+
+- **Key Vault naming**: `kv-<first 7 chars of resource name>-<uniqueString>` (stays within the 3–24 char limit)
+- **RBAC authorization**: Enabled on the Key Vault (role assignments, not access policies)
+- **Soft delete**: Enabled by default
+- **Secret kind validation**: The recipe validates required fields per kind:
+  - `certificate-pem`: requires `tls.crt` and `tls.key`
+  - `basicAuthentication`: requires `username` and `password`
+  - `azureWorkloadIdentity`: requires `clientId` and `tenantId`
+  - `awsIRSA`: requires `roleARN`
+- **Encoding support**: If a secret entry specifies `encoding: 'base64'`, the value is base64-encoded before storage
+- **Parameters**: Accepts an optional `location` parameter (defaults to `resourceGroup().location`)
 
 ## Non-developer Use Cases
 
