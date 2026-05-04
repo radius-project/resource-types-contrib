@@ -60,6 +60,13 @@ PASSED_RECIPES=()
 for recipe_dir in "${RECIPE_DIRS[@]}"; do
     # Convert to relative path for cleaner output
     RELATIVE_PATH="${recipe_dir#$/}"
+
+    # Skip AWS specific recipes that require AWS setup
+    if [[ "$RELATIVE_PATH" == *"/aws/"* ]]; then
+        echo "==> Skipping $RELATIVE_PATH (requires AWS setup)"
+        continue
+    fi
+
     echo ""
     echo "================================================"
     echo "Testing: $RELATIVE_PATH"
