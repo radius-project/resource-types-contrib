@@ -107,7 +107,7 @@ resource neo4j 'apps/StatefulSet@v1' = {
         labels: labels
       }
       spec: {
-        enableServiceLinks: false
+        enableServiceLinks: false // Prevent Kubernetes from injecting service env vars, which can conflict with Neo4j's own env vars
         containers: [
           {
             name: 'neo4j'

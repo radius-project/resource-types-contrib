@@ -24,13 +24,13 @@ resource mycontainer 'Radius.Compute/containers@2025-08-01-preview' = {
     containers: {
       demo: {
         image: 'ghcr.io/radius-project/samples/demo:latest'
-          ports: {
-            web: {
-              containerPort: 3000
-            }
+        ports: {
+          web: {
+            containerPort: 3000
           }
         }
       }
+    }
     connections: {
       neo4j: {
         source: neo4j.id
