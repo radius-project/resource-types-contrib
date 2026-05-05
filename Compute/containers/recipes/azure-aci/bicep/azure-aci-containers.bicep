@@ -56,8 +56,6 @@ param subnetAddressPrefix string = '10.0.1.0/24'
 @description('Desired container count')
 param desiredCount int = 3
 
-@description('Availability zones')
-param zones array = []
 
 @description('Maintain desired count')
 param maintainDesiredCount bool = true
@@ -84,6 +82,10 @@ var resolvedConnections = context.resource.?connections ?? {}
 
 // Extract container items from context
 var containerItems = items(context.resource.properties.?containers ?? {})
+
+// Derive the first container's first exposed port (used for ipAddress and LB rules)
+var firstContainerPorts = length(containerItems) > 0 && contains(containerItems[0].value, 'ports') ? items(containerItems[0].value.ports) : []
+var containerConnectionPort = length(firstContainerPorts) > 0 ? firstContainerPorts[0].value.containerPort : 80
 
 // Find the first container with a readiness probe for load balancer probe reference
 var firstContainerWithReadinessProbe = length(filter(containerItems, item => contains(item.value, 'readinessProbe') && item.value.readinessProbe != null)) > 0 
@@ -333,8 +335,8 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
           frontendIPConfiguration: {
             id: resourceId('Microsoft.Network/loadBalancers/frontendIPConfigurations', loadBalancerName, frontendIPName)
           }
-          frontendPort: 80
-          backendPort: 80
+          frontendPort: containerConnectionPort
+          backendPort: containerConnectionPort
           enableFloatingIP: false
           idleTimeoutInMinutes: 15
           protocol: 'Tcp'
@@ -359,14 +361,12 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
           backendAddressPool: {
             id: resourceId('Microsoft.Network/loadBalancers/backendAddressPools', loadBalancerName, backendAddressPoolName)
           }
-          backendPort: 80
+          backendPort: containerConnectionPort
           enableFloatingIP: false
           enableTcpReset: false
           frontendIPConfiguration: {
             id: resourceId('Microsoft.Network/loadBalancers/frontendIPConfigurations', loadBalancerName, frontendIPName)
           }
-          frontendPortRangeEnd: 331
-          frontendPortRangeStart: 81
           idleTimeoutInMinutes: 4
           protocol: 'Tcp'
         }
@@ -383,12 +383,12 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
 
 // ContainerGroupProfile resource - Dev/Limited: supports ONLY a single container named 'demo'
 // Create default CGProfile when platformOptions is not provided else use the CGProfile resource provided by the customer.
-resource containerGroupProfile 'Microsoft.ContainerInstance/containerGroupProfiles@2024-09-01-preview' = {
+resource containerGroupProfile 'Microsoft.ContainerInstance/containerGroupProfiles@2024-11-01-preview' = {
   name: cgProfileName
   location: resourceGroup().location
   properties: union(
     {
-      sku: toLower(string(context.resource.properties.?platformOptions.?sku ?? 'Standard')) == 'confidential' ? 'Confidential' : 'Standard'
+      sku: isConfidential ? 'Confidential' : 'Standard'
       containers: reduce(containerItems, [], (acc, item) => concat(acc, [{
         name: item.key
         properties: union(
@@ -446,23 +446,24 @@ resource containerGroupProfile 'Microsoft.ContainerInstance/containerGroupProfil
         ports: [
           {
             protocol: 'TCP'
-            port: 80
+            port: containerConnectionPort
           }
         ]
         type: 'Private'
       }
       osType: 'Linux'
     },
-    toLower(string(resourceProperties.?platformOptions.?sku ?? 'standard')) == 'confidential' ? {
+    isConfidential ? {
       confidentialComputeProperties: {
-        ccePolicy: string(resourceProperties.?platformOptions.?ccePolicy ?? '')
+        ccePolicy: ccePolicy
+        isolationType: 'SevSnp'
       }
     } : {}
   )
 }
 
 // NGroups
-resource nGroups 'Microsoft.ContainerInstance/NGroups@2024-09-01-preview' = {
+resource nGroups 'Microsoft.ContainerInstance/NGroups@2024-11-01-preview' = {
   name: nGroupsName
   location: resourceGroup().location
   zones: zones
