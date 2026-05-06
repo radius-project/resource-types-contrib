@@ -5,12 +5,17 @@ on:
     branches: [ main ]
     paths:
       - '**/azure/**'
+      - '**/azure-*/**'
       - '**/test/app.bicep'
       - '.github/workflows/validate-azure-recipes.yaml'
-  pull_request:
+  # pull_request_target runs in the context of the base branch, providing access to secrets.
+  # For external contributors, the approval-gate job requires manual approval before tests run.
+  # SECURITY: We use pull_request_target but do NOT run any code from the PR until after approval.
+  pull_request_target:
     branches: [ main ]
     paths:
       - '**/azure/**'
+      - '**/azure-*/**'
       - '**/test/app.bicep'
       - '.github/workflows/validate-azure-recipes.yaml'
   workflow_dispatch:
@@ -21,16 +26,69 @@ on:
         default: 'edge'
         type: string
 
-permissions:
-  id-token: write
-  contents: read
+permissions: {}
 
 jobs:
+  # Trust check for pull_request_target events. Determines whether the PR author
+  # is a trusted contributor (same-repo push) or an external contributor.
+  #
+  # Trust is determined by:
+  #   1. Same-repo PR (head repo == base repo): trusted (only users with write access
+  #      can push branches to the repo).
+  #   2. Fork PR: external (requires approval).
+  check-trust:
+    name: Check Trust
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    if: github.event_name == 'pull_request_target'
+    outputs:
+      is-external: ${{ steps.check.outputs.is-external }}
+    permissions: {}
+    steps:
+      - name: Determine trust level
+        id: check
+        env:
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          # Same-repo PRs are always trusted (requires write access to push branches)
+          if [ "${HEAD_REPO}" = "${BASE_REPO}" ]; then
+            echo "Same-repo PR from ${PR_AUTHOR} — trusted"
+            echo "is-external=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          # Fork PR: treat as external, requires manual approval
+          echo "Fork PR from ${PR_AUTHOR} — external"
+          echo "is-external=true" >> "${GITHUB_OUTPUT}"
+
+  # Approval gate for external contributors. Uses GitHub Environment protection
+  # to require manual approval before running tests on PRs from non-members.
+  approval-gate:
+    name: Approval Gate
+    needs: [check-trust]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    if: |
+      needs.check-trust.outputs.is-external == 'true'
+    environment: azure
+    permissions: {}
+    steps:
+      - name: Approved
+        run: echo "Tests approved to run for commit ${{ github.event.pull_request.head.sha }}"
+
   validate-azure-recipes:
+    needs: [check-trust, approval-gate]
+    # For pull_request_target, require approval-gate to be 'success' or 'skipped' — block
+    # on 'cancelled' (rejected approval) to prevent running PR code with secrets.
+    if: |
+      !cancelled() &&
+      (needs.check-trust.result == 'success' || needs.check-trust.result == 'skipped') &&
+      (needs.approval-gate.result == 'success' || needs.approval-gate.result == 'skipped')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     name: Validate Azure ${{ matrix.recipe }} Recipes
-    environment: azure
     strategy:
       fail-fast: false
       matrix:
@@ -39,9 +97,19 @@ jobs:
       id-token: write
       contents: read
     steps:
+      - name: Set up checkout target
+        id: checkout-target
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request_target" ]; then
+            echo "ref=${{ github.event.pull_request.head.sha }}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "ref=${{ github.ref }}" >> "${GITHUB_OUTPUT}"
+          fi
+
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ steps.checkout-target.outputs.ref }}
           persist-credentials: false
 
       - name: Azure Login
