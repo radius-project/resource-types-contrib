@@ -6,17 +6,17 @@ on:
   push:
     branches: [main]
     paths:
-      - '**/kubernetes/**'
-      - '**/test/app.bicep'
-      - '**/*.yaml'
-      - '.github/workflows/validate-resource-types.yaml'
+      - "**/kubernetes/**"
+      - "**/test/app.bicep"
+      - "**/*.yaml"
+      - ".github/workflows/validate-resource-types.yaml"
   pull_request:
     branches: [main]
     paths:
-      - '**/kubernetes/**'
-      - '**/test/app.bicep'
-      - '**/*.yaml'
-      - '.github/workflows/validate-resource-types.yaml'
+      - "**/kubernetes/**"
+      - "**/test/app.bicep"
+      - "**/*.yaml"
+      - ".github/workflows/validate-resource-types.yaml"
   workflow_dispatch:
     inputs:
       version:
@@ -50,6 +50,7 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22
+
       - name: Set up ORAS
         uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3 # v2.0.0
         with:
@@ -64,7 +65,7 @@ jobs:
 
       - name: Build Recipes
         run: RECIPE_PLATFORM_FILTER=kubernetes make build
-      
+
       # Generates the bicep definition for recipe pack in recipe-pack-{bicep|terraform}.bicep
       - name: Generate Recipe Pack
         run: RECIPE_PLATFORM_FILTER=kubernetes make generate-recipe-pack PACK_NAME=${{ matrix.recipe }}recipepack OUTPUT_FILE=recipe-pack-${{ matrix.recipe }}.bicep
@@ -78,6 +79,7 @@ jobs:
 
       - name: Update Environment with Recipe Pack
         run: make update-env-recipe-pack RECIPE_PACK_NAME=${{ matrix.recipe }}recipepack ENVIRONMENT="${RAD_ENVIRONMENT_NAME}"
+
       - name: Test ${{ matrix.recipe }} recipes
         run: RECIPE_PLATFORM_FILTER=kubernetes make test ENVIRONMENT=$RAD_ENVIRONMENT_NAME RECIPE_TYPE=${{ matrix.recipe }}
 
@@ -112,7 +114,7 @@ jobs:
 
       - name: Upload Radius pod logs
         if: always()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: radius-pod-logs-${{ matrix.recipe }}
           path: radius-pod-logs

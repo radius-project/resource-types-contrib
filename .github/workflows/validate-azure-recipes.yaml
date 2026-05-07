@@ -1,29 +1,31 @@
+# yaml-language-server: $schema=https://www.schemastore.org/github-workflow.json
+---
 name: Validate Azure Recipes
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
     paths:
-      - '**/azure/**'
-      - '**/azure-*/**'
-      - '**/test/app.bicep'
-      - '.github/workflows/validate-azure-recipes.yaml'
+      - "**/azure/**"
+      - "**/azure-*/**"
+      - "**/test/app.bicep"
+      - ".github/workflows/validate-azure-recipes.yaml"
   # pull_request_target runs in the context of the base branch, providing access to secrets.
   # For external contributors, the approval-gate job requires manual approval before tests run.
   # SECURITY: We use pull_request_target but do NOT run any code from the PR until after approval.
   pull_request_target:
-    branches: [ main ]
+    branches: [main]
     paths:
-      - '**/azure/**'
-      - '**/azure-*/**'
-      - '**/test/app.bicep'
-      - '.github/workflows/validate-azure-recipes.yaml'
+      - "**/azure/**"
+      - "**/azure-*/**"
+      - "**/test/app.bicep"
+      - ".github/workflows/validate-azure-recipes.yaml"
   workflow_dispatch:
     inputs:
       version:
-        description: 'Radius version number to use (e.g. 0.51.0, 0.51.0-rc1, edge).'
+        description: "Radius version number to use (e.g. 0.51.0, 0.51.0-rc1, edge)."
         required: false
-        default: 'edge'
+        default: edge
         type: string
 
 permissions: {}
@@ -107,13 +109,13 @@ jobs:
           fi
 
       - name: Checkout
-        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ steps.checkout-target.outputs.ref }}
           persist-credentials: false
 
       - name: Azure Login
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -156,14 +158,14 @@ jobs:
           echo "Resource group '$RG' is ready"
 
       - name: Setup Node
-        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22
 
       - name: Set up ORAS
-        uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.0
+        uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3 # v2.0.0
         with:
-          version: '1.2.0'
+          version: "1.2.0"
 
       - name: Install Radius CLI
         run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
@@ -238,7 +240,7 @@ jobs:
 
       - name: Upload Radius pod logs
         if: always()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: radius-pod-logs-${{ matrix.recipe }}
           path: radius-pod-logs
