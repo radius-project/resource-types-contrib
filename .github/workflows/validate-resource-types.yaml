@@ -17,6 +17,8 @@ on:
       - "**/test/app.bicep"
       - "**/*.yaml"
       - ".github/workflows/validate-resource-types.yaml"
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
     inputs:
       version:
@@ -81,7 +83,7 @@ jobs:
         run: make update-env-recipe-pack RECIPE_PACK_NAME=${{ matrix.recipe }}recipepack ENVIRONMENT="${RAD_ENVIRONMENT_NAME}"
 
       - name: Test ${{ matrix.recipe }} recipes
-        run: RECIPE_PLATFORM_FILTER=kubernetes make test ENVIRONMENT=$RAD_ENVIRONMENT_NAME RECIPE_TYPE=${{ matrix.recipe }}
+        run: RECIPE_PLATFORM_FILTER=kubernetes make test ENVIRONMENT="$RAD_ENVIRONMENT_NAME" RECIPE_TYPE=${{ matrix.recipe }}
 
       - name: Collect Radius pod logs
         if: always()

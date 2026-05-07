@@ -20,6 +20,8 @@ on:
       - "**/azure-*/**"
       - "**/test/app.bicep"
       - ".github/workflows/validate-azure-recipes.yaml"
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
     inputs:
       version:
@@ -84,6 +86,7 @@ jobs:
     needs: [check-trust, approval-gate]
     # For pull_request_target, require approval-gate to be 'success' or 'skipped' — block
     # on 'cancelled' (rejected approval) to prevent running PR code with secrets.
+    # For push, workflow_dispatch, and merge_group, both gate jobs are skipped.
     if: |
       !cancelled() &&
       (needs.check-trust.result == 'success' || needs.check-trust.result == 'skipped') &&
@@ -124,24 +127,28 @@ jobs:
       - name: Set Azure Test Context
         id: set-context
         run: |
-          LOCATION="${AZURE_LOCATION:-${{ vars.AZURE_LOCATION }}}"
+          LOCATION="${AZURE_LOCATION:-$DEFAULT_AZURE_LOCATION}"
           if [ -z "$LOCATION" ]; then
             LOCATION="westus3"
           fi
           RG="rrttest-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.recipe }}"
           echo "location=$LOCATION" >> "$GITHUB_OUTPUT"
-          echo "AZURE_LOCATION=$LOCATION" >> "$GITHUB_ENV"
-          echo "AZURE_RESOURCE_GROUP=$RG" >> "$GITHUB_ENV"
-          echo "AZURE_WORKSPACE_NAME=default" >> "$GITHUB_ENV"
-          echo "AZURE_ENVIRONMENT_NAME=default" >> "$GITHUB_ENV"
+          {
+            echo "AZURE_LOCATION=$LOCATION"
+            echo "AZURE_RESOURCE_GROUP=$RG"
+            echo "AZURE_WORKSPACE_NAME=default"
+            echo "AZURE_ENVIRONMENT_NAME=default"
+          } >> "$GITHUB_ENV"
+        env:
+          DEFAULT_AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
 
       - name: Create Azure Resource Group
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
           set -euo pipefail
-          RG="${{ env.AZURE_RESOURCE_GROUP }}"
-          LOCATION="${{ env.AZURE_LOCATION }}"
+          RG="$AZURE_RESOURCE_GROUP"
+          LOCATION="$AZURE_LOCATION"
           current_time=$(date +%s)
           az group create \
             --only-show-errors \
@@ -149,7 +156,7 @@ jobs:
             --location "$LOCATION" \
             --name "$RG" \
             --subscription "$AZURE_SUBSCRIPTION_ID" \
-            --tags creationTime=$current_time > /dev/null
+            --tags "creationTime=$current_time" > /dev/null
           # Wait for resource group to be fully available
           while [[ "$(az group exists --name "$RG" --subscription "$AZURE_SUBSCRIPTION_ID")" != "true" ]]; do
             echo "Waiting for resource group '$RG' to be available..."
@@ -203,11 +210,11 @@ jobs:
 
       - name: Update Azure Environment with Recipe Pack
         if: steps.generate.outputs.has_recipes == 'true'
-        run: make update-env-recipe-pack RECIPE_PACK_NAME=azure${{ matrix.recipe }}recipepack ENVIRONMENT=${{ env.AZURE_ENVIRONMENT_NAME }}
+        run: make update-env-recipe-pack RECIPE_PACK_NAME=azure${{ matrix.recipe }}recipepack ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
 
       - name: Test Azure ${{ matrix.recipe }} Recipes
         if: steps.generate.outputs.has_recipes == 'true'
-        run: RECIPE_PLATFORM_FILTER=azure make test ENVIRONMENT=${{ env.AZURE_ENVIRONMENT_NAME }} RECIPE_TYPE=${{ matrix.recipe }}
+        run: RECIPE_PLATFORM_FILTER=azure make test ENVIRONMENT="$AZURE_ENVIRONMENT_NAME" RECIPE_TYPE=${{ matrix.recipe }}
 
       - name: Collect Radius pod logs
         if: always()
