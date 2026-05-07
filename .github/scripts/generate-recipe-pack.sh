@@ -54,7 +54,7 @@ done < <("$SCRIPT_DIR"/list-recipe-folders.sh "$REPO_ROOT" "$RECIPE_TYPE")
 
 if [[ ${#RECIPE_DIRS[@]} -eq 0 ]]; then
     echo "==> No $RECIPE_TYPE recipes found"
-    exit 1
+    exit 0
 fi
 
 echo "==> Found ${#RECIPE_DIRS[@]} $RECIPE_TYPE recipe(s)"
