@@ -70,6 +70,9 @@ param enableDdosProtection bool = false
 @description('Name of an existing DDoS protection plan (required when enableDdosProtection is true)')
 param ddosProtectionPlanName string = 'ddosProtectionPlan'
 
+@description('Deployment location for all resources. Defaults to the resource location provided by Radius.')
+param location string = context.resource.location
+
 @description('Radius ACI Container Context')
 param context object
 
@@ -131,9 +134,9 @@ var aciVolumes = reduce(volumeItems, [], (acc, vol) => concat(acc, [
     { name: vol.key },
     contains(vol.value, 'persistentVolume') && contains(resolvedConnections, vol.key) ? {
       azureFile: {
-        shareName: string(resolvedConnections[vol.key].?status.?computedValues.?shareName ?? '')
-        storageAccountName: string(resolvedConnections[vol.key].?status.?computedValues.?storageAccountName ?? '')
-        storageAccountKey: string(resolvedConnections[vol.key].?status.?secrets.?storageAccountKey.?Value ?? '')
+        shareName: string(resolvedConnections[vol.key].?properties.?status.?computedValues.?shareName ?? '')
+        storageAccountName: string(resolvedConnections[vol.key].?properties.?status.?computedValues.?storageAccountName ?? '')
+        storageAccountKey: string(resolvedConnections[vol.key].?properties.?status.?secrets.?storageAccountKey.?Value ?? '')
         readOnly: string(vol.value.persistentVolume.?accessMode ?? '') == 'ReadOnlyMany'
       }
     } : {},
@@ -149,7 +152,7 @@ resource ddosProtectionPlan 'Microsoft.Network/ddosProtectionPlans@2022-07-01' e
 // Network Security Group
 resource networkSecurityGroup 'Microsoft.Network/networkSecurityGroups@2022-07-01' = {
   name: networkSecurityGroupName
-  location: resourceGroup().location
+  location: location
   properties: {
     securityRules: [
       {
@@ -175,7 +178,7 @@ resource networkSecurityGroup 'Microsoft.Network/networkSecurityGroups@2022-07-0
 // Inbound Public IP
 resource inboundPublicIP 'Microsoft.Network/publicIPAddresses@2022-07-01' = {
   name: inboundPublicIPName
-  location: resourceGroup().location
+  location: location
   sku: {
     name: 'Standard'
     tier: 'Regional'
@@ -191,7 +194,7 @@ resource inboundPublicIP 'Microsoft.Network/publicIPAddresses@2022-07-01' = {
 // Outbound Public IP
 resource outboundPublicIP 'Microsoft.Network/publicIPAddresses@2022-07-01' = {
   name: outboundPublicIPName
-  location: resourceGroup().location
+  location: location
   sku: {
     name: 'Standard'
     tier: 'Regional'
@@ -207,7 +210,7 @@ resource outboundPublicIP 'Microsoft.Network/publicIPAddresses@2022-07-01' = {
 // NAT Gateway
 resource natGateway 'Microsoft.Network/natGateways@2022-07-01' = {
   name: natGatewayName
-  location: resourceGroup().location
+  location: location
   sku: {
     name: 'Standard'
   }
@@ -227,7 +230,7 @@ resource natGateway 'Microsoft.Network/natGateways@2022-07-01' = {
 // Virtual Network
 resource virtualNetwork 'Microsoft.Network/virtualNetworks@2022-07-01' = {
   name: vnetName
-  location: resourceGroup().location
+  location: location
   properties: {
     addressSpace: {
       addressPrefixes: [
@@ -277,7 +280,7 @@ resource virtualNetwork 'Microsoft.Network/virtualNetworks@2022-07-01' = {
 // Load Balancer
 resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
   name: loadBalancerName
-  location: resourceGroup().location
+  location: location
   sku: {
     name: 'Standard'
   }
@@ -354,24 +357,7 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
         }
       }
     ]
-    inboundNatRules: [
-      {
-        name: inboundNatRuleName
-        properties: {
-          backendAddressPool: {
-            id: resourceId('Microsoft.Network/loadBalancers/backendAddressPools', loadBalancerName, backendAddressPoolName)
-          }
-          backendPort: containerConnectionPort
-          enableFloatingIP: false
-          enableTcpReset: false
-          frontendIPConfiguration: {
-            id: resourceId('Microsoft.Network/loadBalancers/frontendIPConfigurations', loadBalancerName, frontendIPName)
-          }
-          idleTimeoutInMinutes: 4
-          protocol: 'Tcp'
-        }
-      }
-    ]
+    inboundNatRules: []
     outboundRules: []
     inboundNatPools: []
   }
@@ -385,7 +371,7 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
 // Create default CGProfile when platformOptions is not provided else use the CGProfile resource provided by the customer.
 resource containerGroupProfile 'Microsoft.ContainerInstance/containerGroupProfiles@2024-11-01-preview' = {
   name: cgProfileName
-  location: resourceGroup().location
+  location: location
   properties: union(
     {
       sku: isConfidential ? 'Confidential' : 'Standard'
@@ -465,7 +451,7 @@ resource containerGroupProfile 'Microsoft.ContainerInstance/containerGroupProfil
 // NGroups
 resource nGroups 'Microsoft.ContainerInstance/NGroups@2024-11-01-preview' = {
   name: nGroupsName
-  location: resourceGroup().location
+  location: location
   zones: zones
   // Run under the UAI created by the secrets recipe so containers can
   // access Key Vault via ManagedIdentityCredential. Only set when a
