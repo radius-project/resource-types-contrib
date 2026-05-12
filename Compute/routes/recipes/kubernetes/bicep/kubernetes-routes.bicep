@@ -35,7 +35,7 @@ var labels = {
 
 
 // Create HTTPRoute for HTTP routing using Gateway API
-resource httpRoute 'gateway.networking.k8s.io/HTTPRoute@v1' = if (routeKind == 'HTTP') {
+resource httpRoute 'gateway.networking.k8s.io/httproutes@v1' = if (routeKind == 'HTTP') {
   metadata: {
     name: 'routes-${uniqueString(context.resource.id)}'
     namespace: context.runtime.kubernetes.namespace
@@ -56,7 +56,7 @@ resource httpRoute 'gateway.networking.k8s.io/HTTPRoute@v1' = if (routeKind == '
 }
 
 // Create TLSRoute for TLS routing using Gateway API
-resource tlsRoute 'gateway.networking.k8s.io/TLSRoute@v1alpha2' = if (routeKind == 'TLS') {
+resource tlsRoute 'gateway.networking.k8s.io/tlsroutes@v1alpha2' = if (routeKind == 'TLS') {
   metadata: {
     name: 'routes-${uniqueString(context.resource.id)}'
     namespace: context.runtime.kubernetes.namespace
@@ -77,7 +77,7 @@ resource tlsRoute 'gateway.networking.k8s.io/TLSRoute@v1alpha2' = if (routeKind 
 }
 
 // Create TCPRoute for TCP routing using Gateway API
-resource tcpRoute 'gateway.networking.k8s.io/TCPRoute@v1alpha2' = if (routeKind == 'TCP') {
+resource tcpRoute 'gateway.networking.k8s.io/tcproutes@v1alpha2' = if (routeKind == 'TCP') {
   metadata: {
     name: 'routes-${uniqueString(context.resource.id)}'
     namespace: context.runtime.kubernetes.namespace
@@ -108,7 +108,7 @@ resource tcpRoute 'gateway.networking.k8s.io/TCPRoute@v1alpha2' = if (routeKind 
 }
 
 // Create UDPRoute for UDP routing using Gateway API
-resource udpRoute 'gateway.networking.k8s.io/UDPRoute@v1alpha2' = if (routeKind == 'UDP') {
+resource udpRoute 'gateway.networking.k8s.io/udproutes@v1alpha2' = if (routeKind == 'UDP') {
   metadata: {
     name: 'routes-${uniqueString(context.resource.id)}'
     namespace: context.runtime.kubernetes.namespace

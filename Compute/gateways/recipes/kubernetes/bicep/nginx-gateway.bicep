@@ -31,7 +31,7 @@ var labels = {
   'radapp.io/resource-group': resourceGroup
 }
 
-resource gateway 'gateway.networking.k8s.io/Gateway@v1' = {
+resource gateway 'gateway.networking.k8s.io/gateways@v1' = {
   metadata: {
     name: resourceName
     namespace: context.runtime.kubernetes.namespace
