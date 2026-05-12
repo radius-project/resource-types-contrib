@@ -85,6 +85,10 @@ types:
             registry:
               type: string
               description: (Optional) Per-resource override of the recipe's `registry` parameter (e.g. `ghcr.io/myorg`). Most developers leave this unset and let the platform engineer's recipe registration decide.
+            image:
+              type: string
+              readOnly: true
+              description: (Read-only) The full image reference produced by the recipe in the form `<registry>/<resource-name>:<tag>`. Reference this from `Radius.Compute/containers` to consume the built image.
             build:
               type: object
               description: (Required) Build configuration for the container image.
