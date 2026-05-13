@@ -17,6 +17,7 @@ Developer documentation is embedded in the resource type definition YAML file, a
 Properties for the **Radius.Data/neo4jDatabases** resource type are provided via the [Recipe Context](https://docs.radapp.io/reference/context-schema/) object. These properties include:
 
 - `context.resource.properties.secretName` (string, required): Name of the secret containing the database credentials. The secret must have `USERNAME` and `PASSWORD` keys.
+- `context.resource.properties.database` (string, optional): Name of the database to create/use. Defaults to the resource name.
 
 ## Recipe Output Properties
 

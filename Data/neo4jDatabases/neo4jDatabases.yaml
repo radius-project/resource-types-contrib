@@ -43,7 +43,6 @@ types:
       When deploying the application definition, provide the database password value as a parameter. It is recommended to use a password generator such as `openssl` or equivalent. For example, `rad deploy app.bicep -p password=$(openssl rand -hex 16)`.
 
       To connect your container to the database, create a connection from the Container resource to the database as shown below.
-      ```
       To connect to the new Neo4j database, add a connection between the container and the new Neo4j database. The final Container resource should look similar to:
       ```
       resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
