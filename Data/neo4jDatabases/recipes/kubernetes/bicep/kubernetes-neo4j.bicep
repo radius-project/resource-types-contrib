@@ -11,22 +11,7 @@ Outputs:
 - values.port: Bolt port (7687)
 - values.database: Database name used by the deployment
 
-## Usage
-
-This recipe is intended to be registered to a Radius Environment and mapped to `Radius.Data/neo4jDatabases@2025-09-11-preview`.
-
-When a developer defines a `neo4jDatabases` resource, Radius will invoke this recipe and populate the resource outputs.
-
-### Parameters
-
-- database (string, default: resource name): Database name to configure.
-- tag (string, default: `community`): Tag for the `neo4j` container image.
-
-### Notes
-
 - This reference recipe enables persistence via a 10Gi PVC and uses a single replica StatefulSet.
-- Credentials are read from the Kubernetes secret specified by `context.resource.properties.secretName`. The secret must have `USERNAME` and `PASSWORD` keys.
-- For production use, consider customizing storage class, resource requests/limits, authentication hardening, backup/restore, and service exposure.
 */
 
 extension kubernetes with {
