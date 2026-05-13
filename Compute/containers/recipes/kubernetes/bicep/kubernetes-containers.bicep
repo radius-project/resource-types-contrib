@@ -36,8 +36,8 @@ var labels = {
 }
 
 // Extract connection data from linked resources (merged with resource properties)
-var resourceConnections = context.resource.connections ?? {}
-var connectionDefinitions = context.resource.properties.connections ?? {}
+var resourceConnections = context.resource.?connections ?? {}
+var connectionDefinitions = resourceProperties.?connections ?? {}
 
 // Properties to exclude from connection environment variables
 var excludedProperties = ['recipe', 'status', 'provisioningState']
