@@ -50,7 +50,21 @@ locals {
   git_repo_url = local.is_git_context ? replace(local.url_segments[0], ":|||", "://") : ""
   git_subdir   = local.is_git_context && length(local.url_segments) > 1 ? local.url_segments[1] : ""
 
-  buildctl_git_url = local.is_git_context ? "${local.git_repo_url}${local.git_ref != "" ? "#${local.git_ref}" : ""}" : ""
+  # BuildKit's git frontend takes the subdir as part of the URL
+  # fragment using the syntax "#<ref>:<subdir>" (see
+  # gitutil.ParseGitRef in moby/buildkit). Build the fragment up
+  # front: empty if no ref or subdir; "#<ref>" if only ref;
+  # "#<ref>:<subdir>" if both. (A subdir without a ref isn't
+  # representable in this syntax — a ref is always required when
+  # using a subdir, which the validate_git_tag check below also
+  # enforces.)
+  git_fragment = local.is_git_context ? (
+    local.git_ref == "" ? "" : (
+      local.git_subdir == "" ? "#${local.git_ref}" : "#${local.git_ref}:${local.git_subdir}"
+    )
+  ) : ""
+
+  buildctl_git_url = local.is_git_context ? "${local.git_repo_url}${local.git_fragment}" : ""
 
   # Content-addressable tag (default). For a local-path context we
   # hash the directory contents, the Dockerfile path, and the
@@ -74,20 +88,17 @@ locals {
   platform_opt = length(local.platforms) > 0 ? "--opt platform=${join(",", local.platforms)}" : ""
 
   # Compose the buildctl context flags up front so the heredoc stays
-  # readable. For git contexts buildkit's git frontend takes the URL
-  # via --opt context (with optional #ref) and the subdir via a
-  # separate --opt contextsubdir (note: no dashes — that's the actual
-  # option key in BuildKit's dockerfile frontend). With contextsubdir
-  # set, the build context is scoped to the subdir before the
-  # dockerfile is loaded, so `filename` is resolved relative to the
-  # subdir. For local contexts we mount the directory under the
-  # well-known `context` and `dockerfile` slots consumed by the
-  # dockerfile.v0 frontend.
-  context_flags = local.is_git_context ? join(" ", compact([
+  # readable. For git contexts, BuildKit's git frontend takes both
+  # ref and subdir from the URL itself ("#<ref>:<subdir>"); the
+  # `--opt contextsubdir` flag is *not* honored by the git source
+  # (only by local/named contexts), so we encode subdir in
+  # buildctl_git_url. For local contexts we mount the directory
+  # under the well-known `context` and `dockerfile` slots consumed
+  # by the dockerfile.v0 frontend.
+  context_flags = local.is_git_context ? join(" ", [
     "--opt context=${local.buildctl_git_url}",
     "--opt filename=${local.dockerfile}",
-    local.git_subdir != "" ? "--opt contextsubdir=${local.git_subdir}" : "",
-    ])) : join(" ", [
+    ]) : join(" ", [
     "--local context=${local.build_context}",
     "--local dockerfile=${local.build_context}",
     "--opt filename=${local.dockerfile}",
