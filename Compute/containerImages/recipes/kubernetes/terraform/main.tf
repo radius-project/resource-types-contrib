@@ -76,12 +76,17 @@ locals {
   # Compose the buildctl context flags up front so the heredoc stays
   # readable. For git contexts buildkit's git frontend takes the URL
   # via --opt context (with optional #ref) and the subdir via a
-  # separate --opt context-sub-dir. For local contexts we mount the
-  # directory under the well-known `context` and `dockerfile` slots
-  # consumed by the dockerfile.v0 frontend.
+  # separate --opt context-sub-dir. Note: with context-sub-dir set,
+  # `--opt filename` is still resolved against the original repo
+  # root, not the sub-dir, so we prefix the dockerfile path
+  # accordingly. For local contexts we mount the directory under the
+  # well-known `context` and `dockerfile` slots consumed by the
+  # dockerfile.v0 frontend.
+  git_dockerfile_path = local.git_subdir != "" ? "${local.git_subdir}/${local.dockerfile}" : local.dockerfile
+
   context_flags = local.is_git_context ? join(" ", compact([
     "--opt context=${local.buildctl_git_url}",
-    "--opt filename=${local.dockerfile}",
+    "--opt filename=${local.git_dockerfile_path}",
     local.git_subdir != "" ? "--opt context-sub-dir=${local.git_subdir}" : "",
     ])) : join(" ", [
     "--local context=${local.build_context}",
