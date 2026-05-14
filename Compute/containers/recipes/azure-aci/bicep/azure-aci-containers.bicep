@@ -65,8 +65,8 @@ param enableDdosProtection bool = false
 @description('Name of an existing DDoS protection plan (required when enableDdosProtection is true)')
 param ddosProtectionPlanName string = 'ddosProtectionPlan'
 
-@description('Deployment location for all resources. Defaults to the resource location provided by Radius.')
-param location string = 'westus'
+@description('Deployment location for all resources. Reads from platformOptions.location if provided.')
+param location string = context.resource.properties.?platformOptions.?location ?? resourceGroup().location
 
 @description('Radius ACI Container Context')
 param context object
