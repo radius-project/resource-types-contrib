@@ -10,7 +10,7 @@ var resourceName = context.resource.name
 var namespace = context.runtime.kubernetes.namespace
 var normalizedName = resourceName
 
-var resourceProperties = context.resource.properties ?? {}
+var resourceProperties = context.resource.?properties ?? {}
 var containerItems = items(resourceProperties.?containers ?? {})
 
 var daprSidecar = resourceProperties.?extensions.?daprSidecar
@@ -25,7 +25,7 @@ var podAnnotations = hasDaprSidecar ? union(
   (daprSidecar.?config != null && string(daprSidecar.?config) != '') ? { 'dapr.io/config': string(daprSidecar.?config) } : {}
 ) : {}
 
-var environmentSegments = context.resource.properties.environment != null ? split(string(context.resource.properties.environment), '/') : []
+var environmentSegments = resourceProperties.?environment != null ? split(string(resourceProperties.?environment), '/') : []
 var environmentLabel = length(environmentSegments) > 0 ? last(environmentSegments) : ''
 
 // Labels
