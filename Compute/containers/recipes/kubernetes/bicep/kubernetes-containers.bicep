@@ -25,7 +25,7 @@ var podAnnotations = hasDaprSidecar ? union(
   (daprSidecar.?config != null && string(daprSidecar.?config) != '') ? { 'dapr.io/config': string(daprSidecar.?config) } : {}
 ) : {}
 
-var environmentSegments = resourceProperties.?environment != null ? split(string(resourceProperties.?environment), '/') : []
+var environmentSegments = resourceProperties.environment != null ? split(string(resourceProperties.environment), '/') : []
 var environmentLabel = length(environmentSegments) > 0 ? last(environmentSegments) : ''
 
 // Labels
