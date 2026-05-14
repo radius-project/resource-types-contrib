@@ -11,7 +11,7 @@ var namespace = context.runtime.kubernetes.namespace
 var normalizedName = resourceName
 
 var resourceProperties = context.resource.properties ?? {}
-var containerItems = items(resourceProperties.containers ?? {})
+var containerItems = items(resourceProperties.?containers ?? {})
 
 var daprSidecar = resourceProperties.?extensions.?daprSidecar
 var hasDaprSidecar = daprSidecar != null
