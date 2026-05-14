@@ -56,13 +56,8 @@ param subnetAddressPrefix string = '10.0.1.0/24'
 @description('Desired container count')
 param desiredCount int = 3
 
-
 @description('Maintain desired count')
 param maintainDesiredCount bool = true
-
-@description('Inbound NAT Rule name')
-@maxLength(64)
-param inboundNatRuleName string = 'inboundNatRule'
 
 @description('Enable DDoS protection (limit: 1 plan per subscription per region)')
 param enableDdosProtection bool = false
@@ -71,7 +66,7 @@ param enableDdosProtection bool = false
 param ddosProtectionPlanName string = 'ddosProtectionPlan'
 
 @description('Deployment location for all resources. Defaults to the resource location provided by Radius.')
-param location string = context.resource.location
+param location string = 'westus'
 
 @description('Radius ACI Container Context')
 param context object
@@ -310,24 +305,38 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
         // Add readiness probe if exists for this container
         contains(item.value, 'readinessProbe') && item.value.readinessProbe != null ? [{
           name: '${item.key}-readinessProbe'
-          properties: {
-            protocol: 'Tcp'
-            port: item.value.readinessProbe.?tcpSocket.?port ?? 80
-            intervalInSeconds: item.value.readinessProbe.?periodSeconds ?? 5
-            numberOfProbes: item.value.readinessProbe.?failureThreshold ?? 3
-            probeThreshold: item.value.readinessProbe.?successThreshold ?? 1
-          }
+          properties: union(
+            {
+              protocol: item.value.readinessProbe.?httpGet != null
+                ? (toLower(item.value.readinessProbe.httpGet.?scheme ?? 'http') == 'https' ? 'Https' : 'Http')
+                : 'Tcp'
+              port: item.value.readinessProbe.?httpGet.?port ?? item.value.readinessProbe.?tcpSocket.?port ?? 80
+              intervalInSeconds: item.value.readinessProbe.?periodSeconds ?? 5
+              numberOfProbes: item.value.readinessProbe.?failureThreshold ?? 3
+              probeThreshold: item.value.readinessProbe.?successThreshold ?? 1
+            },
+            item.value.readinessProbe.?httpGet != null ? {
+              requestPath: item.value.readinessProbe.httpGet.path
+            } : {}
+          )
         }] : [],
         // Add liveness probe if exists for this container
         contains(item.value, 'livenessProbe') && item.value.livenessProbe != null ? [{
           name: '${item.key}-livenessProbe'
-          properties: {
-            protocol: 'Tcp'
-            port: item.value.livenessProbe.?tcpSocket.?port ?? 80
-            intervalInSeconds: item.value.livenessProbe.?periodSeconds ?? 10
-            numberOfProbes: item.value.livenessProbe.?failureThreshold ?? 3
-            probeThreshold: item.value.livenessProbe.?successThreshold ?? 1
-          }
+          properties: union(
+            {
+              protocol: item.value.livenessProbe.?httpGet != null
+                ? (toLower(item.value.livenessProbe.httpGet.?scheme ?? 'http') == 'https' ? 'Https' : 'Http')
+                : 'Tcp'
+              port: item.value.livenessProbe.?httpGet.?port ?? item.value.livenessProbe.?tcpSocket.?port ?? 80
+              intervalInSeconds: item.value.livenessProbe.?periodSeconds ?? 10
+              numberOfProbes: item.value.livenessProbe.?failureThreshold ?? 3
+              probeThreshold: item.value.livenessProbe.?successThreshold ?? 1
+            },
+            item.value.livenessProbe.?httpGet != null ? {
+              requestPath: item.value.livenessProbe.httpGet.path
+            } : {}
+          )
         }] : []
       )
     ))
