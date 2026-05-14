@@ -1,0 +1,21 @@
+# defaults.yaml lists the resource types that should be embedded
+# and registered by default in Radius at startup.
+#
+# Each entry is a canonical resource type name in Radius.<Namespace>/<typeName>
+# format (e.g., Radius.Compute/containers). The go generate script resolves
+# each name to its corresponding manifest file path using the convention:
+#   Strip the "Radius." prefix, then <Namespace>/<typeName>/<typeName>.yaml
+#   e.g., Radius.Compute/containers -> Compute/containers/containers.yaml
+#
+# To add a new default resource type:
+# 1. Add the manifest YAML at <Namespace>/<typeName>/<typeName>.yaml
+# 2. Add the resource type name to this list
+# 3. Run `go generate` to update manifests_gen.go
+# 4. Commit both defaults.yaml and manifests_gen.go
+defaultRegistration:
+  - Radius.Compute/containers
+  - Radius.Compute/persistentVolumes
+  - Radius.Compute/routes
+  - Radius.Data/mySqlDatabases
+  - Radius.Data/postgreSqlDatabases
+  - Radius.Security/secrets

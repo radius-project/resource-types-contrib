@@ -43,3 +43,10 @@ ARROW := \033[34;1m=>\033[0m
 
 # order matters for these
 include ./.github/build/help.mk ./.github/build/environment.mk ./.github/build/test.mk
+
+##@ Code Generation
+
+.PHONY: generate-defaults
+generate-defaults: ## Regenerate manifests_gen.go from defaults.yaml
+	@echo "$(ARROW) Generating manifests_gen.go from defaults.yaml"
+	go generate ./...
