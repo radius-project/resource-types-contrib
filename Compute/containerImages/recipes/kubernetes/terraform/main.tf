@@ -261,6 +261,11 @@ resource "terraform_data" "build_push" {
     }
     command = <<-EOT
       set -eu
+      echo "DEBUG: DOCKER_CONFIG=$${DOCKER_CONFIG}"
+      ls -l "$${DOCKER_CONFIG}/" || true
+      # Print config.json with the auth value redacted so we can see
+      # whether the file has the expected shape without leaking creds.
+      sed 's/"auth": *"[^"]*"/"auth": "***REDACTED***"/' "$${DOCKER_CONFIG}/config.json" || true
       buildctl build \
         --frontend dockerfile.v0 \
         ${local.context_flags} \
