@@ -4,14 +4,6 @@ param context object
 @description('Location for the PostgreSQL Flexible Server. Defaults to the resource group location.')
 param postgresqlLocation string = resourceGroup().location
 
-@description('Administrator username for the PostgreSQL server.')
-@secure()
-param adminUsername string
-
-@description('Administrator password for the PostgreSQL server.')
-@secure()
-param adminPassword string
-
 @description('PostgreSQL major version.')
 param postgresqlVersion string = '16'
 
@@ -25,6 +17,27 @@ param storageSizeGb int = 32
 var resourceName = context.resource.name
 var applicationName = context.application != null ? context.application.name : ''
 var environmentName = context.environment != null ? context.environment.name : ''
+
+//////////////////////////////////////////
+// Secrets connection
+//////////////////////////////////////////
+
+// The secretName property references a Radius.Security/secrets resource whose
+// recipe provisions an Azure Key Vault and (optionally) a User-Assigned Identity.
+// Radius resolves the connection and populates context.resource.connections with
+// the secret resource's status, including computedValues and secrets.
+//
+// Radius wires connection data with full resource structure:
+//   context.resource.connections.<name>.properties.status.computedValues.<key>
+//   context.resource.connections.<name>.properties.status.secrets.<key>.Value
+
+var secretName = context.resource.properties.secretName
+var connections = context.resource.?connections ?? {}
+#disable-next-line use-safe-access
+var secretsConn = contains(connections, secretName) ? connections[secretName] : {}
+
+var adminUsername = string(secretsConn.?properties.?status.?secrets.?USERNAME.?Value ?? '')
+var adminPassword = string(secretsConn.?properties.?status.?secrets.?PASSWORD.?Value ?? '')
 
 //////////////////////////////////////////
 // PostgreSQL variables
@@ -73,6 +86,7 @@ resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' =
   properties: {
     version: postgresqlVersion
     administratorLogin: adminUsername
+    #disable-next-line use-secure-value-for-secure-inputs
     administratorLoginPassword: adminPassword
     storage: {
       storageSizeGB: storageSizeGb
@@ -109,7 +123,6 @@ resource postgresDb 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08
 // Output Radius result
 //////////////////////////////////////////
 
-#disable-next-line outputs-should-not-contain-secrets
 output result object = {
   resources: [
     postgresServer.id
@@ -118,10 +131,5 @@ output result object = {
     host: postgresServer.properties.fullyQualifiedDomainName
     port: port
     database: postgresDb.name
-  }
-  // Radius requires credentials in result.secrets so connection env vars work
-  secrets: {
-    username: adminUsername
-    password: adminPassword
   }
 }
