@@ -17,10 +17,22 @@ limitations under the License.
 // Package resourcetypes provides embedded resource type manifests for default
 // registration in Radius.
 //
-// The defaults.yaml file lists the canonical resource type names that should be
-// embedded and registered by default when Radius starts. Running `go generate`
-// resolves those names to manifest file paths by convention and produces
-// manifests_gen.go with //go:embed directives for the corresponding files.
+// This package is imported by the Radius binary (github.com/radius-project/radius)
+// as a Go module dependency. It exposes a single variable, DefaultManifests, which
+// is an embed.FS containing the manifest YAML files listed in defaults.yaml.
+//
+// How it works:
+//  1. defaults.yaml lists canonical resource type names (e.g., Radius.Compute/containers)
+//     that should be embedded into the Radius binary for default registration at startup.
+//  2. Running `go generate` invokes cmd/gen-embed, which reads defaults.yaml, resolves
+//     each name to a manifest file path, and writes manifests_gen.go with //go:embed
+//     directives for exactly those files.
+//  3. manifests_gen.go (generated, checked in) declares the DefaultManifests embed.FS
+//     variable that the Radius binary imports.
+//
+// To add a new default resource type, see the instructions in defaults.yaml.
 package resourcetypes
 
+// go:generate runs cmd/gen-embed to regenerate manifests_gen.go from defaults.yaml.
+// This must be run after any change to defaults.yaml.
 //go:generate go run ./cmd/gen-embed
