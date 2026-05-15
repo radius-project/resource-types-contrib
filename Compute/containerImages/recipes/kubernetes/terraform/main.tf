@@ -142,8 +142,14 @@ data "kubernetes_secret_v1" "registry_creds" {
 }
 
 locals {
-  registry_username = data.kubernetes_secret_v1.registry_creds.data["USERNAME"]
-  registry_password = data.kubernetes_secret_v1.registry_creds.data["PASSWORD"]
+  # The upstream Radius.Security/secrets recipe writes values into
+  # kubernetes_secret.data already base64-encoded, but the Terraform
+  # kubernetes provider also base64-encodes that field on its way to
+  # the K8s API — so the stored values are double-encoded. Decode
+  # once here to recover the original credential. (Tracked upstream
+  # as a bug in resource-types-contrib Security/secrets recipe.)
+  registry_username = base64decode(data.kubernetes_secret_v1.registry_creds.data["USERNAME"])
+  registry_password = base64decode(data.kubernetes_secret_v1.registry_creds.data["PASSWORD"])
 
   # The Docker auth host is the registry's network hostname (no path).
   # `local.registry` may include a path component (e.g. `ghcr.io/myorg`);
@@ -261,11 +267,6 @@ resource "terraform_data" "build_push" {
     }
     command = <<-EOT
       set -eu
-      echo "DEBUG: DOCKER_CONFIG=$${DOCKER_CONFIG}"
-      ls -l "$${DOCKER_CONFIG}/" || true
-      # Print config.json with the auth value redacted so we can see
-      # whether the file has the expected shape without leaking creds.
-      sed 's/"auth": *"[^"]*"/"auth": "***REDACTED***"/' "$${DOCKER_CONFIG}/config.json" || true
       buildctl build \
         --frontend dockerfile.v0 \
         ${local.context_flags} \
