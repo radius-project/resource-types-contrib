@@ -35,12 +35,16 @@ types:
           properties: {
             environment: environment
             application: myApp.id
+            kind: 'dockerconfigjson'
             data: {
-              USERNAME: {
+              username: {
                 value: 'myorg'
               }
-              PASSWORD: {
+              password: {
                 value: registryPassword
+              }
+              server: {
+                value: 'ghcr.io'
               }
             }
           }
@@ -59,13 +63,16 @@ types:
           }
         }
 
-      To reference the built image in a Container resource:
+      To reference the built image in a Container resource (note that
+      the same `Radius.Security/secrets` is used by kubelet for the
+      pull, via `imagePullSecrets`):
 
         resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
           name: 'myContainer'
           properties: {
             environment: environment
             application: myApp.id
+            imagePullSecrets: [registryCreds.name]
             containers: {
               app: {
                 image: myImage.properties.image
@@ -102,7 +109,7 @@ types:
               description: (Required) The Radius Application ID. `myApplication.id` for example.
             secretName:
               type: string
-              description: (Required) The name of a `Radius.Security/secrets` resource in the same application that holds `USERNAME` and `PASSWORD` keys for authenticating to the registry.
+              description: (Required) The name of a `Radius.Security/secrets` resource of `kind: dockerconfigjson` (with `username`, `password`, and `server` data keys) in the same application that authenticates to the registry. The same Secret should be referenced by `Radius.Compute/containers.imagePullSecrets` so kubelet can pull the resulting image.
             tag:
               type: string
               description: (Optional) Tag for the produced image. When unset, the recipe computes a content-addressable digest (`sha256-<hash>`) from the build inputs. Required when `build.context` is a remote git URL.

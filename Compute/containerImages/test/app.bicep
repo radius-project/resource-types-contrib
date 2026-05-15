@@ -10,6 +10,8 @@ param registryPassword string
 
 param registryUsername string
 
+param registryServer string = 'ghcr.io'
+
 resource app 'Radius.Core/applications@2025-08-01-preview' = {
   name: 'containerimages-testapp'
   properties: {
@@ -22,12 +24,16 @@ resource registryCreds 'Radius.Security/secrets@2025-08-01-preview' = {
   properties: {
     environment: environment
     application: app.id
+    kind: 'dockerconfigjson'
     data: {
-      USERNAME: {
+      username: {
         value: registryUsername
       }
-      PASSWORD: {
+      password: {
         value: registryPassword
+      }
+      server: {
+        value: registryServer
       }
     }
   }
@@ -51,6 +57,7 @@ resource testContainer 'Radius.Compute/containers@2025-08-01-preview' = {
   properties: {
     environment: environment
     application: app.id
+    imagePullSecrets: [registryCreds.name]
     containers: {
       app: {
         image: testImage.properties.image

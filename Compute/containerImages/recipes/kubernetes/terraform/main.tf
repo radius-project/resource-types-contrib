@@ -128,12 +128,16 @@ locals {
 }
 
 # Resolve the registry-credentials secret. The developer (or platform
-# engineer) declares a Radius.Security/secrets resource holding
-# UPPERCASE `USERNAME` and `PASSWORD` keys, and references it from the
-# containerImages resource via `properties.secretName`. Radius
-# realizes that resource as a Kubernetes Secret in the application's
-# namespace; the recipe reads those keys here and assembles a Docker
-# config.json on disk for buildctl.
+# engineer) declares a Radius.Security/secrets resource of
+# `kind: dockerconfigjson` (with `username`, `password`, and `server`
+# data keys) and references it from the containerImages resource via
+# `properties.secretName`. Radius realizes that resource as a
+# Kubernetes Secret of type `kubernetes.io/dockerconfigjson` in the
+# application's namespace; the recipe reads the assembled
+# `.dockerconfigjson` blob and writes it straight to disk for buildctl.
+# The same Secret is referenced by Radius.Compute/containers via
+# `imagePullSecrets` so kubelet can pull images without out-of-band
+# credentials.
 data "kubernetes_secret_v1" "registry_creds" {
   metadata {
     name      = local.properties.secretName
@@ -142,28 +146,11 @@ data "kubernetes_secret_v1" "registry_creds" {
 }
 
 locals {
-  # The upstream Radius.Security/secrets recipe writes values into
-  # kubernetes_secret.data already base64-encoded, but the Terraform
-  # kubernetes provider also base64-encodes that field on its way to
-  # the K8s API — so the stored values are double-encoded. Decode
-  # once here to recover the original credential. (Tracked upstream
-  # as a bug in resource-types-contrib Security/secrets recipe.)
-  registry_username = base64decode(data.kubernetes_secret_v1.registry_creds.data["USERNAME"])
-  registry_password = base64decode(data.kubernetes_secret_v1.registry_creds.data["PASSWORD"])
-
-  # The Docker auth host is the registry's network hostname (no path).
-  # `local.registry` may include a path component (e.g. `ghcr.io/myorg`);
-  # take everything up to the first slash for the auth lookup.
-  registry_auth_host = regex("^[^/]+", local.registry)
-
-  docker_config_dir = "${path.module}/.docker-config"
-  docker_config_json = jsonencode({
-    auths = {
-      (local.registry_auth_host) = {
-        auth = base64encode("${local.registry_username}:${local.registry_password}")
-      }
-    }
-  })
+  # The kubernetes_secret_v1 data source returns `data` values already
+  # decoded from the wire base64, so this is the raw Docker config.json
+  # blob exactly as kubelet would consume it.
+  docker_config_dir  = "${path.module}/.docker-config"
+  docker_config_json = data.kubernetes_secret_v1.registry_creds.data[".dockerconfigjson"]
 }
 
 # Stage the Docker config.json on the recipe runner's filesystem.
