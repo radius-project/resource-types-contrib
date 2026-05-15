@@ -19,7 +19,7 @@
 # =============================================================================
 # Deploy a Recipe Pack using Bicep template
 #
-# Usage: ./deploy-recipe-pack.sh <bicep-file> [resource-group] [subscription]
+# Usage: ./deploy-recipe-pack.sh <bicep-file> [resource-group]
 # Example: ./deploy-recipe-pack.sh recipe-pack.bicep
 # =============================================================================
 
@@ -27,23 +27,17 @@ set -euo pipefail
 
 BICEP_FILE="${1:-}"
 RESOURCE_GROUP="${2:-}"
-SUBSCRIPTION="${3:-}"
-
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "Creating bicepconfig.json with published extensions..."
-# Create base bicepconfig.json with required experimental features
-cat > bicepconfig.json << 'EOF'
-{
-  "extensions": {
-    "radius": "br:biceptypes.azurecr.io/radius:latest",
-    "aws": "br:biceptypes.azurecr.io/aws:latest"
-  }
-}
-EOF
+# Ensure bicepconfig.json has the base extensions and all published resource-type extensions.
+# update-bicepconfig.sh creates the base config only if it doesn't already exist, then merges
+# in any *-extension.tgz files that were published during the build step.
+"$SCRIPT_DIR/update-bicepconfig.sh"
 
 if [[ -z "$BICEP_FILE" ]]; then
     echo "Error: Bicep file is required"
-    echo "Usage: $0 <bicep-file> [resource-group] [subscription]"
+    echo "Usage: $0 <bicep-file> [resource-group]"
     exit 1
 fi
 
@@ -59,10 +53,6 @@ DEPLOY_ARGS=("deploy" "$BICEP_FILE")
 
 if [[ -n "$RESOURCE_GROUP" ]]; then
     DEPLOY_ARGS+=("--group" "$RESOURCE_GROUP")
-fi
-
-if [[ -n "$SUBSCRIPTION" ]]; then
-    DEPLOY_ARGS+=("--subscription" "$SUBSCRIPTION")
 fi
 
 #workaround until we allow recipe packs to be deployed without an environment

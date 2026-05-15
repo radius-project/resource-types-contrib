@@ -176,6 +176,25 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
   }
 }
 
+// Container with no connections - validates that the recipe handles missing connections gracefully
+resource noConnectionsContainer 'Radius.Compute/containers@2025-08-01-preview' = {
+  name: 'no-connections-app'
+  properties: {
+    environment: environment
+    application: app.id
+    containers: {
+      simple: {
+        image: 'nginx:alpine'
+        ports: {
+          http: {
+            containerPort: 80
+          }
+        }
+      }
+    }
+  }
+}
+
 resource myPersistentVolume 'Radius.Compute/persistentVolumes@2025-08-01-preview' = {
   name: 'mypersistentvolume'
   properties: {

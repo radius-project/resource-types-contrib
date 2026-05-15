@@ -4,6 +4,7 @@ types:
     description: |
       The Radius.Compute/containers Resource Type is the primary resource type for running one or more containers. It is always part of a Radius Application. To deploy a Container add a resource to the application definition Bicep file.
 
+      ```
       extension radius
       param environment string 
 
@@ -21,11 +22,13 @@ types:
           }
         }
       }
+      ```
 
       By default, Containers deploys to Kubernetes. In this case, a Kubernetes Deployment named myContainer is deployed which includes a Pod named myContainer. Your Radius environment may deploy to other container platforms such as Azure Container Instances. 
 
       To accept network connections, expose a port on the container.
 
+      ```
       resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
         name: 'myContainer'
         properties: {
@@ -43,11 +46,13 @@ types:
           }
         }
       }
+      ```
       
       When a port is included, a Kubernetes Service named demo with the type ClusterIP is created.
       
       To create a emphemeral emptyDir shared between two containers add a Containers.properties.volumes.
 
+      ```
       resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
         name: 'myContainer'
         properties: {
@@ -80,6 +85,7 @@ types:
           }
         }
       }
+      ```
 
       To mount a persistent volume or secret see the PersistentVolumes and Secrets Resource Types.
 

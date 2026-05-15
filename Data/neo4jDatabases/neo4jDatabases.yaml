@@ -5,7 +5,7 @@ types:
       The Radius.Data/neo4jDatabases Resource Type deploys a Neo4j graph database. To create a new Neo4j database, 
       define an Application and Container resource in your application definition Bicep file.
 
-         ```
+      ```
       extension radius
       param environment string
       resource myApplication 'Radius.Core/applications@2025-08-01-preview' = { ... }
@@ -14,20 +14,41 @@ types:
       Then add a `neo4jDatabases` resource.
       ```
       resource neo4j 'Radius.Data/neo4jDatabases@2025-09-11-preview' = {
-        name: 'neo4j'
-        properties: {
-          application: myApplication.id
-          environment: environment
+          name: 'neo4j'
+          properties: {
+            environment: environment
+            application: myApplication.id
+            secretName: dbCredentials.name
+          }
         }
-      }
+
+        resource dbCredentials 'Radius.Security/secrets@2025-08-01-preview' = {
+          name: 'db-creds'
+          properties: {
+            environment: environment
+            application: myApplication.id
+            data: {
+              USERNAME: {
+                value: 'neo4j'
+              }
+              PASSWORD: {
+                // From password parameter passed in via CLI
+                value: password
+              }
+            }
+          }
+        }
       ```
+
+      When deploying the application definition, provide the database password value as a parameter. It is recommended to use a password generator such as `openssl` or equivalent. For example, `rad deploy app.bicep -p password=$(openssl rand -hex 16)`.
+
       To connect to the new Neo4j database, add a connection between the container and the new Neo4j database. The final Container resource should look similar to:
-        ```
+      ```
       resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
         name: 'myContainer'
         properties: {
-          environment: environment
           application: myApplication.id
+          environment: environment
           containers: { ... }
           connections: {
             neo4jDb: {
@@ -37,12 +58,12 @@ types:
         }
       }
       ```
-      Within your container, your application code can obtain the host, port, username, and password values via environment variables automatically created. 
+
+      The connection automatically injects environment variables into the container for all properties from the database. The environment variables are named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>`. In this example, the connection name is `neo4jDb` so the environment variables will be:
+
+      - CONNECTION_NEO4JDB_DATABASE
       - CONNECTION_NEO4JDB_HOST
       - CONNECTION_NEO4JDB_PORT
-      - CONNECTION_NEO4JDB_DATABASE
-      - CONNECTION_NEO4JDB_USERNAME
-      - CONNECTION_NEO4JDB_PASSWORD
 
     apiVersions:
       '2025-09-11-preview':
@@ -51,10 +72,13 @@ types:
           properties:
             environment:
               type: string
-              description: (Required) The Radius Environment ID. Typically provided by the rad CLI. The typical value is `environment`.
+              description: "(Required) The Radius Environment ID. Typically provided by the rad CLI. The typical value is `environment`."
             application:
               type: string
-              description: (Optional) The Radius Application ID when the database is app-scoped. Omit to provision a shared database in an Environment.
+              description: "(Optional) The Radius Application ID when the database is app-scoped. Omit to provision a shared database in an Environment."
+            secretName:
+              type: string
+              description: "(Required) The name of the secret containing the database credentials."
             host:
               type: string
               readOnly: true
@@ -63,13 +87,9 @@ types:
               type: integer
               readOnly: true
               description: (Read-only) The Bolt protocol port used to connect to Neo4j (typically `7687`).
-            username:
+            database:
               type: string
-              readOnly: true
-              description: (Read-only) The username for connecting to Neo4j.
-            password:
-              type: string
-              readOnly: true
-              description: (Read-only) The password for connecting to Neo4j.
+              description: "(Optional) The name of the database. Defaults to the resource name if not specified."
           required:
             - environment
+            - secretName
