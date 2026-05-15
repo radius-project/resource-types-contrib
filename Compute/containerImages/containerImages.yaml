@@ -109,7 +109,7 @@ types:
               description: (Required) The Radius Application ID. `myApplication.id` for example.
             secretName:
               type: string
-              description: (Required) The name of a `Radius.Security/secrets` resource of `kind: dockerconfigjson` (with `username`, `password`, and `server` data keys) in the same application that authenticates to the registry. The same Secret should be referenced by `Radius.Compute/containers.imagePullSecrets` so kubelet can pull the resulting image.
+              description: "(Required) The name of a `Radius.Security/secrets` resource of `kind: dockerconfigjson` (with `username`, `password`, and `server` data keys) in the same application that authenticates to the registry. The same Secret should be referenced by `Radius.Compute/containers.imagePullSecrets` so kubelet can pull the resulting image."
             tag:
               type: string
               description: (Optional) Tag for the produced image. When unset, the recipe computes a content-addressable digest (`sha256-<hash>`) from the build inputs. Required when `build.context` is a remote git URL.
