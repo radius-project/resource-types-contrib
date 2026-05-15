@@ -56,6 +56,17 @@ resource-types-contrib/
     └── ...
 ```
 
+## Default resource types in Radius
+
+Resource types in this repository are available for users to register manually via `rad resource-provider create`. A subset of these are also registered as defaults in Radius, meaning they are available out of the box without any user action.
+
+The list of default resource types is managed in the [Radius repository](https://github.com/radius-project/radius) via `deploy/manifest/defaults.yaml`. To make a resource type a default:
+
+1. Add the resource type manifest to this repository and merge the PR.
+2. In the Radius repository, add the resource type to `deploy/manifest/defaults.yaml`, run `make update-resource-types`, and create a PR. Once this PR is merged, the type is available and the Bicep extension is published.
+
+For more details, see the [defaults.yaml](https://github.com/radius-project/radius/blob/main/deploy/manifest/defaults.yaml) file in the Radius repository.
+
 ## Contributing
 
 Community members can contribute new Resource Types, Recipes, and Recipe Packs to this repository. We welcome contributions in many forms: submitting issues, writing code, participating in discussions, reviewing pull requests. For information on contributing, follow these guides:
