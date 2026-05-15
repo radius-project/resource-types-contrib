@@ -23,12 +23,13 @@ provider "kubernetes" {
 # buildkitd does not implement the Docker Engine HTTP API that the
 # kreuzwerker/docker provider depends on.
 #
-# Registry credentials reach the recipe via a `Radius.Security/secrets`
-# resource referenced from the containerImages resource via
-# `properties.secretName`. Radius realizes the secret as a Kubernetes
-# Secret in the application's namespace; the recipe reads `USERNAME`
-# and `PASSWORD` from it, composes a Docker config.json on disk, and
-# points buildctl at it with DOCKER_CONFIG.
+# Registry credentials are owned by the platform engineer: a single
+# Kubernetes Secret of type `kubernetes.io/dockerconfigjson` lives in
+# the `radius-system` namespace (configurable via the
+# `registrySecretNamespace` recipe parameter) and is referenced by the
+# `registrySecretName` recipe parameter, both set at
+# `rad recipe register` time. Developers never see, configure, or
+# reference these credentials in their Bicep.
 
 locals {
   resource_name = lower(var.context.resource.name)
@@ -127,21 +128,18 @@ locals {
   ])
 }
 
-# Resolve the registry-credentials secret. The developer (or platform
-# engineer) declares a Radius.Security/secrets resource of
-# `kind: dockerconfigjson` (with `username`, `password`, and `server`
-# data keys) and references it from the containerImages resource via
-# `properties.secretName`. Radius realizes that resource as a
-# Kubernetes Secret of type `kubernetes.io/dockerconfigjson` in the
-# application's namespace; the recipe reads the assembled
-# `.dockerconfigjson` blob and writes it straight to disk for buildctl.
-# The same Secret is referenced by Radius.Compute/containers via
-# `imagePullSecrets` so kubelet can pull images without out-of-band
-# credentials.
+# Resolve the registry-credentials secret. The platform engineer
+# provisions a `kubernetes.io/dockerconfigjson` Secret in
+# `var.registrySecretNamespace` (default `radius-system`) ahead of
+# time; its name is supplied to `rad recipe register` as the
+# `registrySecretName` recipe parameter. Because the recipe runs as
+# the `dynamic-rp` ServiceAccount (which has cluster-wide `get` on
+# Secrets via the Helm chart's ClusterRole), no per-namespace RBAC
+# wiring is required.
 data "kubernetes_secret_v1" "registry_creds" {
   metadata {
-    name      = local.properties.secretName
-    namespace = local.namespace
+    name      = var.registrySecretName
+    namespace = var.registrySecretNamespace
   }
 }
 
@@ -151,6 +149,28 @@ locals {
   # blob exactly as kubelet would consume it.
   docker_config_dir  = "${path.module}/.docker-config"
   docker_config_json = data.kubernetes_secret_v1.registry_creds.data[".dockerconfigjson"]
+
+  # The pull Secret materialized into the application namespace for
+  # kubelet. Per-resource (vs one shared name) so independent
+  # Terraform states for sibling containerImages resources never
+  # contend for the same Kubernetes object. Length-bounded to fit
+  # under the DNS subdomain limit even for long resource names.
+  pull_secret_name = substr("${local.resource_name}-pull", 0, 253)
+}
+
+# Materialize the same dockerconfigjson into the application namespace
+# so kubelet can pull the image the recipe just pushed. The developer
+# references this name from the `Radius.Compute/containers` resource
+# via `imagePullSecrets`; they never handle credential material.
+resource "kubernetes_secret_v1" "pull" {
+  metadata {
+    name      = local.pull_secret_name
+    namespace = local.namespace
+  }
+  type = "kubernetes.io/dockerconfigjson"
+  binary_data = {
+    ".dockerconfigjson" = base64encode(local.docker_config_json)
+  }
 }
 
 # Stage the Docker config.json on the recipe runner's filesystem.
@@ -267,9 +287,13 @@ output "result" {
   value = {
     resources = []
     values = {
-      image = local.image_ref
+      image               = local.image_ref
+      imagePullSecretName = local.pull_secret_name
     }
   }
-  # Ensure the build runs before the output is materialized.
-  depends_on = [terraform_data.build_push]
+  # Ensure both the build and the pull-Secret materialization complete
+  # before the output is published — downstream `Radius.Compute/containers`
+  # resources reference both `image` and `imagePullSecretName` and would
+  # otherwise risk pulling against a Secret that doesn't yet exist.
+  depends_on = [terraform_data.build_push, kubernetes_secret_v1.pull]
 }

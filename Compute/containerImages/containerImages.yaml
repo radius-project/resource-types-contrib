@@ -12,16 +12,13 @@ types:
       - `<resource-name>` is the name of the containerImages resource (e.g. `myImage` becomes `myimage`).
       - `<tag>` defaults to a content-addressable digest (`sha256-<hash>`) derived from the build inputs so that downstream `Radius.Compute/containers` resources observe a property change on every code change. A user-provided `tag` overrides this. Note: when `build.context` is a remote git URL, an explicit `tag` is required because the recipe cannot hash the remote tree.
 
-      To build and push a container image, declare a `Radius.Security/secrets` holding registry credentials and reference it from the containerImages resource:
+      Registry credentials are platform-engineer concerns and never appear in developer Bicep. The platform engineer provisions one `kubernetes.io/dockerconfigjson` Secret in the `radius-system` namespace and points the recipe at it via the `registrySecretName` recipe parameter at registration time. The recipe then materializes a per-resource pull Secret in the application namespace and exposes its name via the read-only `imagePullSecretName` property; developers reference it from `Radius.Compute/containers` via `imagePullSecrets`:
 
         extension radius
         extension containerImages
-        extension secrets
+        extension containers
 
         param environment string
-
-        @secure()
-        param registryPassword string
 
         resource myApp 'Radius.Core/applications@2025-08-01-preview' = {
           name: 'myApp'
@@ -30,32 +27,11 @@ types:
           }
         }
 
-        resource registryCreds 'Radius.Security/secrets@2025-08-01-preview' = {
-          name: 'registry-creds'
-          properties: {
-            environment: environment
-            application: myApp.id
-            kind: 'dockerconfigjson'
-            data: {
-              username: {
-                value: 'myorg'
-              }
-              password: {
-                value: registryPassword
-              }
-              server: {
-                value: 'ghcr.io'
-              }
-            }
-          }
-        }
-
         resource myImage 'Radius.Compute/containerImages@2025-08-01-preview' = {
           name: 'myImage'
           properties: {
             environment: environment
             application: myApp.id
-            secretName: registryCreds.name
             build: {
               context: 'git::https://github.com/myorg/myapp.git//frontend'
             }
@@ -63,16 +39,12 @@ types:
           }
         }
 
-      To reference the built image in a Container resource (note that
-      the same `Radius.Security/secrets` is used by kubelet for the
-      pull, via `imagePullSecrets`):
-
         resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
           name: 'myContainer'
           properties: {
             environment: environment
             application: myApp.id
-            imagePullSecrets: [registryCreds.name]
+            imagePullSecrets: [myImage.properties.imagePullSecretName]
             containers: {
               app: {
                 image: myImage.properties.image
@@ -90,9 +62,13 @@ types:
 
       1. dynamic-rp must be installed with the BuildKit sidecar enabled (default in the Helm chart). On Kubernetes < 1.30 the platform engineer must install with `--set dynamicrp.buildkit.psaMode=baseline`.
 
-      2. The platform engineer registers the recipe once per environment and supplies the registry path via the `registry` parameter:
+      2. The platform engineer creates a `kubernetes.io/dockerconfigjson` Secret with the registry credentials in the `radius-system` namespace (or another namespace, supplied via the `registrySecretNamespace` recipe parameter):
 
-        rad recipe register default --resource-type Radius.Compute/containerImages --template-kind terraform --template-path git::https://github.com/radius-project/resource-types-contrib.git//Compute/containerImages/recipes/kubernetes/terraform --parameters registry=ghcr.io/myorg
+        kubectl create secret docker-registry ghcr-creds --namespace radius-system --docker-server=ghcr.io --docker-username=$USER --docker-password=$TOKEN
+
+      3. The platform engineer registers the recipe once per environment, supplying `registry` and `registrySecretName`:
+
+        rad recipe register default --resource-type Radius.Compute/containerImages --template-kind terraform --template-path git::https://github.com/radius-project/resource-types-contrib.git//Compute/containerImages/recipes/kubernetes/terraform --parameters registry=ghcr.io/myorg --parameters registrySecretName=ghcr-creds
 
       Multi-architecture builds (e.g. `platforms: ["linux/amd64", "linux/arm64"]`) require a Dockerfile that supports cross-compilation via `FROM --platform=$BUILDPLATFORM` and `TARGETARCH`. Dockerfiles that execute target-arch binaries during the build will fail with `exec format error`. There is no QEMU/binfmt fallback in this design.
 
@@ -107,9 +83,6 @@ types:
             application:
               type: string
               description: (Required) The Radius Application ID. `myApplication.id` for example.
-            secretName:
-              type: string
-              description: "(Required) The name of a `Radius.Security/secrets` resource of `kind: dockerconfigjson` (with `username`, `password`, and `server` data keys) in the same application that authenticates to the registry. The same Secret should be referenced by `Radius.Compute/containers.imagePullSecrets` so kubelet can pull the resulting image."
             tag:
               type: string
               description: (Optional) Tag for the produced image. When unset, the recipe computes a content-addressable digest (`sha256-<hash>`) from the build inputs. Required when `build.context` is a remote git URL.
@@ -117,6 +90,10 @@ types:
               type: string
               readOnly: true
               description: (Read-only) The full image reference produced by the recipe in the form `<registry>/<resource-name>:<tag>`. Reference this from `Radius.Compute/containers` to consume the built image.
+            imagePullSecretName:
+              type: string
+              readOnly: true
+              description: (Read-only) Name of the `kubernetes.io/dockerconfigjson` Secret the recipe materialized in the application namespace using the platform engineer's registry credentials. Reference this from `Radius.Compute/containers.imagePullSecrets` so kubelet can pull the image.
             build:
               type: object
               description: (Required) Build configuration for the container image.
@@ -138,5 +115,4 @@ types:
           required:
             - environment
             - application
-            - secretName
             - build
