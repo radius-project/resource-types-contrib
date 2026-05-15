@@ -1,8 +1,14 @@
 extension radius
 extension containerImages
 extension containers
+extension secrets
 
 param environment string
+
+@secure()
+param registryPassword string
+
+param registryUsername string
 
 resource app 'Radius.Core/applications@2025-08-01-preview' = {
   name: 'containerimages-testapp'
@@ -11,11 +17,28 @@ resource app 'Radius.Core/applications@2025-08-01-preview' = {
   }
 }
 
+resource registryCreds 'Radius.Security/secrets@2025-08-01-preview' = {
+  name: 'registry-creds'
+  properties: {
+    environment: environment
+    application: app.id
+    data: {
+      USERNAME: {
+        value: registryUsername
+      }
+      PASSWORD: {
+        value: registryPassword
+      }
+    }
+  }
+}
+
 resource testImage 'Radius.Compute/containerImages@2025-08-01-preview' = {
   name: 'test-image'
   properties: {
     environment: environment
     application: app.id
+    secretName: registryCreds.name
     tag: 'test'
     build: {
       context: 'git::https://github.com/radius-project/samples.git//demo'

@@ -8,16 +8,20 @@ types:
 
       The full image reference is composed by the recipe as `<registry>/<resource-name>:<tag>` where:
 
-      - `<registry>` is the registry path configured by the platform engineer when registering the recipe (e.g. `ghcr.io/myorg`). Per-resource overrides are supported via the `registry` property below.
+      - `<registry>` is the registry path configured by the platform engineer when registering the recipe (e.g. `ghcr.io/myorg`).
       - `<resource-name>` is the name of the containerImages resource (e.g. `myImage` becomes `myimage`).
       - `<tag>` defaults to a content-addressable digest (`sha256-<hash>`) derived from the build inputs so that downstream `Radius.Compute/containers` resources observe a property change on every code change. A user-provided `tag` overrides this. Note: when `build.context` is a remote git URL, an explicit `tag` is required because the recipe cannot hash the remote tree.
 
-      To build and push a container image, add a containerImages resource to your application definition Bicep file:
+      To build and push a container image, declare a `Radius.Security/secrets` holding registry credentials and reference it from the containerImages resource:
 
         extension radius
         extension containerImages
+        extension secrets
 
         param environment string
+
+        @secure()
+        param registryPassword string
 
         resource myApp 'Radius.Core/applications@2025-08-01-preview' = {
           name: 'myApp'
@@ -26,11 +30,28 @@ types:
           }
         }
 
+        resource registryCreds 'Radius.Security/secrets@2025-08-01-preview' = {
+          name: 'registry-creds'
+          properties: {
+            environment: environment
+            application: myApp.id
+            data: {
+              USERNAME: {
+                value: 'myorg'
+              }
+              PASSWORD: {
+                value: registryPassword
+              }
+            }
+          }
+        }
+
         resource myImage 'Radius.Compute/containerImages@2025-08-01-preview' = {
           name: 'myImage'
           properties: {
             environment: environment
             application: myApp.id
+            secretName: registryCreds.name
             build: {
               context: 'git::https://github.com/myorg/myapp.git//frontend'
             }
@@ -62,7 +83,7 @@ types:
 
       1. dynamic-rp must be installed with the BuildKit sidecar enabled (default in the Helm chart). On Kubernetes < 1.30 the platform engineer must install with `--set dynamicrp.buildkit.psaMode=baseline`.
 
-      2. Registry credentials must be configured by the platform engineer at recipe-registration time. They live in a Kubernetes Secret in the dynamic-rp namespace and are mounted into the Pod; developers do not handle credentials.
+      2. The platform engineer registers the recipe once per environment and supplies the registry path via the `registry` parameter:
 
         rad recipe register default --resource-type Radius.Compute/containerImages --template-kind terraform --template-path git::https://github.com/radius-project/resource-types-contrib.git//Compute/containerImages/recipes/kubernetes/terraform --parameters registry=ghcr.io/myorg
 
@@ -79,12 +100,12 @@ types:
             application:
               type: string
               description: (Required) The Radius Application ID. `myApplication.id` for example.
+            secretName:
+              type: string
+              description: (Required) The name of a `Radius.Security/secrets` resource in the same application that holds `USERNAME` and `PASSWORD` keys for authenticating to the registry.
             tag:
               type: string
               description: (Optional) Tag for the produced image. When unset, the recipe computes a content-addressable digest (`sha256-<hash>`) from the build inputs. Required when `build.context` is a remote git URL.
-            registry:
-              type: string
-              description: (Optional) Per-resource override of the recipe's `registry` parameter (e.g. `ghcr.io/myorg`). Most developers leave this unset and let the platform engineer's recipe registration decide.
             image:
               type: string
               readOnly: true
@@ -104,10 +125,11 @@ types:
                   items:
                     type: string
                   description: |
-                    (Optional) Target platforms to build for (e.g. `["linux/amd64"]`, `["linux/amd64", "linux/arm64"]`). When omitted, builds for the BuildKit sidecar's native architecture. Multi-platform builds use cross-compilation; the Dockerfile must use `FROM --platform=$BUILDPLATFORM` and `TARGETARCH`.
+                    (Optional) Target platforms to build for (e.g. `["linux/amd64"]`, `["linux/amd64", "linux/arm64"]`). When omitted, defaults to `["linux/amd64", "linux/arm64"]`. Multi-platform builds use cross-compilation; the Dockerfile must use `FROM --platform=$BUILDPLATFORM` and `TARGETARCH`.
               required:
                 - context
           required:
             - environment
             - application
+            - secretName
             - build

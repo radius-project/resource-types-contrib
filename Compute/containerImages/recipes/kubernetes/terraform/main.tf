@@ -1,25 +1,45 @@
 terraform {
   required_version = ">= 1.5"
+  required_providers {
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = ">= 2.37.1"
+    }
+    local = {
+      source  = "hashicorp/local"
+      version = ">= 2.5.0"
+    }
+  }
+}
+
+provider "kubernetes" {
+  config_path = ""
 }
 
 # The recipe runs inside the dynamic-rp container. The chart mounts
 # `buildctl` (copied from the BuildKit image by an init container)
 # onto PATH and sets BUILDKIT_HOST=tcp://127.0.0.1:1234 to point at
-# the in-Pod buildkitd sidecar. Registry credentials live in a
-# Kubernetes Secret mounted at $HOME/.docker/config.json. We invoke
-# buildctl directly because the kreuzwerker/docker provider talks the
-# Docker Engine HTTP API, which buildkitd does not implement.
+# the in-Pod buildkitd sidecar. We invoke buildctl directly because
+# buildkitd does not implement the Docker Engine HTTP API that the
+# kreuzwerker/docker provider depends on.
+#
+# Registry credentials reach the recipe via a `Radius.Security/secrets`
+# resource referenced from the containerImages resource via
+# `properties.secretName`. Radius realizes the secret as a Kubernetes
+# Secret in the application's namespace; the recipe reads `USERNAME`
+# and `PASSWORD` from it, composes a Docker config.json on disk, and
+# points buildctl at it with DOCKER_CONFIG.
 
 locals {
   resource_name = lower(var.context.resource.name)
   properties    = try(var.context.resource.properties, {})
 
-  # Per-resource override of the recipe-wide registry parameter.
-  registry = coalesce(try(local.properties.registry, null), var.registry)
+  registry  = var.registry
+  namespace = var.context.runtime.kubernetes.namespace
 
   build_context  = local.properties.build.context
   dockerfile     = try(local.properties.build.dockerfile, "Dockerfile")
-  platforms      = try(local.properties.build.platforms, [])
+  platforms      = try(local.properties.build.platforms, ["linux/amd64", "linux/arm64"])
   is_git_context = can(regex("^git::", local.build_context))
 
   # Translate go-getter style git URLs (used by Terraform module
@@ -85,7 +105,9 @@ locals {
 
   image_ref = "${local.registry}/${local.resource_name}:${local.resolved_tag}"
 
-  platform_opt = length(local.platforms) > 0 ? "--opt platform=${join(",", local.platforms)}" : ""
+  # Platforms always has at least one entry (defaulted in the locals
+  # above), so the flag is always emitted.
+  platform_opt = "--opt platform=${join(",", local.platforms)}"
 
   # Compose the buildctl context flags up front so the heredoc stays
   # readable. For git contexts, BuildKit's git frontend takes both
@@ -103,6 +125,49 @@ locals {
     "--local dockerfile=${local.build_context}",
     "--opt filename=${local.dockerfile}",
   ])
+}
+
+# Resolve the registry-credentials secret. The developer (or platform
+# engineer) declares a Radius.Security/secrets resource holding
+# UPPERCASE `USERNAME` and `PASSWORD` keys, and references it from the
+# containerImages resource via `properties.secretName`. Radius
+# realizes that resource as a Kubernetes Secret in the application's
+# namespace; the recipe reads those keys here and assembles a Docker
+# config.json on disk for buildctl.
+data "kubernetes_secret_v1" "registry_creds" {
+  metadata {
+    name      = local.properties.secretName
+    namespace = local.namespace
+  }
+}
+
+locals {
+  registry_username = data.kubernetes_secret_v1.registry_creds.data["USERNAME"]
+  registry_password = data.kubernetes_secret_v1.registry_creds.data["PASSWORD"]
+
+  # The Docker auth host is the registry's network hostname (no path).
+  # `local.registry` may include a path component (e.g. `ghcr.io/myorg`);
+  # take everything up to the first slash for the auth lookup.
+  registry_auth_host = regex("^[^/]+", local.registry)
+
+  docker_config_dir = "${path.module}/.docker-config"
+  docker_config_json = jsonencode({
+    auths = {
+      (local.registry_auth_host) = {
+        auth = base64encode("${local.registry_username}:${local.registry_password}")
+      }
+    }
+  })
+}
+
+# Stage the Docker config.json on the recipe runner's filesystem.
+# `DOCKER_CONFIG` (set in the local-exec env below) points buildctl at
+# this directory.
+resource "local_sensitive_file" "docker_config" {
+  filename             = "${local.docker_config_dir}/config.json"
+  content              = local.docker_config_json
+  file_permission      = "0600"
+  directory_permission = "0700"
 }
 
 # Reject inputs containing shell metacharacters before they ever reach
@@ -180,12 +245,21 @@ resource "terraform_data" "build_push" {
   }
 
   # Block any build until input validation has succeeded, so a bad
-  # input never reaches the local-exec command line.
-  depends_on = [terraform_data.validate_inputs, terraform_data.validate_git_tag]
+  # input never reaches the local-exec command line. Also depend on
+  # the staged Docker config so buildctl always has registry creds
+  # at hand.
+  depends_on = [
+    terraform_data.validate_inputs,
+    terraform_data.validate_git_tag,
+    local_sensitive_file.docker_config,
+  ]
 
   provisioner "local-exec" {
     interpreter = ["/bin/sh", "-c"]
-    command     = <<-EOT
+    environment = {
+      DOCKER_CONFIG = local.docker_config_dir
+    }
+    command = <<-EOT
       set -eu
       buildctl build \
         --frontend dockerfile.v0 \
