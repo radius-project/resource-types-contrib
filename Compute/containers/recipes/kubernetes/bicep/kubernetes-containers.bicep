@@ -294,7 +294,7 @@ resource deployment 'apps/Deployment@v1' = {
           containers: podContainers
           // Disable K8s service env var injection to prevent collisions with app env vars.
           // K8s auto-injects <SERVICE_NAME>_PORT=tcp://<ip>:<port> for every service in the namespace,
-          // which can override app-defined env vars like TRADE_FEED_PORT or ACCOUNT_SERVICE_PORT.
+          // which can override app-defined env vars that developers explicitly set.
           // DNS-based service discovery (the modern K8s approach) is unaffected by this setting.
           enableServiceLinks: false
         },
