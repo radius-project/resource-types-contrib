@@ -292,6 +292,11 @@ resource deployment 'apps/Deployment@v1' = {
       spec: union(
         {
           containers: podContainers
+          // Disable K8s service env var injection to prevent collisions with app env vars.
+          // K8s auto-injects <SERVICE_NAME>_PORT=tcp://<ip>:<port> for every service in the namespace,
+          // which can override app-defined env vars that developers explicitly set.
+          // DNS-based service discovery (the modern K8s approach) is unaffected by this setting.
+          enableServiceLinks: false
         },
         length(podInitContainers) > 0 ? { initContainers: podInitContainers } : {},
         length(podVolumes) > 0 ? { volumes: podVolumes } : {},
@@ -316,7 +321,7 @@ var servicesConfig = reduce(containerItems, [], (acc, item) =>
 
 resource services 'core/Service@v1' = [for svc in servicesConfig: {
   metadata: {
-    name: '${normalizedName}-${svc.containerName}'
+    name: svc.containerName
     namespace: namespace
     labels: union(labels, {
       container: svc.containerName
@@ -389,7 +394,7 @@ resource hpa 'autoscaling/HorizontalPodAutoscaler@v2' = if (hasAutoScaling) {
 }
 
 var deploymentResource = '/planes/kubernetes/local/namespaces/${namespace}/providers/apps/Deployment/${normalizedName}'
-var serviceResources = reduce(servicesConfig, [], (acc, svc) => concat(acc, ['/planes/kubernetes/local/namespaces/${namespace}/providers/core/Service/${normalizedName}-${svc.containerName}']))
+var serviceResources = reduce(servicesConfig, [], (acc, svc) => concat(acc, ['/planes/kubernetes/local/namespaces/${namespace}/providers/core/Service/${svc.containerName}']))
 var hpaResource = hasAutoScaling ? ['/planes/kubernetes/local/namespaces/${namespace}/providers/autoscaling/HorizontalPodAutoscaler/${normalizedName}'] : []
 
 var allResources = concat([deploymentResource], serviceResources, hpaResource)
