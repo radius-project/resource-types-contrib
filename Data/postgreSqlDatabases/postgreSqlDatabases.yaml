@@ -89,7 +89,7 @@ types:
               description: "(Optional) The name of the database. Defaults to `postgres_db` if not provided."
             initSql:
               type: string
-              description: "(Optional) SQL script to run on first database initialization. The script is mounted into the PostgreSQL container's `/docker-entrypoint-initdb.d/` directory and executed automatically on first startup. Useful for creating tables, indexes, and inserting seed data."
+              description: "(Optional) SQL script mounted into the PostgreSQL container's `/docker-entrypoint-initdb.d/` directory and executed whenever PGDATA is empty. With the default ephemeral storage this runs on every pod restart. If a PersistentVolumeClaim is used, the script runs only on the very first startup and subsequent changes to initSql are ignored on existing volumes. Limited to ~1 MiB. Useful for creating tables, indexes, and inserting seed data."
             host:
               type: string
               description: The host name used to connect to the database.
