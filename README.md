@@ -58,7 +58,7 @@ resource-types-contrib/
 
 ## Default resource types in Radius
 
-Resource types in this repository are available for users to register manually via `rad resource-provider create`. A subset of these are also registered as defaults in Radius, meaning they are available out of the box without any user action.
+Resource types in this repository are available for users to register via `rad resource-type create`. A subset of these are also registered as defaults in Radius, meaning they are available out of the box without any user action.
 
 The list of default resource types is managed in the [Radius repository](https://github.com/radius-project/radius) via `deploy/manifest/defaults.yaml`. To make a resource type a default:
 
