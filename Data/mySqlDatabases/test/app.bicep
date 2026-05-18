@@ -1,7 +1,4 @@
 extension radius
-extension containers
-extension mySqlDatabases
-extension secrets
 
 @description('The Radius environment ID')
 param environment string
