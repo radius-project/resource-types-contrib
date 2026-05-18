@@ -1,7 +1,5 @@
 extension radius
-extension containers
 extension postgreSqlDatabases
-extension secrets
 
 @description('The Radius environment ID')
 param environment string
