@@ -10,6 +10,26 @@ param postgresqlVersion string = '16'
 @description('Storage size in GB.')
 param storageSizeGb int = 32
 
+@description('Number of days to retain automated backups.')
+@minValue(7)
+@maxValue(35)
+param backupRetentionDays int = 7
+
+@description('Whether to enable geo-redundant backups for the server.')
+@allowed([
+  'Enabled'
+  'Disabled'
+])
+param geoRedundantBackup string = 'Disabled'
+
+@description('High availability mode for the PostgreSQL Flexible Server.')
+@allowed([
+  'Disabled'
+  'SameZone'
+  'ZoneRedundant'
+])
+param highAvailabilityMode string = 'Disabled'
+
 //////////////////////////////////////////
 // Common Radius variables
 //////////////////////////////////////////
@@ -94,11 +114,11 @@ resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' =
       storageSizeGB: storageSizeGb
     }
     backup: {
-      backupRetentionDays: 7
-      geoRedundantBackup: 'Disabled'
+      backupRetentionDays: backupRetentionDays
+      geoRedundantBackup: geoRedundantBackup
     }
     highAvailability: {
-      mode: 'Disabled'
+      mode: highAvailabilityMode
     }
   }
 }
