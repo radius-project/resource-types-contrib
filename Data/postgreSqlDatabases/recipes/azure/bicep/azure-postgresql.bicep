@@ -45,6 +45,8 @@ var adminPassword = string(secretsConn.?properties.?status.?secrets.?PASSWORD.?V
 
 var database = context.resource.properties.?database ?? 'postgres_db'
 var sizeValue = context.resource.properties.?size ?? 'S'
+var initSql = context.resource.properties.?initSql ?? ''
+var hasInitSql = initSql != ''
 var port = 5432
 
 var uniqueSuffix = substring(uniqueString(context.resource.id), 0, 13)
@@ -117,6 +119,67 @@ resource postgresDb 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08
     charset: 'UTF8'
     collation: 'en_US.utf8'
   }
+}
+
+//////////////////////////////////////////
+// Init SQL deployment script (optional)
+//////////////////////////////////////////
+
+// When `initSql` is provided, run it against the newly created database using
+// `psql` inside an Azure CLI deployment script container. This mirrors the
+// Kubernetes recipe's `/docker-entrypoint-initdb.d/` behavior, executing the
+// SQL once after the database is provisioned. The script depends on the
+// firewall rule that allows Azure services so the container can reach the
+// flexible server.
+resource initSqlScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = if (hasInitSql) {
+  name: 'init-sql-${uniqueSuffix}'
+  location: postgresqlLocation
+  tags: tags
+  kind: 'AzureCLI'
+  properties: {
+    azCliVersion: '2.60.0'
+    timeout: 'PT10M'
+    retentionInterval: 'PT1H'
+    cleanupPreference: 'OnSuccess'
+    environmentVariables: [
+      {
+        name: 'PGHOST'
+        value: postgresServer.properties.fullyQualifiedDomainName
+      }
+      {
+        name: 'PGUSER'
+        value: adminUsername
+      }
+      {
+        name: 'PGPASSWORD'
+        secureValue: adminPassword
+      }
+      {
+        name: 'PGDATABASE'
+        value: postgresDb.name
+      }
+      {
+        name: 'PGPORT'
+        value: string(port)
+      }
+      {
+        name: 'PGSSLMODE'
+        value: 'require'
+      }
+      {
+        name: 'INIT_SQL'
+        secureValue: initSql
+      }
+    ]
+    scriptContent: '''
+      set -euo pipefail
+      apk add --no-cache postgresql-client >/dev/null
+      printf '%s' "$INIT_SQL" | psql --quiet -v ON_ERROR_STOP=1 -f -
+    '''
+  }
+  dependsOn: [
+    firewallRule
+  ]
 }
 
 //////////////////////////////////////////
