@@ -1,7 +1,5 @@
 extension radius
-extension containers
 extension neo4jDatabases
-extension secrets
 
 @description('The Radius environment ID')
 param environment string
