@@ -23,6 +23,8 @@ var namespace = context.runtime.kubernetes.namespace
 var dbSecretName = context.resource.properties.secretName
 var database = context.resource.properties.?database ?? 'postgres_db'
 var sizeValue = context.resource.properties.?size ?? 'S'
+var initSql = context.resource.properties.?initSql ?? ''
+var hasInitSql = initSql != ''
 var tag string = '16-alpine'
 var port = 5432
 var memory ={
@@ -44,6 +46,21 @@ var labels = {
   'radapp.io/resource-type':  replace(context.resource.type, '/', '-')  
   'radapp.io/resource-group': resourceGroupName  
 }  
+
+//////////////////////////////////////////
+// Init SQL ConfigMap (optional)
+//////////////////////////////////////////
+
+resource initSqlConfigMap 'core/ConfigMap@v1' = if (hasInitSql) {
+  metadata: {
+    name: '${resourceName}-init-sql'
+    namespace: namespace
+    labels: labels
+  }
+  data: {
+    '01-init.sql': initSql
+  }
+}
 
 //////////////////////////////////////////
 // PostgreSQL Deployment
@@ -106,8 +123,23 @@ resource postgresql 'apps/Deployment@v1' = {
                 value: database
               }
             ]
+            volumeMounts: hasInitSql ? [
+              {
+                name: 'init-sql'
+                mountPath: '/docker-entrypoint-initdb.d'
+                readOnly: true
+              }
+            ] : []
           }
         ]
+        volumes: hasInitSql ? [
+          {
+            name: 'init-sql'
+            configMap: {
+              name: initSqlConfigMap!.metadata.name
+            }
+          }
+        ] : []
       }
     }
   }
@@ -137,10 +169,15 @@ resource svc 'core/Service@v1' = {
 //////////////////////////////////////////
 
 output result object = {
-  resources: [
-    '/planes/kubernetes/local/namespaces/${svc.metadata.namespace}/providers/core/Service/${svc.metadata.name}'
-    '/planes/kubernetes/local/namespaces/${postgresql.metadata.namespace}/providers/apps/Deployment/${postgresql.metadata.name}'
-  ]
+  resources: union(
+    [
+      '/planes/kubernetes/local/namespaces/${svc.metadata.namespace}/providers/core/Service/${svc.metadata.name}'
+      '/planes/kubernetes/local/namespaces/${postgresql.metadata.namespace}/providers/apps/Deployment/${postgresql.metadata.name}'
+    ],
+    hasInitSql ? [
+      '/planes/kubernetes/local/namespaces/${initSqlConfigMap!.metadata.namespace}/providers/core/ConfigMap/${initSqlConfigMap!.metadata.name}'
+    ] : []
+  )
   values: {
     host: '${svc.metadata.name}.${svc.metadata.namespace}.svc.cluster.local'
     port: port

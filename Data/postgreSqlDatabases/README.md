@@ -23,6 +23,7 @@ Properties for the **Radius.Data/postgreSqlDatabases** resource type are provide
 - `context.resource.properties.secretName`(string, required): name of the secret containing the database credentials
 - `context.resource.properties.size`(string, optional): The size of the database. Defaults to `S` if not provided.
 - `context.resource.properties.database`(string, optional): The name of the database. Defaults to `postgres_db` if not provided.
+- `context.resource.properties.initSql`(string, optional): SQL script mounted at `/docker-entrypoint-initdb.d/01-init.sql` and executed by PostgreSQL whenever PGDATA is empty. With the default ephemeral storage this runs on every pod restart; with a PersistentVolumeClaim, it runs only on the very first startup and subsequent changes are ignored on existing volumes. Limited to ~1 MiB.
 
 ## Recipe Output Properties
 

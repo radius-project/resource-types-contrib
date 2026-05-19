@@ -1,7 +1,4 @@
 extension radius
-extension containers
-extension persistentVolumes
-extension secrets
 
 param environment string
 

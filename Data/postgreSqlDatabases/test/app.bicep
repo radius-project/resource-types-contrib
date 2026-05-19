@@ -1,7 +1,5 @@
 extension radius
-extension containers
 extension postgreSqlDatabases
-extension secrets
 
 @description('The Radius environment ID')
 param environment string
@@ -47,6 +45,12 @@ resource postgresql 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
     application: myapp.id
     size: 'S'
     secretName: dbSecret.name
+    initSql: '''
+      CREATE TABLE IF NOT EXISTS demo (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255)
+      );
+    '''
   }
 }
 

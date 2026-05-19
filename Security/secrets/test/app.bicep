@@ -1,5 +1,4 @@
 extension radius
-extension secrets
 
 @description('The Radius environment ID')
 param environment string
