@@ -123,47 +123,36 @@ resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' =
   }
 }
 
-resource firewallRule 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2024-08-01' = {
-  name: '${serverName}/AllowAllAzureServices'
-  location: postgresqlLocation
-  properties: {
-    startIpAddress: '0.0.0.0'
-    endIpAddress: '0.0.0.0'
-  }
-}
-
-resource postgresDb 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08-01' = {
-  name: '${serverName}/${database}'
-  properties: {
-    charset: 'UTF8'
-    collation: 'en_US.utf8'
-  }
-}
-
 //////////////////////////////////////////
-// Init SQL deployment script (optional)
+// Post-provision setup via deployment script
 //////////////////////////////////////////
 
-// When `initSql` is provided, run it against the newly created database using
-// `psql` inside an Azure CLI deployment script container. This mirrors the
-// Kubernetes recipe's `/docker-entrypoint-initdb.d/` behavior, executing the
-// SQL once after the database is provisioned. The script depends on the
-// firewall rule that allows Azure services so the container can reach the
-// flexible server.
-resource initSqlScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = if (hasInitSql) {
-  name: 'init-sql-${uniqueSuffix}'
+// Radius's deployment engine does not support ARM child resources (e.g.
+// firewallRules, databases) because its template validator cannot resolve
+// parent-child resource references. Instead, we use an Azure CLI deployment
+// script to create the firewall rule, database, and optionally run init SQL.
+resource setupScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
+  name: 'psql-setup-${uniqueSuffix}'
   location: postgresqlLocation
   tags: tags
   kind: 'AzureCLI'
   properties: {
     azCliVersion: '2.60.0'
-    timeout: 'PT10M'
+    timeout: 'PT15M'
     retentionInterval: 'PT1H'
     cleanupPreference: 'OnSuccess'
     environmentVariables: [
       {
-        name: 'PGHOST'
-        value: postgresServer.properties.fullyQualifiedDomainName
+        name: 'SERVER_NAME'
+        value: serverName
+      }
+      {
+        name: 'RESOURCE_GROUP'
+        value: resourceGroup().name
+      }
+      {
+        name: 'DATABASE_NAME'
+        value: database
       }
       {
         name: 'PGUSER'
@@ -171,33 +160,54 @@ resource initSqlScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = if (
       }
       {
         name: 'PGPASSWORD'
+        #disable-next-line use-secure-value-for-secure-inputs
         secureValue: adminPassword
-      }
-      {
-        name: 'PGDATABASE'
-        value: postgresDb.name
       }
       {
         name: 'PGPORT'
         value: string(port)
       }
       {
-        name: 'PGSSLMODE'
-        value: 'require'
+        name: 'HAS_INIT_SQL'
+        value: hasInitSql ? 'true' : 'false'
       }
       {
         name: 'INIT_SQL'
+        #disable-next-line use-secure-value-for-secure-inputs
         secureValue: initSql
       }
     ]
     scriptContent: '''
       set -euo pipefail
-      apk add --no-cache postgresql-client >/dev/null
-      printf '%s' "$INIT_SQL" | psql --quiet -v ON_ERROR_STOP=1 -f -
+
+      # Create firewall rule to allow Azure services
+      az postgres flexible-server firewall-rule create \
+        --resource-group "$RESOURCE_GROUP" \
+        --name "$SERVER_NAME" \
+        --rule-name AllowAllAzureServices \
+        --start-ip-address 0.0.0.0 \
+        --end-ip-address 0.0.0.0
+
+      # Create database
+      az postgres flexible-server db create \
+        --resource-group "$RESOURCE_GROUP" \
+        --server-name "$SERVER_NAME" \
+        --database-name "$DATABASE_NAME" \
+        --charset UTF8 \
+        --collation en_US.utf8 || true
+
+      # Run init SQL if provided
+      if [ "$HAS_INIT_SQL" = "true" ]; then
+        apk add --no-cache postgresql-client >/dev/null
+        export PGHOST="${SERVER_NAME}.postgres.database.azure.com"
+        export PGDATABASE="$DATABASE_NAME"
+        export PGSSLMODE=require
+        printf '%s' "$INIT_SQL" | psql --quiet -v ON_ERROR_STOP=1 -f -
+      fi
     '''
   }
   dependsOn: [
-    firewallRule
+    postgresServer
   ]
 }
 
