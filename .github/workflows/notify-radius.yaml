@@ -55,6 +55,22 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      - name: Generate App Token
+        # Uses a GitHub App token instead of a PAT so that the dispatch event
+        # is sent with scoped, auditable credentials. The app must be installed
+        # on the target repo (radius-project/radius) with contents:write to
+        # trigger repository_dispatch.
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RESOURCE_TYPES_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.RESOURCE_TYPES_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: |
+            radius
+          permission-metadata: read
+          permission-contents: write
+
       - name: Send repository_dispatch to radius-project/radius
         # Fires a repository_dispatch event that the Radius repo's
         # contrib-update-resource-types.yaml workflow listens for.
@@ -64,7 +80,7 @@ jobs:
         # the latest version via 'go get ...@latest'.
         uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # v3.0.0
         with:
-          token: ${{ secrets.GH_RAD_CI_BOT_PAT }}
+          token: ${{ steps.app-token.outputs.token }}
           repository: radius-project/radius
           event-type: resource-types-contrib-updated
           client-payload: |
