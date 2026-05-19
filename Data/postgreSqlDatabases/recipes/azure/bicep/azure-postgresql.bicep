@@ -211,8 +211,8 @@ output result object = {
     postgresServer.id
   ]
   values: {
-    host: postgresServer.properties.fullyQualifiedDomainName
+    host: '${serverName}.postgres.database.azure.com'
     port: port
-    database: postgresDb.name
+    database: database
   }
 }
