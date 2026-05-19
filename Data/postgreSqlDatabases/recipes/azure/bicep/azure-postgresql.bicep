@@ -124,8 +124,8 @@ resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' =
 }
 
 resource firewallRule 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2024-08-01' = {
-  parent: postgresServer
-  name: 'AllowAllAzureServices'
+  name: '${serverName}/AllowAllAzureServices'
+  location: postgresqlLocation
   properties: {
     startIpAddress: '0.0.0.0'
     endIpAddress: '0.0.0.0'
@@ -133,8 +133,7 @@ resource firewallRule 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2
 }
 
 resource postgresDb 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08-01' = {
-  parent: postgresServer
-  name: database
+  name: '${serverName}/${database}'
   properties: {
     charset: 'UTF8'
     collation: 'en_US.utf8'
@@ -208,7 +207,7 @@ resource initSqlScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = if (
 
 output result object = {
   resources: [
-    postgresServer.id
+    '/planes/azure/azurecloud/subscriptions/${subscription().subscriptionId}/resourceGroups/${resourceGroup().name}/providers/Microsoft.DBforPostgreSQL/flexibleServers/${serverName}'
   ]
   values: {
     host: '${serverName}.postgres.database.azure.com'
