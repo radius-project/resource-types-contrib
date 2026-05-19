@@ -124,35 +124,47 @@ resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' =
 }
 
 //////////////////////////////////////////
-// Post-provision setup via deployment script
+// Firewall rule & database
 //////////////////////////////////////////
 
-// Radius's deployment engine does not support ARM child resources (e.g.
-// firewallRules, databases) because its template validator cannot resolve
-// parent-child resource references. Instead, we use an Azure CLI deployment
-// script to create the firewall rule, database, and optionally run init SQL.
-resource setupScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
-  name: 'psql-setup-${uniqueSuffix}'
+resource firewallRule 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2024-08-01' = {
+  parent: postgresServer
+  name: 'AllowAllAzureServices'
+  properties: {
+    startIpAddress: '0.0.0.0'
+    endIpAddress: '0.0.0.0'
+  }
+}
+
+resource postgresDb 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08-01' = {
+  parent: postgresServer
+  name: database
+  properties: {
+    charset: 'UTF8'
+    collation: 'en_US.utf8'
+  }
+}
+
+//////////////////////////////////////////
+// Init SQL deployment script (optional)
+//////////////////////////////////////////
+
+// When `initSql` is provided, run it against the newly created database using
+// `psql` inside an Azure CLI deployment script container.
+resource initSqlScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = if (hasInitSql) {
+  name: 'init-sql-${uniqueSuffix}'
   location: postgresqlLocation
   tags: tags
   kind: 'AzureCLI'
   properties: {
     azCliVersion: '2.60.0'
-    timeout: 'PT15M'
+    timeout: 'PT10M'
     retentionInterval: 'PT1H'
     cleanupPreference: 'OnSuccess'
     environmentVariables: [
       {
-        name: 'SERVER_NAME'
-        value: serverName
-      }
-      {
-        name: 'RESOURCE_GROUP'
-        value: resourceGroup().name
-      }
-      {
-        name: 'DATABASE_NAME'
-        value: database
+        name: 'PGHOST'
+        value: postgresServer.properties.fullyQualifiedDomainName
       }
       {
         name: 'PGUSER'
@@ -164,12 +176,16 @@ resource setupScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
         secureValue: adminPassword
       }
       {
+        name: 'PGDATABASE'
+        value: database
+      }
+      {
         name: 'PGPORT'
         value: string(port)
       }
       {
-        name: 'HAS_INIT_SQL'
-        value: hasInitSql ? 'true' : 'false'
+        name: 'PGSSLMODE'
+        value: 'require'
       }
       {
         name: 'INIT_SQL'
@@ -179,35 +195,12 @@ resource setupScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
     ]
     scriptContent: '''
       set -euo pipefail
-
-      # Create firewall rule to allow Azure services
-      az postgres flexible-server firewall-rule create \
-        --resource-group "$RESOURCE_GROUP" \
-        --name "$SERVER_NAME" \
-        --rule-name AllowAllAzureServices \
-        --start-ip-address 0.0.0.0 \
-        --end-ip-address 0.0.0.0
-
-      # Create database
-      az postgres flexible-server db create \
-        --resource-group "$RESOURCE_GROUP" \
-        --server-name "$SERVER_NAME" \
-        --database-name "$DATABASE_NAME" \
-        --charset UTF8 \
-        --collation en_US.utf8 || true
-
-      # Run init SQL if provided
-      if [ "$HAS_INIT_SQL" = "true" ]; then
-        apk add --no-cache postgresql-client >/dev/null
-        export PGHOST="${SERVER_NAME}.postgres.database.azure.com"
-        export PGDATABASE="$DATABASE_NAME"
-        export PGSSLMODE=require
-        printf '%s' "$INIT_SQL" | psql --quiet -v ON_ERROR_STOP=1 -f -
-      fi
+      apk add --no-cache postgresql-client >/dev/null
+      printf '%s' "$INIT_SQL" | psql --quiet -v ON_ERROR_STOP=1 -f -
     '''
   }
   dependsOn: [
-    postgresServer
+    firewallRule
   ]
 }
 
@@ -216,11 +209,8 @@ resource setupScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
 //////////////////////////////////////////
 
 output result object = {
-  resources: [
-    '/planes/azure/azurecloud/subscriptions/${subscription().subscriptionId}/resourceGroups/${resourceGroup().name}/providers/Microsoft.DBforPostgreSQL/flexibleServers/${serverName}'
-  ]
   values: {
-    host: '${serverName}.postgres.database.azure.com'
+    host: postgresServer.properties.fullyQualifiedDomainName
     port: port
     database: database
   }
