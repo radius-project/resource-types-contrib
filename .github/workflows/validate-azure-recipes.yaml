@@ -42,28 +42,34 @@ jobs:
     permissions:
       pull-requests: read
     outputs:
-      azure-changed: ${{ steps.filter.outputs.azure-changed }}
+      azure-changed: ${{ steps.result.outputs.azure-changed }}
     steps:
+      # REST API mode: no checkout needed, works with fork PRs. Only supports
+      # pull_request* events — non-PR events skip this and default to azure-changed=true.
       - name: Detect Azure file changes
         id: filter
+        if: github.event_name == 'pull_request_target'
+        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
+        with:
+          use_rest_api: true
+          files: |
+            **/azure/**
+            **/azure-*/**
+            **/test/app.bicep
+            .github/workflows/validate-azure-recipes.yaml
+
+      - name: Set result
+        id: result
         env:
-          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          ANY_MODIFIED: ${{ steps.filter.outputs.any_modified }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" != "pull_request_target" ]; then
-            echo "Non-PR event — assuming Azure files changed"
-            echo "azure-changed=true" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-
-          FILES="$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename')"
-          if echo "${FILES}" | grep -qE '(^|/)azure/|(^|/)azure-[^/]+/|(^|/)test/app\.bicep$|^\.github/workflows/validate-azure-recipes\.yaml$'; then
-            echo "Azure files detected in PR:"
-            echo "${FILES}" | grep -E '(^|/)azure/|(^|/)azure-[^/]+/|(^|/)test/app\.bicep$|^\.github/workflows/validate-azure-recipes\.yaml$' || true
-            echo "azure-changed=true" >> "${GITHUB_OUTPUT}"
+          if [ "$EVENT_NAME" = "pull_request_target" ]; then
+            echo "azure-changed=$ANY_MODIFIED" >> "$GITHUB_OUTPUT"
           else
-            echo "No Azure files changed — skipping Azure validation"
-            echo "azure-changed=false" >> "${GITHUB_OUTPUT}"
+            echo "Non-PR event — assuming Azure files changed"
+            echo "azure-changed=true" >> "$GITHUB_OUTPUT"
           fi
 
   # When no Azure files changed, report the required check names as successful
