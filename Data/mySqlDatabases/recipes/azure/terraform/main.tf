@@ -16,6 +16,7 @@ terraform {
 provider "azurerm" {
   features {}
   subscription_id = var.azure_subscription_id
+  use_oidc        = true
 }
 
 //////////////////////////////////////////
@@ -37,7 +38,13 @@ locals {
   port        = 3306
   database    = try(var.context.resource.properties.database, "mysql_db")
   secret_name = var.context.resource.properties.secretName
-  version     = try(var.context.resource.properties.version, "8.0.21")
+  # Azure MySQL Flexible Server accepts only specific version strings.
+  # Map common shorthand values to valid versions.
+  version     = lookup(
+    { "8.0" = "8.0.21", "8" = "8.0.21", "5" = "5.7" },
+    try(var.context.resource.properties.version, "8.0.21"),
+    try(var.context.resource.properties.version, "8.0.21")
+  )
 
   unique_suffix = substr(md5(local.resource_name), 0, 13)
 
@@ -48,9 +55,9 @@ locals {
   sanitized_database = replace(local.database, "/[^0-9A-Za-z_]/", "_")
 
   tags = {
-    "radapp.io/resource"    = local.resource_name
-    "radapp.io/application" = local.application_name
-    "radapp.io/environment" = local.environment_name
+    "radapp.io-resource"    = local.resource_name
+    "radapp.io-application" = local.application_name
+    "radapp.io-environment" = local.environment_name
   }
 }
 
