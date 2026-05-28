@@ -178,7 +178,7 @@ if grep -q 'param password' "$TEST_FILE" 2>/dev/null; then
 fi
 
 # Deploy the test app
-if rad deploy "$TEST_FILE" --application "$APP_NAME" -e "$ENVIRONMENT_NAME" $PARAMS; then
+if rad deploy "$TEST_FILE" --application "$APP_NAME" -e "$ENVIRONMENT_PATH" $PARAMS; then
     echo "==> Test deployment successful"
     
     # Cleanup: delete the app
@@ -196,7 +196,7 @@ else
     rad app delete "$APP_NAME" --yes 2>/dev/null || true
     rad recipe unregister default \
         --workspace "$WORKSPACE_NAME" \
-        --environment "$ENVIRONMENT_NAME" \
+        --environment "$ENVIRONMENT_PATH" \
         --resource-type "$RESOURCE_TYPE"
 
     # Clean up leftover K8s resources even on failure

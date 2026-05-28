@@ -13,13 +13,13 @@ on:
   # pull_request_target runs in the context of the base branch, providing access to secrets.
   # For external contributors, the approval-gate job requires manual approval before tests run.
   # SECURITY: We use pull_request_target but do NOT run any code from the PR until after approval.
+  #
+  # NOTE: No paths filter on pull_request_target. The "check-paths" job below determines
+  # whether Azure files changed. When they haven't, the "skip-azure-validation" job
+  # reports the required check names so branch protection is satisfied without running
+  # expensive Azure tests.
   pull_request_target:
     branches: [main]
-    paths:
-      - "**/azure/**"
-      - "**/azure-*/**"
-      - "**/test/app.bicep"
-      - ".github/workflows/validate-azure-recipes.yaml"
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
@@ -33,6 +33,61 @@ on:
 permissions: {}
 
 jobs:
+  # Detect whether Azure-related files changed. For non-PR events (push, merge_group,
+  # workflow_dispatch) the output defaults to 'true' so tests always run.
+  check-paths:
+    name: Check Paths
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      azure-changed: ${{ steps.result.outputs.azure-changed }}
+    steps:
+      # REST API mode: no checkout needed, works with fork PRs. Only supports
+      # pull_request* events — non-PR events skip this and default to azure-changed=true.
+      - name: Detect Azure file changes
+        id: filter
+        if: github.event_name == 'pull_request_target'
+        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
+        with:
+          use_rest_api: true
+          files: |
+            **/azure/**
+            **/azure-*/**
+            **/test/app.bicep
+            .github/workflows/validate-azure-recipes.yaml
+
+      - name: Set result
+        id: result
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ANY_MODIFIED: ${{ steps.filter.outputs.any_modified }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request_target" ]; then
+            echo "azure-changed=$ANY_MODIFIED" >> "$GITHUB_OUTPUT"
+          else
+            echo "Non-PR event — assuming Azure files changed"
+            echo "azure-changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # When no Azure files changed, report the required check names as successful
+  # so that branch protection is satisfied.
+  skip-azure-validation:
+    needs: [check-paths]
+    if: needs.check-paths.outputs.azure-changed != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    name: Validate Azure ${{ matrix.recipe }} Recipes
+    strategy:
+      matrix:
+        recipe: [bicep, terraform]
+    permissions: {}
+    steps:
+      - name: Skip
+        run: echo "No Azure files changed — skipping Azure ${{ matrix.recipe }} recipe validation"
+
   # Trust check for pull_request_target events. Determines whether the PR author
   # is a trusted contributor (same-repo push) or an external contributor.
   #
@@ -42,9 +97,10 @@ jobs:
   #   2. Fork PR: external (requires approval).
   check-trust:
     name: Check Trust
+    needs: [check-paths]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    if: github.event_name == 'pull_request_target'
+    if: github.event_name == 'pull_request_target' && needs.check-paths.outputs.azure-changed == 'true'
     outputs:
       is-external: ${{ steps.check.outputs.is-external }}
     permissions: {}
@@ -83,12 +139,13 @@ jobs:
         run: echo "Tests approved to run for commit ${{ github.event.pull_request.head.sha }}"
 
   validate-azure-recipes:
-    needs: [check-trust, approval-gate]
+    needs: [check-paths, check-trust, approval-gate]
     # For pull_request_target, require approval-gate to be 'success' or 'skipped' — block
     # on 'cancelled' (rejected approval) to prevent running PR code with secrets.
     # For push, workflow_dispatch, and merge_group, both gate jobs are skipped.
     if: |
       !cancelled() &&
+      needs.check-paths.outputs.azure-changed == 'true' &&
       (needs.check-trust.result == 'success' || needs.check-trust.result == 'skipped') &&
       (needs.approval-gate.result == 'success' || needs.approval-gate.result == 'skipped')
     runs-on: ubuntu-24.04
