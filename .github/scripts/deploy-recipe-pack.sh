@@ -56,7 +56,7 @@ if [[ -n "$RESOURCE_GROUP" ]]; then
 fi
 
 #workaround until we allow recipe packs to be deployed without an environment
-DEPLOY_ARGS+=("-e" "default")
+DEPLOY_ARGS+=("-e" "/planes/radius/local/resourcegroups/default/providers/Radius.Core/environments/default")
 
 echo "==> Running: rad ${DEPLOY_ARGS[*]}"
 rad "${DEPLOY_ARGS[@]}"
