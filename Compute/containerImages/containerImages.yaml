@@ -14,48 +14,50 @@ types:
 
       Registry credentials are a platform-engineer concern. The PE provisions a `Radius.Security/secrets` resource (whose recipe materializes a Kubernetes Secret of the same name in the environment namespace) and wires its name into the recipe pack as the `registrySecretName` recipe parameter — `parameters: { registry: 'ghcr.io/myorg', registrySecretName: ghcrCreds.name }`. The developer's Bicep never references the secret. The recipe reads the underlying Kubernetes Secret via `data "kubernetes_secret"` using the name supplied by the PE and the recipe's runtime namespace, assembles a Docker `config.json`, and runs BuildKit. Cluster-level image pull (kubelet → registry) is handled by the platform out-of-band (e.g. a cluster-wide pull secret on the default ServiceAccount, an OCI mirror, or kubelet credential providers).
 
-        extension radius
-        extension containerImages
-        extension containers
+      ```bicep
+      extension radius
+      extension containerImages
+      extension containers
 
-        param environment string
+      param environment string
 
-        resource myApp 'Radius.Core/applications@2025-08-01-preview' = {
-          name: 'myApp'
-          properties: {
-            environment: environment
+      resource myApp 'Radius.Core/applications@2025-08-01-preview' = {
+        name: 'myApp'
+        properties: {
+          environment: environment
+        }
+      }
+
+      resource myImage 'Radius.Compute/containerImages@2025-08-01-preview' = {
+        name: 'myImage'
+        properties: {
+          environment: environment
+          application: myApp.id
+          tag:         'v1.2.3'
+          build: {
+            source: 'git::https://github.com/myorg/myapp.git//frontend'
           }
         }
+      }
 
-        resource myImage 'Radius.Compute/containerImages@2025-08-01-preview' = {
-          name: 'myImage'
-          properties: {
-            environment: environment
-            application: myApp.id
-            tag:         'v1.2.3'
-            build: {
-              source: 'git::https://github.com/myorg/myapp.git//frontend'
-            }
-          }
-        }
-
-        resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
-          name: 'myContainer'
-          properties: {
-            environment: environment
-            application: myApp.id
-            containers: {
-              app: {
-                image: myImage.properties.imageReference
-                ports: {
-                  web: {
-                    containerPort: 3000
-                  }
+      resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
+        name: 'myContainer'
+        properties: {
+          environment: environment
+          application: myApp.id
+          containers: {
+            app: {
+              image: myImage.properties.imageReference
+              ports: {
+                web: {
+                  containerPort: 3000
                 }
               }
             }
           }
         }
+      }
+      ```
 
       Prerequisites:
 
@@ -65,14 +67,16 @@ types:
 
       3. The platform engineer registers the recipe once per environment, supplying `registry` and `registrySecretName`. Easiest done via Bicep on a `Radius.Core/recipePacks` resource:
 
-        'Radius.Compute/containerImages': {
-          recipeKind: 'terraform'
-          recipeLocation: 'git::https://github.com/radius-project/resource-types-contrib.git//Compute/containerImages/recipes/kubernetes/terraform'
-          parameters: {
-            registry: 'ghcr.io/myorg'
-            registrySecretName: ghcrCreds.name
-          }
+      ```bicep
+      'Radius.Compute/containerImages': {
+        recipeKind: 'terraform'
+        recipeLocation: 'git::https://github.com/radius-project/resource-types-contrib.git//Compute/containerImages/recipes/kubernetes/terraform'
+        parameters: {
+          registry: 'ghcr.io/myorg'
+          registrySecretName: ghcrCreds.name
         }
+      }
+      ```
 
       For an unauthenticated registry (e.g. a local kind registry) omit `registrySecretName`.
 
@@ -95,14 +99,14 @@ types:
             imageReference:
               type: string
               readOnly: true
-              description: (Read-only) The full image reference produced by the recipe in the form `<registry>/<resource-name>:<tag>`. Reference this from `Radius.Compute/containers` to consume the built image.
+              description: (Read Only) The full image reference produced by the recipe in the form `<registry>/<resource-name>:<tag>`. Reference this from `Radius.Compute/containers` to consume the built image.
             build:
               type: object
               description: (Required) Build configuration for the container image.
               properties:
                 source:
                   type: string
-                  description: (Required) Source location for the build. Either a git URL of the form `git::https://...` (BuildKit clones the repo inside the cluster) or, for local development, a path that the rad CLI uploads as a tarball. `git::https://github.com/myorg/myapp.git//frontend` for example.
+                  description: (Required) Source location for the build. Either a git URL of the form `git::https://...` (BuildKit clones the repo inside the cluster) or an absolute filesystem path already available to the Terraform runtime. `git::https://github.com/myorg/myapp.git//frontend` for example.
                 dockerfile:
                   type: string
                   description: (Optional) Path to the Dockerfile relative to the build source. Defaults to `Dockerfile`.

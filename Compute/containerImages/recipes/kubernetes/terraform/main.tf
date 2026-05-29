@@ -62,8 +62,10 @@ locals {
 
   user_tag = try(local.properties.tag, null)
 
+  # Hash file paths alongside contents so renames, deletions, or
+  # same-content swaps still trigger a rebuild.
   local_context_hash = local.is_git_source ? "" : sha256(join("", concat(
-    [for f in fileset(local.build_source, "**") : filesha1("${local.build_source}/${f}")],
+    [for f in fileset(local.build_source, "**") : "${f}:${filesha1("${local.build_source}/${f}")}"],
     [local.dockerfile],
     local.platforms,
   )))
@@ -140,6 +142,10 @@ resource "terraform_data" "validate_inputs" {
       error_message = "containerImages: properties.build.source must be a git::https URL or an absolute filesystem path (got ${local.build_source})."
     }
     precondition {
+      condition     = length(local.platforms) > 0
+      error_message = "containerImages: properties.build.platforms must contain at least one platform when set."
+    }
+    precondition {
       condition = alltrue([
         for p in local.platforms : can(regex("^[a-z0-9]+/[a-z0-9]+(/[a-z0-9]+)?$", p))
       ])
@@ -171,8 +177,16 @@ resource "local_sensitive_file" "docker_config" {
 # Build & push via buildctl.
 resource "terraform_data" "build_push" {
   triggers_replace = {
-    image_ref     = local.image_ref
-    src_hash      = local.local_context_hash
+    image_ref = local.image_ref
+    src_hash  = local.local_context_hash
+    # For git sources src_hash is empty; capture the recipe inputs
+    # explicitly so changing source URL/ref, dockerfile path, or
+    # platforms re-runs the build even when the tag is unchanged.
+    git_inputs = local.is_git_source ? sha256(jsonencode({
+      url        = local.buildctl_git_url
+      dockerfile = local.dockerfile
+      platforms  = local.platforms
+    })) : ""
     config_sha256 = local.use_auth ? sha256(local.docker_config_json) : ""
   }
 
