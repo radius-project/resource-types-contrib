@@ -1,32 +1,35 @@
 ## Overview
+The Radius.Compute/containerImages Resource Type builds a container image from source and pushes it to a container registry. The resulting image reference can be consumed by `Radius.Compute/containers` resources within the same Application.
 
-The Radius.Compute/containerImages Resource Type builds a container image from source and pushes it to a container registry. It is always part of a Radius Application.
-
-Builds run inside the cluster on a rootless BuildKit sidecar that ships with the dynamic-rp Pod. The recipe shells `buildctl` against the sidecar; no host Docker socket, no privileged containers, and no per-node host preparation.
-
-Developer documentation is embedded in the Resource Type definition YAML file and is accessible via `rad resource-type show Radius.Compute/containerImages`.
+Developer documentation is embedded in the Resource Type definition YAML file. Developer documentation is accessible via `rad resource-type show Radius.Compute/containerImages`.
 
 ## Recipes
 
-| Platform | IaC Language | Recipe Name | Stage |
+A list of available Recipes for this Resource Type, including links to the Bicep and Terraform templates:
+
+|Platform| IaC Language| Recipe Name | Stage |
 |---|---|---|---|
-| Kubernetes | Terraform | `recipes/kubernetes/terraform/main.tf` | Alpha |
+| Kubernetes | Terraform | recipes/kubernetes/terraform/main.tf | Alpha |
 
-## Recipe Parameters
 
-| Parameter | Required | Description |
-|---|---|---|
-| `registry` | yes | Registry path images are pushed under (e.g. `ghcr.io/myorg`). The recipe composes `<registry>/<resource-name>:<tag>` to form the full image reference. |
-| `registrySecretName` | no | Name of a Kubernetes Secret in the environment namespace (typically materialized by a `Radius.Security/secrets` resource) with `username` and `password` keys. Omit for unauthenticated registries. |
+## Recipe Input Properties
 
-## Output Properties
+Properties for the containerImages resource are provided to the Recipe via the [Recipe Context](https://docs.radapp.io/reference/context-schema/) object. These properties include:
 
-| Output | Description |
-|---|---|
-| `properties.imageReference` | The full resolved image reference, e.g. `ghcr.io/myorg/myimage:v1.2.3`. Reference this from `Radius.Compute/containers` resources. |
+- `context.resource.properties.build.source` (string, required): The build context. Either a `git::https://...` URL or an absolute filesystem path available to the recipe runtime.
+- `context.resource.properties.build.dockerfile` (string, optional): Path to the Dockerfile relative to the build context. Defaults to `Dockerfile`.
+- `context.resource.properties.build.platforms` (array of string, optional): Target platforms (e.g. `["linux/amd64", "linux/arm64"]`) for the multi-arch image. Defaults to `["linux/amd64", "linux/arm64"]`. Multi-arch builds require a cross-compile-friendly Dockerfile.
+- `context.resource.properties.build.args` (object, optional): Map of `--build-arg` values passed to the build.
+- `context.resource.properties.tag` (string, optional): Explicit image tag. Required when `build.source` is a git URL. Defaults to a content-addressable tag (`sha256-<hash>`) for filesystem contexts.
 
-## Limitations
+The Recipe is also parameterized at registration time by the platform engineer with:
 
-- **Explicit `tag` required for git sources.** The recipe cannot compute a content-addressable tag from a remote tree; defaulting to `latest` would defeat downstream reconciliation.
-- **Local context upload deferred.** `build.source` accepts a `git::https` URL or an absolute filesystem path already available to the Terraform runtime. CLI-driven local-path upload is planned but not yet implemented.
-- **No QEMU/binfmt fallback for multi-arch.** Dockerfiles must cross-compile via `BUILDPLATFORM`/`TARGETPLATFORM`; native execution of foreign-arch binaries during the build will fail.
+- `registry` (string, required): The registry prefix images are pushed under (e.g. `ghcr.io/myorg`). The recipe composes `<registry>/<resource-name>:<tag>` to form the full image reference.
+- `registrySecretName` (string, optional): Name of a Kubernetes Secret in the environment namespace (typically materialized by a `Radius.Security/secrets` resource of `kind: generic` with `username` and `password` keys). Omit for unauthenticated registries.
+
+
+## Recipe Output Properties
+
+The Kubernetes recipe emits the following output values:
+
+- `imageReference` (string): The full resolved image reference, e.g. `ghcr.io/myorg/myimage:v1.2.3`. Reference this from `Radius.Compute/containers` resources via a Radius connection.
