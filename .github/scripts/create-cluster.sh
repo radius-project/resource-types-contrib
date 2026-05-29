@@ -203,15 +203,18 @@ helm upgrade --install dapr dapr/dapr \
   --wait \
   --set global.ha.enabled=false
 
-echo "Configuring RBAC for Radius dynamic-rp service account (HorizontalPodAutoscaler support)..."
+echo "Configuring extra RBAC for Radius dynamic-rp service account..."
 cat <<'EOF' | kubectl apply -f -
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: radius-hpa-manager
+  name: radius-dynamic-rp-extra-resources
 rules:
 - apiGroups: ["autoscaling"]
   resources: ["horizontalpodautoscalers"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["gateway.networking.k8s.io"]
+  resources: ["gateways", "httproutes", "tlsroutes", "tcproutes", "udproutes", "referencegrants"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 EOF
 
@@ -219,11 +222,11 @@ cat <<'EOF' | kubectl apply -f -
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: radius-hpa-manager
+  name: radius-dynamic-rp-extra-resources
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: radius-hpa-manager
+  name: radius-dynamic-rp-extra-resources
 subjects:
 - kind: ServiceAccount
   name: dynamic-rp
