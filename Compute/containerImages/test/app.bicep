@@ -1,6 +1,5 @@
 extension radius
 extension containerImages
-extension containers
 
 param environment string
 
