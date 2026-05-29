@@ -59,6 +59,24 @@ fi
 
 echo "==> Found ${#RECIPE_DIRS[@]} $RECIPE_TYPE recipe(s)"
 
+# Recipe packs are keyed by resource type, so a single pack can only contain
+# one recipe for each resource type. Keep the first discovered recipe and skip
+# alternate implementations for the same resource type.
+SELECTED_RESOURCE_TYPES=()
+SELECTED_RECIPE_COUNT=0
+
+has_selected_resource_type() {
+    local resource_type="$1"
+
+    for selected_resource_type in ${SELECTED_RESOURCE_TYPES+"${SELECTED_RESOURCE_TYPES[@]}"}; do
+        if [[ "$selected_resource_type" == "$resource_type" ]]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
 # Start building the Bicep template
 cat > "$OUTPUT_FILE" << EOF
 extension radius
@@ -77,6 +95,13 @@ for recipe_dir in "${RECIPE_DIRS[@]}"; do
     CATEGORY=$(basename "$(dirname "$RESOURCE_TYPE_PATH")")
     RESOURCE_NAME=$(basename "$RESOURCE_TYPE_PATH")
     RESOURCE_TYPE="Radius.$CATEGORY/$RESOURCE_NAME"
+
+    if has_selected_resource_type "$RESOURCE_TYPE"; then
+        echo "==> Skipping alternate recipe for $RESOURCE_TYPE at $recipe_dir"
+        continue
+    fi
+    SELECTED_RESOURCE_TYPES+=("$RESOURCE_TYPE")
+    SELECTED_RECIPE_COUNT=$((SELECTED_RECIPE_COUNT + 1))
     
     # Extract platform and language from path (e.g., recipes/kubernetes/bicep -> kubernetes/bicep)
     RECIPES_SUBPATH="${recipe_dir#*recipes/}"
@@ -124,4 +149,4 @@ rm -f "$OUTPUT_FILE.bak"
 
 echo "==> Recipe pack template generated: $OUTPUT_FILE"
 echo "==> Pack name: $PACK_NAME"
-echo "==> Contains ${#RECIPE_DIRS[@]} recipe(s)"
+echo "==> Contains $SELECTED_RECIPE_COUNT recipe(s)"
