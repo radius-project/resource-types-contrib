@@ -125,8 +125,8 @@ locals {
 resource "terraform_data" "validate_inputs" {
   lifecycle {
     precondition {
-      condition     = can(regex("^[A-Za-z0-9._:/@-]+$", local.registry))
-      error_message = "containerImages: registry must match [A-Za-z0-9._:/@-]+ (got ${local.registry})."
+      condition     = can(regex("^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]+)?(/[a-z0-9]+([._-][a-z0-9]+)*)*$", local.registry))
+      error_message = "containerImages: registry must be <host>[:<port>][/<lowercase-path>] (no scheme, no '@', lowercase path components) (got ${local.registry})."
     }
     precondition {
       condition     = can(regex("^[a-z0-9][a-z0-9._-]*$", local.image_name))
