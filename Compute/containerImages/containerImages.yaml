@@ -10,7 +10,7 @@ types:
 
       - `<registry>` is the registry path configured by the platform engineer when registering the recipe (e.g. `ghcr.io/myorg`).
       - `<resource-name>` is the (lowercased) name of the containerImages resource (e.g. `myImage` becomes `myimage`).
-      - `<tag>` defaults to a content-addressable digest (`sha256-<hash>`) derived from the build inputs so that downstream `Radius.Compute/containers` resources observe a property change on every code change. A user-provided `tag` overrides this. Note: when `build.source` is a remote git URL, an explicit `tag` is required because the recipe cannot hash the remote tree.
+      - `<tag>` defaults to a content-addressable digest (`sha256-<hash>`) derived from the build inputs (source URL or file tree, dockerfile path, target platforms, build args) so that downstream `Radius.Compute/containers` resources observe a property change on every code change. A user-provided `tag` overrides this.
 
       Registry credentials are a platform-engineer concern. The PE provisions a `Radius.Security/secrets` resource (whose recipe materializes a Kubernetes Secret of the same name in the environment namespace) and wires its name into the recipe pack as the `registrySecretName` recipe parameter — `parameters: { registry: 'ghcr.io/myorg', registrySecretName: ghcrCreds.name }`. The developer's Bicep never references the secret. The recipe reads the underlying Kubernetes Secret via `data "kubernetes_secret"` using the name supplied by the PE and the recipe's runtime namespace, assembles a Docker `config.json`, and runs BuildKit. Cluster-level image pull (kubelet → registry) is handled by the platform out-of-band (e.g. a cluster-wide pull secret on the default ServiceAccount, an OCI mirror, or kubelet credential providers).
 
@@ -35,7 +35,7 @@ types:
           application: myApp.id
           tag:         'v1.2.3'
           build: {
-            source: 'git::https://github.com/myorg/myapp.git//frontend'
+            source: 'git::https://github.com/myorg/myapp.git#main:frontend'
           }
         }
       }
@@ -95,7 +95,7 @@ types:
               description: (Required) The Radius Application ID. `myApplication.id` for example.
             tag:
               type: string
-              description: (Optional) Tag for the produced image. When unset, the recipe computes a content-addressable digest (`sha256-<hash>`) from the build inputs. Required when `build.source` is a remote git URL.
+              description: (Optional) Tag for the produced image. When unset, the recipe computes a content-addressable digest (`sha256-<hash>`) from the build inputs.
             imageReference:
               type: string
               readOnly: true
@@ -106,7 +106,7 @@ types:
               properties:
                 source:
                   type: string
-                  description: (Required) Source location for the build. Either a git URL of the form `git::https://...` (BuildKit clones the repo inside the cluster) or an absolute filesystem path already available to the Terraform runtime. `git::https://github.com/myorg/myapp.git//frontend` for example.
+                  description: (Required) Source location for the build. Either a git URL of the form `git::https://...` (BuildKit clones the repo inside the cluster) or an absolute filesystem path already available to the recipe runtime. Local-path upload from the rad CLI is planned but not yet implemented. `git::https://github.com/myorg/myapp.git#main:frontend` for example.
                 dockerfile:
                   type: string
                   description: (Optional) Path to the Dockerfile relative to the build source. Defaults to `Dockerfile`.
