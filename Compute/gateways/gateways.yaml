@@ -1,0 +1,76 @@
+namespace: Radius.Compute
+types:
+  gateways:
+    description: |
+      The Radius.Compute/gateways Resource Type defines an ingress Gateway for application traffic.
+      On Kubernetes, the nginx recipe creates a Gateway API Gateway that is reconciled by NGINX Gateway Fabric.
+
+      ```
+      extension radius
+      extension gateways
+
+      param environment string
+
+      resource gateway 'Radius.Compute/gateways@2025-08-01-preview' = {
+        name: 'web'
+        properties: {
+          environment: environment
+          gatewayClassName: 'nginx'
+          listeners: [
+            {
+              name: 'http'
+              protocol: 'HTTP'
+              port: 80
+              allowedRoutesFrom: 'All'
+            }
+          ]
+        }
+      }
+      ```
+    apiVersions:
+      '2025-08-01-preview':
+        schema:
+          type: object
+          properties:
+            environment:
+              type: string
+              description: (Required) The Radius Environment ID. Typically set by the rad CLI. Typically value should be `environment`.
+            application:
+              type: string
+              description: (Optional) The Radius Application ID. `myApplication.id` for example.
+            gatewayClassName:
+              type: string
+              description: (Optional) The Kubernetes GatewayClass name. The value is assumed to be `nginx`.
+            listeners:
+              type: array
+              description: (Optional) The Gateway listeners to expose. The value is assumed to be one HTTP listener on port `80`.
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    description: (Required) The listener name.
+                  protocol:
+                    type: string
+                    enum: [HTTP, HTTPS, TLS, TCP, UDP]
+                    description: (Required) The listener protocol.
+                  port:
+                    type: integer
+                    description: (Required) The listener port.
+                  hostname:
+                    type: string
+                    description: (Optional) The hostname accepted by the listener.
+                  allowedRoutesFrom:
+                    type: string
+                    enum: [All, Same, Selector]
+                    description: (Optional) The namespaces allowed to attach routes. The value is assumed to be `Same`.
+                required: [name, protocol, port]
+            gatewayName:
+              type: string
+              readOnly: true
+              description: (Read Only) The Kubernetes Gateway name created by the recipe.
+            gatewayNamespace:
+              type: string
+              readOnly: true
+              description: (Read Only) The Kubernetes namespace containing the Gateway.
+          required: [environment]
