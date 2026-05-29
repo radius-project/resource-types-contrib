@@ -1,11 +1,11 @@
 @description('Radius-provided deployment context.')
 param context object
 
-@description('Name of the Gateway resource to attach routes to. Must be provided by the user.')
-param gatewayName string
+@description('Name of the Gateway resource to attach routes to.')
+param gatewayName string = 'radius'
 
-@description('Namespace where the Gateway resource is located. Must be provided by the user.')
-param gatewayNamespace string
+@description('Namespace where the Gateway resource is located.')
+param gatewayNamespace string = 'radius-system'
 
 extension kubernetes with {
   namespace: context.runtime.kubernetes.namespace

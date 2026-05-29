@@ -44,6 +44,9 @@ types:
           application: myApplication.id
           environment: environment
           kind: 'HTTP'
+          hostnames: [
+            'frontend.example.com'
+          ]
           rules: [
             {
               matches: [
@@ -62,7 +65,7 @@ types:
       }
       ```
 
-      The hostname is determined by the Recipe. 
+      HTTP and TLS routes must specify at least one hostname when using the default shared Gateway.
 
       Multiple rules can be included in Routes.
       ```
@@ -72,6 +75,9 @@ types:
           application: myApplication.id
           environment: environment
           kind: 'HTTP'
+          hostnames: [
+            'frontend.example.com'
+          ]
           rules: [
             {
               matches: [
@@ -119,7 +125,7 @@ types:
               description: (Optional) The type of rule. If not specified, `HTTPRoute` is assumed. `HTTPRoute` provides L7 ingress with support for matching based on the hostname and HTTP header. `TCPRoute` provides L4 ingress with no support for matching (all traffic is forwarded to the Container). `TLSRoute` provides L4 ingress with the ability to match based on Server Name Indication (SNI) which is equivalent to hostname in TLS. `UDPRoute` is similar to TCPRoutes but uses UDP.
             hostnames:
               type: array
-              description: (Optional) Use only when kind is HTTP or TLS. When HTTP, match against the HTTP Host header. When using TLS, match against the SNI attribute of TLS ClientHello message. Hostname may be preceded by a * wildcard.
+              description: (Required for HTTP and TLS recipes using the default shared Gateway) Use only when kind is HTTP or TLS. When HTTP, match against the HTTP Host header. When using TLS, match against the SNI attribute of TLS ClientHello message. Hostname may be preceded by a * wildcard.
               items:
                 type: string
             rules:
