@@ -65,16 +65,27 @@ locals {
 
   user_tag = try(local.properties.tag, null)
 
-  # Hash file paths alongside contents so renames, deletions, or
-  # same-content swaps still trigger a rebuild.
-  local_context_hash = local.is_git_source ? "" : sha256(join("", concat(
+  build_args = try(local.properties.build.args, {})
+
+  # Hash inputs that uniquely identify the build, so the image tag is
+  # content-addressable. For local sources, hash the file tree. For git
+  # sources, hash the resolved URL (incl. ref and subdir), so a changed
+  # ref produces a new tag. Both include the dockerfile path, platforms,
+  # and build args.
+  local_context_hash = local.is_git_source ? sha256(jsonencode({
+    url        = local.buildctl_git_url
+    dockerfile = local.dockerfile
+    platforms  = local.platforms
+    args       = local.build_args
+    })) : sha256(join("", concat(
     [for f in fileset(local.build_source, "**") : "${f}:${filesha1("${local.build_source}/${f}")}"],
     [local.dockerfile],
     local.platforms,
+    [jsonencode(local.build_args)],
   )))
 
-  computed_tag = local.is_git_source ? null : "sha256-${substr(local.local_context_hash, 0, 16)}"
-  resolved_tag = coalesce(local.user_tag, local.computed_tag, "")
+  computed_tag = "sha256-${substr(local.local_context_hash, 0, 16)}"
+  resolved_tag = coalesce(local.user_tag, local.computed_tag)
 
   image_ref = "${local.registry}/${local.image_name}:${local.resolved_tag}"
 
@@ -157,16 +168,6 @@ resource "terraform_data" "validate_inputs" {
   }
 }
 
-resource "terraform_data" "validate_git_tag" {
-  input = local.is_git_source
-  lifecycle {
-    precondition {
-      condition     = !local.is_git_source || local.user_tag != null
-      error_message = "containerImages: when build.source is a git URL, properties.tag must be set explicitly. The recipe cannot compute a content-addressable tag from a remote tree."
-    }
-  }
-}
-
 # Render docker config.json under the module path; buildctl reads it
 # via DOCKER_CONFIG. local_sensitive_file keeps the payload out of
 # plan diffs.
@@ -180,22 +181,13 @@ resource "local_sensitive_file" "docker_config" {
 # Build & push via buildctl.
 resource "terraform_data" "build_push" {
   triggers_replace = {
-    image_ref = local.image_ref
-    src_hash  = local.local_context_hash
-    # For git sources src_hash is empty; capture the recipe inputs
-    # explicitly so changing source URL/ref, dockerfile path, or
-    # platforms re-runs the build even when the tag is unchanged.
-    git_inputs = local.is_git_source ? sha256(jsonencode({
-      url        = local.buildctl_git_url
-      dockerfile = local.dockerfile
-      platforms  = local.platforms
-    })) : ""
+    image_ref     = local.image_ref
+    src_hash      = local.local_context_hash
     config_sha256 = local.use_auth ? sha256(local.docker_config_json) : ""
   }
 
   depends_on = [
     terraform_data.validate_inputs,
-    terraform_data.validate_git_tag,
     local_sensitive_file.docker_config,
   ]
 

@@ -1,5 +1,5 @@
 ## Overview
-The Radius.Compute/containerImages Resource Type builds a container image from source and pushes it to a container registry. The resulting image reference can be consumed by `Radius.Compute/containers` resources within the same Application.
+The Radius.Compute/containerImages Resource Type builds a container image from source and pushes it to a container registry.
 
 Developer documentation is embedded in the Resource Type definition YAML file. Developer documentation is accessible via `rad resource-type show Radius.Compute/containerImages`.
 
@@ -16,11 +16,11 @@ A list of available Recipes for this Resource Type, including links to the Bicep
 
 Properties for the containerImages resource are provided to the Recipe via the [Recipe Context](https://docs.radapp.io/reference/context-schema/) object. These properties include:
 
-- `context.resource.properties.build.source` (string, required): The build context. Either a `git::https://...` URL or an absolute filesystem path available to the recipe runtime.
+- `context.resource.properties.build.source` (string, required): The build context. Either a `git::https://...` URL or a local filesystem path. In the case of a local path, the rad CLI will package upload the source for the container build.
 - `context.resource.properties.build.dockerfile` (string, optional): Path to the Dockerfile relative to the build context. Defaults to `Dockerfile`.
 - `context.resource.properties.build.platforms` (array of string, optional): Target platforms (e.g. `["linux/amd64", "linux/arm64"]`) for the multi-arch image. Defaults to `["linux/amd64", "linux/arm64"]`. Multi-arch builds require a cross-compile-friendly Dockerfile.
 - `context.resource.properties.build.args` (object, optional): Map of `--build-arg` values passed to the build.
-- `context.resource.properties.tag` (string, optional): Explicit image tag. Required when `build.source` is a git URL. Defaults to a content-addressable tag (`sha256-<hash>`) for filesystem contexts.
+- `context.resource.properties.tag` (string, optional): Explicit image tag. Defaults to a content-addressable tag (`sha256-<hash>`) derived from the build inputs (source URL or file tree, dockerfile path, platforms, build args).
 
 The Recipe is also parameterized at registration time by the platform engineer with:
 
