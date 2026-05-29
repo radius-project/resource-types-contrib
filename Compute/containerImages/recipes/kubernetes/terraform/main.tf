@@ -52,9 +52,12 @@ locals {
   git_repo_url = local.is_git_source ? replace(local.url_segments[0], ":|||", "://") : ""
   git_subdir   = local.is_git_source && length(local.url_segments) > 1 ? local.url_segments[1] : ""
 
+  # BuildKit git fragment forms: "#<ref>", "#<ref>:<subdir>", or
+  # "#:<subdir>" (empty ref => default branch). Preserves the
+  # go-getter subdirectory even when no ref= is supplied.
   git_fragment = local.is_git_source ? (
-    local.git_ref == "" ? "" : (
-      local.git_subdir == "" ? "#${local.git_ref}" : "#${local.git_ref}:${local.git_subdir}"
+    local.git_subdir != "" ? "#${local.git_ref}:${local.git_subdir}" : (
+      local.git_ref != "" ? "#${local.git_ref}" : ""
     )
   ) : ""
 
@@ -105,10 +108,10 @@ data "kubernetes_secret" "registry_creds" {
 }
 
 locals {
-  # kubernetes_secret data source returns .data base64-encoded
-  # (unlike the resource form). Decode once.
-  registry_username = local.use_auth ? base64decode(data.kubernetes_secret.registry_creds[0].data["username"]) : ""
-  registry_password = local.use_auth ? base64decode(data.kubernetes_secret.registry_creds[0].data["password"]) : ""
+  # kubernetes_secret data source returns already-decoded values
+  # (the provider decodes the base64 from the K8s API).
+  registry_username = local.use_auth ? data.kubernetes_secret.registry_creds[0].data["username"] : ""
+  registry_password = local.use_auth ? data.kubernetes_secret.registry_creds[0].data["password"] : ""
 
   docker_config_json = local.use_auth ? jsonencode({
     auths = {
@@ -130,8 +133,8 @@ resource "terraform_data" "validate_inputs" {
       error_message = "containerImages: image name (lowercased) must match [a-z0-9][a-z0-9._-]* (got ${local.image_name})."
     }
     precondition {
-      condition     = local.user_tag == null || can(regex("^[A-Za-z0-9._-]{1,128}$", local.user_tag))
-      error_message = "containerImages: properties.tag must match [A-Za-z0-9._-]{1,128} (got ${local.user_tag})."
+      condition     = local.user_tag == null || can(regex("^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$", local.user_tag))
+      error_message = "containerImages: properties.tag must match Docker tag spec [A-Za-z0-9_][A-Za-z0-9._-]{0,127} (got ${local.user_tag})."
     }
     precondition {
       condition     = can(regex("^[A-Za-z0-9._/-]+$", local.dockerfile))
