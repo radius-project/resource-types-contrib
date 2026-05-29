@@ -91,7 +91,7 @@ resource "kubernetes_manifest" "http_route" {
               {
                 name = lower(
                   try(rule.destinationContainer.containerName, "") != ""
-                  ? "${split("/", rule.destinationContainer.resourceId)[length(split("/", rule.destinationContainer.resourceId)) - 1]}-${rule.destinationContainer.containerName}"
+                  ? rule.destinationContainer.containerName
                   : split("/", rule.destinationContainer.resourceId)[length(split("/", rule.destinationContainer.resourceId)) - 1]
                 )
                 port = rule.destinationContainer.containerPort
@@ -136,7 +136,7 @@ resource "kubernetes_manifest" "tls_route" {
               {
                 name = lower(
                   try(rule.destinationContainer.containerName, "") != ""
-                  ? "${split("/", rule.destinationContainer.resourceId)[length(split("/", rule.destinationContainer.resourceId)) - 1]}-${rule.destinationContainer.containerName}"
+                  ? rule.destinationContainer.containerName
                   : split("/", rule.destinationContainer.resourceId)[length(split("/", rule.destinationContainer.resourceId)) - 1]
                 )
                 port = rule.destinationContainer.containerPort
@@ -174,7 +174,7 @@ resource "kubernetes_manifest" "tcp_route" {
             {
               name = lower(
                 try(rule.destinationContainer.containerName, "") != ""
-                ? "${split("/", rule.destinationContainer.resourceId)[length(split("/", rule.destinationContainer.resourceId)) - 1]}-${rule.destinationContainer.containerName}"
+                ? rule.destinationContainer.containerName
                 : split("/", rule.destinationContainer.resourceId)[length(split("/", rule.destinationContainer.resourceId)) - 1]
               )
               port = rule.destinationContainer.containerPort
@@ -211,7 +211,7 @@ resource "kubernetes_manifest" "udp_route" {
             {
               name = lower(
                 try(rule.destinationContainer.containerName, "") != ""
-                ? "${split("/", rule.destinationContainer.resourceId)[length(split("/", rule.destinationContainer.resourceId)) - 1]}-${rule.destinationContainer.containerName}"
+                ? rule.destinationContainer.containerName
                 : split("/", rule.destinationContainer.resourceId)[length(split("/", rule.destinationContainer.resourceId)) - 1]
               )
               port = rule.destinationContainer.containerPort
