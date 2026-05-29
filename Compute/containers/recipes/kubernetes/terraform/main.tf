@@ -21,6 +21,7 @@ locals {
   containers          = try(local.resource_properties.containers, {})
   volumes             = try(local.resource_properties.volumes, {})
   restart_policy      = try(local.resource_properties.restartPolicy, null)
+  image_pull_secrets  = try(local.resource_properties.imagePullSecrets, [])
   extensions          = try(local.resource_properties.extensions, {})
   dapr_sidecar        = try(local.extensions.daprSidecar, null)
   has_dapr_sidecar    = local.dapr_sidecar != null
@@ -88,7 +89,7 @@ locals {
     for conn_name, conn in local.connections :
     # Only process non-secrets connections here (secrets use envFrom)
     !try(local.is_secrets_resource[conn_name], false) &&
-      try(local.connection_definitions[conn_name].disableDefaultEnvVars, false) != true
+    try(local.connection_definitions[conn_name].disableDefaultEnvVars, false) != true
     ? concat(
       # Add top-level connection properties (excluding metadata, nested properties bag, and secretName)
       [
@@ -599,6 +600,17 @@ resource "kubernetes_deployment" "deployment" {
                 medium = empty_dir.value.medium
               }
             }
+          }
+        }
+
+        # Image pull secrets — referenced by name; the corresponding
+        # Kubernetes Secret (type kubernetes.io/dockerconfigjson) is
+        # expected to exist in the same namespace, typically created
+        # by a Radius.Security/secrets resource of kind dockerconfigjson.
+        dynamic "image_pull_secrets" {
+          for_each = local.image_pull_secrets
+          content {
+            name = image_pull_secrets.value
           }
         }
       }

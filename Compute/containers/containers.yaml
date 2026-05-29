@@ -113,6 +113,11 @@ types:
                     type: boolean
                     description: (Optional) Disables the automatic injection of environment variables from connected resource properties.
                 required: [source]
+            imagePullSecrets:
+              type: array
+              description: '(Optional) Names of Radius.Security/secrets resources of kind `dockerconfigjson` whose Kubernetes Secrets kubelet will use to pull container images. `[ regCreds.name ]` for example.'
+              items:
+                type: string
             containers:
               type: object
               additionalProperties:
