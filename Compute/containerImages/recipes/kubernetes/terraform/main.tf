@@ -137,12 +137,12 @@ resource "terraform_data" "validate_inputs" {
       error_message = "containerImages: properties.tag must match Docker tag spec [A-Za-z0-9_][A-Za-z0-9._-]{0,127} (got ${local.user_tag})."
     }
     precondition {
-      condition     = can(regex("^[A-Za-z0-9._/-]+$", local.dockerfile))
-      error_message = "containerImages: properties.build.dockerfile must match [A-Za-z0-9._/-]+ (got ${local.dockerfile})."
+      condition     = !startswith(local.dockerfile, "/") && !strcontains(local.dockerfile, "..") && can(regex("^[A-Za-z0-9._/-]+$", local.dockerfile))
+      error_message = "containerImages: properties.build.dockerfile must be a relative path (no leading '/' and no '..' segments) matching [A-Za-z0-9._/-]+ (got ${local.dockerfile})."
     }
     precondition {
-      condition     = can(regex("^(git::https?://[A-Za-z0-9._:/@?=&%~+#-]+|/[A-Za-z0-9._/+~-]+)$", local.build_source))
-      error_message = "containerImages: properties.build.source must be a git::https URL or an absolute filesystem path (got ${local.build_source})."
+      condition     = can(regex("^(git::https://[A-Za-z0-9._:/@?=&%~+-]+|/[A-Za-z0-9._/+~-]+)$", local.build_source))
+      error_message = "containerImages: properties.build.source must be a git::https URL (no plaintext http, no raw '#' fragments) or an absolute filesystem path (got ${local.build_source})."
     }
     precondition {
       condition     = length(local.platforms) > 0
