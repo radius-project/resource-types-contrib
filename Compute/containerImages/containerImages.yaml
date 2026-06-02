@@ -2,17 +2,9 @@ namespace: Radius.Compute
 types:
   containerImages:
     description: |
-      The Radius.Compute/containerImages Resource Type builds a container image from source and pushes it to a container registry. It is always part of a Radius Application.
+      The Radius.Compute/containerImages Resource Type builds a container image from source and pushes it to an OCI registry. Builds run inside the Radius control plane.
 
-      Builds run inside the cluster on a rootless BuildKit sidecar that ships with the dynamic-rp Pod. There is no host Docker socket, no privileged Pod, and no per-node host preparation. The recipe drives BuildKit by invoking the `buildctl` CLI mounted into the dynamic-rp container; the in-cluster buildkitd sidecar exposes its gRPC API on Pod loopback TCP.
-
-      The full image reference is composed by the recipe as `<registry>/<resource-name>:<tag>` where:
-
-      - `<registry>` is the registry path configured by the platform engineer when registering the recipe (e.g. `ghcr.io/myorg`).
-      - `<resource-name>` is the (lowercased) name of the containerImages resource (e.g. `myImage` becomes `myimage`).
-      - `<tag>` defaults to a content-addressable digest (`sha256-<hash>`) derived from the build inputs (source URL or file tree, dockerfile path, target platforms, build args) so that downstream `Radius.Compute/containers` resources observe a property change on every code change. A user-provided `tag` overrides this.
-
-      Registry credentials are a platform-engineer concern. The PE provisions a `Radius.Security/secrets` resource (whose recipe materializes a Kubernetes Secret of the same name in the environment namespace) and wires its name into the recipe pack as the `registrySecretName` recipe parameter — `parameters: { registry: 'ghcr.io/myorg', registrySecretName: ghcrCreds.name }`. The developer's Bicep never references the secret. The recipe reads the underlying Kubernetes Secret via `data "kubernetes_secret"` using the name supplied by the PE and the recipe's runtime namespace, assembles a Docker `config.json`, and runs BuildKit. Cluster-level image pull (kubelet → registry) is handled by the platform out-of-band (e.g. a cluster-wide pull secret on the default ServiceAccount, an OCI mirror, or kubelet credential providers).
+      To use a containerImages resource in your application, add a containerImages resource to the application definition Bicep file, then reference the `containerImages.imageReference` property in the containers resource. For example:
 
       ```bicep
       extension radius
@@ -35,7 +27,7 @@ types:
           application: myApp.id
           tag:         'v1.2.3'
           build: {
-            source: 'git::https://github.com/myorg/myapp.git#main:frontend'
+            source: 'git::https://github.com/myorg/myapp.git?ref=v1.2.3//frontend'
           }
         }
       }
@@ -59,27 +51,6 @@ types:
       }
       ```
 
-      Prerequisites:
-
-      1. dynamic-rp must be installed with the BuildKit sidecar enabled (default in the Helm chart). On Kubernetes < 1.30 the platform engineer must install with `--set dynamicrp.buildkit.psaMode=baseline`.
-
-      2. The platform engineer provisions a `Radius.Security/secrets` resource (e.g. `ghcr-creds`) with `username` and `password` data keys. Its recipe materializes a Kubernetes Secret of the same name in the environment namespace.
-
-      3. The platform engineer registers the recipe once per environment, supplying `registry` and `registrySecretName`. Easiest done via Bicep on a `Radius.Core/recipePacks` resource:
-
-      ```bicep
-      'Radius.Compute/containerImages': {
-        recipeKind: 'terraform'
-        recipeLocation: 'git::https://github.com/radius-project/resource-types-contrib.git//Compute/containerImages/recipes/kubernetes/terraform'
-        parameters: {
-          registry: 'ghcr.io/myorg'
-          registrySecretName: ghcrCreds.name
-        }
-      }
-      ```
-
-      For an unauthenticated registry (e.g. a local kind registry) omit `registrySecretName`.
-
       Multi-architecture builds (e.g. `platforms: ["linux/amd64", "linux/arm64"]`) require a Dockerfile that supports cross-compilation via `FROM --platform=$BUILDPLATFORM` and `TARGETARCH`. Dockerfiles that execute target-arch binaries during the build will fail with `exec format error`. There is no QEMU/binfmt fallback in this design.
 
     apiVersions:
@@ -95,18 +66,14 @@ types:
               description: (Required) The Radius Application ID. `myApplication.id` for example.
             tag:
               type: string
-              description: (Optional) Tag for the produced image. When unset, the recipe computes a content-addressable digest (`sha256-<hash>`) from the build inputs.
-            imageReference:
-              type: string
-              readOnly: true
-              description: (Read Only) The full image reference produced by the recipe in the form `<registry>/<resource-name>:<tag>`. Reference this from `Radius.Compute/containers` to consume the built image.
+              description: (Optional) Tag for the produced image. When unset, the recipe computes a content-addressable digest (`sha256-<hash>`) from the build inputs. For git sources, pin to a commit SHA or immutable tag (e.g. `?ref=<sha>`) so that the computed tag is genuinely content-addressable; with a moving ref like `?ref=main`, the computed tag does not change when the upstream branch advances.
             build:
               type: object
               description: (Required) Build configuration for the container image.
               properties:
                 source:
                   type: string
-                  description: (Required) Source location for the build. Either a git URL of the form `git::https://...` (BuildKit clones the repo inside the cluster) or an absolute filesystem path already available to the recipe runtime. Local-path upload from the rad CLI is planned but not yet implemented. `git::https://github.com/myorg/myapp.git#main:frontend` for example.
+                  description: "(Required) Source location for the build. Either a git URL of the form `git::https://...` (BuildKit clones the repo inside the cluster) or a local filesystem path to a directory containing the build context. For git URLs, the ref and subdirectory are selected via go-getter query parameters: `?ref=<branch-or-sha>` and `//<subdir>`. Example, `git::https://github.com/myorg/myapp.git?ref=v1.2.3//frontend`."
                 dockerfile:
                   type: string
                   description: (Optional) Path to the Dockerfile relative to the build source. Defaults to `Dockerfile`.
@@ -116,8 +83,17 @@ types:
                     type: string
                   description: |
                     (Optional) Target platforms to build for (e.g. `["linux/amd64"]`, `["linux/amd64", "linux/arm64"]`). When omitted, defaults to `["linux/amd64", "linux/arm64"]`. Multi-platform builds use cross-compilation; the Dockerfile must use `FROM --platform=$BUILDPLATFORM` and `TARGETARCH`.
+                args:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: "(Optional) Map of `--build-arg` values passed to the build, e.g. `{ VERSION: 'v1.2.3' }`. Argument names must match `[A-Za-z_][A-Za-z0-9_]*`. Values must not contain shell metacharacters."
               required:
                 - source
+            imageReference:
+              type: string
+              readOnly: true
+              description: (Read Only) The full image reference produced by the recipe in the form `<registry>/<resource-name>:<tag>`. Reference this from `Radius.Compute/containers` to consume the built image.
           required:
             - environment
             - application

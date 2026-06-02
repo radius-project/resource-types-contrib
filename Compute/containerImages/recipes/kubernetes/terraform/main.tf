@@ -91,14 +91,18 @@ locals {
 
   platform_opt = "--opt platform=${join(",", local.platforms)}"
 
-  context_flags = local.is_git_source ? join(" ", [
+  build_arg_flags = join(" ", [for k, v in local.build_args : "--opt build-arg:${k}=${v}"])
+
+  context_flags = local.is_git_source ? join(" ", compact([
     "--opt context=${local.buildctl_git_url}",
     "--opt filename=${local.dockerfile}",
-    ]) : join(" ", [
+    local.build_arg_flags,
+    ])) : join(" ", compact([
     "--local context=${local.build_source}",
     "--local dockerfile=${local.build_source}",
     "--opt filename=${local.dockerfile}",
-  ])
+    local.build_arg_flags,
+  ]))
 
   # When registrySecretName is set, load the same-named K8s Secret and
   # use it as DOCKER_CONFIG. Unset => unauthenticated registry.
@@ -152,8 +156,8 @@ resource "terraform_data" "validate_inputs" {
       error_message = "containerImages: properties.build.dockerfile must be a relative path (no leading '/' and no '..' segments) matching [A-Za-z0-9._/-]+ (got ${local.dockerfile})."
     }
     precondition {
-      condition     = can(regex("^(git::https://[A-Za-z0-9._:/@?=&%~+-]+|/[A-Za-z0-9._/+~-]+)$", local.build_source))
-      error_message = "containerImages: properties.build.source must be a git::https URL (no plaintext http, no raw '#' fragments) or an absolute filesystem path (got ${local.build_source})."
+      condition     = can(regex("^git::https://[A-Za-z0-9._:/@?=&%~+#-]+$", local.build_source)) || (!strcontains(local.build_source, "..") && can(regex("^[A-Za-z0-9._/+~-]+$", local.build_source)))
+      error_message = "containerImages: properties.build.source must be a git::https URL or a filesystem path (no '..' segments) (got ${local.build_source})."
     }
     precondition {
       condition     = length(local.platforms) > 0
@@ -164,6 +168,18 @@ resource "terraform_data" "validate_inputs" {
         for p in local.platforms : can(regex("^[a-z0-9]+/[a-z0-9]+(/[a-z0-9]+)?$", p))
       ])
       error_message = "containerImages: properties.build.platforms entries must match <os>/<arch>[/<variant>] (got ${jsonencode(local.platforms)})."
+    }
+    precondition {
+      condition = alltrue([
+        for k in keys(local.build_args) : can(regex("^[A-Za-z_][A-Za-z0-9_]*$", k))
+      ])
+      error_message = "containerImages: properties.build.args keys must match [A-Za-z_][A-Za-z0-9_]* (got ${jsonencode(keys(local.build_args))})."
+    }
+    precondition {
+      condition = alltrue([
+        for v in values(local.build_args) : !can(regex("[\\s\"'`$\\\\]", v))
+      ])
+      error_message = "containerImages: properties.build.args values must not contain whitespace or shell metacharacters (\", ', `, $, \\)."
     }
   }
 }
