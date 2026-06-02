@@ -9,7 +9,7 @@ Developer documentation is embedded in the Resource Type definition YAML file. D
 
 Using the containerImages resource requires platform engineers to configure the containerImages Recipe with the target OCI registry. Developers cannot use containerImages without these steps complete.
 
-1. The Radius Environment or Recipe Pack must define a Recipe parameter `registry` with the target OCI registry hostname.
+1. The Radius Environment or Recipe Pack must define a Recipe parameter `registry` with the target registry prefix images are pushed under. This is a registry hostname optionally followed by a path (e.g. `ghcr.io` or `ghcr.io/my-org`); the recipe appends `/<resource-name>:<tag>` to form the full image reference.
 
 2. If the registry requires authentication, a Radius secret resource must be created, then the `registrySecretName` Recipe parameter set on the Environment or Recipe Pack.
 

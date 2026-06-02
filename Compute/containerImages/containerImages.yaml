@@ -27,7 +27,7 @@ types:
           application: myApp.id
           tag:         'v1.2.3'
           build: {
-            source: 'git::https://github.com/myorg/myapp.git?ref=v1.2.3//frontend'
+            source: 'git::https://github.com/myorg/myapp.git//frontend?ref=v1.2.3'
           }
         }
       }
@@ -73,7 +73,7 @@ types:
               properties:
                 source:
                   type: string
-                  description: "(Required) Source location for the build. Either a git URL of the form `git::https://...` (BuildKit clones the repo inside the cluster) or a local filesystem path to a directory containing the build context. For git URLs, the ref and subdirectory are selected via go-getter query parameters: `?ref=<branch-or-sha>` and `//<subdir>`. Example, `git::https://github.com/myorg/myapp.git?ref=v1.2.3//frontend`."
+                  description: "(Required) Source location for the build. Either a git URL of the form `git::https://...` (BuildKit clones the repo inside the cluster) or a local filesystem path to a directory containing the build context. For git URLs, the subdirectory is selected via the go-getter `//<subdir>` segment and the ref via the `?ref=<branch-or-sha>` query parameter, in that order. Example, `git::https://github.com/myorg/myapp.git//frontend?ref=v1.2.3`."
                 dockerfile:
                   type: string
                   description: (Optional) Path to the Dockerfile relative to the build source. Defaults to `Dockerfile`.

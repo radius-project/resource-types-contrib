@@ -12,9 +12,11 @@ terraform {
   }
 }
 
-provider "kubernetes" {
-  config_path = ""
-}
+# The recipe runs inside the dynamic-rp Pod, so the kubernetes provider
+# uses in-cluster service-account credentials by default. Do not set
+# config_path; an empty string forces it to load kubeconfig from "" and
+# fails before the provider can fall back to in-cluster auth.
+provider "kubernetes" {}
 
 # The recipe runs inside the dynamic-rp container. The chart mounts
 # `buildctl` onto PATH and sets BUILDKIT_HOST to the in-Pod buildkitd
