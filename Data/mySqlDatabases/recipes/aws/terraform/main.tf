@@ -112,6 +112,7 @@ module "db" {
   password = try(data.kubernetes_secret.db_credentials.data["PASSWORD"], "")
   port     = local.port
 
+  manage_master_user_password = false
   allocated_storage = var.allocatedStorage
   storage_type      = "gp3"
 
