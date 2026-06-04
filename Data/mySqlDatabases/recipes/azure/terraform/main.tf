@@ -10,6 +10,10 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = ">= 2.37.1"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = ">= 3.6"
+    }
   }
 }
 
@@ -31,6 +35,18 @@ locals {
 }
 
 //////////////////////////////////////////
+// Unique server name
+//////////////////////////////////////////
+
+# Generates a per-deployment random suffix so re-deploys after a server has
+# been deleted (and is in Azure's 7-day soft-delete window) don't collide on
+# the globally-reserved server name. The value is stable in Terraform state,
+# so re-applies with the same state are idempotent.
+resource "random_id" "server_suffix" {
+  byte_length = 7
+}
+
+//////////////////////////////////////////
 // MySQL variables
 //////////////////////////////////////////
 
@@ -40,13 +56,13 @@ locals {
   secret_name = var.context.resource.properties.secretName
   # Azure MySQL Flexible Server accepts only specific version strings.
   # Map common shorthand values to valid versions.
-  version     = lookup(
+  version = lookup(
     { "8.0" = "8.0.21", "8" = "8.0.21", "5" = "5.7" },
     try(var.context.resource.properties.version, "8.0.21"),
     try(var.context.resource.properties.version, "8.0.21")
   )
 
-  unique_suffix = substr(md5(local.resource_name), 0, 13)
+  unique_suffix = random_id.server_suffix.hex
 
   # Azure MySQL server name: lowercase alphanumeric and hyphens, 3-63 chars
   sanitized_server_name = "mysql-${local.unique_suffix}"
