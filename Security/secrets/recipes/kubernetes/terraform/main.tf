@@ -21,7 +21,7 @@ locals {
   }
   
   string_data = {
-    for k, v in local.secret_data : k => base64encode(v.value)
+    for k, v in local.secret_data : k => v.value
     if try(v.encoding, "") != "base64"
   }
   
