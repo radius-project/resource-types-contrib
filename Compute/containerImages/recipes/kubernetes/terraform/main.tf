@@ -125,10 +125,17 @@ data "kubernetes_secret" "registry_creds" {
 }
 
 locals {
-  # kubernetes_secret data source returns already-decoded values
-  # (the provider decodes the base64 from the K8s API).
-  registry_username = local.use_auth ? data.kubernetes_secret.registry_creds[0].data["username"] : ""
-  registry_password = local.use_auth ? data.kubernetes_secret.registry_creds[0].data["password"] : ""
+  # Workaround for Security/secrets recipe double-encoding bug
+  # (resource-types-contrib#176): the secrets/kubernetes/terraform
+  # recipe calls base64encode(plaintext) before assigning to the
+  # TF kubernetes_secret resource's `data` field, but the TF
+  # provider routes that field to StringData (plaintext-in) and
+  # K8s base64-encodes again on admission. The result on disk is
+  # base64(base64(plaintext)). Consumers (us) get the still-encoded
+  # value from the data source and have to decode once.
+  # Drop this base64decode when #176 lands.
+  registry_username = local.use_auth ? base64decode(data.kubernetes_secret.registry_creds[0].data["username"]) : ""
+  registry_password = local.use_auth ? base64decode(data.kubernetes_secret.registry_creds[0].data["password"]) : ""
 
   docker_config_json = local.use_auth ? jsonencode({
     auths = {
