@@ -104,8 +104,8 @@ for recipe_dir in "${RECIPE_DIRS[@]}"; do
     # Add recipe entry to the template
     cat >> "$OUTPUT_FILE" << EOF
       '$RESOURCE_TYPE': {
-        recipeKind: '$RECIPE_KIND'
-        recipeLocation: '$TEMPLATE_PATH'
+        kind: '$RECIPE_KIND'
+        source: '$TEMPLATE_PATH'
         plainHttp: true
       }
 EOF
