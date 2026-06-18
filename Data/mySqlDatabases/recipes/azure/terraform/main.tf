@@ -44,9 +44,8 @@ resource "random_id" "server_suffix" {
 //////////////////////////////////////////
 
 locals {
-  port        = 3306
-  database    = try(var.context.resource.properties.database, "mysql_db")
-  secret_name = var.context.resource.properties.secretName
+  port     = 3306
+  database = try(var.context.resource.properties.database, "mysql_db")
   # Azure MySQL Flexible Server accepts only specific version strings.
   # Map common shorthand values to valid versions.
   version = lookup(
@@ -71,29 +70,33 @@ locals {
 }
 
 //////////////////////////////////////////
-// Credentials (read from Azure Key Vault
-// created by the Security/secrets recipe)
+// Credentials
+//
+// Azure MySQL Flexible Server rejects common admin names ("admin",
+// "administrator", "root", etc.) and requires the password to use 3 of
+// 4 character classes. The user-supplied secret typically does not
+// satisfy these rules, so generate Azure-compliant credentials inside
+// the recipe and emit them as recipe secrets — the consuming app
+// receives them through CONNECTION_<NAME>_USERNAME / _PASSWORD env
+// vars wired from the resource's connections.
 //////////////////////////////////////////
 
+resource "random_password" "admin" {
+  length           = 24
+  upper            = true
+  lower            = true
+  numeric          = true
+  special          = true
+  override_special = "!@#$%^&*()-_=+"
+  min_upper        = 2
+  min_lower        = 2
+  min_numeric      = 2
+  min_special      = 2
+}
+
 locals {
-  # Must match the deterministic vault name in
-  # Security/secrets/recipes/azure/terraform/main.tf
-  vault_name = "kv-${substr(md5("${local.secret_name}-${data.azurerm_resource_group.rg.name}"), 0, 16)}"
-}
-
-data "azurerm_key_vault" "vault" {
-  name                = local.vault_name
-  resource_group_name = data.azurerm_resource_group.rg.name
-}
-
-data "azurerm_key_vault_secret" "username" {
-  name         = "USERNAME"
-  key_vault_id = data.azurerm_key_vault.vault.id
-}
-
-data "azurerm_key_vault_secret" "password" {
-  name         = "PASSWORD"
-  key_vault_id = data.azurerm_key_vault.vault.id
+  admin_username = "mysqladmin"
+  admin_password = random_password.admin.result
 }
 
 //////////////////////////////////////////
@@ -105,8 +108,8 @@ resource "azurerm_mysql_flexible_server" "mysql" {
   resource_group_name = data.azurerm_resource_group.rg.name
   location            = data.azurerm_resource_group.rg.location
 
-  administrator_login    = data.azurerm_key_vault_secret.username.value
-  administrator_password = data.azurerm_key_vault_secret.password.value
+  administrator_login    = local.admin_username
+  administrator_password = local.admin_password
 
   sku_name = var.skuName
   version  = local.version
@@ -149,12 +152,17 @@ resource "azurerm_mysql_flexible_database" "db" {
 //////////////////////////////////////////
 
 output "result" {
+  sensitive = true
   value = {
     resources = []
     values = {
       host     = azurerm_mysql_flexible_server.mysql.fqdn
       port     = local.port
       database = local.sanitized_database
+    }
+    secrets = {
+      username = local.admin_username
+      password = local.admin_password
     }
   }
 }
