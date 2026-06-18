@@ -15,7 +15,7 @@ resource myapp 'Radius.Core/applications@2025-08-01-preview' = {
 }
 
 resource dbSecret 'Radius.Security/secrets@2025-08-01-preview' = {
-  name: 'dbsecret'
+  name: 'mysqlsecret'
   properties: {
     environment: environment
     application: myapp.id
