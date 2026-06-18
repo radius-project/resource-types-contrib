@@ -19,8 +19,10 @@ terraform {
 
 provider "azurerm" {
   features {}
-  subscription_id = var.azure_subscription_id
-  use_oidc        = true
+}
+
+data "azurerm_resource_group" "rg" {
+  name = var.context.azure.resourceGroup.name
 }
 
 //////////////////////////////////////////
@@ -94,8 +96,8 @@ data "kubernetes_secret" "db_credentials" {
 
 resource "azurerm_mysql_flexible_server" "mysql" {
   name                = local.sanitized_server_name
-  resource_group_name = var.resourceGroupName
-  location            = var.location
+  resource_group_name = data.azurerm_resource_group.rg.name
+  location            = data.azurerm_resource_group.rg.location
 
   administrator_login    = try(data.kubernetes_secret.db_credentials.data["USERNAME"], "")
   administrator_password = try(data.kubernetes_secret.db_credentials.data["PASSWORD"], "")
@@ -118,7 +120,7 @@ resource "azurerm_mysql_flexible_server" "mysql" {
 
 resource "azurerm_mysql_flexible_server_firewall_rule" "allow_azure" {
   name                = "AllowAzureServices"
-  resource_group_name = var.resourceGroupName
+  resource_group_name = data.azurerm_resource_group.rg.name
   server_name         = azurerm_mysql_flexible_server.mysql.name
   start_ip_address    = "0.0.0.0"
   end_ip_address      = "0.0.0.0"
@@ -130,7 +132,7 @@ resource "azurerm_mysql_flexible_server_firewall_rule" "allow_azure" {
 
 resource "azurerm_mysql_flexible_database" "db" {
   name                = local.sanitized_database
-  resource_group_name = var.resourceGroupName
+  resource_group_name = data.azurerm_resource_group.rg.name
   server_name         = azurerm_mysql_flexible_server.mysql.name
   charset             = "utf8mb4"
   collation           = "utf8mb4_unicode_ci"
