@@ -6,10 +6,6 @@ terraform {
       source  = "hashicorp/azurerm"
       version = ">= 4.0"
     }
-    kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = ">= 2.37.1"
-    }
     random = {
       source  = "hashicorp/random"
       version = ">= 3.6"
@@ -29,7 +25,6 @@ locals {
   resource_name    = var.context.resource.name
   application_name = var.context.application != null ? var.context.application.name : ""
   environment_name = var.context.environment != null ? var.context.environment.name : ""
-  namespace        = var.context.runtime.kubernetes.namespace
 }
 
 //////////////////////////////////////////
@@ -76,14 +71,29 @@ locals {
 }
 
 //////////////////////////////////////////
-// Credentials
+// Credentials (read from Azure Key Vault
+// created by the Security/secrets recipe)
 //////////////////////////////////////////
 
-data "kubernetes_secret" "db_credentials" {
-  metadata {
-    name      = local.secret_name
-    namespace = local.namespace
-  }
+locals {
+  # Must match the deterministic vault name in
+  # Security/secrets/recipes/azure/terraform/main.tf
+  vault_name = "kv-${substr(md5("${local.secret_name}-${data.azurerm_resource_group.rg.name}"), 0, 16)}"
+}
+
+data "azurerm_key_vault" "vault" {
+  name                = local.vault_name
+  resource_group_name = data.azurerm_resource_group.rg.name
+}
+
+data "azurerm_key_vault_secret" "username" {
+  name         = "USERNAME"
+  key_vault_id = data.azurerm_key_vault.vault.id
+}
+
+data "azurerm_key_vault_secret" "password" {
+  name         = "PASSWORD"
+  key_vault_id = data.azurerm_key_vault.vault.id
 }
 
 //////////////////////////////////////////
@@ -95,8 +105,8 @@ resource "azurerm_mysql_flexible_server" "mysql" {
   resource_group_name = data.azurerm_resource_group.rg.name
   location            = data.azurerm_resource_group.rg.location
 
-  administrator_login    = try(data.kubernetes_secret.db_credentials.data["USERNAME"], "")
-  administrator_password = try(data.kubernetes_secret.db_credentials.data["PASSWORD"], "")
+  administrator_login    = data.azurerm_key_vault_secret.username.value
+  administrator_password = data.azurerm_key_vault_secret.password.value
 
   sku_name = var.skuName
   version  = local.version
