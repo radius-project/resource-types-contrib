@@ -17,10 +17,6 @@ terraform {
   }
 }
 
-provider "azurerm" {
-  features {}
-}
-
 data "azurerm_resource_group" "rg" {
   name = var.context.azure.resourceGroup.name
 }
