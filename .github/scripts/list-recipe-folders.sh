@@ -36,20 +36,6 @@ RECIPE_TYPE_FILTER="$(echo "$RECIPE_TYPE_FILTER" | tr '[:upper:]' '[:lower:]')"
 PLATFORM_FILTER_RAW="${RECIPE_PLATFORM_FILTER:-}"
 FALLBACK_PLATFORM_RAW="${RECIPE_FALLBACK_PLATFORM:-}"
 
-# Default fallback: when a non-kubernetes platform filter is in use, fall
-# back to kubernetes recipes so universally-required resource types (e.g.
-# Radius.Compute/containers) are still resolvable in the generated pack.
-# Set RECIPE_FALLBACK_PLATFORM=- (or any other value) to override.
-if [[ -z "$FALLBACK_PLATFORM_RAW" && -n "$PLATFORM_FILTER_RAW" ]]; then
-    _primary_lower="$(echo "$PLATFORM_FILTER_RAW" | tr '[:upper:]' '[:lower:]')"
-    if [[ "$_primary_lower" != "kubernetes"* ]]; then
-        FALLBACK_PLATFORM_RAW="kubernetes"
-    fi
-fi
-if [[ "$FALLBACK_PLATFORM_RAW" == "-" || "$FALLBACK_PLATFORM_RAW" == "none" ]]; then
-    FALLBACK_PLATFORM_RAW=""
-fi
-
 if [[ ! -d "$ROOT_DIR" ]]; then
     echo "Error: Root directory '$ROOT_DIR' does not exist" >&2
     exit 1
