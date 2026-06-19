@@ -254,7 +254,7 @@ jobs:
       - name: Generate Azure Recipe Pack
         id: generate
         run: |
-          RECIPE_PLATFORM_FILTER=azure make generate-recipe-pack PACK_NAME=azure${{ matrix.recipe }}recipepack OUTPUT_FILE=recipe-pack-azure-${{ matrix.recipe }}.bicep
+          RECIPE_PLATFORM_FILTER=azure RECIPE_FALLBACK_PLATFORM=kubernetes make generate-recipe-pack PACK_NAME=azure${{ matrix.recipe }}recipepack OUTPUT_FILE=recipe-pack-azure-${{ matrix.recipe }}.bicep
           if [ -f "recipe-pack-azure-${{ matrix.recipe }}.bicep" ]; then
             echo "has_recipes=true" >> "$GITHUB_OUTPUT"
           else
