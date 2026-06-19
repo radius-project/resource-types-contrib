@@ -34,7 +34,6 @@ ROOT_DIR="${1:-$(pwd)}"
 RECIPE_TYPE_FILTER="${2:-all}"
 RECIPE_TYPE_FILTER="$(echo "$RECIPE_TYPE_FILTER" | tr '[:upper:]' '[:lower:]')"
 PLATFORM_FILTER_RAW="${RECIPE_PLATFORM_FILTER:-}"
-FALLBACK_PLATFORM_RAW="${RECIPE_FALLBACK_PLATFORM:-}"
 
 if [[ ! -d "$ROOT_DIR" ]]; then
     echo "Error: Root directory '$ROOT_DIR' does not exist" >&2
@@ -114,25 +113,15 @@ add_recipe_dir() {
     local platform_lower
     platform_lower="$(echo "$platform" | tr '[:upper:]' '[:lower:]')"
 
-    if matches_platform "$platform_lower"; then
-        RECIPE_DIRS+=("$dir")
+    if ! matches_platform "$platform_lower"; then
         return
     fi
 
-    # Track fallback candidates so they can be used for resource types
-    # that don't have a primary-platform recipe.
-    if [[ -n "$FALLBACK_PLATFORM_RAW" ]]; then
-        local fallback_lower
-        fallback_lower="$(echo "$FALLBACK_PLATFORM_RAW" | tr '[:upper:]' '[:lower:]')"
-        if [[ "$platform_lower" == "$fallback_lower"* ]]; then
-            FALLBACK_DIRS+=("$dir|$recipe_type")
-        fi
-    fi
+    RECIPE_DIRS+=("$dir")
 }
 
 # Use a regular array and sort/uniq instead of associative array for bash 3.x compatibility
 RECIPE_DIRS=()
-FALLBACK_DIRS=()
 
 # Find Bicep recipe directories (directories containing .bicep files under recipes/)
 if [[ "$RECIPE_TYPE_FILTER" == "all" || "$RECIPE_TYPE_FILTER" == "bicep" ]]; then
@@ -146,41 +135,6 @@ if [[ "$RECIPE_TYPE_FILTER" == "all" || "$RECIPE_TYPE_FILTER" == "terraform" ]];
     while IFS= read -r -d '' matched_path; do
         add_recipe_dir "$(dirname "$matched_path")" "terraform"
     done < <(find "$ROOT_DIR" -type f -path "*/recipes/*/terraform/main.tf" -print0 2>/dev/null)
-fi
-
-if [[ ${#RECIPE_DIRS[@]} -eq 0 && ${#FALLBACK_DIRS[@]} -eq 0 ]]; then
-    exit 0
-fi
-
-# Apply fallback platform: for any resource type not already covered by a
-# primary-platform recipe, include the fallback-platform recipe instead.
-if [[ ${#FALLBACK_DIRS[@]} -gt 0 ]]; then
-    # Build a set of resource-type roots already covered. The resource-type
-    # root is the path up to (but not including) "/recipes/".
-    declare -a covered_roots=()
-    for dir in "${RECIPE_DIRS[@]}"; do
-        covered_roots+=("${dir%%/recipes/*}")
-    done
-
-    is_covered() {
-        local root="$1"
-        local existing
-        for existing in "${covered_roots[@]}"; do
-            if [[ "$existing" == "$root" ]]; then
-                return 0
-            fi
-        done
-        return 1
-    }
-
-    for entry in "${FALLBACK_DIRS[@]}"; do
-        fallback_dir="${entry%|*}"
-        root="${fallback_dir%%/recipes/*}"
-        if ! is_covered "$root"; then
-            RECIPE_DIRS+=("$fallback_dir")
-            covered_roots+=("$root")
-        fi
-    done
 fi
 
 if [[ ${#RECIPE_DIRS[@]} -eq 0 ]]; then
