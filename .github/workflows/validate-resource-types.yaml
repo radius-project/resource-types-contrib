@@ -7,14 +7,14 @@ on:
     branches: [main]
     paths:
       - "**/kubernetes/**"
-      - "**/test/app.bicep"
+      - "**/test/app*.bicep"
       - "**/*.yaml"
       - ".github/workflows/validate-resource-types.yaml"
   pull_request:
     branches: [main]
     paths:
       - "**/kubernetes/**"
-      - "**/test/app.bicep"
+      - "**/test/app*.bicep"
       - "**/*.yaml"
       - ".github/workflows/validate-resource-types.yaml"
   merge_group:

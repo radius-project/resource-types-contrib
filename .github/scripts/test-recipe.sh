@@ -155,8 +155,15 @@ echo "==> Environment: $ENVIRONMENT_NAME"
 ensure_workspace_context
 resolve_environment_path
 
-# Check if test file exists
+# Check if test file exists. Prefer a platform-specific test app
+# (test/app-<platform>.bicep) when present, otherwise fall back to the
+# shared test/app.bicep.
 TEST_FILE="$RESOURCE_TYPE_PATH/test/app.bicep"
+PLATFORM_TEST_FILE="$RESOURCE_TYPE_PATH/test/app-${PLATFORM}.bicep"
+if [[ -n "$PLATFORM" && -f "$PLATFORM_TEST_FILE" ]]; then
+    TEST_FILE="$PLATFORM_TEST_FILE"
+    echo "==> Using platform-specific test app: $TEST_FILE"
+fi
 if [[ ! -f "$TEST_FILE" ]]; then
     echo "==> No test file found at $TEST_FILE, skipping deployment test"
     exit 0
