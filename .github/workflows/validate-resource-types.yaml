@@ -13,10 +13,8 @@ on:
       - ".github/scripts/**"
       - ".github/build/**"
       - "Makefile"
-  # NOTE: No paths filter on pull_request. The "check-paths" job below determines
-  # whether resource type or recipe files changed. When they haven't, the
-  # "skip-validation" job reports the required check names so branch protection is
-  # satisfied without running the full validation suite.
+  # No paths filter on pull_request: these are local (k3d) tests with no cloud
+  # cost, so the workflow runs on every PR and the required checks always report.
   pull_request:
     branches: [main]
   merge_group:
@@ -32,68 +30,7 @@ on:
 permissions: {}
 
 jobs:
-  # Detect whether resource type or recipe files changed. For non-PR events
-  # (merge_group, workflow_dispatch) the output defaults to 'true' so validation
-  # always runs.
-  check-paths:
-    name: Check Paths
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      pull-requests: read
-    outputs:
-      files-changed: ${{ steps.result.outputs.files-changed }}
-    steps:
-      # REST API mode: no checkout needed, works with fork PRs. Only supports
-      # pull_request events — non-PR events skip this and default to files-changed=true.
-      - name: Detect resource type and recipe file changes
-        id: filter
-        if: github.event_name == 'pull_request'
-        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
-        with:
-          use_rest_api: true
-          files: |
-            **/kubernetes/**
-            **/test/app.bicep
-            **/*.yaml
-            .github/workflows/validate-resource-types.yaml
-            .github/scripts/**
-            .github/build/**
-            Makefile
-
-      - name: Set result
-        id: result
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          ANY_MODIFIED: ${{ steps.filter.outputs.any_modified }}
-        run: |
-          set -euo pipefail
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            echo "files-changed=$ANY_MODIFIED" >> "$GITHUB_OUTPUT"
-          else
-            echo "Non-PR event — assuming files changed"
-            echo "files-changed=true" >> "$GITHUB_OUTPUT"
-          fi
-
-  # When no resource type or recipe files changed, report the required check names
-  # as successful so that branch protection is satisfied.
-  skip-validation:
-    needs: [check-paths]
-    if: needs.check-paths.outputs.files-changed != 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    name: Validate Resource Types and Recipes
-    strategy:
-      matrix:
-        recipe: [bicep, terraform]
-    permissions: {}
-    steps:
-      - name: Skip
-        run: echo "No resource type or recipe files changed — skipping ${{ matrix.recipe }} validation"
-
   validate-resource-types:
-    needs: [check-paths]
-    if: needs.check-paths.outputs.files-changed == 'true'
     name: Validate Resource Types and Recipes
     runs-on: ubuntu-24.04
     timeout-minutes: 30
