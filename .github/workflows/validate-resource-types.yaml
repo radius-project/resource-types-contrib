@@ -10,6 +10,9 @@ on:
       - "**/test/app.bicep"
       - "**/*.yaml"
       - ".github/workflows/validate-resource-types.yaml"
+      - ".github/scripts/**"
+      - ".github/build/**"
+      - "Makefile"
   # NOTE: No paths filter on pull_request. The "check-paths" job below determines
   # whether resource type or recipe files changed. When they haven't, the
   # "skip-validation" job reports the required check names so branch protection is
@@ -54,6 +57,9 @@ jobs:
             **/test/app.bicep
             **/*.yaml
             .github/workflows/validate-resource-types.yaml
+            .github/scripts/**
+            .github/build/**
+            Makefile
 
       - name: Set result
         id: result
