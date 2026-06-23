@@ -8,7 +8,7 @@ on:
     paths:
       - "**/azure/**"
       - "**/azure-*/**"
-      - "**/test/app*.bicep"
+      - "**/test/app.bicep"
       - ".github/workflows/validate-azure-recipes.yaml"
   # pull_request_target runs in the context of the base branch, providing access to secrets.
   # For external contributors, the approval-gate job requires manual approval before tests run.
@@ -55,7 +55,7 @@ jobs:
           files: |
             **/azure/**
             **/azure-*/**
-            **/test/app*.bicep
+            **/test/app.bicep
             .github/workflows/validate-azure-recipes.yaml
 
       - name: Set result
