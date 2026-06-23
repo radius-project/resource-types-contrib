@@ -30,28 +30,32 @@ resource dbSecret 'Radius.Security/secrets@2025-08-01-preview' = {
   }
 }
 
-resource mycontainer 'Radius.Compute/containers@2025-08-01-preview' = {
-  name: 'mycontainer'
-  properties: {
-    environment: environment
-    application: myapp.id
-    containers: {
-      demo: {
-        image: 'ghcr.io/radius-project/samples/demo:latest'
-        ports: {
-          web: {
-            containerPort: 3000
-          }
-        }
-      }
-    }
-    connections: {
-      mysql: {
-        source: mysql.id
-      }
-    }
-  }
-}
+// TODO: Re-enable the container consumer once an Azure recipe for
+// Radius.Compute/containers is merged. The shared test app is used by
+// every platform, but the Azure recipe pack currently has no container
+// recipe, so deploying this resource fails on the Azure validation job.
+// resource mycontainer 'Radius.Compute/containers@2025-08-01-preview' = {
+//   name: 'mycontainer'
+//   properties: {
+//     environment: environment
+//     application: myapp.id
+//     containers: {
+//       demo: {
+//         image: 'ghcr.io/radius-project/samples/demo:latest'
+//         ports: {
+//           web: {
+//             containerPort: 3000
+//           }
+//         }
+//       }
+//     }
+//     connections: {
+//       mysql: {
+//         source: mysql.id
+//       }
+//     }
+//   }
+// }
 
 resource mysql 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
   name: 'mysql'
