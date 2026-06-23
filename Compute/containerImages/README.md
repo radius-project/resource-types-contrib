@@ -36,8 +36,8 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
   properties: {
     recipes: {
       'Radius.Compute/containerImages': {
-        recipeKind: 'terraform'
-        recipeLocation: 'git::https://github.com/radius-project/resource-types-contrib.git//Compute/containerImages/recipes/kubernetes/terraform'
+        kind: 'terraform'
+        source: 'git::https://github.com/radius-project/resource-types-contrib.git//Compute/containerImages/recipes/kubernetes/terraform'
         parameters: {
           registry: 'ghcr.io/my-org'
           registrySecretName: 'ghcr-creds'
