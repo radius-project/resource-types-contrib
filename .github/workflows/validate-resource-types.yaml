@@ -10,13 +10,13 @@ on:
       - "**/test/app.bicep"
       - "**/*.yaml"
       - ".github/workflows/validate-resource-types.yaml"
+      - ".github/scripts/**"
+      - ".github/build/**"
+      - "Makefile"
+  # No paths filter on pull_request: these are local (k3d) tests with no cloud
+  # cost, so the workflow runs on every PR and the required checks always report.
   pull_request:
     branches: [main]
-    paths:
-      - "**/kubernetes/**"
-      - "**/test/app.bicep"
-      - "**/*.yaml"
-      - ".github/workflows/validate-resource-types.yaml"
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
