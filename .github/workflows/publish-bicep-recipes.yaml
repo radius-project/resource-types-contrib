@@ -3,6 +3,11 @@
 name: Publish Bicep Recipes
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "**/recipes/**/bicep/**/*.bicep"
+      - ".github/workflows/publish-bicep-recipes.yaml"
   workflow_dispatch:
     inputs:
       release_version:
