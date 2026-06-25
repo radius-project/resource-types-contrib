@@ -83,6 +83,7 @@ types:
               description: "(Optional) The size of the PostgreSQL database. Defaults to `S` if not provided."
             secretName:
               type: string
+              x-radius-secret-reference: true
               description: "(Required) The name of the secret containing the database credentials."
             database:
               type: string
