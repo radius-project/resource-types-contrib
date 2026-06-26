@@ -2,7 +2,7 @@ namespace: Radius.Data
 types:
   postgreSqlDatabases:  
     description: |
-      The Radius.Data/postgreSqlDatabases Resource Type deploys a PostgreSQL database. To deploy a PostgreSQL database, first add a secret resource with the database credentials to the application definition Bicep file, then add a postgreSqlDatabases resource referencing the secret name.
+      The Radius.Data/postgreSqlDatabases Resource Type deploys a PostgreSQL database. To deploy a PostgreSQL database, first add a secret resource with the database credentials to the application definition Bicep file, then add a postgreSqlDatabases resource listing that secret in its `secrets` array.
       ```
       resource postgresql 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
           name: 'postgresql'
@@ -10,7 +10,9 @@ types:
             environment: environment
             application: myApplication.id
             size: 'S'
-            secretName: dbCredentials.name
+            secrets: [
+              dbCredentials.id
+            ]
           }
         }
 
@@ -81,10 +83,13 @@ types:
               type: string
               enum: ['S', 'M', 'L']
               description: "(Optional) The size of the PostgreSQL database. Defaults to `S` if not provided."
-            secretName:
-              type: string
-              x-radius-secret-reference: true
-              description: "(Required) The name of the secret containing the database credentials."
+            secrets:
+              type: array
+              x-radius-secret-binding: true
+              description: "(Required) The Radius.Security/secrets resources holding the credentials this database needs. Each entry is a secret resource ID (for example `dbSecret.id`). Radius loads every key of each listed secret and exposes it to the recipe as `{{context.resource.secrets.<secretName>.<key>}}`, where `<secretName>` is the secret resource's name and `<key>` is a key in its `data`."
+              items:
+                type: string
+                description: "The resource ID of a Radius.Security/secrets resource (for example `dbSecret.id`)."
             database:
               type: string
               description: "(Optional) The name of the database. Defaults to `postgres_db` if not provided."
@@ -99,4 +104,4 @@ types:
               type: string
               description: The port number used to connect to the database.
               readOnly: true
-          required: [environment,secretName]
+          required: [environment,secrets]
