@@ -1,0 +1,103 @@
+namespace: Radius.Data
+types:
+  redisCaches:  
+    description: |
+      The Radius.Data/redisCaches Resource Type deploys a Redis cache. Redis is an in-memory data structure store commonly used for caching, session storage, and message brokering. To deploy a Redis cache, add a redisCaches resource to your application definition Bicep file.
+      ```
+      resource redis 'Radius.Data/redisCaches@2025-08-01-preview' = {
+          name: 'redis'
+          properties: {
+            environment: environment
+            application: myApplication.id
+            size: 'S'
+          }
+        }
+      ```
+
+      To enable authentication, add a secret resource and reference it in the redisCaches resource using the `secretName` property.
+      ```
+        resource redis 'Radius.Data/redisCaches@2025-08-01-preview' = {
+          name: 'redis'
+          properties: {
+            environment: environment
+            application: myApplication.id
+            size: 'S'
+            secretName: redisCredentials.name
+          }
+        }
+
+        resource redisCredentials 'Radius.Security/secrets@2025-08-01-preview' = {
+          name: 'redis-creds'
+          properties: {
+            environment: environment
+            application: myApplication.id
+            data: {
+              PASSWORD: {
+                // From password parameter passed in via CLI
+                value: password
+              }
+            }
+          }
+        }
+      ```
+      
+      When using authentication, provide the password value as a parameter during deployment. It is recommended to use a password generator such as `openssl` or equivalent. For example, `rad deploy app.bicep -p password=$(openssl rand -hex 16)`.
+
+      To connect your container to the cache, create a connection from the Container resource to the cache as shown below. 
+      ```
+      resource myApplication 'Radius.Core/Applications@2025-08-01-preview' = { ... }
+
+      resource frontend 'Radius.Compute/containers@2025-08-01-preview' = {
+        name: 'frontend'
+        properties: {
+          application: myApplication.id
+          environment: environment
+          containers: {
+            image: 'frontend:1.25'
+            ports: {
+              web: {
+                containerPort: 8080
+              }
+            }
+          }
+          connections: {
+            redis: {
+              source: redis.id
+            }
+          }
+        }
+      }
+      ```
+
+      The connection automatically injects environment variables into the container for all properties from the cache. The environment variables are named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>`. In this example, the connection name is `redis` so the environment variables will be:
+ 
+      - CONNECTION_REDIS_HOST
+      - CONNECTION_REDIS_PORT
+
+    apiVersions:
+      '2025-08-01-preview':
+        schema: 
+          type: object
+          properties:
+            environment:
+              type: string
+              description: "(Required) The Radius Environment ID. Typically set by the rad CLI. Typically value should be `environment`."
+            application:
+              type: string
+              description: "(Optional) The Radius Application ID. `myApplication.id` for example."
+            size:
+              type: string
+              enum: ['S', 'M', 'L']
+              description: "(Optional) The size of the Redis cache. Defaults to `S` if not provided."
+            secretName:
+              type: string
+              description: "(Optional) The name of the secret containing the Redis password. If not provided, Redis runs without authentication."
+            host:
+              type: string
+              description: The host name used to connect to the cache.
+              readOnly: true
+            port:
+              type: string
+              description: The port number used to connect to the cache.
+              readOnly: true
+          required: [environment]
