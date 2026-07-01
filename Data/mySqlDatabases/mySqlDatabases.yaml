@@ -2,14 +2,16 @@ namespace: Radius.Data
 types:
   mySqlDatabases:
     description: |
-      The Radius.Data/mySqlDatabases Resource Type deploys a MySQL database. To deploy a new MySQL database, first add a secret resource with the database credentials to the application definition Bicep file, then add a mySqlDatabases resource referencing the secret name.
+      The Radius.Data/mySqlDatabases Resource Type deploys a MySQL database. To deploy a new MySQL database, first add a secret resource with the database credentials to the application definition Bicep file, then add a mySqlDatabases resource listing that secret in its `secrets` array.
       ```
       resource mysql 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
         name: 'mysql'
         properties: {
           environment: environment
           application: myApplication.id
-          secretName: dbCredentials.name
+          secrets: [
+            dbCredentials.id
+          ]
         }
       }
       
@@ -19,11 +21,11 @@ types:
           environment: environment
           application: myApplication.id
           data: {
-            USERNAME: {
+            username: {
               value: 'admin'
             }
-            PASSWORD: {
-              # From password parameter passed in via CLI
+            password: {
+              // From password parameter passed in via CLI
               value: password
             }
           }
@@ -79,9 +81,13 @@ types:
             database:
               type: string
               description: "(Optional) The name of the database. Defaults to `mysql_db` if not provided."
-            secretName:
-              type: string
-              description: "(Required) The name of the secret containing the database credentials."
+            secrets:
+              type: array
+              x-radius-secret-binding: true
+              description: "(Required) The Radius.Security/secrets resources holding the credentials this database needs. Each entry is a secret resource ID (for example `dbSecret.id`). Radius loads every key of each listed secret and exposes it to the recipe as `{{context.resource.secrets.<secretName>.<key>}}`, where `<secretName>` is the secret resource's name and `<key>` is a key in its `data`."
+              items:
+                type: string
+                description: "The resource ID of a Radius.Security/secrets resource (for example `dbSecret.id`)."
             version:
               type: string
               enum: ['5.7', '8.0', '8.4']
@@ -94,4 +100,4 @@ types:
               type: integer
               description: "(Read-only) The port number used to connect to the database."
               readOnly: true
-          required: [environment,secretName]
+          required: [environment,secrets]
