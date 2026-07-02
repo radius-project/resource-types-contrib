@@ -4,7 +4,8 @@
 
 This repository contains the Resource Type definitions and Recipes for deploying those Resource Types via [Radius](https://radapp.io/). It includes:
 
-- **Resource Type Defintions**: Schema definitions for Resource Types available for developers to use while defining their application
+- **Resource Type Definitions**: Schema definitions for Resource Types available for developers to use while defining their application
+- **Recipes**: Platform-specific Infrastructure as Code (Bicep or Terraform) used to deploy the associated Resource Type
 - **Recipe Packs**: Bundled collections of Recipes, grouped by compute platform, that provide the recipe definitions for every Resource Type in the repository
 
 ## What are Resource Types?
