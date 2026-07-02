@@ -111,6 +111,34 @@ var connectionEnvVars = reduce(items(resourceConnections), [], (acc, conn) =>
     : acc
 )
 
+// Token table for ${connection:<key>.<prop>} sentinels used in container env values. Uses the same
+// decrypted source (resourceConnections) and the same exclusions as connectionEnvVars, so any connected
+// resource property (top-level or nested `properties` bag) can be referenced by name in an env value and
+// is resolved to its real (decrypted) value — without the fixed CONNECTION_<KEY>_<PROP> naming.
+var connectionTokens = reduce(items(resourceConnections), [], (acc, conn) =>
+  !isSecretsResource[conn.key] && connectionDefinitions[conn.key].?disableDefaultEnvVars != true
+    ? concat(
+        acc,
+        reduce(items(conn.value ?? {}), [], (tokenAcc, prop) =>
+          (prop.key == 'properties' || prop.key == 'secretName' || contains(excludedProperties, prop.key))
+            ? tokenAcc
+            : concat(tokenAcc, [{
+                token: concat('$', '{connection:', conn.key, '.', prop.key, '}')
+                value: string(prop.value)
+              }])
+        ),
+        reduce(items(conn.value.?properties ?? {}), [], (tokenAcc, prop) =>
+          (prop.key == 'secretName' || contains(excludedProperties, prop.key))
+            ? tokenAcc
+            : concat(tokenAcc, [{
+                token: concat('$', '{connection:', conn.key, '.', prop.key, '}')
+                value: string(prop.value)
+              }])
+        )
+      )
+    : acc
+)
+
 // Use replicas from properties, default to 1 if not specified
 var replicaCount = resourceProperties.?replicas != null ? int(resourceProperties.replicas) : 1
 
@@ -139,7 +167,7 @@ var containerSpecs = reduce(containerItems, [], (acc, item) => concat(acc, [{
           {
             name: envItem.key
           },
-          contains(envItem.value, 'value') ? { value: envItem.value.value } : {},
+          contains(envItem.value, 'value') ? { value: reduce(connectionTokens, string(envItem.value.value), (acc, t) => replace(string(acc), t.token, t.value)) } : {},
           (contains(envItem.value, 'valueFrom') && contains(envItem.value.valueFrom, 'secretKeyRef')) ? {
             valueFrom: {
               secretKeyRef: {
