@@ -124,8 +124,10 @@ var connectionEnvVars = reduce(items(resourceConnections), [], (acc, conn) =>
 // Build ACI volumes - similar pattern to kubernetes-containers.bicep but
 // for ACI we resolve storage account details from computedValues/secrets
 // instead of PVC name, because ACI needs explicit Azure File credentials.
-// Note: 'secretName' volumes (K8s-style secret mounts) are skipped for ACI —
-// secrets are accessed via env vars (AZURE_CLIENT_ID, AZURE_KEYVAULT_URI) instead.
+// Note: Kubernetes-style `secretName` volumes are not supported in ACI.
+// ACI does not support mounting secrets from external stores as volumes.
+// Instead, secrets are typically provided via secure environment variables (AZURE_CLIENT_ID, AZURE_KEYVAULT_URI)
+// or accessed at runtime (e.g., via managed identity + Azure Key Vault).
 var volumeItems = filter(items(resourceVolumes), vol => contains(vol.value, 'persistentVolume') || contains(vol.value, 'emptyDir'))
 var aciVolumeNames = map(volumeItems, vol => vol.key)
 var aciVolumes = reduce(volumeItems, [], (acc, vol) => concat(acc, [
