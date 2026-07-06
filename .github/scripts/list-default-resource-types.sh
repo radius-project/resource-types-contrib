@@ -60,7 +60,7 @@ fi
 # form "Radius.<Namespace>/<typeName>", so a targeted grep is sufficient and is
 # resilient to comments or additional sections in the file.
 fetched=""
-if fetched="$(curl -fsSL "$DEFAULTS_YAML_URL" 2>/dev/null)"; then
+if fetched="$(curl -fsSL --connect-timeout 5 --max-time 20 "$DEFAULTS_YAML_URL" 2>/dev/null)"; then
     parsed="$(printf '%s\n' "$fetched" | grep -oE 'Radius\.[A-Za-z0-9]+/[A-Za-z0-9]+' | sort -u || true)"
     if [[ -n "$parsed" ]]; then
         printf '%s\n' "$parsed" > "$CACHE_FILE"
