@@ -42,6 +42,13 @@ var database = context.resource.properties.?database ?? 'mysql_db'
 ])
 param version string = context.resource.properties.?version ?? '8.4'
 
+// Maps the allowed input versions to the exact version literals accepted by the AVM module for DBforMySQL Flexible Server.
+var mysqlVersionMap = {
+  '5.7': '5.7'
+  '8.0': '8.0.21'
+  '8.4': '8.4'
+}
+
 var port = 3306
 
 // Radius labels to be applied as Azure resource tags. The dash in the resource type is replaced with a hyphen to conform to Azure tag naming rules.
@@ -57,34 +64,31 @@ var labels = {
 // MySQL Deployment
 //////////////////////////////////////////
 
-resource mysqlServer 'Microsoft.DBforMySQL/flexibleServers@2024-12-30' = {
-  name: resourceName
-  location: location
-  tags: labels
-  sku: {
-    name: 'Standard_B1ms'
+// Using the AVM module for DBforMySQL Flexible Server to deploy a MySQL server in Azure
+module flexibleServer 'br/public:avm/res/db-for-my-sql/flexible-server:0.10.3' = {
+  params: {
+    // Required parameters
+    availabilityZone: -1
+    name: resourceName
+    skuName: 'Standard_B1ms'
     tier: 'Burstable'
-  }
-  properties: {
-    createMode: 'Default'
-    version: (version == '8.0') ? '8.0.21' : version
+    // Non-required parameters
+    tags: labels
+    location: location
     administratorLogin: adminUsername
     administratorLoginPassword: adminPassword
-    databasePort: port
-    storage: {
-      storageSizeGB: 32
-    }
-    network: {
-      publicNetworkAccess: 'Enabled'
-    }
-  }
-
-  resource mysqlDatabase 'databases' = {
-    name: database
-    properties: {
-      charset: 'utf8'
-      collation: 'utf8_general_ci'
-    }
+    storageAutoIoScaling: 'Enabled'
+    storageSizeGB: 32
+    version: mysqlVersionMap[version]
+    publicNetworkAccess: 'Enabled'
+    highAvailability: 'Disabled'
+    databases: [
+      {
+        name: database
+        charset: 'utf8'
+        collation: 'utf8_general_ci'
+      }
+    ]
   }
 }
 
@@ -94,7 +98,7 @@ resource mysqlServer 'Microsoft.DBforMySQL/flexibleServers@2024-12-30' = {
 
 output result object = {
   values: {
-    host: mysqlServer.properties.fullyQualifiedDomainName
+    host: flexibleServer.outputs.fqdn
     port: port
     database: database
   }
