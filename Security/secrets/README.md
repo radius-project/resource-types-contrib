@@ -11,7 +11,7 @@ A list of available Recipes for this Resource Type, including links to the Bicep
 |---|---|---|---|
 | Kubernetes | Bicep | recipes/kubernetes/bicep/kubernetes-secrets.bicep | Alpha |
 | Kubernetes | Terraform | recipes/kubernetes/terraform/main.tf | Alpha |
-| Azure (ACI) | Bicep | recipes/azure-aci/bicep/azure-aci-keyvault-secrets.bicep | Alpha |
+| Azure (ACI) | Bicep | recipes/azure/bicep/azure-keyvault-secrets.bicep | Alpha |
 
 
 ## Recipe Input Properties
@@ -31,7 +31,7 @@ The Secrets resource does not have any properties which must be set by a Recipe.
 
 ### Azure ACI Key Vault Recipe Outputs
 
-The Azure ACI recipe (`azure-aci-keyvault-secrets.bicep`) provisions an Azure Key Vault and a User Assigned Managed Identity (UAI) with Key Vault Administrator access. It outputs the following values via the Radius `result` object:
+The Azure ACI recipe (`azure-keyvault-secrets.bicep`) provisions an Azure Key Vault and a User Assigned Managed Identity (UAI) with Key Vault Administrator access. It outputs the following values via the Radius `result` object:
 
 | Output Property | Description |
 |---|---|

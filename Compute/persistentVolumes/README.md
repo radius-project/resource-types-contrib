@@ -9,7 +9,7 @@ A list of available Recipes for this Resource Type, including links to the Bicep
 
 |Platform| IaC Language| Recipe Name | Stage |
 |---|---|---|---|
-| Azure (ACI) | Bicep | recipes/azure-aci/bicep/azure-aci-volumes.bicep | Alpha |
+| Azure (ACI) | Bicep | recipes/azure/bicep/azure-file-volumes.bicpe | Alpha |
 | Kubernetes | Bicep | recipes/kubernetes/bicep/kubernetes-volumes.bicep | Alpha |
 | Kubernetes | Terraform | recipes/kubernetes/terraform/main.tf | Alpha |
 
