@@ -429,8 +429,9 @@ resource containerGroupProfile 'Microsoft.ContainerInstance/containerGroupProfil
               mountPath: vm.mountPath
             }]))
           } : {},
-          // Add command if specified (ACI does not support 'args' or 'workingDir' separately;
-          // merge command + args into a single 'command' array for ACI)
+          // Note: ACI does not support Radius container properties `args` or `workingDir`.
+          // If `args` is provided, merge command + args into a single ACI `command` array.
+          // `workingDir` is ignored for this recipe.
           contains(item.value, 'command') ? {
             command: contains(item.value, 'args')
               ? concat(item.value.command, item.value.args)
