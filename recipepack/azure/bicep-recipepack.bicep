@@ -30,6 +30,37 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
           url: 'primaryConnectionString'
         }
       }
+      'Radius.AI/models': {
+        kind: 'bicep'
+        source: 'mcr.microsoft.com/bicep/avm/res/cognitive-services/account:0.15.0'
+        parameters: {
+          name: '{{context.resource.name}}'
+          kind: 'OpenAI'
+          sku: 'S0'
+          customSubDomainName: '{{context.resource.name}}'
+          disableLocalAuth: false
+          publicNetworkAccess: 'Enabled'
+          deployments: [
+            {
+              name: 'chat'
+              model: {
+                format: 'OpenAI'
+                name: '{{context.resource.properties.model}}'
+                version: '2025-08-07'
+              }
+              sku: {
+                name: 'GlobalStandard'
+                capacity: 1
+              }
+            }
+          ]
+          enableTelemetry: false
+        }
+        outputs: {
+          endpoint: 'endpoint'
+          apiKey: 'primaryKey'
+        }
+      }
       'Radius.AI/search': {
         kind: 'bicep'
         source: 'mcr.microsoft.com/bicep/avm/res/search/search-service:0.12.2'

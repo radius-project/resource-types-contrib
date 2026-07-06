@@ -28,8 +28,8 @@ resource mysql 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
   }
 }
 
-resource democtr 'Radius.Compute/containers@2025-08-01-preview' = {
-  name: 'democtr'
+resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
+  name: 'democontainer'
   properties: {
     environment: environment
     application: app.id
