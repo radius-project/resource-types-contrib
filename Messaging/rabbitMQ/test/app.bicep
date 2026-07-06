@@ -1,30 +1,23 @@
 extension radius
 
-extension postgreSqlDatabases
+extension rabbitMQ
 
 @description('The ID of your Radius Environment. Set automatically by the rad CLI.')
 param environment string
 
-@description('Database admin password. Set on the resource `password` property (x-radius-sensitive), so Radius encrypts it at rest and injects it decrypted into the Recipe as the flexible server administrator password.')
-@secure()
-param password string
-
 resource app 'Radius.Core/applications@2025-08-01-preview' = {
-  name: 'postgresql-azure-test'
+  name: 'rabbitmq-azure-test'
   properties: {
     environment: environment
   }
 }
 
-resource postgresql 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
-  name: 'postgresql'
+resource queue 'Radius.Messaging/rabbitMQ@2025-08-01-preview' = {
+  name: 'rabbitmq'
   properties: {
     environment: environment
     application: app.id
-    size: 'S'
-    database: 'appdb'
-    username: 'radadmin'
-    password: password
+    queue: 'jobs'
   }
 }
 
@@ -44,8 +37,8 @@ resource democtr 'Radius.Compute/containers@2025-08-01-preview' = {
       }
     }
     connections: {
-      postgres: {
-        source: postgresql.id
+      rabbitmq: {
+        source: queue.id
       }
     }
   }
