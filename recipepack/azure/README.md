@@ -20,6 +20,7 @@ Each pack declares a `Radius.Core/recipePacks` resource whose `recipes` map cont
 | `Radius.Messaging/kafka` | Bicep | Azure Verified Module — `avm/res/event-hub/namespace` |
 | `Radius.Data/mongoDatabases` | Bicep | Azure Verified Module — `avm/res/document-db/database-account` |
 | `Radius.Data/mySqlDatabases` | Bicep | Azure Verified Module — `avm/res/db-for-my-sql/flexible-server` |
+| `Radius.Data/redisCaches` | Bicep | Azure Verified Module — `avm/res/cache/redis-enterprise` |
 | `Radius.Compute/containers` | Bicep | `ghcr.io/radius-project/kube-recipes/containers` |
 
 ## Parameters
