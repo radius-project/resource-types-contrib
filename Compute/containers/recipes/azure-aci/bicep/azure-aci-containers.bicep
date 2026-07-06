@@ -70,9 +70,6 @@ param enableDdosProtection bool = false
 @description('Name of an existing DDoS protection plan (required when enableDdosProtection is true)')
 param ddosProtectionPlanName string = 'ddosProtectionPlan'
 
-@description('Base deployment location for all resources when platformOptions.location is not applied.')
-param location string = resourceGroup().location
-
 @description('Radius ACI Container Context')
 param context object
 
@@ -545,4 +542,3 @@ output containerGroupProfileId string = containerGroupProfile.id
 output nGroupsId string = nGroups.id
 output readinessProbeId string = firstContainerWithReadinessProbe != null ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, '${firstContainerWithReadinessProbe.key}-readinessProbe') : ''
 output livenessProbeId string = length(filter(containerItems, item => contains(item.value, 'livenessProbe') && item.value.livenessProbe != null)) > 0 ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, '${filter(containerItems, item => contains(item.value, 'livenessProbe') && item.value.livenessProbe != null)[0].key}-livenessProbe') : ''
-output platformOptionsWarning string = platformOptionsWarning

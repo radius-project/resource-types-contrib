@@ -52,7 +52,8 @@ A list of available Recipes for this Resource Type, including links to the Bicep
 Note: The Azure ACI recipe does not support `context.resource.properties.extensions.daprSidecar` and ignores Dapr sidecar configuration provided through `extensions`.
 Note: The Azure ACI recipe does not support `context.resource.properties.replicas` or `context.resource.properties.autoScaling.*`; scaling is controlled by recipe-specific parameters (`desiredCount` and `maintainDesiredCount`).
 Note: The Azure ACI recipe does not support `context.resource.properties.containers.args` or `context.resource.properties.containers.workingDir`; `args` are only used by merging into the ACI `command` array, and `workingDir` is ignored.
-Note: The Azure ACI recipe accepts an optional `allowPlatformOptions` parameter (default `true`). When set to `false`, the recipe ignores all `context.resource.properties.platformOptions` values and emits a warning in the `platformOptionsWarning` output.
+Note: The Azure ACI recipe accepts an optional `allowPlatformOptions` parameter (default `true`). When set to `false`, the recipe ignores all `context.resource.properties.platformOptions` values.
+Note: The Azure ACI recipe always deploys to `resourceGroup().location`; `context.resource.properties.platformOptions.location` is not supported and is ignored.
 
 ## Recipe Output Properties
 
