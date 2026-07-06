@@ -1,6 +1,6 @@
-# Contributing Tests for Stable Resource Types
+# Contributing Tests for Resource Types
 
-Resource Types at the Stable maturity level are required to integrate with Radius CI/CD testing. This guide explains how to add automated test coverage for your Resource Type so it can be validated in CI/CD pipelines.
+Resource Types that are mature are required to integrate with Radius CI/CD testing. This guide explains how to add automated test coverage for your Resource Type so it can be validated in CI/CD pipelines.
 
 ## Overview
 
