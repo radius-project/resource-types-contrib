@@ -61,7 +61,7 @@ Once a Resource Type is registered and a Recipe is configured in your Environmen
 
 1. **Reference the extension** for the Resource Type at the top of your Bicep file.
 2. **Declare the resource**, providing the required properties. `environment` is always required, and `application` is required for types that belong to an application.
-3. **Connect to the resource** from a container,so Radius injects the connection details as environment variables.
+3. **Connect to the resource** from a container, so Radius injects the connection details as environment variables.
 4. **Deploy** the application.
 
 ```bicep
