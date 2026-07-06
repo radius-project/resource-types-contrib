@@ -46,7 +46,8 @@ CACHE_FILE="${TMPDIR:-/tmp}/radius-default-resource-types.cache"
 
 # Explicit override wins and is not cached.
 if [[ -n "${DEFAULT_RESOURCE_TYPES:-}" ]]; then
-    printf '%s\n' $DEFAULT_RESOURCE_TYPES | sed '/^[[:space:]]*$/d'
+    # Split on whitespace while avoiding pathname expansion.
+    printf '%s\n' "$DEFAULT_RESOURCE_TYPES" | tr -s '[:space:]' '\n' | sed '/^[[:space:]]*$/d'
     exit 0
 fi
 
