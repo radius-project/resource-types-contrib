@@ -12,6 +12,7 @@ Each pack declares a `Radius.Core/recipePacks` resource whose `recipes` map cont
 
 | Resource Type | Kind | Source |
 | --- | --- | --- |
+| `Radius.AI/search` | Bicep | Azure Verified Module — `avm/res/search/search-service` |
 | `Radius.Messaging/rabbitMQ` | Bicep | Azure Verified Module — `avm/res/service-bus/namespace` |
 | `Radius.Messaging/kafka` | Bicep | Azure Verified Module — `avm/res/event-hub/namespace` |
 | `Radius.Data/mongoDatabases` | Bicep | Azure Verified Module — `avm/res/document-db/database-account` |
