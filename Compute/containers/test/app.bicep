@@ -1,5 +1,5 @@
 extension radius
-extension radiusResources
+extension containers
 extension persistentVolumes
 extension secrets
 
@@ -13,7 +13,7 @@ param password string = 'c2VjcmV0cGFzc3dvcmQ='
 #disable-next-line secure-parameter-default @secure()
 param apiKey string = 'abc123xyz'
 
-resource app 'Applications.Core/applications@2023-10-01-preview' = {
+resource app 'Radius.Core/applications@2025-08-01-preview' = {
   name: 'containers-testapp8'
   properties: {
     environment: environment
