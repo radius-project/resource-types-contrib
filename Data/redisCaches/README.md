@@ -15,7 +15,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `size` | string (`S`, `M`, `L`) | Optional | The size of the Redis cache. Defaults to `S`. The Recipe maps the size onto a concrete cloud SKU. |
 | `host` | string | Read only | The host name used to connect to the cache. Set from the Recipe module's output. |
 | `port` | integer | Read only | The TLS port number used to connect to the cache. Set from the Recipe module's output. |
-| `url` | string (sensitive) | Read only | The full TLS connection URL (`rediss://:<access-key>@<host>:<port>`), including the access key. Set from the Recipe module's output and treated as a secret. |
+| `url` | string | Read only | The full TLS connection URL (`rediss://:<access-key>@<host>:<port>`), including the access key. Set from the Recipe module's output. |
 
 ## Recipe Packs
 

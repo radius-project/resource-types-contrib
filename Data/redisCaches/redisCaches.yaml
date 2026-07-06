@@ -72,6 +72,6 @@ types:
               readOnly: true
             url:
               type: string
-              description: The full TLS connection URL (`rediss://:<access-key>@<host>:<port>`) used to connect to the cache, including the access key. Mapped from the recipe module's `primaryConnectionString` output. Marked sensitive so Radius treats it as a secret.
+              description: The full TLS connection URL (`rediss://:<access-key>@<host>:<port>`) used to connect to the cache, including the access key. Mapped from the recipe module's `primaryConnectionString` output.
               readOnly: true
           required: [environment]
