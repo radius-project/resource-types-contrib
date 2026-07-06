@@ -38,6 +38,36 @@ validate_dependencies() {
     fi
 }
 
+# Derive the "Radius.<Category>/<typeName>" identifier for a resource type folder
+# from its path, following the resource-types-contrib layout convention
+# (<Category>/<typeName>/<typeName>.yaml).
+resource_type_id_for_folder() {
+    local folder="$1"
+    local rel="${folder#"$REPO_ROOT"/}"
+    local category type_name
+    category="$(printf '%s' "$rel" | cut -d/ -f1)"
+    type_name="$(printf '%s' "$rel" | cut -d/ -f2)"
+    printf 'Radius.%s/%s' "$category" "$type_name"
+}
+
+# Return 0 if the given "Radius.<Category>/<typeName>" identifier is one of the
+# resource types that ship as Radius defaults (see defaults.yaml). Default types
+# are already registered by Radius and their Bicep types are bundled in the
+# "radius" extension, so the test workflow skips creating/publishing them.
+is_default_resource_type() {
+    local resource_type_id="$1"
+    local default_type
+
+    while IFS= read -r default_type; do
+        [[ -z "$default_type" ]] && continue
+        if [[ "$default_type" == "$resource_type_id" ]]; then
+            return 0
+        fi
+    done < <("${SCRIPT_DIR}/list-default-resource-types.sh")
+
+    return 1
+}
+
 create_resource_type() {
     local yaml_file="$1"
 
@@ -83,6 +113,14 @@ main() {
     fi
 
     target_folder="$(cd "$target_folder" && pwd)"
+
+    local resource_type_id
+    resource_type_id="$(resource_type_id_for_folder "$target_folder")"
+
+    if is_default_resource_type "$resource_type_id"; then
+        echo "⏭️  Skipping '$resource_type_id': ships as a Radius default (defaults.yaml); it is already registered and bundled in the 'radius' extension. Not creating the resource type or publishing an extension."
+        exit 0
+    fi
 
     local -a yaml_files=()
     mapfile -d '' -t yaml_files < <(find "$target_folder" -maxdepth 1 -mindepth 1 -type f \
