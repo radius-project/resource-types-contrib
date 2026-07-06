@@ -1,23 +1,23 @@
 extension radius
 
-extension rabbitMQ
+extension models
 
 @description('The ID of your Radius Environment. Set automatically by the rad CLI.')
 param environment string
 
 resource app 'Radius.Core/applications@2025-08-01-preview' = {
-  name: 'rabbitmq-azure-test'
+  name: 'models-azure-test'
   properties: {
     environment: environment
   }
 }
 
-resource queue 'Radius.Messaging/rabbitMQ@2025-08-01-preview' = {
-  name: 'rabbitmq'
+resource model 'Radius.AI/models@2025-08-01-preview' = {
+  name: 'model'
   properties: {
     environment: environment
     application: app.id
-    queue: 'jobs'
+    model: 'gpt-5-mini'
   }
 }
 
@@ -37,8 +37,8 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
       }
     }
     connections: {
-      rabbitmq: {
-        source: queue.id
+      llm: {
+        source: model.id
       }
     }
   }
