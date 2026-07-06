@@ -12,7 +12,8 @@ Each pack declares a `Radius.Core/recipePacks` resource whose `recipes` map cont
 
 | Resource Type | Kind | Source |
 | --- | --- | --- |
-| `Radius.Data/sqlServerDatabases` | Bicep | Azure Verified Module — `mcr.microsoft.com/bicep/avm/res/sql/server:0.21.4` |
+| `Radius.Data/redisCaches` | Bicep | Azure Verified Module — `mcr.microsoft.com/bicep/avm/res/cache/redis-enterprise:0.5.1` |
+| `Radius.Data/sqlServerDatabases` | Bicep | Azure Verified Module — `avm/res/sql/server` |
 | `Radius.Data/postgreSqlDatabases` | Bicep | Azure Verified Module — `avm/res/db-for-postgre-sql/flexible-server` |
 | `Radius.AI/search` | Bicep | Azure Verified Module — `avm/res/search/search-service` |
 | `Radius.Messaging/rabbitMQ` | Bicep | Azure Verified Module — `avm/res/service-bus/namespace` |
