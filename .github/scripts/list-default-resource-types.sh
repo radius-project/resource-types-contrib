@@ -33,16 +33,35 @@
 # Configuration (environment variables):
 #   DEFAULT_RESOURCE_TYPES  Space/newline separated list that overrides the
 #                           fetched list entirely (useful for offline/testing).
-#   DEFAULTS_YAML_URL       Override the source URL for defaults.yaml.
+#   RADIUS_VERSION          Radius version under test (e.g. "0.58.0", "v0.58.0",
+#                           or "edge"). Selects the matching defaults.yaml so the
+#                           skip list matches the defaults the installed Radius
+#                           actually registers. "edge" or empty maps to "main".
+#   DEFAULTS_YAML_URL       Override the source URL for defaults.yaml entirely.
 #
 # On network failure with no cache available, prints nothing and exits 0 so that
-# callers fall back to the previous behavior (build/publish everything).
+# callers fall back to the previous behavior (build/publish everything). This is
+# also the correct behavior for Radius versions predating defaults.yaml (before
+# ~v0.58.0), where the file does not exist and no types ship as defaults.
 # =============================================================================
 
 set -euo pipefail
 
-DEFAULTS_YAML_URL="${DEFAULTS_YAML_URL:-https://raw.githubusercontent.com/radius-project/radius/main/deploy/manifest/defaults.yaml}"
-CACHE_FILE="${TMPDIR:-/tmp}/radius-default-resource-types.cache"
+# Resolve the git ref for defaults.yaml from the Radius version under test.
+# Release tags are three-part (vX.Y.Z); "edge"/empty tracks the main branch.
+RADIUS_VERSION="${RADIUS_VERSION:-}"
+DEFAULTS_REF="main"
+if [[ -n "$RADIUS_VERSION" && "$RADIUS_VERSION" != "edge" ]]; then
+    DEFAULTS_REF="$RADIUS_VERSION"
+    [[ "$DEFAULTS_REF" == v* ]] || DEFAULTS_REF="v$DEFAULTS_REF"
+fi
+
+DEFAULTS_YAML_URL="${DEFAULTS_YAML_URL:-https://raw.githubusercontent.com/radius-project/radius/${DEFAULTS_REF}/deploy/manifest/defaults.yaml}"
+
+# Cache per resolved URL so an explicit DEFAULTS_YAML_URL override and the
+# version-derived URL never share a cache entry within the same run.
+CACHE_KEY="$(printf '%s' "$DEFAULTS_YAML_URL" | tr -c 'A-Za-z0-9' '_')"
+CACHE_FILE="${TMPDIR:-/tmp}/radius-default-resource-types.${CACHE_KEY}.cache"
 
 # Explicit override wins and is not cached.
 if [[ -n "${DEFAULT_RESOURCE_TYPES:-}" ]]; then
