@@ -42,6 +42,7 @@ jobs:
       contents: read
     env:
       RAD_ENVIRONMENT_NAME: default
+      DEFAULTS_YAML_URL: ${{ (inputs.version && inputs.version != 'edge') && format('https://raw.githubusercontent.com/radius-project/radius/v{0}/deploy/manifest/defaults.yaml', inputs.version) || 'https://raw.githubusercontent.com/radius-project/radius/main/deploy/manifest/defaults.yaml' }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

@@ -164,6 +164,8 @@ jobs:
     permissions:
       id-token: write
       contents: read
+    env:
+      DEFAULTS_YAML_URL: ${{ (inputs.version && inputs.version != 'edge') && format('https://raw.githubusercontent.com/radius-project/radius/v{0}/deploy/manifest/defaults.yaml', inputs.version) || 'https://raw.githubusercontent.com/radius-project/radius/main/deploy/manifest/defaults.yaml' }}
     steps:
       - name: Set up checkout target
         id: checkout-target
