@@ -1,30 +1,33 @@
 extension radius
 
-extension mySqlDatabases
+extension sqlServerDatabases
 
 @description('The ID of your Radius Environment. Set automatically by the rad CLI.')
 param environment string
 
-@description('Database admin password. Set on the resource `password` property (x-radius-sensitive), so Radius encrypts it at rest and injects it decrypted into the Recipe as the flexible server administrator password.')
+@description('Database username.')
 @secure()
-param password string
+param dbUsername string
+
+@description('Database password.')
+@secure()
+param dbPassword string
 
 resource app 'Radius.Core/applications@2025-08-01-preview' = {
-  name: 'mysql-azure-test'
+  name: 'sqlserver-azure-test'
   properties: {
     environment: environment
   }
 }
 
-resource mysql 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
-  name: 'mysql'
+resource sqlserver 'Radius.Data/sqlServerDatabases@2025-08-01-preview' = {
+  name: 'sqlserver'
   properties: {
     environment: environment
     application: app.id
-    version: '8.0'
     database: 'appdb'
-    username: 'radadmin'
-    password: password
+    username: dbUsername
+    password: dbPassword
   }
 }
 
@@ -44,8 +47,8 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
       }
     }
     connections: {
-      mysqldb: {
-        source: mysql.id
+      sql: {
+        source: sqlserver.id
       }
     }
   }
