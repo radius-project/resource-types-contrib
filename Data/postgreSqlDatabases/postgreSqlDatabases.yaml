@@ -2,7 +2,7 @@ namespace: Radius.Data
 types:
   postgreSqlDatabases:  
     description: |
-      The Radius.Data/postgreSqlDatabases Resource Type deploys a PostgreSQL database. To deploy a PostgreSQL database, first add a secret resource with the database credentials to the application definition Bicep file, then add a postgreSqlDatabases resource referencing the secret name.
+      The Radius.Data/postgreSqlDatabases Resource Type deploys a PostgreSQL database. Provide the administrator `username` and `password` directly on the resource. The `password` property is marked `x-radius-sensitive`, so Radius encrypts it at rest, redacts it on reads, and exposes it (decrypted) only to the recipe that provisions the database.
       ```
       resource postgresql 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
           name: 'postgresql'
@@ -10,28 +10,14 @@ types:
             environment: environment
             application: myApplication.id
             size: 'S'
-            secretName: dbCredentials.name
-          }
-        }
-
-        resource dbCredentials 'Radius.Security/secrets@2025-08-01-preview' = {
-          name: 'db-creds'
-          properties: {
-            environment: environment
-            application: myApplication.id
-            data: {
-              username: {
-                value: 'admin'
-              }
-              password: {
-                // From password parameter passed in via CLI
-                value: password
-              }
-            }
+            database: 'appdb'
+            username: 'myadmin'
+            // From a @secure() password parameter passed in via the CLI
+            password: password
           }
         }
       ```
-      
+
       When deploying the application definition, provide the database password value as a parameter. It is recommended to use a password generator such as `openssl` or equivalent. For example, `rad deploy app.bicep -p password=$(openssl rand -hex 16)`.
 
       To connect your container to the database, create a connection from the Container resource to the database as shown below. 
@@ -81,9 +67,13 @@ types:
               type: string
               enum: ['S', 'M', 'L']
               description: "(Optional) The size of the PostgreSQL database. Defaults to `S` if not provided."
-            secretName:
+            username:
               type: string
-              description: "(Required) The name of the secret containing the database credentials."
+              description: "(Required) The administrator username for the PostgreSQL database. Provided directly on the resource and passed to the recipe as `{{context.resource.properties.username}}`."
+            password:
+              type: string
+              x-radius-sensitive: true
+              description: "(Required) The administrator password for the PostgreSQL database. Marked `x-radius-sensitive`: Radius encrypts it at rest, redacts it on reads, and exposes it decrypted only to the recipe as `{{context.resource.properties.password}}`."
             database:
               type: string
               description: "(Optional) The name of the database. Defaults to `postgres_db` if not provided."
@@ -98,4 +88,4 @@ types:
               type: string
               description: The port number used to connect to the database.
               readOnly: true
-          required: [environment,secretName]
+          required: [environment,username,password]

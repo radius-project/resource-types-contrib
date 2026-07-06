@@ -2,31 +2,32 @@
 
 ## Overview
 
-The **Radius.Data/postgreSqlDatabases** resource type represents a PostgreSQL database. It allows developers to create and easily connect to a PostgreSQL database as part of their Radius applications.
+The **Radius.Data/postgreSqlDatabases** resource type represents a PostgreSQL database. It allows developers to create and easily connect to a PostgreSQL database as part of their Radius applications. The developer provides the administrator `username` and `password` directly on the resource; the `password` property is marked `x-radius-sensitive`, so Radius encrypts it at rest, redacts it on reads, and injects it decrypted only into the platform's Recipe.
 
-Developer documentation is embedded in the resource type definition YAML file, and it is accessible via the `rad resource-type show Radius.Data/postgreSqlDatabases` command.
+Developer documentation is embedded in the resource type definition YAML file and is accessible via the `rad resource-type show Radius.Data/postgreSqlDatabases` command.
 
-## Recipes
+## Properties
 
-A list of available Recipes for this resource type, including links to the Bicep and Terraform templates:
+| Property | Type | Access | Description |
+| --- | --- | --- | --- |
+| `environment` | string | Required | The Radius Environment ID. Typically set by the `rad` CLI. |
+| `application` | string | Optional | The Radius Application ID. |
+| `username` | string | Required | The administrator username for the PostgreSQL database. Passed to the Recipe as `{{context.resource.properties.username}}`. |
+| `password` | string (`x-radius-sensitive`) | Required | The administrator password. Encrypted at rest, redacted on reads, and injected decrypted into the Recipe as `{{context.resource.properties.password}}`. |
+| `database` | string | Optional | The name of the database. Defaults to `postgres_db`. |
+| `size` | string (`S`, `M`, `L`) | Optional | The size of the PostgreSQL database. Defaults to `S`. The Recipe maps the size onto a concrete cloud SKU/tier. |
+| `initSql` | string | Optional | Optional SQL script executed on first initialization to create tables, indexes, and seed data. |
+| `host` | string | Read only | The host name used to connect to the database. Set from the Recipe module's output. |
+| `port` | integer | Read only | The port number used to connect to the database. Set from the Recipe module's output. |
 
-|Platform| IaC Language| Recipe Name | Stage |
-|---|---|---|---|
-| Kubernetes | Bicep | kubernetes-postgresql.bicep | Alpha |
+## Recipe Packs
 
-## Recipe Input Properties
+Recipes for this resource type are provided through the platform Recipe Packs at the repository root under [`recipepack/`](../../recipepack). A platform engineer configures an Environment by deploying the Recipe Pack for their target platform, which registers the Recipe for `Radius.Data/postgreSqlDatabases` along with the Recipes for every other Resource Type on that platform.
 
-Properties for the **Radius.Data/postgreSqlDatabases** resource type are provided via the [Recipe Context](https://docs.radapp.io/reference/context-schema/) object. These properties include:
+| Platform | Recipe Pack | Recipe source |
+| --- | --- | --- |
+| Azure | [`recipepack/azure/bicep-recipepack.bicep`](../../recipepack/azure/bicep-recipepack.bicep) | Direct module — Azure Verified Module `avm/res/db-for-postgre-sql/flexible-server` |
 
-- `context.resource.properties.secretName`(string, required): name of the secret containing the database credentials
-- `context.resource.properties.size`(string, optional): The size of the database. Defaults to `S` if not provided.
-- `context.resource.properties.database`(string, optional): The name of the database. Defaults to `postgres_db` if not provided.
-- `context.resource.properties.initSql`(string, optional): SQL script mounted at `/docker-entrypoint-initdb.d/01-init.sql` and executed by PostgreSQL whenever PGDATA is empty. With the default ephemeral storage this runs on every pod restart; with a PersistentVolumeClaim, it runs only on the very first startup and subsequent changes are ignored on existing volumes. Limited to ~1 MiB.
+## Using the resource type
 
-## Recipe Output Properties
-
-The **Radius.Data/postgreSqlDatabases** resource type expects the following output properties to be set in the Results object in the Recipe:
-
-- `context.resource.properties.host` (string): The hostname used to connect to the database.
-- `context.resource.properties.port` (integer): The port number used to connect to the database.
-- `context.resource.properties.database` (string): The name of the database.
+Add a `postgreSqlDatabases` resource to your application and connect a container to it. Radius injects the database's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_POSTGRES_HOST`, `CONNECTION_POSTGRES_PORT`, and `CONNECTION_POSTGRES_DATABASE`). See [`test/app.bicep`](test/app.bicep) for a complete example.

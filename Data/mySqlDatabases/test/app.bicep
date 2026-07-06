@@ -1,40 +1,38 @@
 extension radius
 
-@description('The Radius environment ID')
+extension mySqlDatabases
+
+@description('The ID of your Radius Environment. Set automatically by the rad CLI.')
 param environment string
 
+@description('Database admin password. Set on the resource `password` property (x-radius-sensitive), so Radius encrypts it at rest and injects it decrypted into the Recipe as the flexible server administrator password.')
 @secure()
 param password string
 
-resource myapp 'Radius.Core/applications@2025-08-01-preview' = {
-  name: 'myapp'
-  location: 'global'
+resource app 'Radius.Core/applications@2025-08-01-preview' = {
+  name: 'mysql-azure-test'
   properties: {
     environment: environment
   }
 }
 
-resource dbSecret 'Radius.Security/secrets@2025-08-01-preview' = {
-  name: 'dbsecret'
+resource mysql 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
+  name: 'mysql'
   properties: {
     environment: environment
-    application: myapp.id
-    data: {
-      USERNAME: {
-        value: 'admin'
-      }
-      PASSWORD: {
-        value: password
-      }
-    }
+    application: app.id
+    version: '8.0'
+    database: 'appdb'
+    username: 'radadmin'
+    password: password
   }
 }
 
-resource mycontainer 'Radius.Compute/containers@2025-08-01-preview' = {
-  name: 'mycontainer'
+resource democtr 'Radius.Compute/containers@2025-08-01-preview' = {
+  name: 'democtr'
   properties: {
     environment: environment
-    application: myapp.id
+    application: app.id
     containers: {
       demo: {
         image: 'ghcr.io/radius-project/samples/demo:latest'
@@ -46,18 +44,9 @@ resource mycontainer 'Radius.Compute/containers@2025-08-01-preview' = {
       }
     }
     connections: {
-      mysql: {
+      mysqldb: {
         source: mysql.id
       }
     }
-  }
-}
-
-resource mysql 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
-  name: 'mysql'
-  properties: {
-    environment: environment
-    application: myapp.id
-    secretName: dbSecret.name
   }
 }
