@@ -54,6 +54,8 @@ param vnetAddressPrefix string = '10.0.0.0/16'
 param subnetAddressPrefix string = '10.0.1.0/24'
 
 @description('Desired container count')
+// ACI NGroups scale settings are recipe parameters; Radius resource-level
+// properties context.resource.properties.replicas and autoScaling are not supported for this recipe.
 param desiredCount int = 3
 
 @description('Maintain desired count')
@@ -75,6 +77,8 @@ param context object
 var cgProfileName = containerGroupProfileName
 var nGroupsName = nGroupsParamName
 var resourceProperties = context.resource.properties ?? {}
+// ACI does not support Radius extensions.daprSidecar; this recipe intentionally
+// ignores any Dapr sidecar configuration provided via context.resource.properties.extensions.
 var resourceVolumes = resourceProperties.?volumes ?? {}
 var resolvedConnections = context.resource.?connections ?? {}
 
@@ -378,6 +382,8 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
 
 // ContainerGroupProfile resource - Dev/Limited: supports ONLY a single container named 'demo'
 // Create default CGProfile when platformOptions is not provided else use the CGProfile resource provided by the customer.
+// ACI does not support context.resource.properties.extensions.daprSidecar;
+// this recipe does not project Dapr sidecar settings into the deployed container group profile.
 resource containerGroupProfile 'Microsoft.ContainerInstance/containerGroupProfiles@2024-11-01-preview' = {
   name: cgProfileName
   location: location
@@ -473,6 +479,7 @@ resource nGroups 'Microsoft.ContainerInstance/NGroups@2024-11-01-preview' = {
   } : null
   properties: {
     elasticProfile: {
+      // ACI scaling comes from recipe parameters, not from Radius replicas/autoScaling properties.
       desiredCount: desiredCount
       maintainDesiredCount: maintainDesiredCount
     }
