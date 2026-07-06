@@ -7,7 +7,7 @@ param azureSubscriptionId string
 param azureResourceGroup string
 
 resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
-  name: 'redis-azure-avm'
+  name: 'azure-avm'
   properties: {
     recipes: {
       'Radius.Data/redisCaches': {
@@ -28,6 +28,192 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
           host: 'hostName'
           port: 'port'
           url: 'primaryConnectionString'
+        }
+      }
+      'Radius.AI/search': {
+        kind: 'bicep'
+        source: 'mcr.microsoft.com/bicep/avm/res/search/search-service:0.12.2'
+        parameters: {
+          name: '{{context.resource.name}}'
+          sku: 'basic'
+          disableLocalAuth: false
+          replicaCount: 1
+          partitionCount: 1
+          enableTelemetry: false
+        }
+        outputs: {
+          endpoint: 'endpoint'
+          apiKey: 'primaryKey'
+        }
+      }
+      'Radius.Data/mongoDatabases': {
+        kind: 'bicep'
+        source: 'mcr.microsoft.com/bicep/avm/res/document-db/database-account:0.19.0'
+        parameters: {
+          name: '{{context.resource.name}}'
+          capabilitiesToAdd: [
+            'EnableMongo'
+          ]
+          mongodbDatabases: [
+            {
+              name: '{{context.resource.properties.database}}'
+            }
+          ]
+          networkRestrictions: {
+            ipRules: []
+            publicNetworkAccess: 'Enabled'
+          }
+          enableTelemetry: false
+        }
+        outputs: {
+          endpoint: 'endpoint'
+          connectionString: 'primaryReadWriteConnectionString'
+        }
+      }
+      'Radius.Data/mySqlDatabases': {
+        kind: 'bicep'
+        source: 'mcr.microsoft.com/bicep/avm/res/db-for-my-sql/flexible-server:0.10.3'
+        parameters: {
+          name: '{{context.resource.name}}'
+          administratorLogin: '{{context.resource.properties.username}}'
+          administratorLoginPassword: '{{context.resource.properties.password}}'
+          skuName: 'Standard_B1ms'
+          tier: 'Burstable'
+          version: '{{context.resource.properties.version == "5.7" ? "5.7" : "8.0.21"}}'
+          databases: [
+            {
+              name: '{{context.resource.properties.database}}'
+            }
+          ]
+          availabilityZone: -1
+          highAvailability: 'Disabled'
+          geoRedundantBackup: 'Disabled'
+          storageSizeGB: 32
+          publicNetworkAccess: 'Enabled'
+          firewallRules: [
+            {
+              name: 'allow-all'
+              startIpAddress: '0.0.0.0'
+              endIpAddress: '255.255.255.255'
+            }
+          ]
+          enableTelemetry: false
+        }
+        outputs: {
+          host: 'fqdn'
+        }
+      }
+      'Radius.Data/postgreSqlDatabases': {
+        kind: 'bicep'
+        source: 'mcr.microsoft.com/bicep/avm/res/db-for-postgre-sql/flexible-server:0.15.2'
+        parameters: {
+          name: '{{context.resource.name}}'
+          administratorLogin: '{{context.resource.properties.username}}'
+          administratorLoginPassword: '{{context.resource.properties.password}}'
+          authConfig: {
+            activeDirectoryAuth: 'Enabled'
+            passwordAuth: 'Enabled'
+          }
+          skuName: '{{context.resource.properties.size == "S" ? "Standard_B1ms" : "Standard_D2ds_v5"}}'
+          tier: '{{context.resource.properties.size == "S" ? "Burstable" : "GeneralPurpose"}}'
+          databases: [
+            {
+              name: '{{context.resource.properties.database}}'
+            }
+          ]
+          version: '16'
+          availabilityZone: -1
+          highAvailability: 'Disabled'
+          geoRedundantBackup: 'Disabled'
+          storageSizeGB: 32
+          publicNetworkAccess: 'Enabled'
+          firewallRules: [
+            {
+              name: 'allow-all'
+              startIpAddress: '0.0.0.0'
+              endIpAddress: '255.255.255.255'
+            }
+          ]
+          enableAdvancedThreatProtection: false
+          enableTelemetry: false
+        }
+        outputs: {
+          host: 'fqdn'
+        }
+      }
+      'Radius.Data/sqlServerDatabases': {
+        kind: 'bicep'
+        source: 'mcr.microsoft.com/bicep/avm/res/sql/server:0.21.4'
+        parameters: {
+          name: '{{context.resource.name}}'
+          administratorLogin: '{{context.resource.properties.username}}'
+          administratorLoginPassword: '{{context.resource.properties.password}}'
+          publicNetworkAccess: 'Enabled'
+          firewallRules: [
+            {
+              name: 'AllowAllWindowsAzureIps'
+              startIpAddress: '0.0.0.0'
+              endIpAddress: '0.0.0.0'
+            }
+          ]
+          databases: [
+            {
+              name: '{{context.resource.properties.database}}'
+              availabilityZone: -1
+              sku: {
+                name: 'Basic'
+                tier: 'Basic'
+              }
+              maxSizeBytes: 2147483648
+              zoneRedundant: false
+            }
+          ]
+          enableTelemetry: false
+        }
+        outputs: {
+          host: 'fullyQualifiedDomainName'
+        }
+      }
+      'Radius.Messaging/rabbitMQ': {
+        kind: 'bicep'
+        source: 'mcr.microsoft.com/bicep/avm/res/service-bus/namespace:0.16.2'
+        parameters: {
+          name: '{{context.resource.name}}'
+          skuObject: {
+            name: 'Standard'
+          }
+          zoneRedundant: false
+          disableLocalAuth: false
+          queues: [
+            {
+              name: '{{context.resource.properties.queue}}'
+            }
+          ]
+          enableTelemetry: false
+        }
+        outputs: {
+          host: 'name'
+          connectionString: 'primaryConnectionString'
+        }
+      }
+      'Radius.Messaging/kafka': {
+        kind: 'bicep'
+        source: 'mcr.microsoft.com/bicep/avm/res/event-hub/namespace:0.14.2'
+        parameters: {
+          name: '{{context.resource.name}}'
+          skuName: 'Standard'
+          skuCapacity: 1
+          disableLocalAuth: false
+          eventhubs: [
+            {
+              name: '{{context.resource.properties.topic}}'
+            }
+          ]
+          enableTelemetry: false
+        }
+        outputs: {
+          host: 'name'
+          connectionString: 'primaryConnectionString'
         }
       }
       'Radius.Compute/containers': {
