@@ -48,7 +48,7 @@ resource-types-contrib/
 └── recipepack/                      # Recipe Packs cover recipes for all types in the repo
     ├── azure/                        # Azure recipe pack (recipes for all types + environment)
     │       ├── README.md                  # Documentation for the Azure recipe pack
-    │       └── default-recipepack.bicep   # Recipe pack wiring Bicep and Terraform recipes
+    │       └── aks-recipepack.bicep   # Recipe pack wiring Bicep and Terraform recipes
     ├── aws/                          # AWS recipe pack
     │       ├── README.md
     │       └── default-recipepack.bicep
