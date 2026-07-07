@@ -6,10 +6,6 @@ terraform {
       source  = "hashicorp/aws"
       version = ">= 5.0"
     }
-    kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = ">= 2.37.1"
-    }
   }
 }
 
@@ -21,7 +17,6 @@ locals {
   resource_name    = var.context.resource.name
   application_name = var.context.application != null ? var.context.application.name : ""
   environment_name = var.context.environment != null ? var.context.environment.name : ""
-  namespace        = var.context.runtime.kubernetes.namespace
 }
 
 //////////////////////////////////////////
@@ -29,10 +24,11 @@ locals {
 //////////////////////////////////////////
 
 locals {
-  port        = 3306
-  database    = try(var.context.resource.properties.database, "mysql_db")
-  secret_name = var.context.resource.properties.secretName
-  version     = try(var.context.resource.properties.version, "8.4")
+  port     = 3306
+  database = try(var.context.resource.properties.database, "mysql_db")
+  username = var.context.resource.properties.username
+  password = var.context.resource.properties.password
+  version  = try(var.context.resource.properties.version, "8.4")
 
   unique_suffix = substr(md5(local.resource_name), 0, 13)
 
@@ -46,17 +42,6 @@ locals {
     "radapp.io/resource"    = local.resource_name
     "radapp.io/application" = local.application_name
     "radapp.io/environment" = local.environment_name
-  }
-}
-
-//////////////////////////////////////////
-// Credentials
-//////////////////////////////////////////
-
-data "kubernetes_secret" "db_credentials" {
-  metadata {
-    name      = local.secret_name
-    namespace = local.namespace
   }
 }
 
@@ -108,8 +93,8 @@ module "db" {
   instance_class       = var.instanceClass
 
   db_name  = local.sanitized_database
-  username = try(data.kubernetes_secret.db_credentials.data["USERNAME"], "")
-  password = try(data.kubernetes_secret.db_credentials.data["PASSWORD"], "")
+  username = local.username
+  password = local.password
   port     = local.port
 
   allocated_storage = var.allocatedStorage
