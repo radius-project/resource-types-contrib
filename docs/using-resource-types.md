@@ -47,7 +47,7 @@ Deploy a Recipe Pack to create and configure the Environment:
 
 ```bash
 # Configure an Environment with the Azure recipe pack
-rad deploy recipepack/azure/default-recipepack.bicep
+rad deploy recipepack/azure/aks-recipepack.bicep
 
 # Or start with the zero-config Kubernetes default
 rad deploy recipepack/default-kubernetes/aks-recipepack.bicep
