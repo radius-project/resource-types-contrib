@@ -26,6 +26,7 @@ Each pack declares a `Radius.Core/recipePacks` resource whose `recipes` map cont
 | `Radius.Compute/persistentVolumes` | Bicep | `ghcr.io/radius-project/kube-recipes/persistentvolumes` |
 | `Radius.Security/secrets` | Bicep | `ghcr.io/radius-project/kube-recipes/secrets` |
 | `Radius.Compute/routes` | Bicep | `ghcr.io/radius-project/kube-recipes/routes` |
+| `Radius.Compute/containerImages` | Terraform | `git::https://github.com/radius-project/resource-types-contrib.git//Compute/containerImages/recipes/kubernetes/terraform` |
 
 ## Parameters
 
@@ -37,6 +38,8 @@ The Azure pack accepts the provider configuration it needs to provision into you
 | `azureResourceGroup` | Existing Azure resource group the Environment provisions resources into. |
 | `routesGatewayName` | Name of the existing Kubernetes Gateway resource that `Radius.Compute/routes` attach to. |
 | `routesGatewayNamespace` | Namespace of the Gateway resource for `Radius.Compute/routes`. Defaults to `default`. |
+| `containerImagesRegistry` | Registry path (e.g. `ghcr.io/my-org`) that `Radius.Compute/containerImages` pushes built images to. |
+| `containerImagesRegistrySecretName` | Name of the Kubernetes Secret holding registry credentials for `Radius.Compute/containerImages`. Optional; leave empty for an unauthenticated registry. |
 
 ## Deploying
 
@@ -46,7 +49,8 @@ Deploy the pack with the `rad` CLI, supplying the parameters it requires. Deploy
 rad deploy recipepack/azure/bicep-recipepack.bicep \
   --parameters azureSubscriptionId=<subscription-id> \
   --parameters azureResourceGroup=<resource-group> \
-  --parameters routesGatewayName=<gateway-name>
+  --parameters routesGatewayName=<gateway-name> \
+  --parameters containerImagesRegistry=<registry-path>
 ```
 
 After the pack is deployed, every Resource Type it covers can be used in an application deployed to that Environment.

@@ -12,6 +12,12 @@ param routesGatewayName string
 @description('Namespace where the Kubernetes Gateway resource for Radius.Compute/routes is located.')
 param routesGatewayNamespace string = 'default'
 
+@description('Registry path (e.g. ghcr.io/my-org) that Radius.Compute/containerImages pushes built images to.')
+param containerImagesRegistry string
+
+@description('Name of the Kubernetes Secret holding registry credentials for Radius.Compute/containerImages. Leave empty for an unauthenticated registry.')
+param containerImagesRegistrySecretName string = ''
+
 resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
   name: 'azure-avm'
   properties: {
@@ -303,6 +309,14 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
         parameters: {
           gatewayName: routesGatewayName
           gatewayNamespace: routesGatewayNamespace
+        }
+      }
+      'Radius.Compute/containerImages': {
+        kind: 'terraform'
+        source: 'git::https://github.com/radius-project/resource-types-contrib.git//Compute/containerImages/recipes/kubernetes/terraform'
+        parameters: {
+          registry: containerImagesRegistry
+          registrySecretName: containerImagesRegistrySecretName
         }
       }
     }
