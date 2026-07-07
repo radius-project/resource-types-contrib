@@ -34,7 +34,7 @@ Registering the type also makes it available in Bicep through the generated exte
 
 ## Discovering and using Recipe Packs
 
-Recipe Packs live at the repository root under [`recipepack/`](../recipepack). Each platform has its own folder containing a single Recipe Pack (`default-recipepack.bicep`) that wires both Bicep and Terraform recipes:
+Recipe Packs live at the repository root under [`recipepack/`](../recipepack). Each platform has its own folder containing a default Recipe Pack (`default-recipepack.bicep`) that can wire both Bicep and Terraform recipes:
 
 - `azure/` — recipes for all types provisioned on Azure.
 - `aws/` — recipes for all types provisioned on AWS.
