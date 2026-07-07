@@ -262,7 +262,7 @@ A brief description of what the Recipe does and how to use it.
 
 ## Recipes and Recipe Packs
 
-Recipes for a Resource Type are added to the platform Recipe Packs under `recipepack/` at the repository root. Each platform has its own folder (`azure/`, `aws/`, `kubernetes/`, and `default-kubernetes/`) containing a single Recipe Pack (`default-recipepack.bicep`) that wires both Bicep and Terraform recipes. Each Recipe Pack declares a single `Radius.Core/recipePacks` resource whose `recipes` map contains an entry for every Resource Type, plus a `Radius.Core/environments` resource that references the pack.
+Recipes for a Resource Type are added to the platform Recipe Packs under `recipepack/` at the repository root. Each platform has its own folder (`azure/`, `aws/` ,  and `kubernetes/`) containing a single Recipe Pack (`default-recipepack.bicep`) that wires both Bicep and Terraform recipes. Each Recipe Pack declares a single `Radius.Core/recipePacks` resource whose `recipes` map contains an entry for every Resource Type, plus a `Radius.Core/environments` resource that references the pack.
 
 Today Radius supports Bicep and Terraform Recipe drivers, so a Recipe can be a Bicep template or a Terraform configuration. It can also point to well-maintained community modules like the [Azure Verified Modules](https://azure.github.io/Azure-Verified-Modules/) or the [AWS Terraform modules](https://registry.terraform.io/namespaces/terraform-aws-modules). When pointing at a standard module, Radius resolves any `{{context.*}}` expressions in the Recipe's `parameters` against the resource being deployed and maps the module's outputs onto the resource's read-only properties via the `outputs` field, so no Radius-specific wrapping is required.
 
