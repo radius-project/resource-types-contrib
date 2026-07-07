@@ -3,7 +3,6 @@ extension kubernetes with {
   namespace: context.runtime.kubernetes.namespace
 } as kubernetes
 
-
 //////////////////////////////////////////
 // Common Radius variables
 //////////////////////////////////////////
