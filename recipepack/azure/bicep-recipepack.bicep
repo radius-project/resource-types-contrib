@@ -247,6 +247,38 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
           connectionString: 'primaryConnectionString'
         }
       }
+      'Radius.Storage/objectStorage': {
+        kind: 'bicep'
+        source: 'mcr.microsoft.com/bicep/avm/res/storage/storage-account:0.32.1'
+        parameters: {
+          name: '{{context.resource.name}}'
+          kind: 'StorageV2'
+          skuName: 'Standard_LRS'
+          allowBlobPublicAccess: false
+          // The AVM storage-account module is secure-by-default: with no networkAcls
+          // it applies { bypass: 'AzureServices', defaultAction: 'Deny' }, which
+          // firewalls the blob data plane so connecting apps get 403
+          // AuthorizationFailure. Allow key-authenticated data-plane access; data
+          // stays private (allowBlobPublicAccess is false and access needs the key).
+          networkAcls: {
+            bypass: 'AzureServices'
+            defaultAction: 'Allow'
+          }
+          blobServices: {
+            containers: [
+              {
+                name: '{{context.resource.properties.containerName}}'
+              }
+            ]
+          }
+          enableTelemetry: false
+        }
+        outputs: {
+          endpoint: 'primaryBlobEndpoint'
+          accountKey: 'primaryAccessKey'
+          accountName: 'name'
+        }
+      }
       'Radius.Compute/containers': {
         kind: 'bicep'
         source: 'ghcr.io/radius-project/kube-recipes/containers:latest'
