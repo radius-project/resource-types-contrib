@@ -6,6 +6,12 @@ param azureSubscriptionId string
 @description('Azure resource group the environment provisions resources into. Must already exist.')
 param azureResourceGroup string
 
+@description('Name of the Kubernetes Gateway resource that Radius.Compute/routes attach to. Must already exist in the cluster.')
+param routesGatewayName string
+
+@description('Namespace where the Kubernetes Gateway resource for Radius.Compute/routes is located.')
+param routesGatewayNamespace string = 'default'
+
 resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
   name: 'azure-avm'
   properties: {
@@ -294,6 +300,10 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
       'Radius.Compute/routes': {
         kind: 'bicep'
         source: 'ghcr.io/radius-project/kube-recipes/routes:latest'
+        parameters: {
+          gatewayName: routesGatewayName
+          gatewayNamespace: routesGatewayNamespace
+        }
       }
     }
   }

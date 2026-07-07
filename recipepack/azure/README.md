@@ -35,6 +35,8 @@ The Azure pack accepts the provider configuration it needs to provision into you
 | --- | --- |
 | `azureSubscriptionId` | Azure subscription ID the Environment provisions resources into. |
 | `azureResourceGroup` | Existing Azure resource group the Environment provisions resources into. |
+| `routesGatewayName` | Name of the existing Kubernetes Gateway resource that `Radius.Compute/routes` attach to. |
+| `routesGatewayNamespace` | Namespace of the Gateway resource for `Radius.Compute/routes`. Defaults to `default`. |
 
 ## Deploying
 
@@ -43,7 +45,8 @@ Deploy the pack with the `rad` CLI, supplying the parameters it requires. Deploy
 ```bash
 rad deploy recipepack/azure/bicep-recipepack.bicep \
   --parameters azureSubscriptionId=<subscription-id> \
-  --parameters azureResourceGroup=<resource-group>
+  --parameters azureResourceGroup=<resource-group> \
+  --parameters routesGatewayName=<gateway-name>
 ```
 
 After the pack is deployed, every Resource Type it covers can be used in an application deployed to that Environment.
