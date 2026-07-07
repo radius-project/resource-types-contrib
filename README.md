@@ -37,7 +37,7 @@ resource-types-contrib/
     ├── aws/                             # AWS recipe pack
     │       ├── README.md
     │       └── eks-recipepack.bicep
-    ├── kubernetes/                      # Default Kubernetes recipe pack
+    ├── kubernetes/                      # Default recipe pack (zero-config, in-cluster)
             ├── README.md
             └── default-recipepack.bicep
 
