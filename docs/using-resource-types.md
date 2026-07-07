@@ -50,7 +50,7 @@ Deploy a Recipe Pack to create and configure the Environment:
 rad deploy recipepack/azure/default-recipepack.bicep
 
 # Or start with the zero-config Kubernetes default
-rad deploy recipepack/default-kubernetes/default-recipepack.bicep
+rad deploy recipepack/default-kubernetes/aks-recipepack.bicep
 ```
 
 After a Recipe Pack is deployed, every Resource Type it covers can be used in an application deployed to that Environment.
