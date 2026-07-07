@@ -39,7 +39,6 @@ Recipe Packs live at the repository root under [`recipepack/`](../recipepack). E
 - `azure/` — recipes for all types provisioned on Azure.
 - `aws/` — recipes for all types provisioned on AWS.
 - `kubernetes/` — recipes for all types provisioned in-cluster on Kubernetes.
-- `default-kubernetes/` — the zero-config, in-cluster default pack that ships out of the box.
 
 Each Recipe Pack bundles the Recipes for every Resource Type on that platform together with an Environment definition, so a platform engineer configures an Environment by deploying a single Recipe Pack instead of registering Recipes one type at a time. Cloud packs (under `azure/` and `aws/`) accept parameters for the provider configuration, such as the subscription or account the Environment provisions into.
 
