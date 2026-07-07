@@ -1,0 +1,190 @@
+# yaml-language-server: $schema=https://www.schemastore.org/github-workflow.json
+---
+name: release-namespace
+
+# Cuts an independent, per-namespace release of the resource-type manifests.
+#
+# Each namespace (`Radius.<Category>`) is versioned and tagged on its own series:
+#   tag:     Radius.<Category>/v<major>.<minor>.<patch>[-<prerelease>]
+#   asset:   Radius.<Category>-manifests-v<version>.tar.gz  (+ checksums.txt)
+#
+# Git tags are the single source of truth for the current version -- there is no
+# version file to maintain. A maintainer triggers this workflow, picks the
+# namespace and a bump type, and the workflow computes the next version, builds
+# the manifest bundle, and publishes a GitHub Release. This is the release side
+# of the per-namespace sync design (radius PR #12236): publishing per-namespace
+# versioned artifacts is what makes Radius's per-namespace `sources[].ref` pins
+# meaningful.
+#
+# Downstream: publishing the release fires `notify-radius.yaml` on
+# `release: published`, which dispatches the per-namespace pin (this tag) to
+# radius-project/radius as a reviewable sync PR. The release is created with the
+# RESOURCE_TYPES_BOT GitHub App token (not GITHUB_TOKEN) precisely so that the
+# `release: published` event is allowed to trigger that downstream workflow.
+#
+# Prerequisite (one-time, admin): the RESOURCE_TYPES_BOT GitHub App must be
+# installed on this repository with `contents: write` so it can create the tag
+# and release. `dry_run` needs no token and is safe to run anytime.
+#
+# To release a new namespace folder, add it to the `namespace` choice list below.
+
+on:
+  workflow_dispatch:
+    inputs:
+      namespace:
+        description: Namespace to release
+        type: choice
+        required: true
+        options:
+          - Radius.AI
+          - Radius.Compute
+          - Radius.Data
+          - Radius.Messaging
+          - Radius.Security
+      bump:
+        description: Semantic version bump
+        type: choice
+        required: true
+        default: minor
+        options:
+          - patch
+          - minor
+          - major
+      prerelease_label:
+        description: "Optional prerelease label (e.g. rc.1, beta.1); marks the release as a prerelease"
+        type: string
+        required: false
+        default: ""
+      dry_run:
+        description: Compute the version and build the bundle without tagging or publishing
+        type: boolean
+        required: false
+        default: false
+
+permissions: {}
+
+concurrency:
+  # One release at a time per namespace; never cancel an in-flight release.
+  group: release-namespace-${{ inputs.namespace }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release ${{ inputs.namespace }}
+    if: github.repository == 'radius-project/resource-types-contrib'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      # Read is enough for checkout; the tag/release is created with the App
+      # token so that `release: published` can trigger notify-radius.yaml.
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Full history and tags so version resolution and release notes work.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Resolve version
+        id: ver
+        env:
+          NAMESPACE: ${{ inputs.namespace }}
+          BUMP: ${{ inputs.bump }}
+          PRERELEASE_LABEL: ${{ inputs.prerelease_label }}
+        run: ./.github/scripts/release/next-version.sh
+
+      - name: Build manifest bundle
+        id: bundle
+        env:
+          NAMESPACE: ${{ inputs.namespace }}
+          VERSION: ${{ steps.ver.outputs.next }}
+          OUT_DIR: dist
+        run: ./.github/scripts/release/build-namespace-bundle.sh
+
+      - name: Generate release notes
+        id: notes
+        env:
+          NAMESPACE: ${{ inputs.namespace }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          folder="${NAMESPACE#Radius.}"
+          prev="$(git tag --list "${NAMESPACE}/v*" --sort=-v:refname | head -n1 || true)"
+          if [ -n "$prev" ]; then
+            range="${prev}..HEAD"
+          else
+            range="HEAD"
+          fi
+          {
+            echo "## ${TAG}"
+            echo ""
+            if [ -n "$prev" ]; then
+              echo "Changes in \`${folder}/\` since \`${prev}\`:"
+            else
+              echo "Initial release of the \`${NAMESPACE}\` namespace."
+            fi
+            echo ""
+            changes="$(git log --no-merges --pretty='- %s (%h)' "$range" -- "${folder}/" || true)"
+            if [ -n "$changes" ]; then
+              echo "$changes"
+            else
+              echo "- No manifest changes since the previous release."
+            fi
+          } > dist/notes.md
+          {
+            echo "prev=${prev:-none}"
+          } >> "$GITHUB_OUTPUT"
+          echo "--- release notes ---"
+          cat dist/notes.md
+
+      - name: Generate App Token
+        # Create the release as the RESOURCE_TYPES_BOT App (not GITHUB_TOKEN) so
+        # the `release: published` event triggers notify-radius.yaml. Requires
+        # the App installed on this repo with contents:write.
+        if: ${{ !inputs.dry_run }}
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RESOURCE_TYPES_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.RESOURCE_TYPES_BOT_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Create tag and GitHub Release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          IS_PRERELEASE: ${{ steps.ver.outputs.is_prerelease }}
+          ASSET: ${{ steps.bundle.outputs.asset }}
+          CHECKSUMS: ${{ steps.bundle.outputs.checksums }}
+        run: |
+          set -euo pipefail
+          args=(--target "$GITHUB_SHA" --title "$TAG" --notes-file dist/notes.md --latest=false)
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            args+=(--prerelease)
+          fi
+          gh release create "$TAG" "${args[@]}" "$ASSET" "$CHECKSUMS"
+
+      - name: Summarize
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          {
+            echo "## Release ${{ steps.ver.outputs.tag }}"
+            echo ""
+            echo "* Namespace: \`${{ inputs.namespace }}\`"
+            echo "* Current -> next: \`${{ steps.ver.outputs.current }}\` -> \`${{ steps.ver.outputs.next }}\`"
+            echo "* Since previous tag: \`${{ steps.notes.outputs.prev }}\`"
+            echo "* Prerelease: \`${{ steps.ver.outputs.is_prerelease }}\`"
+            echo "* Manifests bundled: \`${{ steps.bundle.outputs.count }}\`"
+            echo "* Asset: \`$(basename "${{ steps.bundle.outputs.asset }}")\`"
+            if [ "$DRY_RUN" = "true" ]; then
+              echo ""
+              echo "_Dry run: no tag or release was created._"
+            else
+              echo ""
+              echo "Published as \`${{ steps.ver.outputs.tag }}\`; notify-radius.yaml will open the per-namespace sync PR in radius."
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
