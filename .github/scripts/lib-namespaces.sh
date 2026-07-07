@@ -76,19 +76,22 @@ rtc_list_folders() {
 }
 
 _rtc_scan_folders() {
-    local file rel top seen=" "
-    while IFS= read -r file; do
-        rel="${file#"$RTC_REPO_ROOT"/}"
-        top="${rel%%/*}"
-        rtc_is_excluded_dir "$top" && continue
-        case "$seen" in
-            *" $top "*) continue ;;
-        esac
-        rtc_is_resource_type_yaml "$file" || continue
-        seen="$seen$top "
-        echo "$top"
-    done < <(find "$RTC_REPO_ROOT" -mindepth 3 -maxdepth 3 -type f \
-        \( -name '*.yaml' -o -name '*.yml' \) | sort)
+    local dir base file
+    # Enumerate only the immediate top-level directories and skip excluded ones
+    # BEFORE descending, so find never traverses large trees such as .git/ or
+    # .github/. Each remaining category directory is then scanned just two
+    # levels deep for a resource-type manifest (<category>/<type>/<file>.yaml).
+    while IFS= read -r dir; do
+        base="${dir##*/}"
+        rtc_is_excluded_dir "$base" && continue
+        while IFS= read -r file; do
+            if rtc_is_resource_type_yaml "$file"; then
+                echo "$base"
+                break
+            fi
+        done < <(find "$dir" -mindepth 2 -maxdepth 2 -type f \
+            \( -name '*.yaml' -o -name '*.yml' \))
+    done < <(find "$RTC_REPO_ROOT" -mindepth 1 -maxdepth 1 -type d | sort)
 }
 
 # Print the releasable namespaces (`Radius.<Category>`), one per line.
