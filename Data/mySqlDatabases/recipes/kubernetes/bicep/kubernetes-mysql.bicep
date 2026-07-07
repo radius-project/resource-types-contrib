@@ -20,7 +20,9 @@ var namespace = context.runtime.kubernetes.namespace
 // MySQL variables
 //////////////////////////////////////////
 
-var dbSecretName = context.resource.properties.secretName
+var dbSecretName = '${resourceName}-secret'
+var username = context.resource.properties.username
+var password = context.resource.properties.password
 var database = context.resource.properties.?database ?? 'mysql_db'
 
 @description('The major MySQL server version in the X.Y format. Defaults to the version 8.4 if not provided.')
@@ -38,6 +40,23 @@ var labels = {
   'radapp.io/environment': environmentName
   'radapp.io/resource-type': replace(context.resource.type, '/', '-')
   'radapp.io/resource-group': resourceGroupName
+}
+
+//////////////////////////////////////////
+// Credentials Secret
+//////////////////////////////////////////
+
+resource dbSecret 'core/Secret@v1' = {
+  metadata: {
+    name: dbSecretName
+    namespace: namespace
+    labels: labels
+  }
+  type: 'Opaque'
+  stringData: {
+    USERNAME: username
+    PASSWORD: password
+  }
 }
 
 //////////////////////////////////////////
@@ -80,7 +99,7 @@ resource mySql 'apps/Deployment@v1' = {
                 name: 'MYSQL_USER'
                 valueFrom: {
                   secretKeyRef: {
-                    name: dbSecretName
+                    name: dbSecret.metadata.name
                     key: 'USERNAME'
                   }
                 }
@@ -89,7 +108,7 @@ resource mySql 'apps/Deployment@v1' = {
                 name: 'MYSQL_PASSWORD'
                 valueFrom: {
                   secretKeyRef: {
-                    name: dbSecretName
+                    name: dbSecret.metadata.name
                     key: 'PASSWORD'
                   }
                 }
@@ -131,6 +150,7 @@ resource svc 'core/Service@v1' = {
 
 output result object = {
   resources: [
+    '/planes/kubernetes/local/namespaces/${dbSecret.metadata.namespace}/providers/core/Secret/${dbSecret.metadata.name}'
     '/planes/kubernetes/local/namespaces/${svc.metadata.namespace}/providers/core/Service/${svc.metadata.name}'
     '/planes/kubernetes/local/namespaces/${mySql.metadata.namespace}/providers/apps/Deployment/${mySql.metadata.name}'
   ]

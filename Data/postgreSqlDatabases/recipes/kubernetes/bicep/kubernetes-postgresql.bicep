@@ -20,7 +20,9 @@ var namespace = context.runtime.kubernetes.namespace
 // PostgreSQL variables
 //////////////////////////////////////////
 
-var dbSecretName = context.resource.properties.secretName
+var dbSecretName = '${resourceName}-secret'
+var username = context.resource.properties.username
+var password = context.resource.properties.password
 var database = context.resource.properties.?database ?? 'postgres_db'
 var sizeValue = context.resource.properties.?size ?? 'S'
 var initSql = context.resource.properties.?initSql ?? ''
@@ -59,6 +61,23 @@ resource initSqlConfigMap 'core/ConfigMap@v1' = if (hasInitSql) {
   }
   data: {
     '01-init.sql': initSql
+  }
+}
+
+//////////////////////////////////////////
+// Credentials Secret
+//////////////////////////////////////////
+
+resource dbSecret 'core/Secret@v1' = {
+  metadata: {
+    name: dbSecretName
+    namespace: namespace
+    labels: labels
+  }
+  type: 'Opaque'
+  stringData: {
+    USERNAME: username
+    PASSWORD: password
   }
 }
 
@@ -104,7 +123,7 @@ resource postgresql 'apps/Deployment@v1' = {
                 name: 'POSTGRES_USER'
                 valueFrom: {
                   secretKeyRef: {
-                    name: dbSecretName
+                    name: dbSecret.metadata.name
                     key: 'USERNAME'
                   }
                 }
@@ -113,7 +132,7 @@ resource postgresql 'apps/Deployment@v1' = {
                 name: 'POSTGRES_PASSWORD'
                 valueFrom: {
                   secretKeyRef: {
-                    name: dbSecretName
+                    name: dbSecret.metadata.name
                     key: 'PASSWORD'
                   }
                 }
@@ -171,6 +190,7 @@ resource svc 'core/Service@v1' = {
 output result object = {
   resources: union(
     [
+      '/planes/kubernetes/local/namespaces/${dbSecret.metadata.namespace}/providers/core/Secret/${dbSecret.metadata.name}'
       '/planes/kubernetes/local/namespaces/${svc.metadata.namespace}/providers/core/Service/${svc.metadata.name}'
       '/planes/kubernetes/local/namespaces/${postgresql.metadata.namespace}/providers/apps/Deployment/${postgresql.metadata.name}'
     ],

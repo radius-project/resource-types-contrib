@@ -39,7 +39,9 @@ locals {
   namespace          = var.context.runtime.kubernetes.namespace
   port               = 5432
   tag                = "16-alpine"
-  db_secret_name     = var.context.resource.properties.secretName
+  db_secret_name     = "${local.resource_name}-secret"
+  username           = var.context.resource.properties.username
+  password           = var.context.resource.properties.password
   database           = try(var.context.resource.properties.database, "postgres_db")
   size_value         = try(var.context.resource.properties.size, "S")
 
@@ -52,7 +54,24 @@ locals {
   }
 }
 
+resource "kubernetes_secret" "postgresql" {
+  metadata {
+    name      = local.db_secret_name
+    namespace = local.namespace
+    labels    = local.labels
+  }
+
+  data = {
+    USERNAME = local.username
+    PASSWORD = local.password
+  }
+
+  type = "Opaque"
+}
+
 resource "kubernetes_deployment" "postgresql" {
+  depends_on = [kubernetes_secret.postgresql]
+
   metadata {
     name      = local.resource_name
     namespace = local.namespace
@@ -139,6 +158,7 @@ resource "kubernetes_service" "postgres" {
 output "result" {
   value = {
     resources = [
+      "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Secret/${local.db_secret_name}",
       "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Service/${local.resource_name}",
       "/planes/kubernetes/local/namespaces/${local.namespace}/providers/apps/Deployment/${local.resource_name}"
     ]
