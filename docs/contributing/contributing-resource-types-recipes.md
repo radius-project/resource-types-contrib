@@ -372,7 +372,7 @@ After creating your Resource Type and Recipes, test them locally using the provi
    make configure-azure-provider
 
    # Deploy the Recipe Pack, supplying its parameters
-   rad deploy recipepack/azure/default-recipepack.bicep \
+   rad deploy recipepack/azure/aks-recipepack.bicep \
      --parameters azureSubscriptionId=<subscription-id> \
      --parameters azureResourceGroup=<resource-group>
    ```
