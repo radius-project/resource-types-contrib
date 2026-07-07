@@ -229,8 +229,8 @@ A list of the Recipes provided for this Resource Type, including the platform Re
 
 | Platform | Recipe Pack | Module Source |
 |---|---|---|
-| Azure | recipepack/azure/default-recipepack.bicep | mcr.microsoft.com/bicep/avm/res/cache/redis-enterprise |
-| AWS | recipepack/aws/default-recipepack.bicep | ... |
+| Azure | recipepack/azure/aks-recipepack.bicep | mcr.microsoft.com/bicep/avm/res/cache/redis-enterprise |
+| AWS | recipepack/aws/eks-recipepack.bicep | ... |
 | Kubernetes | recipepack/kubernetes/default-recipepack.bicep | ghcr.io/radius-project/kube-recipes/... |
 
 ## Recipe Input Properties
