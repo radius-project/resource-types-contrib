@@ -31,21 +31,18 @@ resource-types-contrib/
 │       └── test/
 │               └── app.bicep           # Developer-facing test application
 └── recipepack/                         # Recipe packs cover recipe definitions for all types in the repo
-    ├── azure/                           # Azure recipe packs (recipes for all types + environment)
-    │       ├── README.md                    # Documentation for the Azure recipe packs
-    │       ├── bicep-recipepack.bicep       # Recipe pack wiring Bicep recipes
-    │       └── terraform-recipepack.bicep   # Recipe pack wiring Terraform recipes
-    ├── aws/                             # AWS recipe packs
+    ├── azure/                           # Azure recipe pack (recipes for all types + environment)
+    │       ├── README.md                    # Documentation for the Azure recipe pack
+    │       └── default-recipepack.bicep     # Recipe pack wiring Bicep and Terraform recipes
+    ├── aws/                             # AWS recipe pack
     │       ├── README.md
-    │       └── terraform-recipepack.bicep   # AWS recipes use Terraform modules
-    ├── kubernetes/                      # Kubernetes recipe packs
+    │       └── default-recipepack.bicep
+    ├── kubernetes/                      # Kubernetes recipe pack
     │       ├── README.md
-    │       ├── bicep-recipepack.bicep
-    │       └── terraform-recipepack.bicep
+    │       └── default-recipepack.bicep
     └── default-kubernetes/              # Default recipe pack 
             ├── README.md
-            ├── bicep-recipepack.bicep
-            └── terraform-recipepack.bicep
+            └── default-recipepack.bicep
 ```
 
 ## Discovering and using Resource Types and Recipe Packs

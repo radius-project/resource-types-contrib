@@ -34,7 +34,7 @@ Registering the type also makes it available in Bicep through the generated exte
 
 ## Discovering and using Recipe Packs
 
-Recipe Packs live at the repository root under [`recipepack/`](../recipepack). Each platform has its own folder containing a Bicep-recipes pack (`bicep-recipepack.bicep`) and a Terraform-recipes pack (`terraform-recipepack.bicep`):
+Recipe Packs live at the repository root under [`recipepack/`](../recipepack). Each platform has its own folder containing a single Recipe Pack (`default-recipepack.bicep`) that wires both Bicep and Terraform recipes:
 
 - `azure/` — recipes for all types provisioned on Azure.
 - `aws/` — recipes for all types provisioned on AWS.
@@ -46,11 +46,11 @@ Each Recipe Pack bundles the Recipes for every Resource Type on that platform to
 Deploy a Recipe Pack to create and configure the Environment:
 
 ```bash
-# Configure an Environment with the Azure Bicep-recipes pack
-rad deploy recipepack/azure/bicep-recipepack.bicep
+# Configure an Environment with the Azure recipe pack
+rad deploy recipepack/azure/default-recipepack.bicep
 
 # Or start with the zero-config Kubernetes default
-rad deploy recipepack/default-kubernetes/bicep-recipepack.bicep
+rad deploy recipepack/default-kubernetes/default-recipepack.bicep
 ```
 
 After a Recipe Pack is deployed, every Resource Type it covers can be used in an application deployed to that Environment.
