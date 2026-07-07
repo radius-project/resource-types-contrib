@@ -283,6 +283,18 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
         kind: 'bicep'
         source: 'ghcr.io/radius-project/kube-recipes/containers:latest'
       }
+      'Radius.Compute/persistentVolumes': {
+        kind: 'bicep'
+        source: 'ghcr.io/radius-project/kube-recipes/persistentvolumes:latest'
+      }
+      'Radius.Security/secrets': {
+        kind: 'bicep'
+        source: 'ghcr.io/radius-project/kube-recipes/secrets:latest'
+      }
+      'Radius.Compute/routes': {
+        kind: 'bicep'
+        source: 'ghcr.io/radius-project/kube-recipes/routes:latest'
+      }
     }
   }
 }

@@ -23,6 +23,9 @@ Each pack declares a `Radius.Core/recipePacks` resource whose `recipes` map cont
 | `Radius.Data/redisCaches` | Bicep | Azure Verified Module — `avm/res/cache/redis-enterprise` |
 | `Radius.Storage/objectStorage` | Bicep | Azure Verified Module — `avm/res/storage/storage-account` |
 | `Radius.Compute/containers` | Bicep | `ghcr.io/radius-project/kube-recipes/containers` |
+| `Radius.Compute/persistentVolumes` | Bicep | `ghcr.io/radius-project/kube-recipes/persistentvolumes` |
+| `Radius.Security/secrets` | Bicep | `ghcr.io/radius-project/kube-recipes/secrets` |
+| `Radius.Compute/routes` | Bicep | `ghcr.io/radius-project/kube-recipes/routes` |
 
 ## Parameters
 
