@@ -48,7 +48,7 @@ The Azure pack accepts the provider configuration it needs to provision into you
 Deploy the pack with the `rad` CLI, supplying the parameters it requires. Deploying the file creates the `Radius.Core/recipePacks` resource and configures the `default` Environment to use it:
 
 ```bash
-rad deploy recipepack/azure/bicep-recipepack.bicep \
+rad deploy recipepack/azure/aks-recipepack.bicep \
   --parameters azureSubscriptionId=<subscription-id> \
   --parameters azureResourceGroup=<resource-group> \
   --parameters routesGatewayName=<gateway-name> \
