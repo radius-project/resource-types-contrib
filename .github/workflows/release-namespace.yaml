@@ -8,6 +8,10 @@ name: release-namespace
 #   tag:     Radius.<Category>/v<major>.<minor>.<patch>[-<prerelease>]
 #   asset:   Radius.<Category>-manifests-v<version>.tar.gz  (+ checksums.txt)
 #
+# Every published release artifact gets a signed SLSA build provenance
+# attestation (actions/attest-build-provenance), verifiable with
+#   gh attestation verify <asset> --repo radius-project/resource-types-contrib
+#
 # Git tags are the single source of truth for the current version -- there is no
 # version file to maintain. A maintainer triggers this workflow, picks the
 # namespace and a bump type, and the workflow computes the next version, builds
@@ -78,6 +82,9 @@ jobs:
       # Read is enough for checkout; the tag/release is created with the App
       # token so that `release: published` can trigger notify-radius.yaml.
       contents: read
+      # Sign and record a build provenance attestation for the release artifact.
+      id-token: write
+      attestations: write
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -139,6 +146,17 @@ jobs:
           echo "--- release notes ---"
           cat dist/notes.md
 
+      - name: Attest build provenance
+        # Generate a signed SLSA build provenance attestation for the release
+        # bundle so consumers can cryptographically verify it was built by this
+        # workflow and has not been tampered with. Runs before publishing so a
+        # released artifact is always attested (fail-closed). Verify with:
+        #   gh attestation verify <asset> --repo radius-project/resource-types-contrib
+        if: ${{ !inputs.dry_run }}
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: ${{ steps.bundle.outputs.asset }}
+
       - name: Generate App Token
         # Create the release as the RESOURCE_TYPES_BOT App (not GITHUB_TOKEN) so
         # the `release: published` event triggers notify-radius.yaml. Requires
@@ -182,8 +200,9 @@ jobs:
             echo "* Asset: \`$(basename "${{ steps.bundle.outputs.asset }}")\`"
             if [ "$DRY_RUN" = "true" ]; then
               echo ""
-              echo "_Dry run: no tag or release was created._"
+              echo "_Dry run: no tag, release, or attestation was created._"
             else
+              echo "* Provenance: attested (verify with \`gh attestation verify <asset> --repo ${{ github.repository }}\`)"
               echo ""
               echo "Published as \`${{ steps.ver.outputs.tag }}\`; notify-radius.yaml will open the per-namespace sync PR in radius."
             fi
