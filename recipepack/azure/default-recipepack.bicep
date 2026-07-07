@@ -1,5 +1,11 @@
 extension radius
 
+@description('Name of the Radius environment to create.')
+param environmentName string = 'default'
+
+@description('Kubernetes namespace the Radius environment deploys resources into.')
+param environmentNamespace string = 'default'
+
 @description('Azure subscription ID the environment provisions resources into.')
 param azureSubscriptionId string
 
@@ -325,7 +331,7 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
 }
 
 resource env 'Radius.Core/environments@2025-08-01-preview' = {
-  name: 'default'
+  name: environmentName
   properties: {
     providers: {
       azure: {
@@ -333,7 +339,7 @@ resource env 'Radius.Core/environments@2025-08-01-preview' = {
         resourceGroupName: azureResourceGroup
       }
       kubernetes: {
-        namespace: 'default'
+        namespace: environmentNamespace
       }
     }
     recipePacks: [

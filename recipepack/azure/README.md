@@ -34,6 +34,8 @@ The Azure pack accepts the provider configuration it needs to provision into you
 
 | Parameter | Description |
 | --- | --- |
+| `environmentName` | Name of the Radius Environment to create. Defaults to `default`. |
+| `environmentNamespace` | Kubernetes namespace the Radius Environment deploys resources into. Defaults to `default`. |
 | `azureSubscriptionId` | Azure subscription ID the Environment provisions resources into. |
 | `azureResourceGroup` | Existing Azure resource group the Environment provisions resources into. |
 | `routesGatewayName` | Name of the existing Kubernetes Gateway resource that `Radius.Compute/routes` attach to. |
