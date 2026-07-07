@@ -21,6 +21,7 @@ Each pack declares a `Radius.Core/recipePacks` resource whose `recipes` map cont
 | `Radius.Data/mongoDatabases` | Bicep | Azure Verified Module — `avm/res/document-db/database-account` |
 | `Radius.Data/mySqlDatabases` | Bicep | Azure Verified Module — `avm/res/db-for-my-sql/flexible-server` |
 | `Radius.Data/redisCaches` | Bicep | Azure Verified Module — `avm/res/cache/redis-enterprise` |
+| `Radius.Storage/objectStorage` | Bicep | Azure Verified Module — `avm/res/storage/storage-account` |
 | `Radius.Compute/containers` | Bicep | `ghcr.io/radius-project/kube-recipes/containers` |
 
 ## Parameters
