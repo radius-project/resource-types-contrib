@@ -52,10 +52,7 @@ resource-types-contrib/
     ├── aws/                          # AWS recipe pack
     │       ├── README.md
     │       └──eks-recipepack.bicep
-    ├── kubernetes/                   # Kubernetes recipe pack
-    │       ├── README.md
-    │       └── default-recipepack.bicep
-    └── default-kubernetes/           # Default recipe pack (zero-config, in-cluster)
+    └── kubernetes/           # Default recipe pack (zero-config, in-cluster)
             ├── README.md
             └── default-recipepack.bicep
 ```
