@@ -365,7 +365,7 @@ After creating your Resource Type and Recipes, test them locally using the provi
 
 3. **Deploy the Recipe Pack to configure your Environment**:
 
-   A Recipe Pack declares the `Radius.Core/recipePacks` and `Radius.Core/environments` resources, so deploying it registers the Recipes for every Resource Type it covers in the Environment. Add your Resource Type's Recipe to the pack for your target platform, then deploy that pack. For example, the Azure pack (`recipepack/azure/default-recipepack.bicep`) holds the Recipe definitions for all Azure-provisioned types and is deployed with the `rad` CLI, supplying the pack's parameters:
+   A Recipe Pack declares the `Radius.Core/recipePacks` and `Radius.Core/environments` resources, so deploying it registers the Recipes for every Resource Type it covers in the Environment. Add your Resource Type's Recipe to the pack for your target platform, then deploy that pack. For example, the Azure pack (`recipepack/azure/aks-recipepack.bicep`) holds the Recipe definitions for all Azure-provisioned types and is deployed with the `rad` CLI, supplying the pack's parameters:
    ```bash
    # Configure the Radius Azure provider credentials (requires AZURE_* env vars:
    # AZURE_SUBSCRIPTION_ID, AZURE_RESOURCE_GROUP, AZURE_LOCATION, AZURE_TENANT_ID, AZURE_CLIENT_ID)
