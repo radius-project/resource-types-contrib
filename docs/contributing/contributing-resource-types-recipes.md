@@ -51,7 +51,7 @@ resource-types-contrib/
     │       └── aks-recipepack.bicep   # Recipe pack wiring Bicep and Terraform recipes
     ├── aws/                          # AWS recipe pack
     │       ├── README.md
-    │       └── default-recipepack.bicep
+    │       └──eks-recipepack.bicep
     ├── kubernetes/                   # Kubernetes recipe pack
     │       ├── README.md
     │       └── default-recipepack.bicep
