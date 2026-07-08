@@ -84,6 +84,9 @@ var secretNameEnvFrom = reduce(items(resourceConnections), [], (acc, conn) =>
 )
 
 // Each connection's resource properties (including the nested properties bag) become CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>
+// Null-valued properties are skipped: sensitive properties (e.g. a database
+// password marked x-radius-sensitive) are redacted to null on reads, and
+// string(null) fails ARM template validation with "InvalidTemplate".
 var connectionEnvVars = reduce(items(resourceConnections), [], (acc, conn) => 
 // Only process non-secrets connections here (secrets use envFrom)
   !isSecretsResource[conn.key] && connectionDefinitions[conn.key].?disableDefaultEnvVars != true
@@ -91,7 +94,7 @@ var connectionEnvVars = reduce(items(resourceConnections), [], (acc, conn) =>
         acc,
         // Add top-level connection properties (excluding metadata and the nested properties bag)
         reduce(items(conn.value ?? {}), [], (envAcc, prop) => 
-          (prop.key == 'properties' || prop.key == 'secretName' || contains(excludedProperties, prop.key))
+          (prop.key == 'properties' || prop.key == 'secretName' || contains(excludedProperties, prop.key) || prop.value == null)
             ? envAcc 
             : concat(envAcc, [{
                 name: toUpper('CONNECTION_${conn.key}_${prop.key}')
@@ -100,7 +103,7 @@ var connectionEnvVars = reduce(items(resourceConnections), [], (acc, conn) =>
         ),
         // Flatten the nested connection.properties bag so values like host/port become their own env vars
         reduce(items(conn.value.?properties ?? {}), [], (envAcc, prop) => 
-          (prop.key == 'secretName' || contains(excludedProperties, prop.key))
+          (prop.key == 'secretName' || contains(excludedProperties, prop.key) || prop.value == null)
             ? envAcc 
             : concat(envAcc, [{
                 name: toUpper('CONNECTION_${conn.key}_${prop.key}')
