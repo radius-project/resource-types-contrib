@@ -162,5 +162,10 @@ output "result" {
       port     = local.port
       database = local.database
     }
+    secrets = {
+      password         = local.password
+      connectionString = "postgresql://${local.username}:${local.password}@${kubernetes_service.postgres.metadata[0].name}.${kubernetes_service.postgres.metadata[0].namespace}.svc.cluster.local:${local.port}/${local.database}"
+    }
   }
+  sensitive = true
 }

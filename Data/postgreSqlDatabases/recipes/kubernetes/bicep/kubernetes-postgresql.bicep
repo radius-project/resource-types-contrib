@@ -207,4 +207,8 @@ output result object = {
     port: port
     database: database
   }
+  secrets: {
+    password: password
+    connectionString: 'postgresql://${username}:${password}@${svc.metadata.name}.${svc.metadata.namespace}.svc.cluster.local:${port}/${database}'
+  }
 }
