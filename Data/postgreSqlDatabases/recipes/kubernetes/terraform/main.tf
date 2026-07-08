@@ -39,7 +39,8 @@ locals {
   namespace          = var.context.runtime.kubernetes.namespace
   port               = 5432
   tag                = "16-alpine"
-  db_secret_name     = var.context.resource.properties.secretName
+  username           = var.context.resource.properties.username
+  password           = var.context.resource.properties.password
   database           = try(var.context.resource.properties.database, "postgres_db")
   size_value         = try(var.context.resource.properties.size, "S")
 
@@ -49,6 +50,19 @@ locals {
     "radapp.io/environment"    = local.environment_name
     "radapp.io/resource-type"  = replace(var.context.resource.type, "/", "-")
     "radapp.io/resource-group" = local.resource_group
+  }
+}
+
+resource "kubernetes_secret" "postgres" {
+  metadata {
+    name      = "${local.resource_name}-credentials"
+    namespace = local.namespace
+    labels    = local.labels
+  }
+
+  data = {
+    USERNAME = local.username
+    PASSWORD = local.password
   }
 }
 
@@ -90,7 +104,7 @@ resource "kubernetes_deployment" "postgresql" {
             name = "POSTGRES_USER"
             value_from {
               secret_key_ref {
-                name = local.db_secret_name
+                name = kubernetes_secret.postgres.metadata[0].name
                 key  = "USERNAME"
               }
             }
@@ -100,7 +114,7 @@ resource "kubernetes_deployment" "postgresql" {
             name = "POSTGRES_PASSWORD"
             value_from {
               secret_key_ref {
-                name = local.db_secret_name
+                name = kubernetes_secret.postgres.metadata[0].name
                 key  = "PASSWORD"
               }
             }
@@ -139,6 +153,7 @@ resource "kubernetes_service" "postgres" {
 output "result" {
   value = {
     resources = [
+      "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Secret/${kubernetes_secret.postgres.metadata[0].name}",
       "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Service/${local.resource_name}",
       "/planes/kubernetes/local/namespaces/${local.namespace}/providers/apps/Deployment/${local.resource_name}"
     ]

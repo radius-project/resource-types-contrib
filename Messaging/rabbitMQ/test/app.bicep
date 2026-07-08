@@ -1,7 +1,5 @@
 extension radius
 
-extension rabbitMQ
-
 @description('The ID of your Radius Environment. Set automatically by the rad CLI.')
 param environment string
 
