@@ -20,7 +20,8 @@ var namespace = context.runtime.kubernetes.namespace
 // PostgreSQL variables
 //////////////////////////////////////////
 
-var dbSecretName = context.resource.properties.secretName
+var username = context.resource.properties.username
+var password = context.resource.properties.password
 var database = context.resource.properties.?database ?? 'postgres_db'
 var sizeValue = context.resource.properties.?size ?? 'S'
 var initSql = context.resource.properties.?initSql ?? ''
@@ -59,6 +60,28 @@ resource initSqlConfigMap 'core/ConfigMap@v1' = if (hasInitSql) {
   }
   data: {
     '01-init.sql': initSql
+  }
+}
+
+//////////////////////////////////////////
+// PostgreSQL credentials
+//
+// The administrator username and password are provided directly on the
+// Radius.Data/postgreSqlDatabases resource. `password` is x-radius-sensitive,
+// so Radius injects it into the Recipe decrypted. Store both in a Kubernetes
+// Secret so the PostgreSQL container references them via secretKeyRef rather
+// than carrying the password inline in the Pod spec.
+//////////////////////////////////////////
+
+resource dbSecret 'core/Secret@v1' = {
+  metadata: {
+    name: '${resourceName}-credentials'
+    namespace: namespace
+    labels: labels
+  }
+  stringData: {
+    USERNAME: username
+    PASSWORD: password
   }
 }
 
@@ -104,7 +127,7 @@ resource postgresql 'apps/Deployment@v1' = {
                 name: 'POSTGRES_USER'
                 valueFrom: {
                   secretKeyRef: {
-                    name: dbSecretName
+                    name: dbSecret.metadata.name
                     key: 'USERNAME'
                   }
                 }
@@ -113,7 +136,7 @@ resource postgresql 'apps/Deployment@v1' = {
                 name: 'POSTGRES_PASSWORD'
                 valueFrom: {
                   secretKeyRef: {
-                    name: dbSecretName
+                    name: dbSecret.metadata.name
                     key: 'PASSWORD'
                   }
                 }
@@ -171,6 +194,7 @@ resource svc 'core/Service@v1' = {
 output result object = {
   resources: union(
     [
+      '/planes/kubernetes/local/namespaces/${dbSecret.metadata.namespace}/providers/core/Secret/${dbSecret.metadata.name}'
       '/planes/kubernetes/local/namespaces/${svc.metadata.namespace}/providers/core/Service/${svc.metadata.name}'
       '/planes/kubernetes/local/namespaces/${postgresql.metadata.namespace}/providers/apps/Deployment/${postgresql.metadata.name}'
     ],
@@ -182,5 +206,9 @@ output result object = {
     host: '${svc.metadata.name}.${svc.metadata.namespace}.svc.cluster.local'
     port: port
     database: database
+  }
+  secrets: {
+    password: password
+    connectionString: 'postgresql://${username}:${password}@${svc.metadata.name}.${svc.metadata.namespace}.svc.cluster.local:${port}/${database}'
   }
 }
