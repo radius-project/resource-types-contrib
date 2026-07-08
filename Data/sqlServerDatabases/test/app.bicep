@@ -1,7 +1,5 @@
 extension radius
 
-extension sqlServerDatabases
-
 @description('The ID of your Radius Environment. Set automatically by the rad CLI.')
 param environment string
 
