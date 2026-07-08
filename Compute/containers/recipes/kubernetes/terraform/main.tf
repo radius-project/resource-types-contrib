@@ -347,16 +347,10 @@ resource "kubernetes_deployment" "deployment" {
               }
             }
 
-            # Environment variables with direct values
-            dynamic "env" {
-              for_each = [for e in init_container.value.env : e if e.value != null]
-              content {
-                name  = env.value.name
-                value = env.value.value
-              }
-            }
-
-            # Environment variables with secretKeyRef
+            # Environment variables with secretKeyRef.
+            # Emitted BEFORE plain-value env vars: kubelet only expands $(VAR) references
+            # against env vars defined earlier in the container's ordered env list, so
+            # secret-backed vars must precede any value vars that interpolate them.
             dynamic "env" {
               for_each = [for e in init_container.value.env : e if e.value == null && try(e.value_from.secret_key_ref, null) != null]
               content {
@@ -367,6 +361,16 @@ resource "kubernetes_deployment" "deployment" {
                     key  = env.value.value_from.secret_key_ref.key
                   }
                 }
+              }
+            }
+
+            # Environment variables with direct values (may reference the secret-backed
+            # vars above via $(VAR)); rendered after them so interpolation resolves.
+            dynamic "env" {
+              for_each = [for e in init_container.value.env : e if e.value != null]
+              content {
+                name  = env.value.name
+                value = env.value.value
               }
             }
 
@@ -423,16 +427,10 @@ resource "kubernetes_deployment" "deployment" {
               }
             }
 
-            # Environment variables with direct values
-            dynamic "env" {
-              for_each = [for e in container.value.env : e if e.value != null]
-              content {
-                name  = env.value.name
-                value = env.value.value
-              }
-            }
-
-            # Environment variables with secretKeyRef
+            # Environment variables with secretKeyRef.
+            # Emitted BEFORE plain-value env vars: kubelet only expands $(VAR) references
+            # against env vars defined earlier in the container's ordered env list, so
+            # secret-backed vars must precede any value vars that interpolate them.
             dynamic "env" {
               for_each = [for e in container.value.env : e if e.value == null && try(e.value_from.secret_key_ref, null) != null]
               content {
@@ -443,6 +441,16 @@ resource "kubernetes_deployment" "deployment" {
                     key  = env.value.value_from.secret_key_ref.key
                   }
                 }
+              }
+            }
+
+            # Environment variables with direct values (may reference the secret-backed
+            # vars above via $(VAR)); rendered after them so interpolation resolves.
+            dynamic "env" {
+              for_each = [for e in container.value.env : e if e.value != null]
+              content {
+                name  = env.value.name
+                value = env.value.value
               }
             }
 
