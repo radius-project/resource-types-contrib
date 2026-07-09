@@ -1,6 +1,6 @@
 @description('NGroups parameter name')
 @maxLength(64)
-param nGroupsParamName string = 'ngroups-${uniqueString(resourceGroup().id)}'
+param nGroupsParamName string = 'ngroups-${uniqueString(context.resource.id, resourceGroup().id)}'
 
 @description('Container Group Profile name')
 @maxLength(64)
