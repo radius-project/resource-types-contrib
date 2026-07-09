@@ -13,7 +13,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `environment` | string | Required | The Radius Environment ID. Typically set by the `rad` CLI. |
 | `application` | string | Optional | The Radius Application ID. |
 | `endpoint` | string | Read only | The endpoint used to connect to the search service. Set from the Recipe module's output. |
-| `apiKey` | string | Read only | The admin API key used to connect to the search service. Set from the Recipe module's output. |
+| `secrets` | object | Read only | Recipe secrets. `secrets.name` references the managed `Radius.Security/secrets` resource; `secrets.apiKey` is the secret key (delivered via that managed secret, never stored on the resource). |
 
 ## Recipe Packs
 
@@ -25,4 +25,4 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 ## Using the resource type
 
-Add a `search` resource to your application and connect a container to it. Radius injects the search service's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_SEARCH_ENDPOINT` and `CONNECTION_SEARCH_APIKEY`). See [`test/app.bicep`](test/app.bicep) for a complete example.
+Add a `search` resource to your application and connect a container to it. Radius injects the search service's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_SEARCH_ENDPOINT`). The `apiKey` secret is not injected — bind it from the managed `Radius.Security/secrets` resource with a container `secretKeyRef` using `search.properties.secrets.name`. See [`test/app.bicep`](test/app.bicep) for a complete example.

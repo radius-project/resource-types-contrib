@@ -16,7 +16,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `application` | string | Optional | The Radius Application ID. |
 | `queue` | string | Optional | The queue name to create. Defaults to `jobs`. |
 | `host` | string | Read only | The host or namespace name used to connect to the queue. Set from the Recipe module's output. |
-| `connectionString` | string | Read only | The primary connection string used to connect to the queue. Set from the Recipe module's output. |
+| `secrets` | object | Read only | Recipe secrets. `secrets.name` references the managed `Radius.Security/secrets` resource; `secrets.connectionString` is the secret key (delivered via that managed secret, never stored on the resource). |
 
 ## Recipe Packs
 
@@ -28,4 +28,4 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 ## Using the resource type
 
-Add a `rabbitMQ` resource to your application and connect a container to it. Radius injects the queue's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_RABBITMQ_HOST` and `CONNECTION_RABBITMQ_CONNECTIONSTRING`). See [`test/app.bicep`](test/app.bicep) for a complete example.
+Add a `rabbitMQ` resource to your application and connect a container to it. Radius injects the queue's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_RABBITMQ_HOST`). The `connectionString` secret is not injected — bind it from the managed `Radius.Security/secrets` resource with a container `secretKeyRef` using `rabbitmq.properties.secrets.name`. See [`test/app.bicep`](test/app.bicep) for a complete example.

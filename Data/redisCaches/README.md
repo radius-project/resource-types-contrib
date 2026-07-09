@@ -15,7 +15,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `size` | string (`S`, `M`, `L`) | Optional | The size of the Redis cache. Defaults to `S`. The Recipe maps the size onto a concrete cloud SKU. |
 | `host` | string | Read only | The host name used to connect to the cache. Set from the Recipe module's output. |
 | `port` | integer | Read only | The TLS port number used to connect to the cache. Set from the Recipe module's output. |
-| `url` | string | Read only | The full TLS connection URL (`rediss://:<access-key>@<host>:<port>`), including the access key. Set from the Recipe module's output. |
+| `secrets` | object | Read only | Recipe secrets. `secrets.name` references the managed `Radius.Security/secrets` resource; `secrets.url` is the secret key (delivered via that managed secret, never stored on the resource). |
 
 ## Recipe Packs
 
@@ -27,4 +27,4 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 ## Using the resource type
 
-Add a `redisCaches` resource to your application and connect a container to it. Radius injects the cache's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_REDIS_HOST`, `CONNECTION_REDIS_PORT`, and `CONNECTION_REDIS_URL`). See [`test/app.bicep`](test/app.bicep) for a complete example.
+Add a `redisCaches` resource to your application and connect a container to it. Radius injects the cache's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_REDIS_HOST` and `CONNECTION_REDIS_PORT`). The `url` secret is not injected — bind it from the managed `Radius.Security/secrets` resource with a container `secretKeyRef` using `redis.properties.secrets.name`. See [`test/app.bicep`](test/app.bicep) for a complete example.
