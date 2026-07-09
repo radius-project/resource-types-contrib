@@ -20,7 +20,8 @@ var namespace = context.runtime.kubernetes.namespace
 // MySQL variables
 //////////////////////////////////////////
 
-var dbSecretName = context.resource.properties.secretName
+var username = context.resource.properties.username
+var password = context.resource.properties.password
 var database = context.resource.properties.?database ?? 'mysql_db'
 
 @description('The major MySQL server version in the X.Y format. Defaults to the version 8.4 if not provided.')
@@ -38,6 +39,28 @@ var labels = {
   'radapp.io/environment': environmentName
   'radapp.io/resource-type': replace(context.resource.type, '/', '-')
   'radapp.io/resource-group': resourceGroupName
+}
+
+//////////////////////////////////////////
+// MySQL credentials
+//
+// The administrator username and password are provided directly on the
+// Radius.Data/mySqlDatabases resource. `password` is x-radius-sensitive, so
+// Radius injects it into the Recipe decrypted. Store both in a Kubernetes
+// Secret so the MySQL container references them via secretKeyRef rather than
+// carrying the password inline in the Pod spec.
+//////////////////////////////////////////
+
+resource dbSecret 'core/Secret@v1' = {
+  metadata: {
+    name: '${resourceName}-credentials'
+    namespace: namespace
+    labels: labels
+  }
+  stringData: {
+    USERNAME: username
+    PASSWORD: password
+  }
 }
 
 //////////////////////////////////////////
@@ -80,7 +103,7 @@ resource mySql 'apps/Deployment@v1' = {
                 name: 'MYSQL_USER'
                 valueFrom: {
                   secretKeyRef: {
-                    name: dbSecretName
+                    name: dbSecret.metadata.name
                     key: 'USERNAME'
                   }
                 }
@@ -89,7 +112,7 @@ resource mySql 'apps/Deployment@v1' = {
                 name: 'MYSQL_PASSWORD'
                 valueFrom: {
                   secretKeyRef: {
-                    name: dbSecretName
+                    name: dbSecret.metadata.name
                     key: 'PASSWORD'
                   }
                 }
@@ -131,6 +154,7 @@ resource svc 'core/Service@v1' = {
 
 output result object = {
   resources: [
+    '/planes/kubernetes/local/namespaces/${dbSecret.metadata.namespace}/providers/core/Secret/${dbSecret.metadata.name}'
     '/planes/kubernetes/local/namespaces/${svc.metadata.namespace}/providers/core/Service/${svc.metadata.name}'
     '/planes/kubernetes/local/namespaces/${mySql.metadata.namespace}/providers/apps/Deployment/${mySql.metadata.name}'
   ]
@@ -138,5 +162,9 @@ output result object = {
     host: '${svc.metadata.name}.${svc.metadata.namespace}.svc.cluster.local'
     port: port
     database: database
+  }
+  secrets: {
+    password: password
+    connectionString: 'mysql://${username}:${password}@${svc.metadata.name}.${svc.metadata.namespace}.svc.cluster.local:${port}/${database}'
   }
 }

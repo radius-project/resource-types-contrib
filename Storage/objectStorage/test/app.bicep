@@ -4,23 +4,23 @@ extension radius
 param environment string
 
 resource app 'Radius.Core/applications@2025-08-01-preview' = {
-  name: 'redis-azure-test'
+  name: 'objectstorage-azure-test'
   properties: {
     environment: environment
   }
 }
 
-resource redis 'Radius.Data/redisCaches@2025-08-01-preview' = {
-  name: 'redis'
+resource store 'Radius.Storage/objectStorage@2025-08-01-preview' = {
+  name: 'store'
   properties: {
     environment: environment
     application: app.id
-    size: 'S'
+    containerName: 'data'
   }
 }
 
-resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
-  name: 'democontainer'
+resource democtr 'Radius.Compute/containers@2025-08-01-preview' = {
+  name: 'democtr'
   properties: {
     environment: environment
     application: app.id
@@ -35,8 +35,8 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
       }
     }
     connections: {
-      redis: {
-        source: redis.id
+      storage: {
+        source: store.id
       }
     }
   }

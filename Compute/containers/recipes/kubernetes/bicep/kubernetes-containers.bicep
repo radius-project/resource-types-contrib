@@ -84,6 +84,9 @@ var secretNameEnvFrom = reduce(items(resourceConnections), [], (acc, conn) =>
 )
 
 // Each connection's resource properties (including the nested properties bag) become CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>
+// Null-valued properties are skipped: sensitive properties (e.g. a database
+// password marked x-radius-sensitive) are redacted to null on reads, and
+// string(null) fails ARM template validation with "InvalidTemplate".
 var connectionEnvVars = reduce(items(resourceConnections), [], (acc, conn) => 
 // Only process non-secrets connections here (secrets use envFrom)
   !isSecretsResource[conn.key] && connectionDefinitions[conn.key].?disableDefaultEnvVars != true
@@ -91,7 +94,7 @@ var connectionEnvVars = reduce(items(resourceConnections), [], (acc, conn) =>
         acc,
         // Add top-level connection properties (excluding metadata and the nested properties bag)
         reduce(items(conn.value ?? {}), [], (envAcc, prop) => 
-          (prop.key == 'properties' || prop.key == 'secretName' || contains(excludedProperties, prop.key))
+          (prop.key == 'properties' || prop.key == 'secretName' || contains(excludedProperties, prop.key) || prop.value == null)
             ? envAcc 
             : concat(envAcc, [{
                 name: toUpper('CONNECTION_${conn.key}_${prop.key}')
@@ -100,7 +103,7 @@ var connectionEnvVars = reduce(items(resourceConnections), [], (acc, conn) =>
         ),
         // Flatten the nested connection.properties bag so values like host/port become their own env vars
         reduce(items(conn.value.?properties ?? {}), [], (envAcc, prop) => 
-          (prop.key == 'secretName' || contains(excludedProperties, prop.key))
+          (prop.key == 'secretName' || contains(excludedProperties, prop.key) || prop.value == null)
             ? envAcc 
             : concat(envAcc, [{
                 name: toUpper('CONNECTION_${conn.key}_${prop.key}')
@@ -133,23 +136,34 @@ var containerSpecs = reduce(containerItems, [], (acc, item) => concat(acc, [{
     // Add environment variables from container definition and connections
     // Connection environment variables are automatically added from output values
     (contains(item.value, 'env') || length(connectionEnvVars) > 0) ? {
+      // Kubelet expands $(VAR) in an env var's value ONLY against env vars defined
+      // earlier in this container's ordered env list. Emit secret/valueFrom env vars
+      // FIRST so plain value env vars can compose them via $(VAR) without leaking
+      // plaintext through Radius state. (items() sorts by key, so a single mixed list
+      // would order secrets vs values by name only, which is not a real guarantee.)
       env: concat(
-        // Container-defined env vars
-        reduce(items(item.value.?env ?? {}), [], (envAcc, envItem) => concat(envAcc, [union(
-          {
-            name: envItem.key
-          },
-          contains(envItem.value, 'value') ? { value: envItem.value.value } : {},
-          (contains(envItem.value, 'valueFrom') && contains(envItem.value.valueFrom, 'secretKeyRef')) ? {
-            valueFrom: {
-              secretKeyRef: {
-                name: envItem.value.valueFrom.secretKeyRef.secretName
-                key: envItem.value.valueFrom.secretKeyRef.key
-              }
-            }
-          } : {}
-        )])),
-        // Connection-derived env vars (non-secrets connections)
+        // 1. Container-defined secret-backed (valueFrom.secretKeyRef) env vars.
+        reduce(items(item.value.?env ?? {}), [], (envAcc, envItem) =>
+          (contains(envItem.value, 'valueFrom') && contains(envItem.value.valueFrom, 'secretKeyRef'))
+            ? concat(envAcc, [{
+                name: envItem.key
+                valueFrom: {
+                  secretKeyRef: {
+                    name: envItem.value.valueFrom.secretKeyRef.secretName
+                    key: envItem.value.valueFrom.secretKeyRef.key
+                  }
+                }
+              }])
+            : envAcc),
+        // 2. Container-defined plain value env vars (may reference the secrets above).
+        reduce(items(item.value.?env ?? {}), [], (envAcc, envItem) =>
+          contains(envItem.value, 'value')
+            ? concat(envAcc, [{
+                name: envItem.key
+                value: envItem.value.value
+              }])
+            : envAcc),
+        // 3. Connection-derived env vars (non-secrets connections)
         connectionEnvVars
       )
     } : {},

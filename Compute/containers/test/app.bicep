@@ -88,11 +88,11 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
         resources: {
           requests: {
             cpu: '0.1'       
-            memoryInMib: 2048   
+            memoryInMib: 128   
           }
           limits: {
             cpu: '0.5'
-            memoryInMib: 2048
+            memoryInMib: 512
           }
         }
         livenessProbe: {
@@ -130,7 +130,7 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
         resources: {
           requests: {
             cpu: '0.1'
-            memoryInMib: 1024
+            memoryInMib: 64
           }
         }
       }
