@@ -45,7 +45,9 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
         outputs: {
           host: 'hostName'
           port: 'port'
-          url: 'primaryConnectionString'
+          secrets: {
+            url: 'primaryConnectionString'
+          }
         }
       }
       'Radius.AI/models': {
@@ -76,7 +78,9 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
         }
         outputs: {
           endpoint: 'endpoint'
-          apiKey: 'primaryKey'
+          secrets: {
+            apiKey: 'primaryKey'
+          }
         }
       }
       'Radius.AI/search': {
@@ -92,7 +96,9 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
         }
         outputs: {
           endpoint: 'endpoint'
-          apiKey: 'primaryKey'
+          secrets: {
+            apiKey: 'primaryKey'
+          }
         }
       }
       'Radius.Data/mongoDatabases': {
@@ -116,7 +122,9 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
         }
         outputs: {
           endpoint: 'endpoint'
-          connectionString: 'primaryReadWriteConnectionString'
+          secrets: {
+            connectionString: 'primaryReadWriteConnectionString'
+          }
         }
       }
       'Radius.Data/mySqlDatabases': {
@@ -242,7 +250,9 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
         }
         outputs: {
           host: 'name'
-          connectionString: 'primaryConnectionString'
+          secrets: {
+            connectionString: 'primaryConnectionString'
+          }
         }
       }
       'Radius.Messaging/kafka': {
@@ -262,7 +272,9 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
         }
         outputs: {
           host: 'name'
-          connectionString: 'primaryConnectionString'
+          secrets: {
+            connectionString: 'primaryConnectionString'
+          }
         }
       }
       'Radius.Storage/objectStorage': {
@@ -293,8 +305,11 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
         }
         outputs: {
           endpoint: 'primaryBlobEndpoint'
-          accountKey: 'primaryAccessKey'
           accountName: 'name'
+          secrets: {
+            accountKey: 'primaryAccessKey'
+            connectionString: 'primaryConnectionString'
+          }
         }
       }
       'Radius.Compute/containers': {

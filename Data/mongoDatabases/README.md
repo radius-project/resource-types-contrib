@@ -14,7 +14,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `application` | string | Optional | The Radius Application ID. |
 | `database` | string | Optional | The Mongo database name. Defaults to `mongo_db`. |
 | `endpoint` | string | Read only | The endpoint used to connect to the database. Set from the Recipe module's output. |
-| `connectionString` | string | Read only | The connection string used to connect to the database. Set from the Recipe module's output. |
+| `secrets` | object | Read only | Recipe secrets. `secrets.name` references the managed `Radius.Security/secrets` resource; `secrets.connectionString` is the secret key (delivered via that managed secret, never stored on the resource). |
 
 ## Recipe Packs
 
@@ -26,4 +26,4 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 ## Using the resource type
 
-Add a `mongoDatabases` resource to your application and connect a container to it. Radius injects the database's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_MONGODB_DATABASE`, `CONNECTION_MONGODB_ENDPOINT`, and `CONNECTION_MONGODB_CONNECTIONSTRING`). See [`test/app.bicep`](test/app.bicep) for a complete example.
+Add a `mongoDatabases` resource to your application and connect a container to it. Radius injects the database's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_MONGODB_DATABASE` and `CONNECTION_MONGODB_ENDPOINT`). The `connectionString` secret is not injected — bind it from the managed `Radius.Security/secrets` resource with a container `secretKeyRef` using `mongo.properties.secrets.name`. See [`test/app.bicep`](test/app.bicep) for a complete example.

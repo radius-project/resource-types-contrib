@@ -14,9 +14,8 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `application` | string | Optional | The Radius Application ID. |
 | `containerName` | string | Optional | The object container (blob container / S3 bucket) name to create inside the storage account. Defaults to `data`. |
 | `endpoint` | string | Read only | The object storage endpoint. Set from the Recipe module's `primaryBlobEndpoint` output. |
-| `connectionString` | string | Read only | The storage account connection string. Set from the Recipe module's `primaryConnectionString` output. |
+| `secrets` | object | Read only | Recipe secrets. `secrets.name` references the managed `Radius.Security/secrets` resource; `secrets.connectionString`, `secrets.accountKey` are the secret keys (delivered via that managed secret, never stored on the resource). |
 | `accountName` | string | Read only | The Azure Storage account name. Set from the Recipe module's `name` output. |
-| `accountKey` | string | Read only | The Azure Storage account access key. Set from the Recipe module's `primaryAccessKey` output. |
 
 The schema is platform-neutral: the same developer-facing properties can be backed by Azure Blob Storage, AWS S3, or a Kubernetes object-store recipe by changing only the platform recipe's module source, parameters, and outputs.
 
@@ -30,4 +29,4 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 ## Using the resource type
 
-Add an `objectStorage` resource to your application and connect a container to it. Radius injects the store's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_STORAGE_ENDPOINT`, `CONNECTION_STORAGE_ACCOUNTNAME`, and `CONNECTION_STORAGE_CONTAINERNAME`). See [`test/app.bicep`](test/app.bicep) for a complete example.
+Add an `objectStorage` resource to your application and connect a container to it. Radius injects the store's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_STORAGE_ENDPOINT`, `CONNECTION_STORAGE_ACCOUNTNAME`, and `CONNECTION_STORAGE_CONTAINERNAME`). The `connectionString` and `accountKey` secrets are not injected — bind them from the managed `Radius.Security/secrets` resource with a container `secretKeyRef` using `store.properties.secrets.name`. See [`test/app.bicep`](test/app.bicep) for a complete example.
