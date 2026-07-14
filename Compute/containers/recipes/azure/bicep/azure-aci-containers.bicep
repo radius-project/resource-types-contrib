@@ -388,7 +388,8 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
   ]
 }
 
-// ContainerGroupProfile resource - Dev/Limited: supports ONLY a single container named 'demo'
+// ContainerGroupProfile resource. Regular containers are projected from context.resource.properties.containers;
+// entries marked with initContainer: true are emitted separately via the ACI init container path.
 // Apply platformOptions only when allowPlatformOptions=true.
 // ACI does not support context.resource.properties.extensions.daprSidecar;
 // this recipe does not project Dapr sidecar settings into the deployed container group profile.
@@ -534,18 +535,32 @@ resource nGroups 'Microsoft.ContainerInstance/NGroups@2024-11-01-preview' = {
 }
 
 // Outputs
-output virtualNetworkId string = virtualNetwork.id
-output subnetId string = virtualNetwork.properties.subnets[0].id
-output loadBalancerId string = loadBalancer.id
-output frontendIPConfigurationId string = loadBalancer.properties.frontendIPConfigurations[0].id
-output backendAddressPoolId string = loadBalancer.properties.backendAddressPools[0].id
-output inboundPublicIPId string = inboundPublicIP.id
-output outboundPublicIPId string = outboundPublicIP.id
-output inboundPublicIPFQDN string = inboundPublicIP.properties.dnsSettings.fqdn
-output natGatewayId string = natGateway.id
-output networkSecurityGroupId string = networkSecurityGroup.id
-output ddosProtectionPlanId string = enableDdosProtection ? ddosProtectionPlan.id : ''
-output containerGroupProfileId string = containerGroupProfile.id
-output nGroupsId string = nGroups.id
-output readinessProbeId string = firstContainerWithReadinessProbe != null ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, '${firstContainerWithReadinessProbe.key}-readinessProbe') : ''
-output livenessProbeId string = length(filter(regularContainerItems, item => contains(item.value, 'livenessProbe') && item.value.livenessProbe != null)) > 0 ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, '${filter(regularContainerItems, item => contains(item.value, 'livenessProbe') && item.value.livenessProbe != null)[0].key}-livenessProbe') : ''
+output result object = {
+  resources: [
+    networkSecurityGroup.id
+    inboundPublicIP.id
+    outboundPublicIP.id
+    natGateway.id
+    virtualNetwork.id
+    loadBalancer.id
+    containerGroupProfile.id
+    nGroups.id
+  ]
+  values: {
+    virtualNetworkId: virtualNetwork.id
+    subnetId: virtualNetwork.properties.subnets[0].id
+    loadBalancerId: loadBalancer.id
+    frontendIPConfigurationId: loadBalancer.properties.frontendIPConfigurations[0].id
+    backendAddressPoolId: loadBalancer.properties.backendAddressPools[0].id
+    inboundPublicIPId: inboundPublicIP.id
+    outboundPublicIPId: outboundPublicIP.id
+    inboundPublicIPFQDN: inboundPublicIP.properties.dnsSettings.fqdn
+    natGatewayId: natGateway.id
+    networkSecurityGroupId: networkSecurityGroup.id
+    ddosProtectionPlanId: enableDdosProtection ? ddosProtectionPlan.id : ''
+    containerGroupProfileId: containerGroupProfile.id
+    nGroupsId: nGroups.id
+    readinessProbeId: firstContainerWithReadinessProbe != null ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, '${firstContainerWithReadinessProbe.key}-readinessProbe') : ''
+    livenessProbeId: length(filter(regularContainerItems, item => contains(item.value, 'livenessProbe') && item.value.livenessProbe != null)) > 0 ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, '${filter(regularContainerItems, item => contains(item.value, 'livenessProbe') && item.value.livenessProbe != null)[0].key}-livenessProbe') : ''
+  }
+}
