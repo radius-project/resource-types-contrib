@@ -51,7 +51,9 @@ rtc_latest_version() {
     git -C "$RTC_REPO_ROOT" tag --list "${ns}/v*" 2>/dev/null |
         while IFS= read -r tag; do
             version="${tag#"${ns}/v"}"
-            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "$version"
+            if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                echo "$version"
+            fi
         done |
         sort -V | tail -n1
 }
