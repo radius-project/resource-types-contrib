@@ -137,11 +137,12 @@ Each property must also include:
  - Whether the property is required or optional.
 
 When setting the description of properties:
- - Unquoted strings are preferred, avoid special characters such as `:`, `{`, `}`, `[`, `]`, `,`, `&`, `*`, `#`, `?`, `|`, `-`, `<`, `>`, `=`, `!`, `%`, `@`, and `\`.
- - Prefix the description with `(Required)`, `(Optional)`, or `(Read Only)`.
- - If an enum, do not add acceptable values in the description (these are visible in VS Code via Intellisense).
- - There are no defaults for enums. If the Recipes should assume a value, denote that "the value is assumed to be _____".
- - Denote values using `backquotes`. 
+ - **Prefix each description** with `(Required)`, `(Optional)`, or `(Read Only)` to match how the property is defined in the schema. Keep the prefix in sync with the schema's `required` array and `readOnly` flag.
+ - **Wrap literal values in backticks**: enum members, defaults, property names, type names, and file names (for example `` `false` ``, `` `Radius.Core/environments` ``). Leave ordinary words unquoted.
+ - **State the default, if any**, at the end of the description as `` Defaults to `<value>` if not specified. `` This applies to all property types.
+ - **Don't restate the schema.** For enums, omit the list of accepted values; they surface through IntelliSense in VS Code and in the resource type schema. Describe what the property does, not what values it accepts.
+ - **Keep descriptions unquoted.** Write property descriptions as plain, unquoted text. Do not use `:` or `#`. Ordinary punctuation such as commas, hyphens, parentheses, periods, and slashes are acceptable. If a description needs a colon or other special punctuation, use a `description: |` block.
+
 
 For example, the initial `redisCaches` Resource Type from above must be enhanced with developer documentation:
 
