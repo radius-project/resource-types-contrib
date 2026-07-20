@@ -10,13 +10,15 @@ Each pack declares a `Radius.Core/recipePacks` resource whose `recipes` map cont
 
 ## Recipes in this pack
 
+Kube-recipes tagged `:latest` are edge builds; released recipes are pinned to a version tag.
+
 | Resource Type | Kind | Source |
 | --- | --- | --- |
-| `Radius.Compute/containers` | Bicep | `ghcr.io/radius-project/kube-recipes/containers` |
-| `Radius.Compute/persistentVolumes` | Bicep | `ghcr.io/radius-project/kube-recipes/persistentvolumes` |
-| `Radius.Compute/routes` | Bicep | `ghcr.io/radius-project/kube-recipes/routes` |
-| `Radius.Security/secrets` | Bicep | `ghcr.io/radius-project/kube-recipes/secrets` |
-| `Radius.Data/mySqlDatabases` | Bicep | `ghcr.io/radius-project/kube-recipes/mysqldatabases` |
+| `Radius.Compute/containers` | Bicep | `ghcr.io/radius-project/kube-recipes/containers:latest` |
+| `Radius.Compute/persistentVolumes` | Bicep | `ghcr.io/radius-project/kube-recipes/persistentvolumes:latest` |
+| `Radius.Compute/routes` | Bicep | `ghcr.io/radius-project/kube-recipes/routes:latest` |
+| `Radius.Security/secrets` | Bicep | `ghcr.io/radius-project/kube-recipes/secrets:latest` |
+| `Radius.Data/mySqlDatabases` | Bicep | `ghcr.io/radius-project/kube-recipes/mysqldatabases:latest` |
 
 ## Deploying
 
