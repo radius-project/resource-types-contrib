@@ -7,9 +7,14 @@
 
 extension radius
 
+@description('Name of the Radius environment to create.')
+param environmentName string = 'default'
+
+@description('Kubernetes namespace the Radius environment deploys resources into.')
+param environmentNamespace string = 'default'
+
 resource defaultRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
   name: 'default'
-  location: 'global'
   properties: {
     recipes: {
       'Radius.Compute/containers': {
@@ -37,5 +42,19 @@ resource defaultRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
         source: 'ghcr.io/radius-project/kube-recipes/mysqldatabases:latest'
       }
     }
+  }
+}
+
+resource env 'Radius.Core/environments@2025-08-01-preview' = {
+  name: environmentName
+  properties: {
+    providers: {
+      kubernetes: {
+        namespace: environmentNamespace
+      }
+    }
+    recipePacks: [
+      defaultRecipePack.id
+    ]
   }
 }
