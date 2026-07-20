@@ -72,7 +72,7 @@ A list of available Recipes for this Resource Type, including links to the Bicep
 
 Properties for the containerImages resource are provided to the Recipe via the [Recipe Context](https://docs.radapp.io/reference/context-schema/) object. These properties include:
 
-- `context.resource.properties.build.source` (string, required): The build context. Either a `git::https://...` URL or a local filesystem path to a directory containing the build context.
+- `context.resource.properties.build.source` (string, required): The build context. Either a `git::https://...` URL or a local filesystem path to a directory containing the build context under `/var/radius/build-contexts`.
 - `context.resource.properties.build.dockerfile` (string, optional): Path to the Dockerfile relative to the build context. Defaults to `Dockerfile`.
 - `context.resource.properties.build.platforms` (array of string, optional): Target platforms (e.g. `["linux/amd64", "linux/arm64"]`) for the multi-arch image. Defaults to `["linux/amd64", "linux/arm64"]`. Multi-arch builds require a cross-compile-friendly Dockerfile.
 - `context.resource.properties.build.args` (object, optional): Map of `--build-arg` values passed to the build.

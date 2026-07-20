@@ -38,10 +38,11 @@ locals {
 
   image_name = local.resource_name
 
-  build_source  = local.properties.build.source
-  dockerfile    = try(local.properties.build.dockerfile, "Dockerfile")
-  platforms     = try(local.properties.build.platforms, ["linux/amd64", "linux/arm64"])
-  is_git_source = can(regex("^git::", local.build_source))
+  local_context_root = "/var/radius/build-contexts"
+  build_source       = local.properties.build.source
+  dockerfile         = try(local.properties.build.dockerfile, "Dockerfile")
+  platforms          = try(local.properties.build.platforms, ["linux/amd64", "linux/arm64"])
+  is_git_source      = can(regex("^git::", local.build_source))
 
   go_getter_stripped = local.is_git_source ? replace(local.build_source, "git::", "") : ""
   url_no_query       = local.is_git_source ? split("?", local.go_getter_stripped)[0] : ""
@@ -158,8 +159,12 @@ resource "terraform_data" "validate_inputs" {
       error_message = "containerImages: properties.build.dockerfile must be a relative path (no leading '/' and no '..' segments) matching [A-Za-z0-9._/-]+ (got ${local.dockerfile})."
     }
     precondition {
-      condition     = can(regex("^git::https://[A-Za-z0-9._:/@?=&%~+#-]+$", local.build_source)) || (!strcontains(local.build_source, "..") && can(regex("^[A-Za-z0-9._/+~-]+$", local.build_source)))
-      error_message = "containerImages: properties.build.source must be a git::https URL or a filesystem path (no '..' segments) (got ${local.build_source})."
+      condition = can(regex("^git::https://[A-Za-z0-9._:/@?=&%~+#-]+$", local.build_source)) || (
+        startswith(local.build_source, "${local.local_context_root}/") &&
+        !strcontains(local.build_source, "..") &&
+        can(regex("^[A-Za-z0-9._/+~-]+$", local.build_source))
+      )
+      error_message = "containerImages: properties.build.source must be a git::https URL or a filesystem path under ${local.local_context_root} (no '..' segments) (got ${local.build_source})."
     }
     precondition {
       condition     = length(local.platforms) > 0
