@@ -41,6 +41,9 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
           }
           publicNetworkAccess: 'Enabled'
           enableTelemetry: false
+          lock: {
+            kind: 'None'
+          }
         }
         outputs: {
           host: 'hostName'
@@ -75,6 +78,9 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
             }
           ]
           enableTelemetry: false
+          lock: {
+            kind: 'None'
+          }
         }
         outputs: {
           endpoint: 'endpoint'
@@ -93,6 +99,9 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
           replicaCount: 1
           partitionCount: 1
           enableTelemetry: false
+          lock: {
+            kind: 'None'
+          }
         }
         outputs: {
           endpoint: 'endpoint'
@@ -119,6 +128,9 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
             publicNetworkAccess: 'Enabled'
           }
           enableTelemetry: false
+          lock: {
+            kind: 'None'
+          }
         }
         outputs: {
           endpoint: 'endpoint'
@@ -155,6 +167,9 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
             }
           ]
           enableTelemetry: false
+          lock: {
+            kind: 'None'
+          }
         }
         outputs: {
           host: 'fqdn'
@@ -193,6 +208,9 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
           ]
           enableAdvancedThreatProtection: false
           enableTelemetry: false
+          lock: {
+            kind: 'None'
+          }
         }
         outputs: {
           host: 'fqdn'
@@ -226,6 +244,9 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
             }
           ]
           enableTelemetry: false
+          lock: {
+            kind: 'None'
+          }
         }
         outputs: {
           host: 'fullyQualifiedDomainName'
@@ -247,6 +268,9 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
             }
           ]
           enableTelemetry: false
+          lock: {
+            kind: 'None'
+          }
         }
         outputs: {
           host: 'name'
@@ -269,6 +293,9 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
             }
           ]
           enableTelemetry: false
+          lock: {
+            kind: 'None'
+          }
         }
         outputs: {
           host: 'name'
@@ -302,6 +329,9 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
             ]
           }
           enableTelemetry: false
+          lock: {
+            kind: 'None'
+          }
         }
         outputs: {
           endpoint: 'primaryBlobEndpoint'
