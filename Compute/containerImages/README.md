@@ -83,7 +83,7 @@ The Bicep recipe requires a Radius control plane that supports the private `imag
 
 Properties for the containerImages resource are provided to the Recipe via the [Recipe Context](https://docs.radapp.io/reference/context-schema/) object. These properties include:
 
-- `context.resource.properties.build.source` (string, required): The build context. This can be a `git::https://...` URL, which BuildKit clones inside the cluster, or a local filesystem directory that is already visible inside the dynamic-rp container. Use an absolute path for a local directory; Radius does not upload a directory from the user's workstation, and relative paths resolve from a transient recipe working directory.
+- `context.resource.properties.build.source` (string, required): The build context. This can be a `git::https://...` URL, which BuildKit clones inside the cluster, or an operator-managed local filesystem directory. Radius does not upload a directory from the user's workstation. The default Bicep script accepts local sources only beneath `/var/radius/build-contexts`, resolves the source and Dockerfile to canonical paths, and rejects symbolic links anywhere in the context. The stock Radius Helm chart does not mount this directory; platform engineers using local sources must add a read-only mount by customizing or post-rendering the dynamic-rp Deployment. Git sources require no additional mount. The Terraform recipe retains its existing local-path behavior.
 - `context.resource.properties.build.dockerfile` (string, optional): Path to the Dockerfile relative to the build context. Defaults to `Dockerfile`.
 - `context.resource.properties.build.platforms` (array of string, optional): Target platforms (e.g. `["linux/amd64", "linux/arm64"]`) for the multi-arch image. Defaults to `["linux/amd64", "linux/arm64"]`. Multi-arch builds require a cross-compile-friendly Dockerfile.
 - `context.resource.properties.build.args` (object, optional): Map of `--build-arg` values passed to the build.
@@ -91,8 +91,8 @@ Properties for the containerImages resource are provided to the Recipe via the [
 
 The Recipe is also parameterized at registration time by the platform engineer with:
 
-- `registry` (string, required): The registry prefix images are pushed under (e.g. `ghcr.io/myorg`). The recipe composes `<registry>/<resource-name>:<tag>` to form the full image reference.
-- `registrySecretName` (string, optional): Name of a Kubernetes Secret in the recipe runtime namespace on the target Kubernetes cluster (typically materialized by an application-scoped `Radius.Security/secrets` resource of `kind: generic` with `username` and `password` keys). Omit for unauthenticated registries.
+- `registry` (string, required): The operator-owned registry prefix images are pushed under (e.g. `ghcr.io/myorg`). The driver resolves this value directly from the registered Recipe definition, so a developer parameter override cannot redirect registry credentials. The recipe composes `<registry>/<resource-name>:<tag>` to form the full image reference.
+- `registrySecretName` (string, optional): Operator-owned name of a Kubernetes Secret in the recipe runtime namespace on the target Kubernetes cluster (typically materialized by an application-scoped `Radius.Security/secrets` resource of `kind: generic` with `username` and `password` keys). The driver also resolves this value directly from the registered Recipe definition. Omit for unauthenticated registries.
 
 ## Recipe Output Properties
 
@@ -104,13 +104,13 @@ The Kubernetes recipe emits the following output values:
 
 The imperative part of the Bicep Recipe lives in `recipes/kubernetes/bicep/build.sh`, next to the Recipe's `.bicep` file. It validates the build inputs, translates the go-getter source URL into a BuildKit context, computes a deterministic default tag from the build inputs, runs `buildctl build ... --output type=image,push=true`, and reports `imageReference` back to Radius through the `RADIUS_EXEC_OUTPUT` result file.
 
-To customize the build (different buildctl options, extra steps, a different tag scheme):
+To customize the build within the hook's fixed input contract (different buildctl options, extra steps, a different tag scheme):
 
-1. Fork this recipe directory and edit `build.sh` (and `kubernetes-containerimages.bicep` if the script needs different inputs).
+1. Fork this recipe directory and edit `build.sh`.
 2. Publish the fork: `rad bicep publish --file kubernetes-containerimages.bicep --target br:<your-registry>/<path>:<tag>`. The script is embedded into the published artifact by `loadTextContent`.
 3. Point your Recipe Pack's `Radius.Compute/containerImages` entry at the published artifact.
 
-Radius executes only script content embedded in the registered Recipe artifact. Build inputs (tags, build args, sources) are passed as positional data, never interpolated into shell code. The script runs in the dynamic-rp container (Alpine: BusyBox `sh`, `sha256sum`, `git`, plus `buildctl`).
+Radius executes only script content embedded in the registered Recipe artifact. Build inputs (tags, build args, sources) are passed as positional data, never interpolated into shell code. The scoped driver accepts the exact nine-field `imageBuild` output emitted by this Bicep module and translates it to fixed script arguments; adding inputs or changing that contract also requires a Radius driver change. The default script confines local contexts to the operator-managed `/var/radius/build-contexts` root and rejects symbolic links so a developer cannot turn the dynamic-rp filesystem into an image context. The script runs in the dynamic-rp container (Alpine: BusyBox `sh`, `sha256sum`, `git`, plus `buildctl`).
 
 Note on tags and rebuilds: the Bicep recipe rebuilds and re-pushes synchronously on every recipe execution. Unchanged build inputs produce the same deterministic image reference, but an explicit tag or a moving Git ref can replace the image content behind an existing tag; pin Git sources to an immutable commit when stable content is required. The Terraform recipe retains its `triggers_replace` behavior and does not rebuild when its tracked inputs are unchanged.
 

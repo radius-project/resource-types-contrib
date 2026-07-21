@@ -1,10 +1,10 @@
 @description('Radius recipe context. Carries resource properties, environment, and runtime info.')
 param context object
 
-@description('Registry prefix (e.g. `ghcr.io/myorg`) into which images are pushed. The recipe appends `/<resource-name>:<tag>`.')
+@description('Operator Recipe parameter for the registry prefix (e.g. `ghcr.io/myorg`) into which images are pushed.')
 param registry string
 
-@description('Name of the Kubernetes Secret containing `username` and `password`. Leave empty for an unauthenticated registry.')
+@description('Operator Recipe parameter naming the Kubernetes Secret containing `username` and `password`. Leave empty for an unauthenticated registry.')
 param registrySecretName string = ''
 
 // Platform engineers customize build.sh and republish this recipe. Radius reads this exact
@@ -16,8 +16,9 @@ var radiusContainerImagesBuildScript = loadTextContent('build.sh')
 var properties = context.resource.properties
 var build = properties.build
 
-// Radius consumes this private, typed output synchronously after the Bicep deployment. All
-// values are passed to build.sh as arguments, not interpolated into its source text.
+// Radius consumes this private, typed output synchronously after the Bicep deployment. The
+// driver replaces the evaluated registry fields with the registered operator Recipe parameters
+// before passing values to build.sh as arguments; no values are interpolated into script text.
 output imageBuild object = {
   resourceName: context.resource.name
   registry: registry

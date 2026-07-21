@@ -36,6 +36,16 @@ run_build() {
         --build-arg Z z)
 }
 
+expect_failure() {
+    expected=$1
+    shift
+    if (cd "$WORK_DIR/work" && sh "$SCRIPT" "$@") 2> "$WORK_DIR/validation.err"; then
+        echo "expected build input validation to fail" >&2
+        exit 1
+    fi
+    grep -F "$expected" "$WORK_DIR/validation.err" >/dev/null
+}
+
 run_build
 [ "$(cat "$WORK_DIR/result.json")" = '{"imageReference":"ghcr.io/example/demo:sha256-ed8fc579e9dc133a"}' ]
 grep -Fx -- '--output' "$WORK_DIR/buildctl.args" >/dev/null
@@ -63,16 +73,73 @@ z_line=$(grep -nFx -- 'build-arg:Z=z' "$WORK_DIR/buildctl.args" | cut -d: -f1)
 run_build
 [ "$(cat "$WORK_DIR/buildctl.calls")" = '3' ]
 
-# Local paths already visible to dynamic-rp use a deterministic file-tree hash.
-mkdir -p "$WORK_DIR/source"
-printf 'FROM scratch\n' > "$WORK_DIR/source/Dockerfile"
-printf 'hello\n' > "$WORK_DIR/source/app.txt"
+# Local paths are confined to the operator-managed root and use a deterministic,
+# NUL-delimited file-tree hash that accepts spaces and newlines in filenames.
+export RADIUS_CONTAINER_IMAGES_LOCAL_CONTEXT_ROOT="$WORK_DIR/local-root"
+LOCAL_SOURCE="$RADIUS_CONTAINER_IMAGES_LOCAL_CONTEXT_ROOT/source"
+mkdir -p "$LOCAL_SOURCE"
+RESOLVED_LOCAL_SOURCE=$(realpath "$LOCAL_SOURCE")
+printf 'FROM scratch\n' > "$LOCAL_SOURCE/Dockerfile"
+printf 'hello\n' > "$LOCAL_SOURCE/file with spaces.txt"
+newline_file="$LOCAL_SOURCE/line
+break.txt"
+printf 'newline\n' > "$newline_file"
 (cd "$WORK_DIR/work" && sh "$SCRIPT" \
     --resource-name Demo --registry ghcr.io/example --tag '' \
-    --source "$WORK_DIR/source" --dockerfile Dockerfile \
+    --source "$LOCAL_SOURCE" --dockerfile Dockerfile \
     --platform linux/amd64)
-[ "$(cat "$WORK_DIR/result.json")" = '{"imageReference":"ghcr.io/example/demo:sha256-34d9003fabeec515"}' ]
-grep -Fx -- "context=$WORK_DIR/source" "$WORK_DIR/buildctl.args" >/dev/null
+first_local_result=$(cat "$WORK_DIR/result.json")
+printf '%s' "$first_local_result" |
+    grep -Eq '^\{"imageReference":"ghcr.io/example/demo:sha256-[a-f0-9]{16}"\}$'
+grep -Fx -- "context=$RESOLVED_LOCAL_SOURCE" "$WORK_DIR/buildctl.args" >/dev/null
+printf 'changed\n' > "$newline_file"
+(cd "$WORK_DIR/work" && sh "$SCRIPT" \
+    --resource-name Demo --registry ghcr.io/example --tag '' \
+    --source "$LOCAL_SOURCE" --dockerfile Dockerfile \
+    --platform linux/amd64)
+[ "$first_local_result" != "$(cat "$WORK_DIR/result.json")" ]
+
+# Canonical-path containment blocks sources outside the operator-owned mount.
+OUTSIDE_SOURCE="$WORK_DIR/outside-source"
+mkdir -p "$OUTSIDE_SOURCE"
+printf 'FROM scratch\n' > "$OUTSIDE_SOURCE/Dockerfile"
+expect_failure 'local build source must be beneath operator-managed root' \
+    --resource-name Demo --registry ghcr.io/example --tag explicit --tag-provided \
+    --source "$OUTSIDE_SOURCE" --dockerfile Dockerfile --platform linux/amd64
+
+saved_local_context_root=$RADIUS_CONTAINER_IMAGES_LOCAL_CONTEXT_ROOT
+export RADIUS_CONTAINER_IMAGES_LOCAL_CONTEXT_ROOT=/
+expect_failure 'local build context root must not be the filesystem root' \
+    --resource-name Demo --registry ghcr.io/example --tag explicit --tag-provided \
+    --source "$LOCAL_SOURCE" --dockerfile Dockerfile --platform linux/amd64
+export RADIUS_CONTAINER_IMAGES_LOCAL_CONTEXT_ROOT="$saved_local_context_root"
+
+# The source itself, the Dockerfile, and every other context entry must be symlink-free.
+SOURCE_LINK="$RADIUS_CONTAINER_IMAGES_LOCAL_CONTEXT_ROOT/source-link"
+ln -s "$LOCAL_SOURCE" "$SOURCE_LINK"
+expect_failure 'local build source must not be a symbolic link' \
+    --resource-name Demo --registry ghcr.io/example --tag explicit --tag-provided \
+    --source "$SOURCE_LINK/" --dockerfile Dockerfile --platform linux/amd64
+rm "$SOURCE_LINK"
+
+printf 'FROM scratch\n' > "$LOCAL_SOURCE/ActualDockerfile"
+ln -s ActualDockerfile "$LOCAL_SOURCE/SymlinkDockerfile"
+expect_failure 'Dockerfile must not be a symbolic link' \
+    --resource-name Demo --registry ghcr.io/example --tag explicit --tag-provided \
+    --source "$LOCAL_SOURCE" --dockerfile SymlinkDockerfile --platform linux/amd64
+rm "$LOCAL_SOURCE/SymlinkDockerfile"
+
+mkdir "$LOCAL_SOURCE/DockerfileDirectory"
+expect_failure 'Dockerfile must be a regular file' \
+    --resource-name Demo --registry ghcr.io/example --tag explicit --tag-provided \
+    --source "$LOCAL_SOURCE" --dockerfile DockerfileDirectory --platform linux/amd64
+rmdir "$LOCAL_SOURCE/DockerfileDirectory"
+
+ln -s 'file with spaces.txt' "$LOCAL_SOURCE/app-link"
+expect_failure 'local build source must not contain symbolic links' \
+    --resource-name Demo --registry ghcr.io/example --tag explicit --tag-provided \
+    --source "$LOCAL_SOURCE" --dockerfile Dockerfile --platform linux/amd64
+rm "$LOCAL_SOURCE/app-link"
 
 # An explicit tag bypasses all default-tag hashing.
 cat > "$WORK_DIR/bin/sha256sum" <<'EOF'
@@ -82,7 +149,7 @@ EOF
 chmod +x "$WORK_DIR/bin/sha256sum"
 (cd "$WORK_DIR/work" && sh "$SCRIPT" \
     --resource-name Demo --registry ghcr.io/example --tag explicit --tag-provided \
-    --source "$WORK_DIR/source" --dockerfile Dockerfile \
+    --source "$LOCAL_SOURCE" --dockerfile Dockerfile \
     --platform linux/amd64)
 [ "$(cat "$WORK_DIR/result.json")" = '{"imageReference":"ghcr.io/example/demo:explicit"}' ]
 rm -f "$WORK_DIR/bin/sha256sum"
@@ -96,16 +163,6 @@ if run_build > "$WORK_DIR/build-failure.log" 2>&1; then
 fi
 unset FAKE_BUILDKIT_FAILURE
 [ ! -e "$RADIUS_EXEC_OUTPUT" ]
-
-expect_failure() {
-    expected=$1
-    shift
-    if (cd "$WORK_DIR/work" && sh "$SCRIPT" "$@") 2> "$WORK_DIR/validation.err"; then
-        echo "expected build input validation to fail" >&2
-        exit 1
-    fi
-    grep -F "$expected" "$WORK_DIR/validation.err" >/dev/null
-}
 
 # These cases were lossy when collections were serialized into environment strings.
 newline_value=$(printf 'safe\nsmuggled')
@@ -132,6 +189,6 @@ expect_failure 'registry must not contain newlines' \
     --resource-name Demo --registry "$newline_registry" --tag '' \
     --source 'git::https://example.com/repo.git?ref=main' \
     --dockerfile Dockerfile --platform linux/amd64
-[ "$(cat "$WORK_DIR/buildctl.calls")" = '6' ]
+[ "$(cat "$WORK_DIR/buildctl.calls")" = '7' ]
 
 echo "containerImages build.sh smoke test passed"

@@ -6,6 +6,11 @@
 # RADIUS_EXEC_OUTPUT, and the pod's existing BUILDKIT_HOST environment variable.
 
 set -eu
+umask 077
+
+# Local sources must come from an operator-managed mount. The override exists so the
+# confinement behavior can be exercised by the isolated script tests.
+LOCAL_CONTEXT_ROOT=${RADIUS_CONTAINER_IMAGES_LOCAL_CONTEXT_ROOT:-/var/radius/build-contexts}
 
 fail() {
     echo "containerImages: $1" >&2
@@ -152,6 +157,10 @@ case "$BUILD_SOURCE" in
         ;;
 esac
 
+SCRIPT_WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/radius-containerimages.XXXXXX") ||
+    fail "failed to create script work directory"
+trap 'rm -rf "$SCRIPT_WORK_DIR"' EXIT
+
 # Translate go-getter git::https://host/repo.git//subdir?ref=ref into the BuildKit
 # https://host/repo.git#ref:subdir form used by the Terraform recipe.
 BUILDKIT_CONTEXT=
@@ -196,31 +205,73 @@ if [ "$IS_GIT" -eq 1 ]; then
     fi
     BUILDKIT_CONTEXT="$scheme://$repo_part$fragment"
 else
-    [ -d "$BUILD_SOURCE" ] || fail "local build source directory not found: $BUILD_SOURCE"
+    [ -d "$LOCAL_CONTEXT_ROOT" ] ||
+        fail "local build sources are disabled; operator-managed root does not exist: $LOCAL_CONTEXT_ROOT"
+    resolved_root=$(realpath "$LOCAL_CONTEXT_ROOT") ||
+        fail "failed to resolve local build context root: $LOCAL_CONTEXT_ROOT"
+    [ "$resolved_root" != / ] || fail "local build context root must not be the filesystem root"
+
+    source_path=$BUILD_SOURCE
+    while [ "${source_path%/}" != "$source_path" ]; do
+        source_path=${source_path%/}
+    done
+    [ ! -L "$source_path" ] || fail "local build source must not be a symbolic link: $BUILD_SOURCE"
+    resolved_source=$(realpath "$source_path") ||
+        fail "local build source directory not found: $BUILD_SOURCE"
+    case "$resolved_source" in
+        "$resolved_root"/*) ;;
+        *) fail "local build source must be beneath operator-managed root $resolved_root (got $resolved_source)" ;;
+    esac
+    [ -d "$resolved_source" ] || fail "local build source must be a directory: $resolved_source"
+
+    dockerfile_path="$resolved_source/$DOCKERFILE"
+    [ ! -L "$dockerfile_path" ] || fail "Dockerfile must not be a symbolic link (got $DOCKERFILE)"
+    resolved_dockerfile=$(realpath "$dockerfile_path") ||
+        fail "Dockerfile not found in local build source: $DOCKERFILE"
+    case "$resolved_dockerfile" in
+        "$resolved_source"/*) ;;
+        *) fail "Dockerfile must resolve within the local build source (got $DOCKERFILE)" ;;
+    esac
+    [ -f "$resolved_dockerfile" ] || fail "Dockerfile must be a regular file (got $DOCKERFILE)"
+
+    SYMLINK_LIST="$SCRIPT_WORK_DIR/symlink-list"
+    (cd "$resolved_source" && find . -type l -print0) > "$SYMLINK_LIST" ||
+        fail "failed to inspect local build source symlinks: $resolved_source"
+    [ ! -s "$SYMLINK_LIST" ] ||
+        fail "local build source must not contain symbolic links: $resolved_source"
+
+    BUILD_SOURCE=$resolved_source
 fi
 
-# Use an explicit tag as-is. Otherwise compute a deterministic tag from a newline-delimited
-# manifest; validation rejects newlines, and the core sorts build arguments by key.
+# Use an explicit tag as-is. Otherwise compute a deterministic tag. Local file records use
+# NUL delimiters because filenames within the operator-managed context may contain newlines.
 if [ "$TAG_PROVIDED" -eq 1 ]; then
     RESOLVED_TAG=$TAG
 else
-    HASH_INPUT=.radius-containerimages-hash-input
-    FILE_LIST=.radius-containerimages-file-list
-    trap 'rm -f "$HASH_INPUT" "$FILE_LIST"' EXIT
+    HASH_INPUT="$SCRIPT_WORK_DIR/hash-input"
+    FILE_LIST="$SCRIPT_WORK_DIR/file-list"
+    SORTED_FILE_LIST="$SCRIPT_WORK_DIR/file-list-sorted"
 
     : > "$HASH_INPUT"
     if [ "$IS_GIT" -eq 1 ]; then
         printf 'source=%s\n' "$BUILDKIT_CONTEXT" >> "$HASH_INPUT"
     else
-        (cd "$BUILD_SOURCE" && find . -type f -print | LC_ALL=C sort) > "$FILE_LIST" ||
+        (cd "$BUILD_SOURCE" && find . -type f -print0) > "$FILE_LIST" ||
             fail "failed to enumerate local build source: $BUILD_SOURCE"
-        while IFS= read -r file; do
-            relative_path=${file#./}
-            digest_line=$(sha256sum "$BUILD_SOURCE/$relative_path") ||
-                fail "failed to hash local build source file: $relative_path"
-            digest=${digest_line%% *}
-            printf 'file.%s=%s\n' "$relative_path" "$digest" >> "$HASH_INPUT"
-        done < "$FILE_LIST"
+        LC_ALL=C sort -z "$FILE_LIST" -o "$SORTED_FILE_LIST" ||
+            fail "failed to sort local build source entries: $BUILD_SOURCE"
+        # shellcheck disable=SC2016 # Expanded by the inner shell after xargs supplies its arguments.
+        xargs -0 sh -c '
+            output=$1
+            root=$2
+            shift 2
+            for path do
+                digest_line=$(sha256sum < "$root/${path#./}") || exit 1
+                digest=${digest_line%% *}
+                printf "file.%s\0%s\0" "${path#./}" "$digest" >> "$output" || exit 1
+            done
+        ' radius-local-hash "$HASH_INPUT" "$BUILD_SOURCE" < "$SORTED_FILE_LIST" ||
+            fail "failed to hash local build source: $BUILD_SOURCE"
     fi
     printf 'dockerfile=%s\n' "$DOCKERFILE" >> "$HASH_INPUT"
     old_ifs=$IFS
