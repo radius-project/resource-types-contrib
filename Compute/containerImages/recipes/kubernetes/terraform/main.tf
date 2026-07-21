@@ -33,8 +33,9 @@ locals {
   properties    = try(var.context.resource.properties, {})
   app_namespace = var.context.runtime.kubernetes.namespace
 
-  registry      = var.registry
-  registry_host = split("/", var.registry)[0]
+  registry        = var.registry
+  registry_host   = split("/", var.registry)[0]
+  docker_auth_key = contains(["docker.io", "index.docker.io", "registry-1.docker.io"], local.registry_host) ? "https://index.docker.io/v1/" : local.registry_host
 
   image_name = local.resource_name
 
@@ -140,7 +141,7 @@ locals {
 
   docker_config_json = local.use_auth ? jsonencode({
     auths = {
-      (local.registry_host) = {
+      (local.docker_auth_key) = {
         auth = base64encode("${local.registry_username}:${local.registry_password}")
       }
     }
