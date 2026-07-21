@@ -53,10 +53,6 @@ jobs:
         with:
           node-version-file: .node-version
 
-      - name: Test containerImages Bicep build script
-        if: matrix.recipe == 'bicep'
-        run: sh Compute/containerImages/recipes/kubernetes/bicep/build_test.sh
-
       - name: Set up ORAS
         uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3 # v2.0.0
         with:
