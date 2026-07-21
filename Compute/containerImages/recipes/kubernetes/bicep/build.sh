@@ -2,8 +2,10 @@
 # Build and push for the Radius.Compute/containerImages Bicep recipe.
 #
 # Platform engineers can fork this recipe, edit this script, and republish the Bicep module.
-# Radius supplies resource inputs as positional arguments and provides DOCKER_CONFIG,
-# RADIUS_EXEC_OUTPUT, and the pod's existing BUILDKIT_HOST environment variable.
+# Radius passes each field of the recipe's imageBuild output as a --<fieldName> argument and
+# provides DOCKER_CONFIG, RADIUS_EXEC_OUTPUT, and the pod's existing BUILDKIT_HOST environment
+# variable. The flag names match the imageBuild property names, so this script and the recipe
+# evolve together without any Radius driver change.
 
 set -eu
 umask 077
@@ -35,8 +37,8 @@ BUILD_ARGS=
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --resource-name)
-            [ "$#" -ge 2 ] || fail "--resource-name requires a value"
+        --resourceName)
+            [ "$#" -ge 2 ] || fail "--resourceName requires a value"
             RESOURCE_NAME=$2
             shift 2
             ;;
@@ -50,7 +52,7 @@ while [ "$#" -gt 0 ]; do
             TAG=$2
             shift 2
             ;;
-        --tag-provided)
+        --tagProvided)
             TAG_PROVIDED=1
             shift
             ;;
@@ -64,8 +66,8 @@ while [ "$#" -gt 0 ]; do
             DOCKERFILE=$2
             shift 2
             ;;
-        --platform)
-            [ "$#" -ge 2 ] || fail "--platform requires a value"
+        --platforms)
+            [ "$#" -ge 2 ] || fail "--platforms requires a value"
             platform=$2
             reject_line_break "properties.build.platforms entries" "$platform"
             printf '%s' "$platform" | grep -Eq '^[a-z0-9]+/[a-z0-9]+(/[a-z0-9]+)?$' ||
@@ -77,8 +79,8 @@ while [ "$#" -gt 0 ]; do
             fi
             shift 2
             ;;
-        --build-arg)
-            [ "$#" -ge 3 ] || fail "--build-arg requires a key and value"
+        --buildArgs)
+            [ "$#" -ge 3 ] || fail "--buildArgs requires a key and value"
             key=$2
             value=$3
             reject_line_break "properties.build.args keys" "$key"
