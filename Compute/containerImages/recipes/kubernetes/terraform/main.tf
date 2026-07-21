@@ -36,6 +36,10 @@ locals {
   registry      = var.registry
   registry_host = split("/", var.registry)[0]
 
+  # Docker Hub auth must be keyed by https://index.docker.io/v1/, not the
+  # docker.io host (also covers index.docker.io / registry-1.docker.io).
+  docker_auth_key = contains(["docker.io", "index.docker.io", "registry-1.docker.io"], local.registry_host) ? "https://index.docker.io/v1/" : local.registry_host
+
   image_name = local.resource_name
 
   build_source  = local.properties.build.source
@@ -140,7 +144,7 @@ locals {
 
   docker_config_json = local.use_auth ? jsonencode({
     auths = {
-      (local.registry_host) = {
+      (local.docker_auth_key) = {
         auth = base64encode("${local.registry_username}:${local.registry_password}")
       }
     }
