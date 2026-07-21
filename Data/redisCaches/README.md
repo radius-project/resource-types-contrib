@@ -24,6 +24,8 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 | Platform | Recipe Pack | Recipe source |
 | --- | --- | --- |
 | Azure | [`recipepack/azure/bicep-recipepack.bicep`](../../recipepack/azure/bicep-recipepack.bicep) | Direct module — Azure Verified Module `avm/res/cache/redis-enterprise` |
+| Kubernetes | [`recipepack/kubernetes/default-recipepack.bicep`](../../recipepack/kubernetes/default-recipepack.bicep) | In-cluster Redis `Deployment` + `Service` [`recipes/kubernetes`](recipes/kubernetes) |
+
 
 ## Using the resource type
 

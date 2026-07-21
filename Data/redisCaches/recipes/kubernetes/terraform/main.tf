@@ -5,10 +5,6 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = ">= 2.37.1"
     }
-    random = {
-      source  = "hashicorp/random"
-      version = ">= 3.6.0"
-    }
   }
 }
 
@@ -33,29 +29,8 @@ locals {
   host = "${local.resource_name}.${local.namespace}.svc.cluster.local"
 }
 
-# The Radius.Data/redisCaches resource exposes no credential property: it is
-# designed so the platform generates its own access key. This recipe generates
-# one. random_password is persisted in Terraform state, keeping it stable and
-# idempotent across applies.
-resource "random_password" "redis" {
-  length  = 24
-  special = false
-}
-
-# Store the generated password in a Kubernetes Secret so the Redis container
-# references it via secretKeyRef rather than carrying it inline in the Pod spec.
-resource "kubernetes_secret" "redis" {
-  metadata {
-    name      = "${local.resource_name}-credentials"
-    namespace = local.namespace
-    labels    = local.labels
-  }
-
-  data = {
-    REDIS_PASSWORD = random_password.redis.result
-  }
-}
-
+# In-cluster Redis Deployment. Runs without authentication (no requirepass),
+# matching the default local-dev Redis recipe for a quick-start experience.
 resource "kubernetes_deployment" "redis" {
   metadata {
     name      = local.resource_name
@@ -88,11 +63,10 @@ resource "kubernetes_deployment" "redis" {
           image = "redis:${local.tag}"
 
           # The default redis image entrypoint prepends `redis-server` when the
-          # first arg starts with '-'. Kubernetes substitutes $(REDIS_PASSWORD)
-          # from the env var below (sourced from the Secret) at runtime.
-          # --maxmemory caps the dataset (below the memory request) and
-          # allkeys-lru evicts keys under pressure instead of OOM-killing the pod.
-          args = ["--requirepass", "$(REDIS_PASSWORD)", "--maxmemory", var.memory[local.size_value].maxmemory, "--maxmemory-policy", "allkeys-lru"]
+          # first arg starts with '-'. --maxmemory caps the dataset (below the
+          # memory request) and allkeys-lru evicts keys under pressure instead of
+          # OOM-killing the pod.
+          args = ["--maxmemory", var.memory[local.size_value].maxmemory, "--maxmemory-policy", "allkeys-lru"]
 
           port {
             container_port = local.port
@@ -101,16 +75,6 @@ resource "kubernetes_deployment" "redis" {
           resources {
             requests = {
               memory = var.memory[local.size_value].memoryRequest
-            }
-          }
-
-          env {
-            name = "REDIS_PASSWORD"
-            value_from {
-              secret_key_ref {
-                name = kubernetes_secret.redis.metadata[0].name
-                key  = "REDIS_PASSWORD"
-              }
             }
           }
         }
@@ -142,7 +106,6 @@ resource "kubernetes_service" "redis" {
 output "result" {
   value = {
     resources = [
-      "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Secret/${kubernetes_secret.redis.metadata[0].name}",
       "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Service/${kubernetes_service.redis.metadata[0].name}",
       "/planes/kubernetes/local/namespaces/${local.namespace}/providers/apps/Deployment/${kubernetes_deployment.redis.metadata[0].name}"
     ]
@@ -151,10 +114,10 @@ output "result" {
       port = local.port
     }
     secrets = {
-      # In-cluster Redis is reached over plaintext (no TLS), so the scheme is
-      # `redis://` (not `rediss://`). Radius materializes this into the managed
+      # In-cluster Redis runs without auth (no TLS, no password), so the URL is a
+      # plain redis://host:port. Radius still materializes it into the managed
       # Radius.Security/secrets resource; it is never written onto the resource.
-      url = "redis://:${random_password.redis.result}@${local.host}:${local.port}"
+      url = "redis://${local.host}:${local.port}"
     }
   }
   sensitive = true

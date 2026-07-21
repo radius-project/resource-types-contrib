@@ -24,14 +24,6 @@ var sizeValue = context.resource.properties.?size ?? 'S'
 var tag string = '7-alpine'
 var port = 6379
 
-// Unlike the database recipes (which take a developer-supplied password), the
-// Radius.Data/redisCaches resource exposes no credential property — the platform
-// provisions the access key. Bicep has no stateful RNG, so this recipe derives a
-// stable password from the resource id via uniqueString(): deterministic and
-// idempotent across redeploys. (The Terraform variant uses a random_password kept
-// in state.) The value is stored in the Kubernetes Secret below.
-var password = uniqueString(context.resource.id, 'redis-password')
-
 // Each size maps to a memory request (pod scheduling) and a Redis `--maxmemory`
 // budget (dataset cap). maxmemory is kept below the request so Redis evicts keys
 // before the container is under memory pressure, rather than being OOM-killed.
@@ -56,24 +48,6 @@ var labels = {
   'radapp.io/environment':    environmentName
   'radapp.io/resource-type':  replace(context.resource.type, '/', '-')
   'radapp.io/resource-group': resourceGroupName
-}
-
-//////////////////////////////////////////
-// Redis credentials
-//
-// The generated password is stored in a Kubernetes Secret so the Redis container
-// references it via secretKeyRef rather than carrying it inline in the Pod spec.
-//////////////////////////////////////////
-
-resource redisSecret 'core/Secret@v1' = {
-  metadata: {
-    name: '${resourceName}-credentials'
-    namespace: namespace
-    labels: labels
-  }
-  stringData: {
-    REDIS_PASSWORD: password
-  }
 }
 
 //////////////////////////////////////////
@@ -108,14 +82,12 @@ resource redis 'apps/Deployment@v1' = {
           {
             // This container is the running Redis instance. The default redis
             // image entrypoint prepends `redis-server` when the first arg starts
-            // with '-', so `--requirepass $(REDIS_PASSWORD)` enables auth. The
-            // $(REDIS_PASSWORD) token is substituted by Kubernetes from the env
-            // var below (sourced from the Secret) — the password is never inlined.
+            // with '-'. `--maxmemory` caps the dataset (below the memory request)
+            // and `allkeys-lru` evicts keys under memory pressure rather than
+            // letting the Pod get OOM-killed.
             name: 'redis'
             image: 'redis:${tag}'
             args: [
-              '--requirepass'
-              '$(REDIS_PASSWORD)'
               '--maxmemory'
               memory[sizeValue].maxmemory
               '--maxmemory-policy'
@@ -131,17 +103,6 @@ resource redis 'apps/Deployment@v1' = {
                 memory: memory[sizeValue].memoryRequest
               }
             }
-            env: [
-              {
-                name: 'REDIS_PASSWORD'
-                valueFrom: {
-                  secretKeyRef: {
-                    name: redisSecret.metadata.name
-                    key: 'REDIS_PASSWORD'
-                  }
-                }
-              }
-            ]
           }
         ]
       }
@@ -176,7 +137,6 @@ var host = '${svc.metadata.name}.${svc.metadata.namespace}.svc.cluster.local'
 
 output result object = {
   resources: [
-    '/planes/kubernetes/local/namespaces/${redisSecret.metadata.namespace}/providers/core/Secret/${redisSecret.metadata.name}'
     '/planes/kubernetes/local/namespaces/${svc.metadata.namespace}/providers/core/Service/${svc.metadata.name}'
     '/planes/kubernetes/local/namespaces/${redis.metadata.namespace}/providers/apps/Deployment/${redis.metadata.name}'
   ]
@@ -185,9 +145,9 @@ output result object = {
     port: port
   }
   secrets: {
-    // In-cluster Redis is reached over plaintext (no TLS), so the scheme is
-    // `redis://` (not `rediss://`). Radius materializes this into the managed
+    // In-cluster Redis runs without auth (no TLS, no password), so the URL is a
+    // plain `redis://host:port`. Radius still materializes it into the managed
     // Radius.Security/secrets resource; it is never written onto the resource.
-    url: 'redis://:${password}@${host}:${port}'
+    url: 'redis://${host}:${port}'
   }
 }
