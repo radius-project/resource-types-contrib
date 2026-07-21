@@ -31,6 +31,8 @@ jobs:
         include:
           - name: containers
             path: Compute/containers/recipes/kubernetes/bicep/kubernetes-containers.bicep
+          - name: containerimages
+            path: Compute/containerImages/recipes/kubernetes/bicep/kubernetes-containerimages.bicep
           - name: persistentvolumes
             path: Compute/persistentVolumes/recipes/kubernetes/bicep/kubernetes-volumes.bicep
           - name: routes
