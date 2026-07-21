@@ -332,7 +332,7 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
           gatewayNamespace: routesGatewayNamespace
         }
       }
-      // Note: Radius currently only supports Terraform containerImages 
+      // Keep Terraform as the default until the Bicep build hook ships in a compatible Radius release.
       'Radius.Compute/containerImages': {
         kind: 'terraform'
         source: 'git::https://github.com/radius-project/resource-types-contrib.git//Compute/containerImages/recipes/kubernetes/terraform'

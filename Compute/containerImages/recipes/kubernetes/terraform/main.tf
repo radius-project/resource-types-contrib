@@ -159,7 +159,7 @@ resource "terraform_data" "validate_inputs" {
     }
     precondition {
       condition     = local.user_tag == null || can(regex("^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$", local.user_tag))
-      error_message = "containerImages: properties.tag must match Docker tag spec [A-Za-z0-9_][A-Za-z0-9._-]{0,127} (got ${local.user_tag})."
+      error_message = "containerImages: properties.tag must match Docker tag spec [A-Za-z0-9_][A-Za-z0-9._-]{0,127} (got ${jsonencode(local.user_tag)})."
     }
     precondition {
       condition     = !startswith(local.dockerfile, "/") && !strcontains(local.dockerfile, "..") && can(regex("^[A-Za-z0-9._/-]+$", local.dockerfile))
