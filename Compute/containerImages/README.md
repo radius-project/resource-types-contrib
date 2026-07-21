@@ -87,7 +87,7 @@ Properties for the containerImages resource are provided to the Recipe via the [
 - `context.resource.properties.build.dockerfile` (string, optional): Path to the Dockerfile relative to the build context. Defaults to `Dockerfile`.
 - `context.resource.properties.build.platforms` (array of string, optional): Target platforms (e.g. `["linux/amd64", "linux/arm64"]`) for the multi-arch image. Defaults to `["linux/amd64", "linux/arm64"]`. Multi-arch builds require a cross-compile-friendly Dockerfile.
 - `context.resource.properties.build.args` (object, optional): Map of `--build-arg` values passed to the build.
-- `context.resource.properties.tag` (string, optional): Explicit image tag. When omitted or `null`, defaults to a deterministic tag (`sha256-<hash>`) derived from the build inputs (source URL or file tree, dockerfile path, platforms, build args). An explicit non-empty tag is used as-is and skips this hash calculation; an explicitly empty tag is invalid.
+- `context.resource.properties.tag` (string, optional): Explicit image tag. When omitted, defaults to a deterministic tag (`sha256-<hash>`) derived from the build inputs (source URL or file tree, dockerfile path, platforms, build args). A present tag must be a valid non-empty string and is used as-is, skipping this hash calculation.
 
 The Recipe is also parameterized at registration time by the platform engineer with:
 

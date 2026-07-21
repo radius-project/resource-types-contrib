@@ -105,6 +105,12 @@ done
 
 [ -n "$PLATFORMS" ] || fail "properties.build.platforms must contain at least one platform"
 
+# Keep generated tags and buildctl arguments deterministic even when callers provide
+# build arguments in a different order.
+if [ -n "$BUILD_ARGS" ]; then
+    BUILD_ARGS=$(printf '%s\n' "$BUILD_ARGS" | LC_ALL=C sort)
+fi
+
 # Validate the scalar inputs against the Terraform recipe's preconditions. Explicit newline
 # checks keep grep's line-oriented anchors from accepting only one line of a supplied value.
 reject_line_break "registry" "$REGISTRY"

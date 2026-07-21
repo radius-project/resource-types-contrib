@@ -64,7 +64,7 @@ types:
               description: (Required) The Radius Application ID. `myApplication.id` for example.
             tag:
               type: string
-              description: (Optional) Tag for the produced image. When omitted or null, the recipe computes a deterministic tag (`sha256-<hash>`) from the build inputs. An explicitly empty tag is invalid. For git sources, pin to a commit SHA or immutable tag (e.g. `?ref=<sha>`); with a moving ref like `?ref=main`, the computed tag does not change when the upstream branch advances even though a later build can replace the content behind that tag.
+              description: (Optional) Tag for the produced image. When omitted, the recipe computes a deterministic tag (`sha256-<hash>`) from the build inputs. A present tag must be a valid non-empty string. For git sources, pin to a commit SHA or immutable tag (e.g. `?ref=<sha>`); with a moving ref like `?ref=main`, the computed tag does not change when the upstream branch advances even though a later build can replace the content behind that tag.
             build:
               type: object
               description: (Required) Build configuration for the container image.

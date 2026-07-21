@@ -43,9 +43,25 @@ grep -Fx -- 'type=image,name=ghcr.io/example/demo:sha256-ed8fc579e9dc133a,push=t
 grep -Fx -- 'context=https://example.com/repo.git#main:src' "$WORK_DIR/buildctl.args" >/dev/null
 grep -Fx -- 'build-arg:A=a&b<c>d' "$WORK_DIR/buildctl.args" >/dev/null
 
+# The script canonicalizes build arguments without relying on the Radius driver's map ordering.
+(cd "$WORK_DIR/work" && sh "$SCRIPT" \
+    --resource-name Demo \
+    --registry ghcr.io/example \
+    --tag '' \
+    --source 'git::https://example.com/repo.git//src?ref=main' \
+    --dockerfile Dockerfile \
+    --platform linux/amd64 \
+    --platform linux/arm64 \
+    --build-arg Z z \
+    --build-arg A 'a&b<c>d')
+[ "$(cat "$WORK_DIR/result.json")" = '{"imageReference":"ghcr.io/example/demo:sha256-ed8fc579e9dc133a"}' ]
+a_line=$(grep -nFx -- 'build-arg:A=a&b<c>d' "$WORK_DIR/buildctl.args" | cut -d: -f1)
+z_line=$(grep -nFx -- 'build-arg:Z=z' "$WORK_DIR/buildctl.args" | cut -d: -f1)
+[ "$a_line" -lt "$z_line" ]
+
 # Bicep has no Terraform state, so a second deployment still invokes buildctl.
 run_build
-[ "$(cat "$WORK_DIR/buildctl.calls")" = '2' ]
+[ "$(cat "$WORK_DIR/buildctl.calls")" = '3' ]
 
 # Local paths already visible to dynamic-rp use a deterministic file-tree hash.
 mkdir -p "$WORK_DIR/source"
@@ -116,6 +132,6 @@ expect_failure 'registry must not contain newlines' \
     --resource-name Demo --registry "$newline_registry" --tag '' \
     --source 'git::https://example.com/repo.git?ref=main' \
     --dockerfile Dockerfile --platform linux/amd64
-[ "$(cat "$WORK_DIR/buildctl.calls")" = '5' ]
+[ "$(cat "$WORK_DIR/buildctl.calls")" = '6' ]
 
 echo "containerImages build.sh smoke test passed"
