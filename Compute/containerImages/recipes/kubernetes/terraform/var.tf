@@ -10,7 +10,7 @@ variable "registry" {
 }
 
 variable "registrySecretName" {
-  description = "Name of the Kubernetes Secret holding the registry credentials. Supplied by the platform engineer as a recipe-pack parameter, typically as `ghcrCreds.name` referencing an application-scoped `Radius.Security/secrets` resource whose recipe materializes a same-named Secret in the recipe runtime namespace. The Secret must contain string keys `username` and `password`. Leave empty for an unauthenticated registry."
+  description = "Name of the Kubernetes Secret holding the registry credentials. Supplied by the platform engineer as a recipe-pack parameter, typically as `ghcrCreds.name` referencing a `Radius.Security/secrets` resource whose recipe materializes a same-named Secret in the environment namespace. The Secret must contain string keys `username` and `password`. Leave empty for an unauthenticated registry."
   type        = string
   default     = ""
 }

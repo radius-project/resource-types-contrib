@@ -33,9 +33,8 @@ locals {
   properties    = try(var.context.resource.properties, {})
   app_namespace = var.context.runtime.kubernetes.namespace
 
-  registry        = var.registry
-  registry_host   = split("/", var.registry)[0]
-  docker_auth_key = contains(["docker.io", "index.docker.io", "registry-1.docker.io"], local.registry_host) ? "https://index.docker.io/v1/" : local.registry_host
+  registry      = var.registry
+  registry_host = split("/", var.registry)[0]
 
   image_name = local.resource_name
 
@@ -141,7 +140,7 @@ locals {
 
   docker_config_json = local.use_auth ? jsonencode({
     auths = {
-      (local.docker_auth_key) = {
+      (local.registry_host) = {
         auth = base64encode("${local.registry_username}:${local.registry_password}")
       }
     }
@@ -160,7 +159,7 @@ resource "terraform_data" "validate_inputs" {
     }
     precondition {
       condition     = local.user_tag == null || can(regex("^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$", local.user_tag))
-      error_message = "containerImages: properties.tag must match Docker tag spec [A-Za-z0-9_][A-Za-z0-9._-]{0,127} (got ${jsonencode(local.user_tag)})."
+      error_message = "containerImages: properties.tag must match Docker tag spec [A-Za-z0-9_][A-Za-z0-9._-]{0,127} (got ${local.user_tag})."
     }
     precondition {
       condition     = !startswith(local.dockerfile, "/") && !strcontains(local.dockerfile, "..") && can(regex("^[A-Za-z0-9._/-]+$", local.dockerfile))
