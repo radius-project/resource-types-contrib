@@ -127,8 +127,16 @@ data "kubernetes_secret" "registry_creds" {
 locals {
   # kubernetes_secret data source returns already-decoded values
   # (the provider decodes the base64 from the K8s API).
-  registry_username = local.use_auth ? data.kubernetes_secret.registry_creds[0].data["username"] : ""
-  registry_password = local.use_auth ? data.kubernetes_secret.registry_creds[0].data["password"] : ""
+  #
+  # try(..., "") guards against destroy-time evaluation: the Secret is
+  # owned by a separate Radius.Security/secrets resource, so on teardown
+  # it (or its namespace) may already be deleted while registrySecretName
+  # is still set. In that case the data source read can resolve to a null
+  # .data map (or one missing these keys) and indexing it crashes
+  # `terraform destroy`. The credentials are never used on destroy, so
+  # degrading to "" is safe.
+  registry_username = try(data.kubernetes_secret.registry_creds[0].data["username"], "")
+  registry_password = try(data.kubernetes_secret.registry_creds[0].data["password"], "")
 
   docker_config_json = local.use_auth ? jsonencode({
     auths = {
