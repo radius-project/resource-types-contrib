@@ -23,6 +23,10 @@
 BUMP ?= minor
 OUT_DIR ?= dist
 
+.PHONY: test-release-automation
+test-release-automation: ## Run focused tests for namespace sync and release versioning automation
+	@./.github/scripts/tests/test-release-automation.sh
+
 .PHONY: list-namespaces
 list-namespaces: ## List releasable namespaces (Radius.<Category>)
 	@./.github/scripts/release/list-namespaces.sh

@@ -70,9 +70,8 @@ IS_PRERELEASE="false"
 if [[ -n "$PRERELEASE_LABEL" ]]; then
     # Normalize: allow the caller to pass either "rc.1" or "-rc.1".
     PRERELEASE_LABEL="${PRERELEASE_LABEL#-}"
-    # Restrict to the SemVer prerelease charset so the resulting tag is valid.
-    if [[ ! "$PRERELEASE_LABEL" =~ ^[0-9A-Za-z]([0-9A-Za-z.-]*[0-9A-Za-z])?$ ]]; then
-        echo "Error: invalid prerelease label '$PRERELEASE_LABEL' (allowed: alphanumerics, '.', '-'; must start and end alphanumeric)" >&2
+    if ! rtc_is_valid_prerelease "$PRERELEASE_LABEL"; then
+        echo "Error: invalid SemVer prerelease label '$PRERELEASE_LABEL' (use dot-separated alphanumeric/hyphen identifiers; numeric identifiers cannot have leading zeroes)" >&2
         exit 1
     fi
     NEXT="${NEXT}-${PRERELEASE_LABEL}"

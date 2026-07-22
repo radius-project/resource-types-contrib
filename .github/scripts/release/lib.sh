@@ -86,3 +86,23 @@ rtc_semver_bump() {
     esac
     echo "${major}.${minor}.${patch}"
 }
+
+# True when label is a valid SemVer prerelease value. Identifiers are separated
+# by dots, contain only ASCII alphanumerics and hyphens, and numeric identifiers
+# must not contain leading zeroes.
+rtc_is_valid_prerelease() {
+    local label="$1" identifier
+    local -a identifiers=()
+    [[ -n "$label" ]] || return 1
+    [[ "$label" =~ ^[0-9A-Za-z.-]+$ ]] || return 1
+    [[ "$label" != .* && "$label" != *. && "$label" != *..* ]] || return 1
+
+    IFS='.' read -r -a identifiers <<<"$label"
+    for identifier in "${identifiers[@]}"; do
+        [[ "$identifier" =~ ^[0-9A-Za-z-]+$ ]] || return 1
+        if [[ "$identifier" =~ ^[0-9]+$ && "$identifier" =~ ^0[0-9]+$ ]]; then
+            return 1
+        fi
+    done
+    return 0
+}

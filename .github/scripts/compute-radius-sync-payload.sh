@@ -110,6 +110,33 @@ add_all_namespaces() {
     done < <(rtc_list_folders)
 }
 
+# True when path is a resource-type manifest at ref. Reading from the commit,
+# rather than the working tree, lets push events recognize namespaces that were
+# deleted or renamed by the push.
+is_resource_type_yaml_at_ref() {
+    local ref="$1" path="$2" expected_namespace="$3" contents
+    [[ -n "$ref" && -n "$path" ]] || return 1
+    contents="$(git -C "$REPO_ROOT" show "${ref}:${path}" 2>/dev/null)" || return 1
+    sed -nE \
+        's/^namespace:[[:space:]]*(Radius\.[^[:space:]#]+)[[:space:]]*$/\1/p' \
+        <<<"$contents" | grep -Fxq "$expected_namespace" &&
+        grep -qE '^types:' <<<"$contents"
+}
+
+add_namespace_for_path_at_ref() {
+    local path="$1" ref="$2" top
+    case "$path" in
+        *.yaml | *.yml) ;;
+        *) return 0 ;;
+    esac
+
+    top="${path%%/*}"
+    rtc_is_excluded_dir "$top" && return 0
+    if is_resource_type_yaml_at_ref "$ref" "$path" "Radius.$top"; then
+        add_namespace "Radius.$top"
+    fi
+}
+
 CHANNEL=""
 REF=""
 
@@ -150,27 +177,27 @@ case "$EVENT_NAME" in
             REF="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || true)"
         fi
 
-        changed=""
-        if [[ -n "$BEFORE_SHA" && "$BEFORE_SHA" != "$ZERO_SHA" && -n "$AFTER_SHA" ]]; then
-            changed="$(git -C "$REPO_ROOT" diff --name-only "$BEFORE_SHA" "$AFTER_SHA" 2>/dev/null || true)"
-        fi
-
-        if [[ -n "$changed" ]]; then
-            while IFS= read -r path; do
-                [[ -z "$path" ]] && continue
-                # Only resource-type manifest YAML changes drive a re-sync.
-                case "$path" in
-                    *.yaml | *.yml) ;;
-                    *) continue ;;
+        if [[ -n "$BEFORE_SHA" && "$BEFORE_SHA" != "$ZERO_SHA" && -n "$AFTER_SHA" ]] &&
+            git -C "$REPO_ROOT" cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null &&
+            git -C "$REPO_ROOT" cat-file -e "${AFTER_SHA}^{commit}" 2>/dev/null; then
+            # Name-status with NUL delimiters preserves both paths for renames
+            # and avoids ambiguity from whitespace in filenames. Inspect both
+            # revisions so deleting the final manifest or renaming a namespace
+            # still dispatches the old namespace for downstream pruning.
+            while IFS= read -r -d '' status; do
+                IFS= read -r -d '' old_path
+                case "${status:0:1}" in
+                    R | C)
+                        IFS= read -r -d '' new_path
+                        add_namespace_for_path_at_ref "$old_path" "$BEFORE_SHA"
+                        add_namespace_for_path_at_ref "$new_path" "$AFTER_SHA"
+                        ;;
+                    *)
+                        add_namespace_for_path_at_ref "$old_path" "$BEFORE_SHA"
+                        add_namespace_for_path_at_ref "$old_path" "$AFTER_SHA"
+                        ;;
                 esac
-                top="${path%%/*}"
-                if rtc_is_excluded_dir "$top"; then
-                    continue
-                fi
-                if rtc_is_category "$top"; then
-                    add_namespace "Radius.$top"
-                fi
-            done <<<"$changed"
+            done < <(git -C "$REPO_ROOT" diff --name-status --find-renames -z "$BEFORE_SHA" "$AFTER_SHA")
         else
             # No usable diff (new branch, shallow clone, or unrelated
             # force-push): fall back to the safe superset of all namespaces.
