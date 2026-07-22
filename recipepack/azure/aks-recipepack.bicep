@@ -363,8 +363,8 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
         }
       }
       'Radius.Compute/containerImages': {
-        kind: 'terraform'
-        source: 'git::https://github.com/radius-project/resource-types-contrib.git//Compute/containerImages/recipes/kubernetes/terraform'
+        kind: 'bicep'
+        source: 'ghcr.io/radius-project/kube-recipes/containerimages:latest'
         parameters: {
           registry: containerImagesRegistry
           registrySecretName: containerImagesRegistrySecretName
