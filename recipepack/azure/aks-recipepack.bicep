@@ -389,5 +389,12 @@ resource env 'Radius.Core/environments@2025-08-01-preview' = {
     recipePacks: [
       recipes.id
     ]
+    recipeParameters: {
+      'Radius.Data/mySqlDatabases': {
+        lock: {
+          kind: 'None'
+        }
+      }
+    }
   }
 }
