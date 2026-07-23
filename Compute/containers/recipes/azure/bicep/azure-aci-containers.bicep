@@ -1,9 +1,9 @@
 @description('NGroups parameter name')
-@maxLength(64)
-param nGroupsParamName string = 'ngroups-${uniqueString(context.resource.id, resourceGroup().id)}'
+@maxLength(63)
+param nGroupsParamName string = 'ngroups-${uniqueString(resourceGroup().id)}'
 
 @description('Container Group Profile name')
-@maxLength(64)
+@maxLength(63)
 param containerGroupProfileName string = 'cgp-${uniqueString(resourceGroup().id)}'
 
 @description('Load Balancer name')
@@ -83,6 +83,38 @@ var hasPlatformOptions = resourceProperties.?platformOptions != null
 var resourceVolumes = resourceProperties.?volumes ?? {}
 var resolvedConnections = context.resource.?connections ?? {}
 
+// ---------------------------------------------------------------------------
+// Secrets connection – consume the UAI created by the Key Vault secrets recipe
+// No role assignment is created here – RBAC is owned by the secrets recipe,
+// which already grants "Key Vault Administrator" to the UAI on the vault.
+//
+// Radius wires connection data with full resource structure:
+//   context.resource.connections.<name>.properties.status.computedValues.<key>
+//   context.resource.connections.<name>.properties.status.secrets.<key>.Value
+// ---------------------------------------------------------------------------
+var secretsConn = contains(context.resource, 'connections') && contains(context.resource.connections, 'secrets') ? context.resource.connections.secrets : {}
+var secretsUaiId = string(secretsConn.?properties.?status.?computedValues.?userAssignedIdentityId ?? '')
+var secretsUaiClientId = string(secretsConn.?properties.?status.?computedValues.?userAssignedIdentityClientId ?? '')
+var secretsKeyVaultUri = string(secretsConn.?properties.?status.?computedValues.?keyVaultUri ?? '')
+
+// Azure SDK env vars injected when a secrets connection is active.
+// AZURE_CLIENT_ID lets ManagedIdentityCredential pick the correct UAI.
+// AZURE_KEYVAULT_URI tells the app which vault to query.
+var secretsEnvVars = secretsUaiClientId != '' ? [
+  { name: 'AZURE_CLIENT_ID', value: secretsUaiClientId }
+  { name: 'AZURE_KEYVAULT_URI', value: secretsKeyVaultUri }
+] : []
+
+// Platform options are applied only when allowPlatformOptions is true.
+// When allowPlatformOptions is false, provided platformOptions are ignored.
+// Location is always resourceGroup().location; platformOptions.location is not supported by this recipe.
+var platformOptions = allowPlatformOptions && hasPlatformOptions ? resourceProperties.?platformOptions ?? {} : {}
+var effectiveLocation = resourceGroup().location
+var aciSku = contains(platformOptions, 'sku') && platformOptions.sku != null ? string(platformOptions.sku) : 'Standard'
+var isConfidential = toLower(aciSku) == 'confidential'
+var zones = isConfidential ? [] : []
+var ccePolicy = contains(platformOptions, 'confidentialComputeProperties') && contains(platformOptions.confidentialComputeProperties, 'ccePolicy') ? string(platformOptions.confidentialComputeProperties.ccePolicy) : ''
+
 // Extract container items from context
 var containerItems = items(context.resource.properties.?containers ?? {})
 // Containers with initContainer: true are placed in the ACI initContainers[] array;
@@ -98,6 +130,7 @@ var containerConnectionPort = length(firstContainerPorts) > 0 ? firstContainerPo
 var firstContainerWithReadinessProbe = length(filter(regularContainerItems, item => contains(item.value, 'readinessProbe') && item.value.readinessProbe != null)) > 0 
   ? filter(regularContainerItems, item => contains(item.value, 'readinessProbe') && item.value.readinessProbe != null)[0]
   : null
+var readinessProbeContainerName = firstContainerWithReadinessProbe.?key ?? ''
 
 // Extract connection data from linked resources (merged with resource properties)
 var resourceConnections = context.resource.?connections ?? {}
@@ -228,9 +261,6 @@ resource natGateway 'Microsoft.Network/natGateways@2022-07-01' = {
       }
     ]
   }
-  dependsOn: [
-    outboundPublicIP
-  ]
 }
 
 // Virtual Network
@@ -277,10 +307,6 @@ resource virtualNetwork 'Microsoft.Network/virtualNetworks@2022-07-01' = {
       id: ddosProtectionPlan.id
     } : null
   }
-  dependsOn: [
-    networkSecurityGroup
-    natGateway
-  ]
 }
 
 // Load Balancer
@@ -372,8 +398,8 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
               id: resourceId('Microsoft.Network/loadBalancers/backendAddressPools', loadBalancerName, backendAddressPoolName)
             }
           ]
-          probe: firstContainerWithReadinessProbe != null ? {
-            id: resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, '${firstContainerWithReadinessProbe.key}-readinessProbe')
+          probe: readinessProbeContainerName != '' ? {
+            id: resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, '${readinessProbeContainerName}-readinessProbe')
           } : null
         }
       }
@@ -382,14 +408,9 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
     outboundRules: []
     inboundNatPools: []
   }
-  dependsOn: [
-    inboundPublicIP
-    virtualNetwork
-  ]
 }
 
-// ContainerGroupProfile resource. Regular containers are projected from context.resource.properties.containers;
-// entries marked with initContainer: true are emitted separately via the ACI init container path.
+// ContainerGroupProfile resource - Dev/Limited: supports ONLY a single container named 'demo'
 // Apply platformOptions only when allowPlatformOptions=true.
 // ACI does not support context.resource.properties.extensions.daprSidecar;
 // this recipe does not project Dapr sidecar settings into the deployed container group profile.
@@ -419,24 +440,35 @@ resource containerGroupProfile 'Microsoft.ContainerInstance/containerGroupProfil
               }
             }
           },
-          // Add environment variables from container definition and connections
-          (contains(item.value, 'env') || length(connectionEnvVars) > 0) ? {
+          // Add environment variables from container definition, connections, and secrets UAI
+          (contains(item.value, 'env') || length(connectionEnvVars) > 0 || length(secretsEnvVars) > 0) ? {
             environmentVariables: concat(
-              // Container-defined env vars
+              // Container-defined env vars (handles both plain values and secretKeyRef)
               reduce(items(item.value.?env ?? {}), [], (envAcc, envItem) => concat(envAcc, [{
                 name: envItem.key
-                value: envItem.value.?value ?? string(envItem.value)
+                value: envItem.value.?value != null
+                  ? string(envItem.value.value)
+                  : envItem.value.?valueFrom.?secretKeyRef != null
+                    ? string(envItem.value.valueFrom.secretKeyRef.key)
+                    : string(envItem.value)
               }])),
               // Connection-derived env vars
-              connectionEnvVars
+              connectionEnvVars,
+              // Azure SDK env vars for secrets UAI (AZURE_CLIENT_ID, AZURE_KEYVAULT_URI)
+              secretsEnvVars
             )
           } : {},
           // Add volume mounts if they exist (filter out mounts for unsupported volume types like secretName)
           contains(item.value, 'volumeMounts') ? {
-            volumeMounts: reduce(item.value.volumeMounts, [], (vmAcc, vm) => concat(vmAcc, [{
-              name: vm.volumeName
-              mountPath: vm.mountPath
-            }]))
+            volumeMounts: reduce(filter(item.value.volumeMounts, vm => contains(aciVolumeNames, vm.volumeName)), [], (vmAcc, vm) => concat(vmAcc, [
+              union(
+                {
+                  name: vm.volumeName
+                  mountPath: vm.mountPath
+                },
+                (vm.?readOnly ?? false) == true ? { readOnly: true } : {}
+              )
+            ]))
           } : {},
           // Note: ACI does not support Radius container properties `args` or `workingDir`.
           // If `args` is provided, merge command + args into a single ACI `command` array.
@@ -448,13 +480,56 @@ resource containerGroupProfile 'Microsoft.ContainerInstance/containerGroupProfil
           } : {}
         )
       }]))
-      volumes: [
-        {
-          name: 'cachevolume'
-          emptyDir: {}   // ephemeral volume
-        }
-      ]
-      restartPolicy: 'Always'
+      // Init containers run sequentially to completion before regular containers start.
+      // The ACI init container schema is a subset: supports command, environmentVariables,
+      // image, securityContext, and volumeMounts — but NOT ports, resources, livenessProbe,
+      // readinessProbe, or configMap.
+      initContainers: reduce(initContainerItems, [], (acc, item) => concat(acc, [{
+        name: item.key
+        properties: union(
+          {
+            image: item.value.image
+          },
+          // Env vars from container definition only (no connection env vars for init containers)
+          contains(item.value, 'env') ? {
+            environmentVariables: reduce(items(item.value.?env ?? {}), [], (envAcc, envItem) => concat(envAcc, [{
+              name: envItem.key
+              value: envItem.value.?value != null
+                ? string(envItem.value.value)
+                : envItem.value.?valueFrom.?secretKeyRef != null
+                  ? string(envItem.value.valueFrom.secretKeyRef.key)
+                  : string(envItem.value)
+            }]))
+          } : {},
+          // Volume mounts (filter out unsupported secretName volumes)
+          contains(item.value, 'volumeMounts') ? {
+            volumeMounts: reduce(filter(item.value.volumeMounts, vm => contains(aciVolumeNames, vm.volumeName)), [], (vmAcc, vm) => concat(vmAcc, [
+              union(
+                {
+                  name: vm.volumeName
+                  mountPath: vm.mountPath
+                },
+                (vm.?readOnly ?? false) == true ? { readOnly: true } : {}
+              )
+            ]))
+          } : {},
+          // Merge command + args into a single command array (args and workingDir not supported by ACI init containers)
+          contains(item.value, 'command') ? {
+            command: contains(item.value, 'args')
+              ? concat(item.value.command, item.value.args)
+              : item.value.command
+          } : {}
+        )
+      }]))
+      volumes: !empty(aciVolumes)
+        ? aciVolumes
+        : [
+            {
+              name: 'cachevolume'
+              emptyDir: {}
+            }
+          ]
+      restartPolicy: resourceProperties.?restartPolicy ?? 'Always'
       ipAddress: {
         ports: [
           {
@@ -512,9 +587,7 @@ resource nGroups 'Microsoft.ContainerInstance/NGroups@2024-11-01-preview' = {
           loadBalancer: {
             backendAddressPools: [
               {
-                resource: {
-                  id: resourceId('Microsoft.Network/loadBalancers/backendAddressPools', loadBalancerName, backendAddressPoolName)
-                }
+                resource: resourceId('Microsoft.Network/loadBalancers/backendAddressPools', loadBalancerName, backendAddressPoolName)
               }
             ]
           }
@@ -523,9 +596,9 @@ resource nGroups 'Microsoft.ContainerInstance/NGroups@2024-11-01-preview' = {
     ]
   }
   tags: {
-    'reprovision.enabled': true
-    'metadata.container.environmentVariable.orchestratorId': true
-    'rollingupdate.replace.enabled': true
+    'reprovision.enabled': 'true'
+    'metadata.container.environmentVariable.orchestratorId': 'true'
+    'rollingupdate.replace.enabled': 'true'
   }
   dependsOn: [
     containerGroupProfile
@@ -536,31 +609,19 @@ resource nGroups 'Microsoft.ContainerInstance/NGroups@2024-11-01-preview' = {
 
 // Outputs
 output result object = {
-  resources: [
-    networkSecurityGroup.id
-    inboundPublicIP.id
-    outboundPublicIP.id
-    natGateway.id
-    virtualNetwork.id
-    loadBalancer.id
-    containerGroupProfile.id
-    nGroups.id
-  ]
-  values: {
-    virtualNetworkId: virtualNetwork.id
-    subnetId: virtualNetwork.properties.subnets[0].id
-    loadBalancerId: loadBalancer.id
-    frontendIPConfigurationId: loadBalancer.properties.frontendIPConfigurations[0].id
-    backendAddressPoolId: loadBalancer.properties.backendAddressPools[0].id
-    inboundPublicIPId: inboundPublicIP.id
-    outboundPublicIPId: outboundPublicIP.id
-    inboundPublicIPFQDN: inboundPublicIP.properties.dnsSettings.fqdn
-    natGatewayId: natGateway.id
-    networkSecurityGroupId: networkSecurityGroup.id
-    ddosProtectionPlanId: enableDdosProtection ? ddosProtectionPlan.id : ''
-    containerGroupProfileId: containerGroupProfile.id
-    nGroupsId: nGroups.id
-    readinessProbeId: firstContainerWithReadinessProbe != null ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, '${firstContainerWithReadinessProbe.key}-readinessProbe') : ''
-    livenessProbeId: length(filter(regularContainerItems, item => contains(item.value, 'livenessProbe') && item.value.livenessProbe != null)) > 0 ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, '${filter(regularContainerItems, item => contains(item.value, 'livenessProbe') && item.value.livenessProbe != null)[0].key}-livenessProbe') : ''
-  }
+  virtualNetworkId: virtualNetwork.id
+  subnetId: virtualNetwork.properties.subnets[0].id
+  loadBalancerId: loadBalancer.id
+  frontendIPConfigurationId: loadBalancer.properties.frontendIPConfigurations[0].id
+  backendAddressPoolId: loadBalancer.properties.backendAddressPools[0].id
+  inboundPublicIPId: inboundPublicIP.id
+  outboundPublicIPId: outboundPublicIP.id
+  inboundPublicIPFQDN: inboundPublicIP.properties.dnsSettings.fqdn
+  natGatewayId: natGateway.id
+  networkSecurityGroupId: networkSecurityGroup.id
+  ddosProtectionPlanId: enableDdosProtection ? ddosProtectionPlan.id : ''
+  containerGroupProfileId: containerGroupProfile.id
+  nGroupsId: nGroups.id
+  readinessProbeId: readinessProbeContainerName != '' ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, '${readinessProbeContainerName}-readinessProbe') : ''
+  livenessProbeId: length(filter(regularContainerItems, item => contains(item.value, 'livenessProbe') && item.value.livenessProbe != null)) > 0 ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, '${filter(regularContainerItems, item => contains(item.value, 'livenessProbe') && item.value.livenessProbe != null)[0].key}-livenessProbe') : ''
 }
