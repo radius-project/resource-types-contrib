@@ -41,11 +41,16 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
           }
           publicNetworkAccess: 'Enabled'
           enableTelemetry: false
+          lock: {
+            kind: 'None'
+          }
         }
         outputs: {
           host: 'hostName'
           port: 'port'
-          url: 'primaryConnectionString'
+          secrets: {
+            url: 'primaryConnectionString'
+          }
         }
       }
       'Radius.AI/models': {
@@ -73,10 +78,15 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
             }
           ]
           enableTelemetry: false
+          lock: {
+            kind: 'None'
+          }
         }
         outputs: {
           endpoint: 'endpoint'
-          apiKey: 'primaryKey'
+          secrets: {
+            apiKey: 'primaryKey'
+          }
         }
       }
       'Radius.AI/search': {
@@ -89,10 +99,15 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
           replicaCount: 1
           partitionCount: 1
           enableTelemetry: false
+          lock: {
+            kind: 'None'
+          }
         }
         outputs: {
           endpoint: 'endpoint'
-          apiKey: 'primaryKey'
+          secrets: {
+            apiKey: 'primaryKey'
+          }
         }
       }
       'Radius.Data/mongoDatabases': {
@@ -113,10 +128,15 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
             publicNetworkAccess: 'Enabled'
           }
           enableTelemetry: false
+          lock: {
+            kind: 'None'
+          }
         }
         outputs: {
           endpoint: 'endpoint'
-          connectionString: 'primaryReadWriteConnectionString'
+          secrets: {
+            connectionString: 'primaryReadWriteConnectionString'
+          }
         }
       }
       'Radius.Data/mySqlDatabases': {
@@ -147,6 +167,9 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
             }
           ]
           enableTelemetry: false
+          lock: {
+            kind: 'None'
+          }
         }
         outputs: {
           host: 'fqdn'
@@ -185,6 +208,9 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
           ]
           enableAdvancedThreatProtection: false
           enableTelemetry: false
+          lock: {
+            kind: 'None'
+          }
         }
         outputs: {
           host: 'fqdn'
@@ -218,6 +244,9 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
             }
           ]
           enableTelemetry: false
+          lock: {
+            kind: 'None'
+          }
         }
         outputs: {
           host: 'fullyQualifiedDomainName'
@@ -239,10 +268,15 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
             }
           ]
           enableTelemetry: false
+          lock: {
+            kind: 'None'
+          }
         }
         outputs: {
           host: 'name'
-          connectionString: 'primaryConnectionString'
+          secrets: {
+            connectionString: 'primaryConnectionString'
+          }
         }
       }
       'Radius.Messaging/kafka': {
@@ -259,10 +293,15 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
             }
           ]
           enableTelemetry: false
+          lock: {
+            kind: 'None'
+          }
         }
         outputs: {
           host: 'name'
-          connectionString: 'primaryConnectionString'
+          secrets: {
+            connectionString: 'primaryConnectionString'
+          }
         }
       }
       'Radius.Storage/objectStorage': {
@@ -290,11 +329,17 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
             ]
           }
           enableTelemetry: false
+          lock: {
+            kind: 'None'
+          }
         }
         outputs: {
           endpoint: 'primaryBlobEndpoint'
-          accountKey: 'primaryAccessKey'
           accountName: 'name'
+          secrets: {
+            accountKey: 'primaryAccessKey'
+            connectionString: 'primaryConnectionString'
+          }
         }
       }
       'Radius.Compute/containers': {
@@ -317,10 +362,9 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
           gatewayNamespace: routesGatewayNamespace
         }
       }
-      // Note: Radius currently only supports Terraform containerImages 
       'Radius.Compute/containerImages': {
-        kind: 'terraform'
-        source: 'git::https://github.com/radius-project/resource-types-contrib.git//Compute/containerImages/recipes/kubernetes/terraform'
+        kind: 'bicep'
+        source: 'ghcr.io/radius-project/kube-recipes/containerimages:latest'
         parameters: {
           registry: containerImagesRegistry
           registrySecretName: containerImagesRegistrySecretName

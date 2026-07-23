@@ -14,7 +14,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `application` | string | Optional | The Radius Application ID. |
 | `topic` | string | Optional | The Kafka topic/Event Hub name to create. Defaults to `events`. |
 | `host` | string | Read only | The host name used to connect to the Kafka-compatible endpoint. Set from the Recipe module's output. |
-| `connectionString` | string | Read only | The connection string used to connect to the Kafka-compatible endpoint. Set from the Recipe module's output. |
+| `secrets` | object | Read only | Recipe secrets. `secrets.name` references the managed `Radius.Security/secrets` resource; `secrets.connectionString` is the secret key (delivered via that managed secret, never stored on the resource). |
 
 ## Recipe Packs
 
@@ -26,4 +26,4 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 ## Using the resource type
 
-Add a `kafka` resource to your application and connect a container to it. Radius injects the Kafka connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_KAFKA_HOST` and `CONNECTION_KAFKA_CONNECTIONSTRING`). See [`test/app.bicep`](test/app.bicep) for a complete example.
+Add a `kafka` resource to your application and connect a container to it. Radius injects the Kafka connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_KAFKA_HOST`). The `connectionString` secret is not injected — bind it from the managed `Radius.Security/secrets` resource with a container `secretKeyRef` using `kafka.properties.secrets.name`. See [`test/app.bicep`](test/app.bicep) for a complete example.

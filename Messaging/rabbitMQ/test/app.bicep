@@ -27,6 +27,19 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
     containers: {
       demo: {
         image: 'ghcr.io/radius-project/samples/demo:latest'
+        // The recipe's secret output(s) are materialized into a managed
+        // Radius.Security/secrets resource and consumed here BY REFERENCE via
+        // secretKeyRef — the value never lands on queue state.
+        env: {
+          RABBITMQ_CONNECTIONSTRING: {
+            valueFrom: {
+              secretKeyRef: {
+                secretName: queue.properties.secrets.name
+                key: 'connectionString'
+              }
+            }
+          }
+        }
         ports: {
           web: {
             containerPort: 3000

@@ -14,7 +14,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `application` | string | Optional | The Radius Application ID. |
 | `model` | string | Optional | The model deployment to provision. Defaults to `gpt-5-mini`. |
 | `endpoint` | string | Read only | The base URL used to call the model inference endpoint. Set from the Recipe module's output. |
-| `apiKey` | string | Read only | The API key used to call the model inference endpoint. Set from the Recipe module's output. |
+| `secrets` | object | Read only | Recipe secrets. `secrets.name` references the managed `Radius.Security/secrets` resource; `secrets.apiKey` is the secret key (delivered via that managed secret, never stored on the resource). |
 
 ## Recipe Packs
 
@@ -26,4 +26,4 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 ## Using the resource type
 
-Add a `models` resource to your application and connect a container to it. Radius injects the model's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_LLM_MODEL`, `CONNECTION_LLM_ENDPOINT`, and `CONNECTION_LLM_APIKEY`). See [`test/app.bicep`](test/app.bicep) for a complete example.
+Add a `models` resource to your application and connect a container to it. Radius injects the model's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_LLM_MODEL` and `CONNECTION_LLM_ENDPOINT`). The `apiKey` secret is not injected — bind it from the managed `Radius.Security/secrets` resource with a container `secretKeyRef` using `model.properties.secrets.name`. See [`test/app.bicep`](test/app.bicep) for a complete example.

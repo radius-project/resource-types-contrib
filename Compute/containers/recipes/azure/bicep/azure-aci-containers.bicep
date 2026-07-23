@@ -112,7 +112,7 @@ var platformOptions = allowPlatformOptions && hasPlatformOptions ? resourcePrope
 var effectiveLocation = resourceGroup().location
 var aciSku = contains(platformOptions, 'sku') && platformOptions.sku != null ? string(platformOptions.sku) : 'Standard'
 var isConfidential = toLower(aciSku) == 'confidential'
-var zones = isConfidential ? [] : []
+var zones = []
 var ccePolicy = contains(platformOptions, 'confidentialComputeProperties') && contains(platformOptions.confidentialComputeProperties, 'ccePolicy') ? string(platformOptions.confidentialComputeProperties.ccePolicy) : ''
 
 // Extract container items from context

@@ -31,6 +31,8 @@ jobs:
         include:
           - name: containers
             path: Compute/containers/recipes/kubernetes/bicep/kubernetes-containers.bicep
+          - name: containerimages
+            path: Compute/containerImages/recipes/kubernetes/bicep/kubernetes-containerimages.bicep
           - name: persistentvolumes
             path: Compute/persistentVolumes/recipes/kubernetes/bicep/kubernetes-volumes.bicep
           - name: routes
@@ -41,6 +43,8 @@ jobs:
             path: Data/mySqlDatabases/recipes/kubernetes/bicep/kubernetes-mysql.bicep
           - name: postgresqldatabases
             path: Data/postgreSqlDatabases/recipes/kubernetes/bicep/kubernetes-postgresql.bicep
+          - name: rediscaches
+            path: Data/redisCaches/recipes/kubernetes/bicep/kubernetes-redis.bicep
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -48,7 +52,7 @@ jobs:
           persist-credentials: false
 
       - name: Log in to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

@@ -27,6 +27,27 @@ resource democtr 'Radius.Compute/containers@2025-08-01-preview' = {
     containers: {
       demo: {
         image: 'ghcr.io/radius-project/samples/demo:latest'
+        // The recipe's secret output(s) are materialized into a managed
+        // Radius.Security/secrets resource and consumed here BY REFERENCE via
+        // secretKeyRef — the value never lands on store state.
+        env: {
+          STORAGE_CONNECTIONSTRING: {
+            valueFrom: {
+              secretKeyRef: {
+                secretName: store.properties.secrets.name
+                key: 'connectionString'
+              }
+            }
+          }
+          STORAGE_ACCOUNTKEY: {
+            valueFrom: {
+              secretKeyRef: {
+                secretName: store.properties.secrets.name
+                key: 'accountKey'
+              }
+            }
+          }
+        }
         ports: {
           web: {
             containerPort: 3000
