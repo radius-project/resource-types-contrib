@@ -4,7 +4,7 @@
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
-#    
+#
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
@@ -16,7 +16,7 @@
 
 # Makefile for Radius Resource Types and Recipes Testing
 #
-# This Makefile provides standardized commands for testing resource types 
+# This Makefile provides standardized commands for testing resource types
 # locally and in CI/CD pipelines. It supports Kubernetes recipe testing
 # with automated setup, validation, and cleanup.
 #
@@ -42,4 +42,4 @@ SHELL := /bin/bash
 ARROW := \033[34;1m=>\033[0m
 
 # order matters for these
-include ./.github/build/help.mk ./.github/build/environment.mk ./.github/build/test.mk
+include ./.github/build/help.mk ./.github/build/environment.mk ./.github/build/test.mk ./.github/build/release.mk

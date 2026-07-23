@@ -2,30 +2,49 @@
 ---
 name: Notify Radius
 
-# Fires a `repository_dispatch` event to radius-project/radius whenever
-# resource type manifests change on `main`. The Radius repo responds by opening
-# a PR that runs `make update-resource-types`, which refreshes the manifest
-# copies committed under `deploy/manifest/built-in-providers/`. Merging that PR
-# triggers the existing `build-and-push-bicep-types` job in build.yaml, which
-# dispatches to radius-publisher to republish `radius:latest` with the updated
-# types.
+# Fires a `repository_dispatch` event to radius-project/radius so it can re-sync
+# its default resource-type manifests from this repository.
+#
+# This is the resource-types-contrib side of the "sync default resource types
+# without a fake Go module" design (radius PR #12236), Phase A. It adopts the
+# hybrid of Option 3 (pinned git-ref) and Option 6 (automated, Dependabot-like
+# PR sync), with the per-namespace variant:
+#
+#   * Option 3 (pinned git-ref): the dispatch carries an immutable pin -- the
+#     pushed commit SHA on the moving channel, or the release tag on the release
+#     channel -- that Radius records as `source.ref` / `sources[].ref`. The pin
+#     is no longer "informational only" (the old fake-module model fetched via
+#     `go get ...@latest`); it is the exact revision Radius vendors.
+#   * Option 6 (automated PR sync): Radius's contrib-update-resource-types.yaml
+#     turns the dispatch into a reviewable `bot/update-resource-types` PR that
+#     runs `make update-resource-types`, surfacing the full YAML diff and the
+#     drift check + CI on every bump.
+#   * Per-namespace variant: the payload lists exactly the affected
+#     `Radius.<Category>` namespaces (each with its ref), so Radius advances only
+#     the namespaces this event actually changed instead of re-vendoring all of
+#     them.
+#
+# Channels (both delivered as a reviewable PR, nothing fetched at build/runtime):
+#   * edge    -> push to `main`. Keeps Radius `latest`/`edge` current with this
+#                repo's `main`; affected namespaces come from the changed
+#                manifest YAML files, pinned to the pushed commit SHA.
+#   * release -> a published release. Pins a stable upstream tag at Radius
+#                release time; a scope-prefixed tag affects a single namespace,
+#                a plain `vX.Y.Z` tag affects all.
 #
 # End-to-end flow:
-#   1. This workflow fires repository_dispatch on push to main
-#   2. Radius repo's contrib-update-resource-types.yaml receives it
-#   3. Opens a PR to refresh manifest copies via make update-resource-types
-#   4. Human merges the PR
-#   5. Push to main triggers build.yaml -> radius-publisher -> biceptypes.azurecr.io
+#   1. This workflow computes the per-namespace payload and fires
+#      repository_dispatch (event-type `resource-types-contrib-updated`).
+#   2. Radius's contrib-update-resource-types.yaml receives it and opens/refreshes
+#      a PR that re-runs the manifest copy for the pinned ref.
+#   3. A maintainer reviews the YAML diff and merges the PR.
 #
 # Note: only resource types listed in the Radius repo's
-# deploy/manifest/defaults.yaml are included in the unified extension.
-# If a new namespace folder is added here but not added to defaults.yaml,
-# the dispatch will fire but make update-resource-types will find no changes
-# and no PR will be opened. The new types only appear in the extension when
-# someone adds them to defaults.yaml in the Radius repo.
+# deploy/manifest/defaults.yaml ship as defaults. A namespace added here but not
+# registered there produces a dispatch with no effective changes and no PR.
 #
 # See the design note in the radius repo:
-#   eng/design-notes/extensibility/2026-05-unified-bicep-extension-publishing.md
+#   eng/design-notes/extensibility/2026-06-resource-types-sync-without-fake-go-module.md
 
 on:
   push:
@@ -40,26 +59,59 @@ on:
       - "**/*.yml"
       - "!.github/**"
       - "!docs/**"
+  release:
+    # Release channel: pin a stable upstream tag at Radius release time.
+    types:
+      - published
   # workflow_dispatch: # Enable during development for manual testing
 
 permissions: {}
 
 concurrency:
-  group: notify-radius
+  # Serialize per event + ref so an edge push and a release don't race, but
+  # never cancel an in-flight dispatch.
+  group: notify-radius-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   dispatch:
-    name: Dispatch resource-types-contrib-updated
+    name: Notify radius-project/radius
     if: github.repository == 'radius-project/resource-types-contrib'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      # Needed for actions/checkout to read this repository's history so the
+      # push diff can resolve which namespaces changed.
+      contents: read
     steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Full history so the per-namespace diff can resolve `event.before`.
+          fetch-depth: 0
+
+      - name: Compute per-namespace sync payload
+        # Resolves the channel, the immutable pin (SHA or tag), and the set of
+        # affected `Radius.<Category>` namespaces, then emits the compact JSON
+        # client-payload. Emits namespace_count=0 when nothing relevant changed
+        # (e.g. a recipe-pack-only release), which short-circuits the dispatch.
+        id: payload
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
+          CONTRIB_REPO: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
+        run: ./.github/scripts/compute-radius-sync-payload.sh
+
       - name: Generate App Token
         # Uses a GitHub App token instead of a PAT so that the dispatch event
         # is sent with scoped, auditable credentials. The app must be installed
         # on the target repo (radius-project/radius) with contents:write to
         # trigger repository_dispatch.
+        if: steps.payload.outputs.namespace_count != '0'
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
@@ -72,29 +124,32 @@ jobs:
           permission-contents: write
 
       - name: Send repository_dispatch to radius-project/radius
-        # Fires a repository_dispatch event that the Radius repo's
-        # contrib-update-resource-types.yaml workflow listens for.
-        # The payload includes the commit SHA for traceability in the
-        # automated PR's commit message and body. Note: the SHA is
-        # informational only -- the Radius workflow always fetches
-        # the latest version via 'go get ...@latest'.
+        # Fires the repository_dispatch event that Radius's
+        # contrib-update-resource-types.yaml workflow listens for. The
+        # per-namespace client-payload (channel, immutable ref, and the affected
+        # namespaces) is computed by the previous step.
+        if: steps.payload.outputs.namespace_count != '0'
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
           token: ${{ steps.app-token.outputs.token }}
           repository: radius-project/radius
           event-type: resource-types-contrib-updated
-          client-payload: |
-            {
-              "contrib_ref": "${{ github.sha }}",
-              "contrib_repo": "${{ github.repository }}",
-              "actor": "${{ github.actor }}"
-            }
+          client-payload: ${{ steps.payload.outputs.payload }}
 
       - name: Summarize
         # Write a summary to the GitHub Actions UI for visibility.
         run: |
           {
-            echo "## Notified radius-project/radius"
-            echo "* Event: \`resource-types-contrib-updated\`"
-            echo "* Commit: \`${{ github.sha }}\`"
+            echo "## Notify radius-project/radius"
+            echo ""
+            echo "* Event: \`${{ github.event_name }}\`"
+            echo "* Channel: \`${{ steps.payload.outputs.channel }}\`"
+            echo "* Ref: \`${{ steps.payload.outputs.ref }}\`"
+            echo "* Affected namespaces (${{ steps.payload.outputs.namespace_count }}): \`${{ steps.payload.outputs.affected }}\`"
+            if [ "${{ steps.payload.outputs.namespace_count }}" = "0" ]; then
+              echo ""
+              echo "_No dispatch sent (reason: \`${{ steps.payload.outputs.reason }}\`)._"
+            else
+              echo "* Event type: \`resource-types-contrib-updated\`"
+            fi
           } >> "${GITHUB_STEP_SUMMARY}"
