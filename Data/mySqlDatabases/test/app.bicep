@@ -26,6 +26,18 @@ resource mysql 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
   }
 }
 
+resource demoImage 'Radius.Compute/containerImages@2025-08-01-preview' = {
+  name: 'mysql-demo-image'
+  properties: {
+    environment: environment
+    application: app.id
+    tag: 'demo-e2e'
+    build: {
+      source: 'git::https://github.com/radius-project/samples.git//samples/demo?ref=190d9c4c84278980d9fae402330bd5ead76b31a5'
+    }
+  }
+}
+
 resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
   name: 'democontainer'
   properties: {
