@@ -25,7 +25,7 @@ Kube-recipes tagged `:latest` are edge builds; released recipes are pinned to a 
 Deploy the pack with the `rad` CLI. Deploying the file creates the `Radius.Core/recipePacks` resource and configures the `default` Environment to use it:
 
 ```bash
-rad deploy recipepack/kubernetes/default-recipepack.bicep
+rad deploy recipe-packs/kubernetes/default-recipepack.bicep
 ```
 
 After the pack is deployed, every Resource Type it covers can be used in an application deployed to that Environment.

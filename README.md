@@ -30,14 +30,14 @@ resource-types-contrib/
 │       ├── <resource_type_name>.yaml   # e.g., redisCaches.yaml
 │       └── test/
 │               └── app.bicep           # Developer-facing test application
-└── recipepack/                         # Recipe packs cover recipe definitions for all types in the repo
-    ├── azure/                           # Azure recipe pack (recipes for all types + environment)
-    │       ├── README.md                    # Documentation for the Azure recipe pack
-    │       └── aks-recipepack.bicep     # Recipe pack wiring Bicep and Terraform recipes
-    ├── aws/                             # AWS recipe pack
+└── recipe-packs/                       # Recipe packs cover recipe definitions for all types in the repo
+    ├── azure/                          # Azure recipe pack (recipes for all types + environment)
+    │       ├── README.md               # Documentation for the Azure recipe pack
+    │       └── aks-recipepack.bicep    # Recipe pack wiring Bicep and Terraform recipes
+    ├── aws/                            # AWS recipe pack
     │       ├── README.md
     │       └── eks-recipepack.bicep
-    ├── kubernetes/                      # Default recipe pack (zero-config, in-cluster)
+    ├── kubernetes/                     # Default recipe pack (zero-config, in-cluster)
             ├── README.md
             └── default-recipepack.bicep
 
@@ -47,7 +47,7 @@ resource-types-contrib/
 
 Developers can discover the Resource Types in this repository and use them in a Radius application, and platform engineers can use the Recipe Packs to configure how those types are provisioned in an Environment. For a step-by-step guide on discovering, registering, and using Resource Types and Recipe Packs, see [Discovering and Using Resource Types and Recipe Packs](docs/using-resource-types.md).
 
-Every Resource Type in this repository can be registered via `rad resource-type create`. A subset is also registered as defaults in Radius, so they are available out of the box without any user action. The default resource types are paired with the default Recipe Pack under `recipepack/default-kubernetes/`, a zero-config, in-cluster Kubernetes pack that ships out of the box, so they can be deployed without any cloud provider configuration. The list of default resource types is managed in the [Radius repository](https://github.com/radius-project/radius) via [`deploy/manifest/defaults.yaml`](https://github.com/radius-project/radius/blob/main/deploy/manifest/defaults.yaml).
+Every Resource Type in this repository can be registered via `rad resource-type create`. A subset is also registered as defaults in Radius, so they are available out of the box without any user action. The default resource types are paired with the default Recipe Pack under `recipe-packs/default-kubernetes/`, a zero-config, in-cluster Kubernetes pack that ships out of the box, so they can be deployed without any cloud provider configuration. The list of default resource types is managed in the [Radius repository](https://github.com/radius-project/radius) via [`deploy/manifest/defaults.yaml`](https://github.com/radius-project/radius/blob/main/deploy/manifest/defaults.yaml).
 
 ## Contributing
 
