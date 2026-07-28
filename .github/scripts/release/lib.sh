@@ -53,7 +53,7 @@ source "$RTC_RELEASE_LIB_DIR/../lib-namespaces.sh"
 # Recipe packs live one directory below this root. Their tags carry a
 # `recipe-pack/` prefix so they never collide with the namespace tag series and
 # so the Radius sync tooling can recognize them as a non-namespace scope.
-RTC_RECIPE_PACK_ROOT="${RTC_RECIPE_PACK_ROOT:-recipepack}"
+RTC_RECIPE_PACK_ROOT="${RTC_RECIPE_PACK_ROOT:-recipe-packs}"
 RTC_RECIPE_PACK_TAG_PREFIX="recipe-pack"
 
 # Print the releasable recipe packs (directory names under recipe-packs/), one per
