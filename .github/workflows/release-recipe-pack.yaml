@@ -20,11 +20,13 @@ name: Release Recipe Pack
 # shares its release scripts.
 #
 # Downstream: publishing the release fires `notify-radius.yaml` on
-# `release: published`, which recognizes the `recipe-pack/` scope as a
-# non-namespace scope and sends no sync dispatch to radius-project/radius --
-# Recipe Packs are not part of the default resource-type manifests. The release
-# is still created with the RESOURCE_TYPES_BOT GitHub App token (not
-# GITHUB_TOKEN) so release events behave consistently across both workflows.
+# `release: published`, which dispatches the pack pin (this tag) to
+# radius-project/radius as a reviewable sync PR. Radius records it under
+# `recipePacks[]` in deploy/manifest/defaults.yaml but does not vendor the pack;
+# its deploy workflows fetch the pack Bicep from here at deploy time. The
+# release is created with the RESOURCE_TYPES_BOT GitHub App token (not
+# GITHUB_TOKEN) precisely so that the `release: published` event is allowed to
+# trigger that downstream workflow.
 #
 # Prerequisite (one-time, admin): the RESOURCE_TYPES_BOT GitHub App must be
 # installed on this repository with `contents: write` so it can create the tag

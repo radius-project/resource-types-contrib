@@ -20,8 +20,8 @@
 # compute-radius-sync-payload.sh
 # -----------------------------------------------------------------------------
 # Build the `repository_dispatch` client-payload that notify-radius.yaml sends
-# to radius-project/radius so it can re-sync its default resource-type
-# manifests.
+# to radius-project/radius so it can re-sync what it consumes from this
+# repository.
 #
 # This implements the resource-types-contrib side of the "sync default resource
 # types without a fake Go module" design (radius PR #12236), Phase A:
@@ -29,18 +29,31 @@
 #   * Option 3 (pinned git-ref) + Option 6 (automated PR sync), together the
 #     "hybrid": the payload carries an immutable pin (a commit SHA on the moving
 #     channel, or a release tag on the release channel) that the Radius bot
-#     records as `source.ref` / `sources[].ref` and re-syncs via a reviewable PR.
-#   * Per-namespace variant: instead of one repository-wide pin, the payload
-#     lists exactly the `Radius.<Category>` namespaces affected by this event,
-#     each with its ref, so Radius can advance only the namespaces that changed.
+#     records in `deploy/manifest/defaults.yaml` and re-syncs via a reviewable
+#     PR.
+#   * Per-unit variant: instead of one repository-wide pin, the payload lists
+#     exactly the units affected by this event, so Radius advances only what
+#     changed. Two kinds of units are dispatched, matching the two pin sections
+#     Radius keeps in defaults.yaml (radius PR #12567):
+#       - namespaces    `Radius.<Category>` manifest namespaces -> resourceTypes[]
+#       - recipe packs  directories under recipe-packs/         -> recipePacks[]
 #
 # Channels:
 #   * edge    -> push to `main`. Ref is the pushed commit SHA (immutable, even
-#                though it is repository-wide in Phase A). Affected namespaces
-#                are derived from the manifest YAML files changed in the push.
+#                though it is repository-wide in Phase A). Affected units are
+#                derived from the files changed in the push.
 #   * release -> a published release. Ref is the release tag. A scope-prefixed
-#                tag (e.g. `Compute/containers/v0.1.0` or `Radius.Data/v0.2.0`)
-#                affects just that namespace; a plain `vX.Y.Z` tag affects all.
+#                tag affects just that unit -- `Radius.Data/v0.2.0` a namespace,
+#                `recipe-pack/azure/v0.2.0` a recipe pack -- while a plain
+#                `vX.Y.Z` tag affects every unit.
+#
+# Payload shape (consumed by the Radius contrib-update-resource-types.yaml
+# workflow, which accepts `namespace` as a legacy alias for `name`):
+#   {
+#     channel, contrib_repo, contrib_ref, actor,
+#     namespaces:   [ {name, namespace, ref}, ... ],
+#     recipe_packs: [ {name, ref}, ... ]
+#   }
 #
 # Inputs (environment variables, normally supplied by the workflow):
 #   EVENT_NAME    github.event_name           ("push" | "release")
@@ -54,15 +67,20 @@
 #                                              to stderr only)
 #
 # Outputs (written to $GITHUB_OUTPUT when set):
-#   channel          the resolved channel ("edge" | "release")
-#   ref              the immutable pin (commit SHA or release tag)
-#   namespace_count  number of affected namespaces (0 => nothing to dispatch)
-#   affected         comma-separated affected namespaces
-#   payload          compact JSON client-payload (only when namespace_count > 0)
+#   channel                the resolved channel ("edge" | "release")
+#   ref                    the immutable pin (commit SHA or release tag)
+#   namespace_count        number of affected namespaces
+#   affected               comma-separated affected namespaces
+#   recipe_pack_count      number of affected recipe packs
+#   affected_recipe_packs  comma-separated affected recipe packs
+#   unit_count             total affected units (0 => nothing to dispatch)
+#   reason                 why nothing was dispatched (only when unit_count is 0)
+#   payload                compact JSON client-payload (only when unit_count > 0)
 #
 # Usage:
 #   EVENT_NAME=push BEFORE_SHA=<sha> AFTER_SHA=<sha> ./compute-radius-sync-payload.sh
-#   EVENT_NAME=release RELEASE_TAG=Compute/containers/v0.1.0 ./compute-radius-sync-payload.sh
+#   EVENT_NAME=release RELEASE_TAG=Radius.Compute/v0.1.0 ./compute-radius-sync-payload.sh
+#   EVENT_NAME=release RELEASE_TAG=recipe-pack/azure/v0.1.0 ./compute-radius-sync-payload.sh
 # =============================================================================
 
 set -euo pipefail
@@ -92,8 +110,10 @@ source "$SCRIPT_DIR/lib-namespaces.sh"
 # Reason recorded when nothing is dispatched (surfaced in the workflow summary).
 REASON=""
 
-# Accumulator for affected namespaces (deduplicated, insertion order preserved).
+# Accumulators for affected units (deduplicated, insertion order preserved).
 declare -a AFFECTED_NS=()
+declare -a AFFECTED_PACKS=()
+
 add_namespace() {
     local ns="$1" existing
     for existing in "${AFFECTED_NS[@]:-}"; do
@@ -102,12 +122,28 @@ add_namespace() {
     AFFECTED_NS+=("$ns")
 }
 
+add_recipe_pack() {
+    local pack="$1" existing
+    for existing in "${AFFECTED_PACKS[@]:-}"; do
+        [[ "$existing" == "$pack" ]] && return 0
+    done
+    AFFECTED_PACKS+=("$pack")
+}
+
 add_all_namespaces() {
     local cat
     while IFS= read -r cat; do
         [[ -z "$cat" ]] && continue
         add_namespace "Radius.$cat"
     done < <(rtc_list_folders)
+}
+
+add_all_recipe_packs() {
+    local pack
+    while IFS= read -r pack; do
+        [[ -z "$pack" ]] && continue
+        add_recipe_pack "$pack"
+    done < <(rtc_list_recipe_packs)
 }
 
 # True when path is a resource-type manifest at ref. Reading from the commit,
@@ -137,6 +173,22 @@ add_namespace_for_path_at_ref() {
     fi
 }
 
+# Recipe pack membership is decided by path alone (recipe-packs/<pack>/...), so
+# a pack whose files were deleted or renamed by the push is still dispatched --
+# Radius skips any name it does not pin.
+add_recipe_pack_for_path() {
+    local path="$1" rest pack
+    [[ "$path" == "$RTC_RECIPE_PACK_ROOT"/* ]] || return 0
+    rest="${path#"$RTC_RECIPE_PACK_ROOT"/}"
+    # Files directly under recipe-packs/ (e.g. a shared README) belong to no pack.
+    [[ "$rest" == */* ]] || return 0
+    pack="${rest%%/*}"
+    case "$pack" in
+        "" | *[!A-Za-z0-9._-]*) return 0 ;;
+    esac
+    add_recipe_pack "$pack"
+}
+
 CHANNEL=""
 REF=""
 
@@ -153,6 +205,15 @@ case "$EVENT_NAME" in
             # tracks the same commits on main, and the release channel pins
             # stable tags only.
             REASON="prerelease"
+        elif [[ "$REF" == "$RTC_RECIPE_PACK_TAG_PREFIX"/*/* ]]; then
+            # Recipe pack tag: recipe-pack/<pack>/vX.Y.Z.
+            pack="${REF#"$RTC_RECIPE_PACK_TAG_PREFIX"/}"
+            pack="${pack%%/*}"
+            if rtc_is_recipe_pack "$pack"; then
+                add_recipe_pack "$pack"
+            else
+                REASON="unknown-recipe-pack"
+            fi
         elif [[ "$REF" == */* ]]; then
             # Scope-prefixed tag: the first path segment names the scope.
             # Tolerate both "Compute/..." and "Radius.Compute/..." forms.
@@ -161,13 +222,14 @@ case "$EVENT_NAME" in
             if rtc_is_category "$scope"; then
                 add_namespace "Radius.$scope"
             else
-                # A non-category scope (e.g. recipe-pack/kubernetes/v0.1.0) is
-                # not a manifest namespace, so nothing is dispatched.
-                REASON="non-namespace-scope"
+                # A scope that is neither a namespace nor a recipe pack names
+                # nothing Radius consumes, so nothing is dispatched.
+                REASON="unknown-scope"
             fi
         else
-            # Plain repository-wide tag (vX.Y.Z): every namespace advances.
+            # Plain repository-wide tag (vX.Y.Z): every unit advances.
             add_all_namespaces
+            add_all_recipe_packs
         fi
         ;;
     push | "")
@@ -191,17 +253,21 @@ case "$EVENT_NAME" in
                         IFS= read -r -d '' new_path
                         add_namespace_for_path_at_ref "$old_path" "$BEFORE_SHA"
                         add_namespace_for_path_at_ref "$new_path" "$AFTER_SHA"
+                        add_recipe_pack_for_path "$old_path"
+                        add_recipe_pack_for_path "$new_path"
                         ;;
                     *)
                         add_namespace_for_path_at_ref "$old_path" "$BEFORE_SHA"
                         add_namespace_for_path_at_ref "$old_path" "$AFTER_SHA"
+                        add_recipe_pack_for_path "$old_path"
                         ;;
                 esac
             done < <(git -C "$REPO_ROOT" diff --name-status --find-renames -z "$BEFORE_SHA" "$AFTER_SHA")
         else
             # No usable diff (new branch, shallow clone, or unrelated
-            # force-push): fall back to the safe superset of all namespaces.
+            # force-push): fall back to the safe superset of every unit.
             add_all_namespaces
+            add_all_recipe_packs
         fi
         ;;
     *)
@@ -210,27 +276,43 @@ case "$EVENT_NAME" in
         ;;
 esac
 
-COUNT="${#AFFECTED_NS[@]}"
-AFFECTED_CSV="$(
+NS_COUNT="${#AFFECTED_NS[@]}"
+PACK_COUNT="${#AFFECTED_PACKS[@]}"
+UNIT_COUNT=$((NS_COUNT + PACK_COUNT))
+AFFECTED_NS_CSV="$(
     IFS=,
     echo "${AFFECTED_NS[*]:-}"
 )"
+AFFECTED_PACKS_CSV="$(
+    IFS=,
+    echo "${AFFECTED_PACKS[*]:-}"
+)"
+
+# Render unit names as a compact JSON array of pin objects. Namespace entries
+# repeat the name under `namespace` as well: Radius reads `name` and keeps
+# `namespace` as a legacy alias, so one payload satisfies both.
+pins_json() {
+    local with_alias="$1"
+    shift
+    printf '%s\n' "$@" |
+        jq -R -c --arg ref "$REF" --argjson alias "$with_alias" \
+            'select(length > 0) |
+             if $alias then {name: ., namespace: ., ref: $ref} else {name: ., ref: $ref} end' |
+        jq -s -c '.'
+}
 
 PAYLOAD=""
-if [[ "$COUNT" -gt 0 ]]; then
-    namespaces_json="$(
-        printf '%s\n' "${AFFECTED_NS[@]}" |
-            jq -R -c --arg ref "$REF" 'select(length > 0) | {namespace: ., ref: $ref}' |
-            jq -s -c '.'
-    )"
+if [[ "$UNIT_COUNT" -gt 0 ]]; then
     PAYLOAD="$(
         jq -c -n \
             --arg channel "$CHANNEL" \
             --arg repo "$CONTRIB_REPO" \
             --arg ref "$REF" \
             --arg actor "$ACTOR" \
-            --argjson namespaces "$namespaces_json" \
-            '{channel: $channel, contrib_repo: $repo, contrib_ref: $ref, namespaces: $namespaces, actor: $actor}'
+            --argjson namespaces "$(pins_json true "${AFFECTED_NS[@]:-}")" \
+            --argjson recipe_packs "$(pins_json false "${AFFECTED_PACKS[@]:-}")" \
+            '{channel: $channel, contrib_repo: $repo, contrib_ref: $ref,
+              namespaces: $namespaces, recipe_packs: $recipe_packs, actor: $actor}'
     )"
 fi
 
@@ -241,27 +323,31 @@ emit() {
     fi
 }
 
-if [[ "$COUNT" -eq 0 && -z "$REASON" ]]; then
-    REASON="no-namespace-changes"
+if [[ "$UNIT_COUNT" -eq 0 && -z "$REASON" ]]; then
+    REASON="no-relevant-changes"
 fi
 
 emit "channel" "$CHANNEL"
 emit "ref" "$REF"
-emit "namespace_count" "$COUNT"
-emit "affected" "$AFFECTED_CSV"
+emit "namespace_count" "$NS_COUNT"
+emit "affected" "$AFFECTED_NS_CSV"
+emit "recipe_pack_count" "$PACK_COUNT"
+emit "affected_recipe_packs" "$AFFECTED_PACKS_CSV"
+emit "unit_count" "$UNIT_COUNT"
 emit "reason" "$REASON"
-if [[ "$COUNT" -gt 0 ]]; then
+if [[ "$UNIT_COUNT" -gt 0 ]]; then
     emit "payload" "$PAYLOAD"
 fi
 
 {
-    echo "Event:      $EVENT_NAME"
-    echo "Channel:    $CHANNEL"
-    echo "Ref:        $REF"
-    echo "Namespaces: ${AFFECTED_CSV:-<none>} ($COUNT)"
-    if [[ "$COUNT" -gt 0 ]]; then
-        echo "Payload:    $PAYLOAD"
+    echo "Event:        $EVENT_NAME"
+    echo "Channel:      $CHANNEL"
+    echo "Ref:          $REF"
+    echo "Namespaces:   ${AFFECTED_NS_CSV:-<none>} ($NS_COUNT)"
+    echo "Recipe packs: ${AFFECTED_PACKS_CSV:-<none>} ($PACK_COUNT)"
+    if [[ "$UNIT_COUNT" -gt 0 ]]; then
+        echo "Payload:      $PAYLOAD"
     else
-        echo "Payload:    <none - skipped: ${REASON:-none}>"
+        echo "Payload:      <none - skipped: ${REASON:-none}>"
     fi
 } >&2

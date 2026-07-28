@@ -163,14 +163,64 @@ test_recipe_pack_bundle() {
         fail "recipe pack bundle is missing the pack README"
 }
 
-test_recipe_pack_release_is_not_synced() {
-    local repo="$TEST_ROOT/recipe-pack-sync" output="$TEST_ROOT/recipe-pack-sync.out"
-    create_repo "$repo" "Data"
+test_recipe_pack_release_is_synced() {
+    local repo="$TEST_ROOT/recipe-pack-sync" output="$TEST_ROOT/recipe-pack-sync.out" payload
+    create_recipe_pack_repo "$repo" "kubernetes"
 
     REPO_ROOT="$repo" EVENT_NAME=release RELEASE_TAG="recipe-pack/kubernetes/v0.1.0" \
         GITHUB_OUTPUT="$output" bash "$SYNC_SCRIPT" >/dev/null 2>&1
     assert_eq "0" "$(output_value "$output" namespace_count)" "recipe pack release namespace count"
-    assert_eq "non-namespace-scope" "$(output_value "$output" reason)" "recipe pack release skip reason"
+    assert_eq "1" "$(output_value "$output" recipe_pack_count)" "recipe pack release pack count"
+    assert_eq "kubernetes" "$(output_value "$output" affected_recipe_packs)" "recipe pack release affected pack"
+
+    payload="$(output_value "$output" payload)"
+    assert_eq '[{"name":"kubernetes","ref":"recipe-pack/kubernetes/v0.1.0"}]' \
+        "$(jq -c '.recipe_packs' <<<"$payload")" "recipe pack release payload pins"
+    assert_eq "[]" "$(jq -c '.namespaces' <<<"$payload")" "recipe pack release payload namespaces"
+
+    : >"$output"
+    REPO_ROOT="$repo" EVENT_NAME=release RELEASE_TAG="recipe-pack/does-not-exist/v0.1.0" \
+        GITHUB_OUTPUT="$output" bash "$SYNC_SCRIPT" >/dev/null 2>&1
+    assert_eq "0" "$(output_value "$output" unit_count)" "unknown recipe pack unit count"
+    assert_eq "unknown-recipe-pack" "$(output_value "$output" reason)" "unknown recipe pack skip reason"
+}
+
+test_recipe_pack_push_is_synced() {
+    local repo="$TEST_ROOT/recipe-pack-push" output="$TEST_ROOT/recipe-pack-push.out" before after payload
+    create_recipe_pack_repo "$repo" "azure"
+    before="$(git -C "$repo" rev-parse HEAD)"
+    echo "// updated" >>"$repo/recipe-packs/azure/default-recipepack.bicep"
+    git -C "$repo" commit -q -am "update azure recipe pack"
+    after="$(git -C "$repo" rev-parse HEAD)"
+
+    REPO_ROOT="$repo" EVENT_NAME=push BEFORE_SHA="$before" AFTER_SHA="$after" \
+        GITHUB_OUTPUT="$output" bash "$SYNC_SCRIPT" >/dev/null 2>&1
+    assert_eq "0" "$(output_value "$output" namespace_count)" "recipe pack push namespace count"
+    assert_eq "azure" "$(output_value "$output" affected_recipe_packs)" "recipe pack push affected pack"
+
+    payload="$(output_value "$output" payload)"
+    assert_eq "$after" "$(jq -r '.recipe_packs[0].ref' <<<"$payload")" "recipe pack push pin ref"
+}
+
+test_repo_wide_release_covers_all_units() {
+    local repo="$TEST_ROOT/repo-wide" output="$TEST_ROOT/repo-wide.out" payload
+    create_repo "$repo" "Data"
+    mkdir -p "$repo/recipe-packs/kubernetes"
+    echo "extension radius" >"$repo/recipe-packs/kubernetes/default-recipepack.bicep"
+    git -C "$repo" add .
+    git -C "$repo" commit -q -m "add kubernetes recipe pack"
+
+    REPO_ROOT="$repo" EVENT_NAME=release RELEASE_TAG="v0.1.0" \
+        GITHUB_OUTPUT="$output" bash "$SYNC_SCRIPT" >/dev/null 2>&1
+    assert_eq "2" "$(output_value "$output" unit_count)" "repo-wide release unit count"
+    assert_eq "Radius.Data" "$(output_value "$output" affected)" "repo-wide release namespaces"
+    assert_eq "kubernetes" "$(output_value "$output" affected_recipe_packs)" "repo-wide release recipe packs"
+
+    # Radius reads `name` and accepts `namespace` as a legacy alias; both must
+    # be present so one payload works with either consumer version.
+    payload="$(output_value "$output" payload)"
+    assert_eq "Radius.Data" "$(jq -r '.namespaces[0].name' <<<"$payload")" "repo-wide namespace name"
+    assert_eq "Radius.Data" "$(jq -r '.namespaces[0].namespace' <<<"$payload")" "repo-wide namespace alias"
 }
 
 command -v jq >/dev/null 2>&1 || fail "jq is required"
@@ -179,5 +229,7 @@ test_renamed_namespace
 test_prerelease_labels
 test_recipe_pack_versioning
 test_recipe_pack_bundle
-test_recipe_pack_release_is_not_synced
+test_recipe_pack_release_is_synced
+test_recipe_pack_push_is_synced
+test_repo_wide_release_covers_all_units
 echo "Release automation tests passed"
