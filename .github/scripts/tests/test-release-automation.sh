@@ -21,6 +21,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SYNC_SCRIPT="${REPO_ROOT}/.github/scripts/compute-radius-sync-payload.sh"
 VERSION_SCRIPT="${REPO_ROOT}/.github/scripts/release/next-version.sh"
+BUNDLE_SCRIPT="${REPO_ROOT}/.github/scripts/release/build-recipe-pack-bundle.sh"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/rtc-release-tests-XXXXXX")"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
@@ -55,6 +56,20 @@ types:
 EOF
     git -C "$repo" add .
     git -C "$repo" commit -q -m "add ${category} manifest"
+}
+
+create_recipe_pack_repo() {
+    local repo="$1" pack="$2"
+    git init -q "$repo"
+    git -C "$repo" config user.name "Release Test"
+    git -C "$repo" config user.email "release-test@example.com"
+    mkdir -p "$repo/recipe-packs/$pack"
+    cat >"$repo/recipe-packs/$pack/default-recipepack.bicep" <<'EOF'
+extension radius
+EOF
+    echo "# ${pack} recipe pack" >"$repo/recipe-packs/$pack/README.md"
+    git -C "$repo" add .
+    git -C "$repo" commit -q -m "add ${pack} recipe pack"
 }
 
 test_deleted_namespace() {
@@ -102,8 +117,67 @@ test_prerelease_labels() {
     done
 }
 
+test_recipe_pack_versioning() {
+    local repo="$TEST_ROOT/recipe-pack" output="$TEST_ROOT/recipe-pack.out"
+    create_recipe_pack_repo "$repo" "kubernetes"
+
+    REPO_ROOT="$repo" RECIPE_PACK=kubernetes BUMP=minor GITHUB_OUTPUT="$output" \
+        bash "$VERSION_SCRIPT" >/dev/null 2>&1 || fail "initial recipe pack version was rejected"
+    assert_eq "none" "$(output_value "$output" current)" "initial recipe pack current version"
+    assert_eq "recipe-pack/kubernetes/v0.1.0" "$(output_value "$output" tag)" "initial recipe pack tag"
+
+    git -C "$repo" tag "recipe-pack/kubernetes/v0.1.0"
+    : >"$output"
+    REPO_ROOT="$repo" RECIPE_PACK=kubernetes BUMP=patch PRERELEASE_LABEL=rc.1 \
+        GITHUB_OUTPUT="$output" bash "$VERSION_SCRIPT" >/dev/null 2>&1 ||
+        fail "recipe pack patch bump was rejected"
+    assert_eq "0.1.0" "$(output_value "$output" current)" "recipe pack current version"
+    assert_eq "recipe-pack/kubernetes/v0.1.1-rc.1" "$(output_value "$output" tag)" "recipe pack prerelease tag"
+    assert_eq "true" "$(output_value "$output" is_prerelease)" "recipe pack prerelease flag"
+
+    if REPO_ROOT="$repo" RECIPE_PACK=does-not-exist bash "$VERSION_SCRIPT" >/dev/null 2>&1; then
+        fail "unknown recipe pack was accepted"
+    fi
+
+    if REPO_ROOT="$repo" NAMESPACE=Radius.Data RECIPE_PACK=kubernetes \
+        bash "$VERSION_SCRIPT" >/dev/null 2>&1; then
+        fail "NAMESPACE and RECIPE_PACK together were accepted"
+    fi
+}
+
+test_recipe_pack_bundle() {
+    local repo="$TEST_ROOT/recipe-pack-bundle" output="$TEST_ROOT/recipe-pack-bundle.out" asset
+    create_recipe_pack_repo "$repo" "kubernetes"
+
+    (cd "$repo" && REPO_ROOT="$repo" RECIPE_PACK=kubernetes VERSION=0.1.0 \
+        GITHUB_OUTPUT="$output" bash "$BUNDLE_SCRIPT" >/dev/null 2>&1) ||
+        fail "recipe pack bundle build failed"
+
+    asset="$(output_value "$output" asset)"
+    assert_eq "recipe-pack-kubernetes-v0.1.0.tar.gz" "$(basename "$asset")" "recipe pack asset name"
+    assert_eq "1" "$(output_value "$output" count)" "recipe pack template count"
+    [[ -f "$asset" ]] || fail "recipe pack asset was not created"
+    tar -tzf "$asset" | grep -q 'recipe-packs/kubernetes/default-recipepack.bicep' ||
+        fail "recipe pack bundle is missing the pack template"
+    tar -tzf "$asset" | grep -q 'recipe-packs/kubernetes/README.md' ||
+        fail "recipe pack bundle is missing the pack README"
+}
+
+test_recipe_pack_release_is_not_synced() {
+    local repo="$TEST_ROOT/recipe-pack-sync" output="$TEST_ROOT/recipe-pack-sync.out"
+    create_repo "$repo" "Data"
+
+    REPO_ROOT="$repo" EVENT_NAME=release RELEASE_TAG="recipe-pack/kubernetes/v0.1.0" \
+        GITHUB_OUTPUT="$output" bash "$SYNC_SCRIPT" >/dev/null 2>&1
+    assert_eq "0" "$(output_value "$output" namespace_count)" "recipe pack release namespace count"
+    assert_eq "non-namespace-scope" "$(output_value "$output" reason)" "recipe pack release skip reason"
+}
+
 command -v jq >/dev/null 2>&1 || fail "jq is required"
 test_deleted_namespace
 test_renamed_namespace
 test_prerelease_labels
+test_recipe_pack_versioning
+test_recipe_pack_bundle
+test_recipe_pack_release_is_not_synced
 echo "Release automation tests passed"

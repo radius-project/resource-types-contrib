@@ -161,8 +161,8 @@ case "$EVENT_NAME" in
             if rtc_is_category "$scope"; then
                 add_namespace "Radius.$scope"
             else
-                # A non-category scope (e.g. recipe-packs/...) is not a manifest
-                # namespace, so nothing is dispatched.
+                # A non-category scope (e.g. recipe-pack/kubernetes/v0.1.0) is
+                # not a manifest namespace, so nothing is dispatched.
                 REASON="non-namespace-scope"
             fi
         else

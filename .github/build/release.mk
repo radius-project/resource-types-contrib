@@ -16,9 +16,11 @@
 
 ##@ Release
 
-# Per-namespace releases are cut by the release-namespace.yaml workflow. These
+# Per-namespace releases are cut by the release-namespace.yaml workflow and
+# per-recipe-pack releases by the release-recipe-pack.yaml workflow. These
 # targets mirror the workflow steps for local inspection and dry runs. Git tags
-# (Radius.<Category>/vX.Y.Z) are the single source of truth for versions.
+# (Radius.<Category>/vX.Y.Z and recipe-pack/<pack>/vX.Y.Z) are the single source
+# of truth for versions.
 
 BUMP ?= minor
 OUT_DIR ?= dist
@@ -31,19 +33,33 @@ test-release-automation: ## Run focused tests for namespace sync and release ver
 list-namespaces: ## List releasable namespaces (Radius.<Category>)
 	@./.github/scripts/release/list-namespaces.sh
 
+.PHONY: list-recipe-packs
+list-recipe-packs: ## List releasable recipe packs (recipe-packs/<pack>)
+	@./.github/scripts/release/list-recipe-packs.sh
+
 .PHONY: next-version
-next-version: ## Show current/next version for a namespace (requires NAMESPACE; optional BUMP=patch|minor|major, PRERELEASE_LABEL)
-ifndef NAMESPACE
-	$(error NAMESPACE parameter is required. Usage: make next-version NAMESPACE=Radius.Data BUMP=minor)
+next-version: ## Show current/next version for a namespace or recipe pack (requires NAMESPACE or RECIPE_PACK; optional BUMP=patch|minor|major, PRERELEASE_LABEL)
+ifeq ($(strip $(NAMESPACE))$(strip $(RECIPE_PACK)),)
+	$(error NAMESPACE or RECIPE_PACK parameter is required. Usage: make next-version NAMESPACE=Radius.Data BUMP=minor | make next-version RECIPE_PACK=kubernetes BUMP=minor)
 endif
-	@NAMESPACE="$(NAMESPACE)" BUMP="$(BUMP)" PRERELEASE_LABEL="$(PRERELEASE_LABEL)" ./.github/scripts/release/next-version.sh
+ifneq ($(and $(strip $(NAMESPACE)),$(strip $(RECIPE_PACK))),)
+	$(error NAMESPACE and RECIPE_PACK are mutually exclusive. Set exactly one of them)
+endif
+	@NAMESPACE="$(NAMESPACE)" RECIPE_PACK="$(RECIPE_PACK)" BUMP="$(BUMP)" PRERELEASE_LABEL="$(PRERELEASE_LABEL)" ./.github/scripts/release/next-version.sh
 
 .PHONY: release-bundle
-release-bundle: ## Build a namespace manifest bundle locally (requires NAMESPACE, VERSION; optional OUT_DIR)
-ifndef NAMESPACE
-	$(error NAMESPACE parameter is required. Usage: make release-bundle NAMESPACE=Radius.Data VERSION=0.1.0)
+release-bundle: ## Build a namespace manifest or recipe pack bundle locally (requires NAMESPACE or RECIPE_PACK, and VERSION; optional OUT_DIR)
+ifeq ($(strip $(NAMESPACE))$(strip $(RECIPE_PACK)),)
+	$(error NAMESPACE or RECIPE_PACK parameter is required. Usage: make release-bundle NAMESPACE=Radius.Data VERSION=0.1.0 | make release-bundle RECIPE_PACK=kubernetes VERSION=0.1.0)
+endif
+ifneq ($(and $(strip $(NAMESPACE)),$(strip $(RECIPE_PACK))),)
+	$(error NAMESPACE and RECIPE_PACK are mutually exclusive. Set exactly one of them)
 endif
 ifndef VERSION
 	$(error VERSION parameter is required. Usage: make release-bundle NAMESPACE=Radius.Data VERSION=0.1.0)
 endif
-	@NAMESPACE="$(NAMESPACE)" VERSION="$(VERSION)" OUT_DIR="$(OUT_DIR)" ./.github/scripts/release/build-namespace-bundle.sh
+	@if [ -n "$(RECIPE_PACK)" ]; then \
+		RECIPE_PACK="$(RECIPE_PACK)" VERSION="$(VERSION)" OUT_DIR="$(OUT_DIR)" ./.github/scripts/release/build-recipe-pack-bundle.sh; \
+	else \
+		NAMESPACE="$(NAMESPACE)" VERSION="$(VERSION)" OUT_DIR="$(OUT_DIR)" ./.github/scripts/release/build-namespace-bundle.sh; \
+	fi
