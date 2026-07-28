@@ -63,11 +63,11 @@ create_recipe_pack_repo() {
     git init -q "$repo"
     git -C "$repo" config user.name "Release Test"
     git -C "$repo" config user.email "release-test@example.com"
-    mkdir -p "$repo/recipepack/$pack"
-    cat >"$repo/recipepack/$pack/default-recipepack.bicep" <<'EOF'
+    mkdir -p "$repo/recipe-packs/$pack"
+    cat >"$repo/recipe-packs/$pack/default-recipepack.bicep" <<'EOF'
 extension radius
 EOF
-    echo "# ${pack} recipe pack" >"$repo/recipepack/$pack/README.md"
+    echo "# ${pack} recipe pack" >"$repo/recipe-packs/$pack/README.md"
     git -C "$repo" add .
     git -C "$repo" commit -q -m "add ${pack} recipe pack"
 }
@@ -157,9 +157,9 @@ test_recipe_pack_bundle() {
     assert_eq "recipe-pack-kubernetes-v0.1.0.tar.gz" "$(basename "$asset")" "recipe pack asset name"
     assert_eq "1" "$(output_value "$output" count)" "recipe pack template count"
     [[ -f "$asset" ]] || fail "recipe pack asset was not created"
-    tar -tzf "$asset" | grep -q 'recipepack/kubernetes/default-recipepack.bicep' ||
+    tar -tzf "$asset" | grep -q 'recipe-packs/kubernetes/default-recipepack.bicep' ||
         fail "recipe pack bundle is missing the pack template"
-    tar -tzf "$asset" | grep -q 'recipepack/kubernetes/README.md' ||
+    tar -tzf "$asset" | grep -q 'recipe-packs/kubernetes/README.md' ||
         fail "recipe pack bundle is missing the pack README"
 }
 

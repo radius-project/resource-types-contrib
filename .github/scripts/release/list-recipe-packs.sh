@@ -19,7 +19,7 @@
 # =============================================================================
 # list-recipe-packs.sh
 # -----------------------------------------------------------------------------
-# Print the releasable recipe packs (directory names under recipepack/), one per
+# Print the releasable recipe packs (directory names under recipe-packs/), one per
 # line. Each is versioned and released independently by
 # release-recipe-pack.yaml under the `recipe-pack/<pack>/vX.Y.Z` tag series.
 #

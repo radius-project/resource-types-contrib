@@ -34,7 +34,7 @@ list-namespaces: ## List releasable namespaces (Radius.<Category>)
 	@./.github/scripts/release/list-namespaces.sh
 
 .PHONY: list-recipe-packs
-list-recipe-packs: ## List releasable recipe packs (recipepack/<pack>)
+list-recipe-packs: ## List releasable recipe packs (recipe-packs/<pack>)
 	@./.github/scripts/release/list-recipe-packs.sh
 
 .PHONY: next-version

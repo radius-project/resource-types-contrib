@@ -4,7 +4,7 @@ name: Release Recipe Pack
 
 # Cuts an independent, per-recipe-pack release of the Recipe Packs.
 #
-# Each pack (a directory under `recipepack/`) is versioned and tagged on its own
+# Each pack (a directory under `recipe-packs/`) is versioned and tagged on its own
 # series, prefixed so it never collides with the namespace tag series:
 #   tag:     recipe-pack/<pack>/v<major>.<minor>.<patch>[-<prerelease>]
 #   asset:   recipe-pack-<pack>-v<version>.tar.gz  (+ checksums.txt)
@@ -117,7 +117,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          folder="recipepack/${RECIPE_PACK}"
+          folder="recipe-packs/${RECIPE_PACK}"
           prev="$(git tag --list "recipe-pack/${RECIPE_PACK}/v*" --sort=-v:refname | head -n1 || true)"
           if [ -n "$prev" ]; then
             range="${prev}..HEAD"

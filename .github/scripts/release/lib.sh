@@ -30,7 +30,7 @@
 #   * namespace    `Radius.<Category>` (e.g. Radius.Data), mapping 1:1 to a
 #                  top-level category directory (e.g. Data/).
 #                  tag: Radius.<Category>/v<major>.<minor>.<patch>[-<prerelease>]
-#   * recipe pack  a directory under recipepack/ (e.g. recipepack/kubernetes).
+#   * recipe pack  a directory under recipe-packs/ (e.g. recipe-packs/kubernetes).
 #                  tag: recipe-pack/<pack>/v<major>.<minor>.<patch>[-<prerelease>]
 #
 # In both cases git tags are the single source of truth for the current version
@@ -56,7 +56,7 @@ source "$RTC_RELEASE_LIB_DIR/../lib-namespaces.sh"
 RTC_RECIPE_PACK_ROOT="${RTC_RECIPE_PACK_ROOT:-recipepack}"
 RTC_RECIPE_PACK_TAG_PREFIX="recipe-pack"
 
-# Print the releasable recipe packs (directory names under recipepack/), one per
+# Print the releasable recipe packs (directory names under recipe-packs/), one per
 # line, sorted. A directory is only treated as a pack when it holds a Bicep
 # template, so unrelated folders are never mistaken for a pack.
 rtc_list_recipe_packs() {
@@ -79,7 +79,7 @@ rtc_is_recipe_pack() {
 }
 
 # Map a recipe pack to its tag prefix and directory
-# (e.g. kubernetes -> recipe-pack/kubernetes, recipepack/kubernetes).
+# (e.g. kubernetes -> recipe-pack/kubernetes, recipe-packs/kubernetes).
 rtc_recipe_pack_tag_prefix() { echo "${RTC_RECIPE_PACK_TAG_PREFIX}/$1"; }
 rtc_recipe_pack_dir() { echo "${RTC_RECIPE_PACK_ROOT}/$1"; }
 

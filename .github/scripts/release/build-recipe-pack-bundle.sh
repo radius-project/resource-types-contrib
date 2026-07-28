@@ -21,7 +21,7 @@
 # -----------------------------------------------------------------------------
 # Package a recipe pack into a release bundle plus a checksums file. The bundle
 # contains the pack's Bicep templates and its README.md, laid out under the
-# repo-relative path (e.g. `recipepack/kubernetes/default-recipepack.bicep`) so
+# repo-relative path (e.g. `recipe-packs/kubernetes/default-recipepack.bicep`) so
 # it extracts back into the same tree. This is the recipe pack counterpart of
 # build-namespace-bundle.sh and shares its bundling helpers.
 #
@@ -67,7 +67,7 @@ PACK_DIR_ABS="$RTC_REPO_ROOT/$PACK_DIR"
 STAGING_COUNT=0
 rtc_bundle_begin
 
-# Collect the pack's Bicep templates (recipepack/<pack>/<file>.bicep).
+# Collect the pack's Bicep templates (recipe-packs/<pack>/<file>.bicep).
 while IFS= read -r template; do
     rtc_bundle_add_file "$template"
     STAGING_COUNT=$((STAGING_COUNT + 1))
