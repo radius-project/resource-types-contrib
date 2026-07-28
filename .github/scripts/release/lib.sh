@@ -169,12 +169,18 @@ rtc_emit() {
 #   rtc_bundle_create "$OUT_DIR" "<asset name>.tar.gz"
 #
 # rtc_bundle_create sets RTC_BUNDLE_ASSET and RTC_BUNDLE_CHECKSUMS.
+# rtc_bundle_begin fixes the umask for the rest of the run so staged file modes
+# -- and therefore the checksum -- do not depend on the caller's environment.
 # -----------------------------------------------------------------------------
 RTC_BUNDLE_STAGING=""
 RTC_BUNDLE_ASSET=""
 RTC_BUNDLE_CHECKSUMS=""
 
 rtc_bundle_begin() {
+    # `mkdir` and `cp` mask the mode they create files with, so an unusual
+    # caller umask (e.g. 077) would otherwise change the modes recorded in the
+    # archive and produce a different checksum for identical content.
+    umask 022
     RTC_BUNDLE_STAGING="$(mktemp -d)"
     trap 'rm -rf "$RTC_BUNDLE_STAGING"' EXIT
 }

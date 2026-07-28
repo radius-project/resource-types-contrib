@@ -42,12 +42,18 @@ next-version: ## Show current/next version for a namespace or recipe pack (requi
 ifeq ($(strip $(NAMESPACE))$(strip $(RECIPE_PACK)),)
 	$(error NAMESPACE or RECIPE_PACK parameter is required. Usage: make next-version NAMESPACE=Radius.Data BUMP=minor | make next-version RECIPE_PACK=kubernetes BUMP=minor)
 endif
+ifneq ($(and $(strip $(NAMESPACE)),$(strip $(RECIPE_PACK))),)
+	$(error NAMESPACE and RECIPE_PACK are mutually exclusive. Set exactly one of them)
+endif
 	@NAMESPACE="$(NAMESPACE)" RECIPE_PACK="$(RECIPE_PACK)" BUMP="$(BUMP)" PRERELEASE_LABEL="$(PRERELEASE_LABEL)" ./.github/scripts/release/next-version.sh
 
 .PHONY: release-bundle
 release-bundle: ## Build a namespace manifest or recipe pack bundle locally (requires NAMESPACE or RECIPE_PACK, and VERSION; optional OUT_DIR)
 ifeq ($(strip $(NAMESPACE))$(strip $(RECIPE_PACK)),)
 	$(error NAMESPACE or RECIPE_PACK parameter is required. Usage: make release-bundle NAMESPACE=Radius.Data VERSION=0.1.0 | make release-bundle RECIPE_PACK=kubernetes VERSION=0.1.0)
+endif
+ifneq ($(and $(strip $(NAMESPACE)),$(strip $(RECIPE_PACK))),)
+	$(error NAMESPACE and RECIPE_PACK are mutually exclusive. Set exactly one of them)
 endif
 ifndef VERSION
 	$(error VERSION parameter is required. Usage: make release-bundle NAMESPACE=Radius.Data VERSION=0.1.0)
