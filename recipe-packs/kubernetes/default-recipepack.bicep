@@ -1,7 +1,7 @@
 // Default Radius recipe pack
 //
 // Deploy with:
-//   rad deploy recipepack/kubernetes/default-recipepack.bicep
+//   rad deploy recipe-packs/kubernetes/default-recipepack.bicep
 //
 // This mirrors /planes/radius/local/resourceGroups/default/providers/Radius.Core/recipePacks/default
 

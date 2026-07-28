@@ -19,13 +19,12 @@ Developer documentation is embedded in the resource type definition YAML file an
 
 ## Recipe Packs
 
-Recipes for this resource type are provided through the platform Recipe Packs at the repository root under [`recipepack/`](../../recipepack). A platform engineer configures an Environment by deploying the Recipe Pack for their target platform, which registers the Recipe for `Radius.Data/redisCaches` along with the Recipes for every other Resource Type on that platform.
+Recipes for this resource type are provided through the platform Recipe Packs at the repository root under [`recipe-packs/`](../../recipe-packs/). A platform engineer configures an Environment by deploying the Recipe Pack for their target platform, which registers the Recipe for `Radius.Data/redisCaches` along with the Recipes for every other Resource Type on that platform.
 
 | Platform | Recipe Pack | Recipe source |
 | --- | --- | --- |
-| Azure | [`recipepack/azure/bicep-recipepack.bicep`](../../recipepack/azure/bicep-recipepack.bicep) | Direct module — Azure Verified Module `avm/res/cache/redis-enterprise` |
-| Kubernetes | [`recipepack/kubernetes/default-recipepack.bicep`](../../recipepack/kubernetes/default-recipepack.bicep) | In-cluster Redis `Deployment` + `Service` [`recipes/kubernetes`](recipes/kubernetes) |
-
+| Azure | [`recipe-packs/azure/bicep-recipepack.bicep`](../../recipe-packs/azure/bicep-recipepack.bicep) | Direct module — Azure Verified Module `avm/res/cache/redis-enterprise` |
+| Kubernetes | [`recipe-packs/kubernetes/default-recipepack.bicep`](../../recipe-packs/kubernetes/default-recipepack.bicep) | In-cluster Redis `Deployment` + `Service` [`recipes/kubernetes`](recipes/kubernetes) |
 
 ## Using the resource type
 
