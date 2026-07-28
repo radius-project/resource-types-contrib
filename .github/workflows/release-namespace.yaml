@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://www.schemastore.org/github-workflow.json
 ---
-name: release-namespace
+name: Release Namespace
 
 # Cuts an independent, per-namespace release of the resource-type manifests.
 #
