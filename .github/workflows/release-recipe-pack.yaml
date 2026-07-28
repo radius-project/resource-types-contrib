@@ -1,0 +1,209 @@
+# yaml-language-server: $schema=https://www.schemastore.org/github-workflow.json
+---
+name: Release Recipe Pack
+
+# Cuts an independent, per-recipe-pack release of the Recipe Packs.
+#
+# Each pack (a directory under `recipepack/`) is versioned and tagged on its own
+# series, prefixed so it never collides with the namespace tag series:
+#   tag:     recipe-pack/<pack>/v<major>.<minor>.<patch>[-<prerelease>]
+#   asset:   recipe-pack-<pack>-v<version>.tar.gz  (+ checksums.txt)
+#
+# Every published release artifact gets a signed SLSA build provenance
+# attestation (actions/attest-build-provenance), verifiable with
+#   gh attestation verify <asset> --repo radius-project/resource-types-contrib
+#
+# Git tags are the single source of truth for the current version -- there is no
+# version file to maintain. A maintainer triggers this workflow, picks the pack
+# and a bump type, and the workflow computes the next version, builds the pack
+# bundle, and publishes a GitHub Release. This mirrors release-namespace.yaml and
+# shares its release scripts.
+#
+# Downstream: publishing the release fires `notify-radius.yaml` on
+# `release: published`, which recognizes the `recipe-pack/` scope as a
+# non-namespace scope and sends no sync dispatch to radius-project/radius --
+# Recipe Packs are not part of the default resource-type manifests. The release
+# is still created with the RESOURCE_TYPES_BOT GitHub App token (not
+# GITHUB_TOKEN) so release events behave consistently across both workflows.
+#
+# Prerequisite (one-time, admin): the RESOURCE_TYPES_BOT GitHub App must be
+# installed on this repository with `contents: write` so it can create the tag
+# and release. `dry_run` needs no token and is safe to run anytime.
+#
+# To release a new recipe pack folder, add it to the `recipe_pack` choice list
+# below.
+
+on:
+  workflow_dispatch:
+    inputs:
+      recipe_pack:
+        description: Recipe pack to release
+        type: choice
+        required: true
+        options:
+          - azure
+          - kubernetes
+      bump:
+        description: Semantic version bump
+        type: choice
+        required: true
+        default: minor
+        options:
+          - patch
+          - minor
+          - major
+      prerelease_label:
+        description: "Optional prerelease label (e.g. rc.1, beta.1); marks the release as a prerelease"
+        type: string
+        required: false
+        default: ""
+      dry_run:
+        description: Compute the version and build the bundle without tagging or publishing
+        type: boolean
+        required: false
+        default: false
+
+permissions: {}
+
+concurrency:
+  # One release at a time per recipe pack; never cancel an in-flight release.
+  group: release-recipe-pack-${{ inputs.recipe_pack }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release recipe pack ${{ inputs.recipe_pack }}
+    if: >-
+      github.repository == 'radius-project/resource-types-contrib' &&
+      (inputs.dry_run || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      # Read is enough for checkout; the tag/release is created with the App
+      # token so release events behave the same as for namespace releases.
+      contents: read
+      # Sign and record a build provenance attestation for the release artifact.
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history and tags so version resolution and release notes work.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Resolve version
+        id: ver
+        env:
+          RECIPE_PACK: ${{ inputs.recipe_pack }}
+          BUMP: ${{ inputs.bump }}
+          PRERELEASE_LABEL: ${{ inputs.prerelease_label }}
+        run: ./.github/scripts/release/next-version.sh
+
+      - name: Build recipe pack bundle
+        id: bundle
+        env:
+          RECIPE_PACK: ${{ inputs.recipe_pack }}
+          VERSION: ${{ steps.ver.outputs.next }}
+          OUT_DIR: dist
+        run: ./.github/scripts/release/build-recipe-pack-bundle.sh
+
+      - name: Generate release notes
+        id: notes
+        env:
+          RECIPE_PACK: ${{ inputs.recipe_pack }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          folder="recipepack/${RECIPE_PACK}"
+          prev="$(git tag --list "recipe-pack/${RECIPE_PACK}/v*" --sort=-v:refname | head -n1 || true)"
+          if [ -n "$prev" ]; then
+            range="${prev}..HEAD"
+          else
+            range="HEAD"
+          fi
+          {
+            echo "## ${TAG}"
+            echo ""
+            if [ -n "$prev" ]; then
+              echo "Changes in \`${folder}/\` since \`${prev}\`:"
+            else
+              echo "Initial release of the \`${RECIPE_PACK}\` recipe pack."
+            fi
+            echo ""
+            changes="$(git log --no-merges --pretty='- %s (%h)' "$range" -- "${folder}/" || true)"
+            if [ -n "$changes" ]; then
+              echo "$changes"
+            else
+              echo "- No recipe pack changes since the previous release."
+            fi
+          } > dist/notes.md
+          {
+            echo "prev=${prev:-none}"
+          } >> "$GITHUB_OUTPUT"
+          echo "--- release notes ---"
+          cat dist/notes.md
+
+      - name: Attest build provenance
+        # Generate a signed SLSA build provenance attestation for the release
+        # bundle so consumers can cryptographically verify it was built by this
+        # workflow and has not been tampered with. Runs before publishing so a
+        # released artifact is always attested (fail-closed). Verify with:
+        #   gh attestation verify <asset> --repo radius-project/resource-types-contrib
+        if: ${{ !inputs.dry_run }}
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: ${{ steps.bundle.outputs.asset }}
+
+      - name: Generate App Token
+        # Create the release as the RESOURCE_TYPES_BOT App (not GITHUB_TOKEN) so
+        # release events are allowed to trigger downstream workflows. Requires
+        # the App installed on this repo with contents:write.
+        if: ${{ !inputs.dry_run }}
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RESOURCE_TYPES_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.RESOURCE_TYPES_BOT_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Create tag and GitHub Release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          IS_PRERELEASE: ${{ steps.ver.outputs.is_prerelease }}
+          ASSET: ${{ steps.bundle.outputs.asset }}
+          CHECKSUMS: ${{ steps.bundle.outputs.checksums }}
+        run: |
+          set -euo pipefail
+          args=(--target "$GITHUB_SHA" --title "$TAG" --notes-file dist/notes.md --latest=false)
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            args+=(--prerelease)
+          fi
+          gh release create "$TAG" "${args[@]}" "$ASSET" "$CHECKSUMS"
+
+      - name: Summarize
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          {
+            echo "## Release ${{ steps.ver.outputs.tag }}"
+            echo ""
+            echo "* Recipe pack: \`${{ inputs.recipe_pack }}\`"
+            echo "* Current -> next: \`${{ steps.ver.outputs.current }}\` -> \`${{ steps.ver.outputs.next }}\`"
+            echo "* Since previous tag: \`${{ steps.notes.outputs.prev }}\`"
+            echo "* Prerelease: \`${{ steps.ver.outputs.is_prerelease }}\`"
+            echo "* Templates bundled: \`${{ steps.bundle.outputs.count }}\`"
+            echo "* Asset: \`$(basename "${{ steps.bundle.outputs.asset }}")\`"
+            if [ "$DRY_RUN" = "true" ]; then
+              echo ""
+              echo "_Dry run: no tag, release, or attestation was created._"
+            else
+              echo "* Provenance: attested (verify with \`gh attestation verify <asset> --repo ${{ github.repository }}\`)"
+              echo ""
+              echo "Published as \`${{ steps.ver.outputs.tag }}\`; no radius sync dispatch is sent for recipe pack releases."
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"

@@ -68,69 +68,43 @@ if [[ ! -d "$FOLDER_ABS" ]]; then
     exit 1
 fi
 
-STAGING="$(mktemp -d)"
-cleanup() { rm -rf "$STAGING"; }
-trap cleanup EXIT
-
-count=0
-add_file() {
-    local src="$1" rel
-    rel="${src#"$RTC_REPO_ROOT"/}"
-    mkdir -p "$STAGING/$(dirname "$rel")"
-    cp "$src" "$STAGING/$rel"
-}
+STAGING_COUNT=0
+rtc_bundle_begin
 
 # Collect resource-type manifests (<category>/<type>/<file>.yaml) and each
 # type's adjacent README.md.
 while IFS= read -r manifest; do
     rtc_is_resource_type_yaml "$manifest" || continue
-    add_file "$manifest"
-    count=$((count + 1))
+    rtc_bundle_add_file "$manifest"
+    STAGING_COUNT=$((STAGING_COUNT + 1))
     type_dir="$(dirname "$manifest")"
     if [[ -f "$type_dir/README.md" ]]; then
-        add_file "$type_dir/README.md"
+        rtc_bundle_add_file "$type_dir/README.md"
     fi
 done < <(find "$FOLDER_ABS" -mindepth 2 -maxdepth 2 -type f \
     \( -name '*.yaml' -o -name '*.yml' \) | sort)
 
 # Include a namespace-level README.md when present.
 if [[ -f "$FOLDER_ABS/README.md" ]]; then
-    add_file "$FOLDER_ABS/README.md"
+    rtc_bundle_add_file "$FOLDER_ABS/README.md"
 fi
 
-if [[ "$count" -eq 0 ]]; then
+if [[ "$STAGING_COUNT" -eq 0 ]]; then
     echo "Error: no resource-type manifests found under '$FOLDER'" >&2
     exit 1
 fi
 
-mkdir -p "$OUT_DIR"
-OUT_DIR_ABS="$(cd "$OUT_DIR" && pwd)"
-ASSET_NAME="${NAMESPACE}-manifests-v${VERSION}.tar.gz"
-ASSET="$OUT_DIR_ABS/$ASSET_NAME"
+rtc_bundle_create "$OUT_DIR" "${NAMESPACE}-manifests-v${VERSION}.tar.gz"
 
-# Deterministic archive: fixed order/mtime/ownership so the checksum is stable.
-tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
-    -czf "$ASSET" -C "$STAGING" .
-
-CHECKSUMS="$OUT_DIR_ABS/checksums.txt"
-(cd "$OUT_DIR_ABS" && sha256sum "$ASSET_NAME" >"checksums.txt")
-
-emit() {
-    local key="$1" value="$2"
-    if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-        printf '%s=%s\n' "$key" "$value" >>"$GITHUB_OUTPUT"
-    fi
-}
-
-emit "asset" "$ASSET"
-emit "checksums" "$CHECKSUMS"
-emit "count" "$count"
+rtc_emit "asset" "$RTC_BUNDLE_ASSET"
+rtc_emit "checksums" "$RTC_BUNDLE_CHECKSUMS"
+rtc_emit "count" "$STAGING_COUNT"
 
 {
     echo "Namespace:   $NAMESPACE"
     echo "Version:     $VERSION"
-    echo "Manifests:   $count"
-    echo "Asset:       $ASSET"
-    echo "Checksums:   $CHECKSUMS"
-    echo "SHA256:      $(cut -d' ' -f1 "$CHECKSUMS")"
+    echo "Manifests:   $STAGING_COUNT"
+    echo "Asset:       $RTC_BUNDLE_ASSET"
+    echo "Checksums:   $RTC_BUNDLE_CHECKSUMS"
+    echo "SHA256:      $(cut -d' ' -f1 "$RTC_BUNDLE_CHECKSUMS")"
 } >&2
