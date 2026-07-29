@@ -17,8 +17,8 @@ name: Release Namespace
 # namespace and a bump type, and the workflow computes the next version, builds
 # the manifest bundle, and publishes a GitHub Release. This is the release side
 # of the per-namespace sync design (radius PR #12236): publishing per-namespace
-# versioned artifacts is what makes Radius's per-namespace `sources[].ref` pins
-# meaningful.
+# versioned artifacts is what makes Radius's per-namespace `resourceTypes[].ref`
+# pins meaningful.
 #
 # Downstream: publishing the release fires `notify-radius.yaml` on
 # `release: published`, which dispatches the per-namespace pin (this tag) to

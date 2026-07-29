@@ -2,11 +2,33 @@
 ---
 name: Publish Bicep Recipes
 
+# Publishes the Kubernetes Bicep recipes to GHCR as OCI artifacts.
+#
+# The tag channels mirror the release lifecycle implemented by
+# notify-radius.yaml, so a recipe image tag means the same thing as a sync pin:
+#   * edge      -> every push to `main` that touches a Bicep recipe, and manual
+#                  runs with no version. Floating tag; `edge` always resolves to
+#                  the newest recipes on `main`.
+#   * <version> -> manual dispatch with `release_version`, run alongside a
+#                  Radius release. Immutable; never republished.
+#   * latest    -> moves only with a stable `release_version`, so `latest`
+#                  always resolves to the newest stable release.
+
 on:
+  push:
+    branches:
+      - main
+    paths:
+      # Any Bicep recipe, so a new recipe folder is covered without editing
+      # this list; the publish steps below decide what actually gets published.
+      - "**/recipes/kubernetes/bicep/**"
+      # Republish when the recipe list or the publish script changes.
+      - .github/workflows/publish-bicep-recipes.yaml
+      - .github/scripts/publish-bicep-recipe.sh
   workflow_dispatch:
     inputs:
       release_version:
-        description: "Release version to use as the image tag (e.g. 0.51.0). Defaults to 'latest' if not specified."
+        description: Release version to use as the image tag (e.g. 0.51.0). Leave empty to refresh the floating edge tag.
         required: false
         default: ""
         type: string
@@ -15,36 +37,29 @@ permissions: {}
 
 env:
   REGISTRY: ghcr.io/radius-project/kube-recipes
-  TAG: ${{ inputs.release_version || 'latest' }}
+  # `latest` is only ever moved by a stable release version -- semver marks a
+  # prerelease with a `-` -- so it never resolves to an unreleased build.
+  TAGS: >-
+    ${{ github.event_name == 'push' && 'edge'
+        || inputs.release_version == '' && 'edge'
+        || contains(inputs.release_version, '-') && inputs.release_version
+        || format('{0} latest', inputs.release_version) }}
+
+concurrency:
+  # `edge` must end up at the newest commit on `main`, so let a newer push
+  # supersede an in-flight publish. Versioned publishes are never cancelled.
+  group: publish-bicep-recipes-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   publish-bicep-recipes:
     name: Publish Bicep Recipes to GHCR
+    if: github.repository == 'radius-project/resource-types-contrib'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
       packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: containers
-            path: Compute/containers/recipes/kubernetes/bicep/kubernetes-containers.bicep
-          - name: containerimages
-            path: Compute/containerImages/recipes/kubernetes/bicep/kubernetes-containerimages.bicep
-          - name: persistentvolumes
-            path: Compute/persistentVolumes/recipes/kubernetes/bicep/kubernetes-volumes.bicep
-          - name: routes
-            path: Compute/routes/recipes/kubernetes/bicep/kubernetes-routes.bicep
-          - name: secrets
-            path: Security/secrets/recipes/kubernetes/bicep/kubernetes-secrets.bicep
-          - name: mysqldatabases
-            path: Data/mySqlDatabases/recipes/kubernetes/bicep/kubernetes-mysql.bicep
-          - name: postgresqldatabases
-            path: Data/postgreSqlDatabases/recipes/kubernetes/bicep/kubernetes-postgresql.bicep
-          - name: rediscaches
-            path: Data/redisCaches/recipes/kubernetes/bicep/kubernetes-redis.bicep
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -62,9 +77,27 @@ jobs:
         run: |
           wget -q "https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh" -O - | /bin/bash
 
-      - name: Publish ${{ matrix.name }} recipe
+      # Publishing every recipe from one job means checkout, login and the CLI
+      # install happen once instead of once per recipe. At most 10 of these run
+      # concurrently; the rest queue.
+      - parallel:
+          - name: Publish containers
+            run: ./.github/scripts/publish-bicep-recipe.sh containers Compute/containers/recipes/kubernetes/bicep/kubernetes-containers.bicep
+          - name: Publish containerimages
+            run: ./.github/scripts/publish-bicep-recipe.sh containerimages Compute/containerImages/recipes/kubernetes/bicep/kubernetes-containerimages.bicep
+          - name: Publish persistentvolumes
+            run: ./.github/scripts/publish-bicep-recipe.sh persistentvolumes Compute/persistentVolumes/recipes/kubernetes/bicep/kubernetes-volumes.bicep
+          - name: Publish routes
+            run: ./.github/scripts/publish-bicep-recipe.sh routes Compute/routes/recipes/kubernetes/bicep/kubernetes-routes.bicep
+          - name: Publish secrets
+            run: ./.github/scripts/publish-bicep-recipe.sh secrets Security/secrets/recipes/kubernetes/bicep/kubernetes-secrets.bicep
+          - name: Publish mysqldatabases
+            run: ./.github/scripts/publish-bicep-recipe.sh mysqldatabases Data/mySqlDatabases/recipes/kubernetes/bicep/kubernetes-mysql.bicep
+          - name: Publish postgresqldatabases
+            run: ./.github/scripts/publish-bicep-recipe.sh postgresqldatabases Data/postgreSqlDatabases/recipes/kubernetes/bicep/kubernetes-postgresql.bicep
+          - name: Publish rediscaches
+            run: ./.github/scripts/publish-bicep-recipe.sh rediscaches Data/redisCaches/recipes/kubernetes/bicep/kubernetes-redis.bicep
+
+      - name: Summarize
         run: |
-          echo "Publishing ${{ matrix.name }} recipe to ${{ env.REGISTRY }}/${{ matrix.name }}:${{ env.TAG }}"
-          rad bicep publish \
-            --file ${{ matrix.path }} \
-            --target "br:${{ env.REGISTRY }}/${{ matrix.name }}:${{ env.TAG }}"
+          echo "Published the Kubernetes Bicep recipes to \`$REGISTRY\` with tags \`$TAGS\`." >>"$GITHUB_STEP_SUMMARY"

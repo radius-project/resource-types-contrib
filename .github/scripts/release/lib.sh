@@ -44,44 +44,11 @@ if [[ -n "${RTC_RELEASE_LIB_SOURCED:-}" ]]; then
 fi
 RTC_RELEASE_LIB_SOURCED=1
 
-# Namespace enumeration and folder<->namespace mapping are shared with the
-# Radius sync tooling so there is a single source of truth.
+# Namespace and recipe pack enumeration, plus the folder<->unit mapping, are
+# shared with the Radius sync tooling so there is a single source of truth.
 RTC_RELEASE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=.github/scripts/lib-namespaces.sh
 source "$RTC_RELEASE_LIB_DIR/../lib-namespaces.sh"
-
-# Recipe packs live one directory below this root. Their tags carry a
-# `recipe-pack/` prefix so they never collide with the namespace tag series and
-# so the Radius sync tooling can recognize them as a non-namespace scope.
-RTC_RECIPE_PACK_ROOT="${RTC_RECIPE_PACK_ROOT:-recipe-packs}"
-RTC_RECIPE_PACK_TAG_PREFIX="recipe-pack"
-
-# Print the releasable recipe packs (directory names under recipe-packs/), one per
-# line, sorted. A directory is only treated as a pack when it holds a Bicep
-# template, so unrelated folders are never mistaken for a pack.
-rtc_list_recipe_packs() {
-    local dir
-    [[ -d "$RTC_REPO_ROOT/$RTC_RECIPE_PACK_ROOT" ]] || return 0
-    while IFS= read -r dir; do
-        if compgen -G "$dir/*.bicep" >/dev/null; then
-            echo "${dir##*/}"
-        fi
-    done < <(find "$RTC_REPO_ROOT/$RTC_RECIPE_PACK_ROOT" -mindepth 1 -maxdepth 1 -type d | sort)
-}
-
-# True if the argument is a known recipe pack (e.g. "kubernetes").
-rtc_is_recipe_pack() {
-    local pack="$1" candidate
-    while IFS= read -r candidate; do
-        [[ "$candidate" == "$pack" ]] && return 0
-    done < <(rtc_list_recipe_packs)
-    return 1
-}
-
-# Map a recipe pack to its tag prefix and directory
-# (e.g. kubernetes -> recipe-pack/kubernetes, recipe-packs/kubernetes).
-rtc_recipe_pack_tag_prefix() { echo "${RTC_RECIPE_PACK_TAG_PREFIX}/$1"; }
-rtc_recipe_pack_dir() { echo "${RTC_RECIPE_PACK_ROOT}/$1"; }
 
 # Print the highest existing STABLE version (X.Y.Z, no prerelease suffix) for a
 # tag series, derived from git tags. `prefix` identifies the released unit (e.g.
