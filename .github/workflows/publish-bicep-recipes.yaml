@@ -37,6 +37,11 @@ on:
       - main
   workflow_call:
     inputs:
+      release_version:
+        description: Release version to use as the image tag (e.g. 0.51.0). Leave empty to refresh the floating edge tag.
+        required: false
+        default: ""
+        type: string
       pin_only:
         description: Publish only the immutable commit-SHA tag, leaving edge and latest where they are.
         required: false
