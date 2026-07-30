@@ -56,10 +56,9 @@ env:
   REGISTRY: ghcr.io/radius-project/kube-recipes
 
 concurrency:
-  # Keyed on the commit, not the branch, and never cancelled: a superseded run
-  # would leave its SHA without an image, and notify-radius.yaml may already
-  # have dispatched that SHA as a pin.
-  group: publish-bicep-recipes-${{ github.event_name }}-${{ github.sha }}
+  # Keyed on the ref and never cancelled: runs queue so every commit SHA gets published,
+  # but avoids unbounded parallel publishes on busy branches.
+  group: publish-bicep-recipes-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
