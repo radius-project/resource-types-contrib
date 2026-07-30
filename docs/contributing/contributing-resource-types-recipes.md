@@ -131,7 +131,7 @@ Each Resource Type has two types of documentation written specifically for devel
 
 ### Developers
 
-Developer documentation is embedded in the Resource Type definition. Each Resource Type definition must have documentation on how and when to use the resource in the top-level description property. When writing developer documentation, use Markdown. This is especially important for code blocks which must be quoted using triple backquotes. Output from `rad resource-type show` is shown in text only, but the Radius Dashboard formats the Markdown property including the ability to single-click copy code blocks.
+Developer documentation is embedded in the Resource Type definition. Each Resource Type definition must have documentation on how and when to use the resource in the top-level description property. When writing developer documentation, use Markdown. This is especially important for code blocks which must be quoted using triple backquotes. Every code block must include a language annotation immediately after the opening backticks (for example ` ```bicep `, ` ```json `, or ` ```yaml `) so it renders with correct syntax highlighting on docs.radapp.io. Most code blocks in a description are Bicep examples and should use ` ```bicep `. Output from `rad resource-type show` is shown in text only, but the Radius Dashboard formats the Markdown property including the ability to single-click copy code blocks.
 
 Each property must also include:
 
@@ -155,26 +155,30 @@ types:
     description: |
       The Radius.Data/redisCaches Resource Type adds a Redis cache to an application. Start by adding a redisCaches resource to your application definition Bicep file:
 
-        resource redis 'Radius.Data/redisCaches@2025-08-01-preview' = {
-          name: 'redis'
-          properties: {
-            application: todolist.id
-            environment: environment
-            capacity: 'M'
-          }
+      ```bicep
+      resource redis 'Radius.Data/redisCaches@2025-08-01-preview' = {
+        name: 'redis'
+        properties: {
+          application: todolist.id
+          environment: environment
+          capacity: 'M'
         }
+      }
+      ```
 
       Then add a connection from a Container resource to the Redis resource.
 
-        resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
-          name: 'myContainer'
-          properties: { ... }
-          connections: {
-            redis: {
-              source: redis.id
-            }
+      ```bicep
+      resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
+        name: 'myContainer'
+        properties: { ... }
+        connections: {
+          redis: {
+            source: redis.id
           }
         }
+      }
+      ```
     apiVersions:
       '2025-08-01-preview':
         schema:
