@@ -19,7 +19,7 @@ resource app 'Radius.Core/applications@2025-08-01-preview' = {
 
 // Create a container that mounts the persistent volume
 resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
-  name: 'myapp'
+  name: 'myApp'
   properties: {
     environment: environment
     application: app.id
@@ -34,7 +34,7 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
       }
     }
     containers: {
-      web: {
+      orderProcessor: {
         image: 'nginx:alpine'
         command: ['/bin/sh', '-c']
         args: ['nginx -g "daemon off;"']
@@ -116,7 +116,7 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
           periodSeconds: 10
         }
       }
-      init: {
+      dbMigration: {
         initContainer: true
         image: 'busybox:latest'
         command: ['sh', '-c']

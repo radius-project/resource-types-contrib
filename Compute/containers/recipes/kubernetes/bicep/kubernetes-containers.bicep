@@ -8,7 +8,7 @@ extension kubernetes with {
 
 var resourceName = context.resource.name
 var namespace = context.runtime.kubernetes.namespace
-var normalizedName = resourceName
+var normalizedName = toLower(resourceName)
 
 var resourceProperties = context.resource.?properties ?? {}
 var containerItems = items(resourceProperties.?containers ?? {})
@@ -122,7 +122,7 @@ var containerSpecs = reduce(containerItems, [], (acc, item) => concat(acc, [{
   isInit: item.value.?initContainer ?? false
   spec: union(
     {
-      name: item.key
+      name: toLower(item.key)
       image: item.value.image
     },
     // Add ports if they exist
@@ -324,6 +324,7 @@ resource deployment 'apps/Deployment@v1' = {
 var servicesConfig = reduce(containerItems, [], (acc, item) => 
   contains(item.value, 'ports') && length(items(item.value.ports)) > 0 ? concat(acc, [{
     containerName: item.key
+    normalizedContainerName: toLower(item.key)
     ports: reduce(items(item.value.ports), [], (portAcc, port) => concat(portAcc, [{
       name: port.key
       port: port.value.containerPort
@@ -335,7 +336,7 @@ var servicesConfig = reduce(containerItems, [], (acc, item) =>
 
 resource services 'core/Service@v1' = [for svc in servicesConfig: {
   metadata: {
-    name: '${normalizedName}-${svc.containerName}'
+    name: '${normalizedName}-${svc.normalizedContainerName}'
     namespace: namespace
     labels: union(labels, {
       container: svc.containerName
@@ -408,7 +409,7 @@ resource hpa 'autoscaling/HorizontalPodAutoscaler@v2' = if (hasAutoScaling) {
 }
 
 var deploymentResource = '/planes/kubernetes/local/namespaces/${namespace}/providers/apps/Deployment/${normalizedName}'
-var serviceResources = reduce(servicesConfig, [], (acc, svc) => concat(acc, ['/planes/kubernetes/local/namespaces/${namespace}/providers/core/Service/${normalizedName}-${svc.containerName}']))
+var serviceResources = reduce(servicesConfig, [], (acc, svc) => concat(acc, ['/planes/kubernetes/local/namespaces/${namespace}/providers/core/Service/${normalizedName}-${svc.normalizedContainerName}']))
 var hpaResource = hasAutoScaling ? ['/planes/kubernetes/local/namespaces/${namespace}/providers/autoscaling/HorizontalPodAutoscaler/${normalizedName}'] : []
 
 var allResources = concat([deploymentResource], serviceResources, hpaResource)
