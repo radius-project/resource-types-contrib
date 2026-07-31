@@ -42,4 +42,4 @@ SHELL := /bin/bash
 ARROW := \033[34;1m=>\033[0m
 
 # order matters for these
-include ./.github/build/help.mk ./.github/build/environment.mk ./.github/build/test.mk ./.github/build/release.mk
+include ./.github/build/help.mk ./.github/build/environment.mk ./.github/build/test.mk ./.github/build/release.mk ./.github/build/lint.mk
