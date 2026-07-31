@@ -26,6 +26,11 @@ name: Release Namespace
 # RESOURCE_TYPES_BOT GitHub App token (not GITHUB_TOKEN) precisely so that the
 # `release: published` event is allowed to trigger that downstream workflow.
 #
+# The pin Radius records is a commit SHA, and a released `rad` reuses that SHA
+# as the OCI tag of every recipe in the namespace (radius PR #12566). So the
+# release commit's recipes are published to GHCR under that SHA *before* the
+# release exists, and the tag is verified to resolve back to it afterwards.
+#
 # Prerequisite (one-time, admin): the RESOURCE_TYPES_BOT GitHub App must be
 # installed on this repository with `contents: write` so it can create the tag
 # and release. `dry_run` needs no token and is safe to run anytime.
@@ -73,11 +78,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  publish-recipes:
+    name: Publish recipes for the release commit
+    # A namespace pin is also an OCI coordinate: a released `rad` resolves
+    # `Radius.<Category>` to the commit SHA this release tag points at and pulls
+    # `ghcr.io/radius-project/kube-recipes/<recipe>:<sha>` (radius PR #12566).
+    # Publishing here makes that tag a precondition of releasing instead of
+    # something a later push has to backfill -- if it fails, no release is cut
+    # and Radius never sees a pin it cannot resolve. `pin_only` keeps the
+    # floating `edge`/`latest` aliases where they are; only the immutable SHA
+    # tag is (re)published.
+    if: ${{ !inputs.dry_run }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish-bicep-recipes.yaml
+    with:
+      pin_only: true
+
   release:
     name: Release ${{ inputs.namespace }}
+    needs: publish-recipes
     if: >-
+      !cancelled() &&
       github.repository == 'radius-project/resource-types-contrib' &&
-      (inputs.dry_run || github.ref == 'refs/heads/main')
+      (
+        (inputs.dry_run && needs.publish-recipes.result == 'skipped') ||
+        (!inputs.dry_run && github.ref == 'refs/heads/main' && needs.publish-recipes.result == 'success')
+      )
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -187,6 +215,25 @@ jobs:
           fi
           gh release create "$TAG" "${args[@]}" "$ASSET" "$CHECKSUMS"
 
+      - name: Verify the tag resolves to the published commit
+        # Radius turns this tag into a commit SHA with `git ls-remote` and uses
+        # that SHA as the recipe OCI tag, which the publish-recipes job pushed
+        # as $GITHUB_SHA. `gh release create` makes a lightweight tag, so the
+        # two match; an annotated tag would resolve to the tag object instead
+        # and the pin would point at a SHA that was never published. Fail loudly
+        # rather than ship a release whose recipes are unreachable.
+        if: ${{ !inputs.dry_run }}
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          resolved="$(git ls-remote origin "refs/tags/${TAG}" | awk '{print $1}')"
+          if [ "$resolved" != "$GITHUB_SHA" ]; then
+            echo "Error: ${TAG} resolves to '${resolved:-<missing>}' but recipes were published as :${GITHUB_SHA}." >&2
+            exit 1
+          fi
+          echo "${TAG} -> ${resolved}"
+
       - name: Summarize
         env:
           DRY_RUN: ${{ inputs.dry_run }}
@@ -205,6 +252,7 @@ jobs:
               echo "_Dry run: no tag, release, or attestation was created._"
             else
               echo "* Provenance: attested (verify with \`gh attestation verify <asset> --repo ${{ github.repository }}\`)"
+              echo "* Recipes: published as \`${GITHUB_SHA}\`, the tag Radius resolves this pin to"
               echo ""
               echo "Published as \`${{ steps.ver.outputs.tag }}\`; notify-radius.yaml will open the per-namespace sync PR in radius."
             fi
