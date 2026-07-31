@@ -21,6 +21,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SYNC_SCRIPT="${REPO_ROOT}/.github/scripts/compute-radius-sync-payload.sh"
 VERSION_SCRIPT="${REPO_ROOT}/.github/scripts/release/next-version.sh"
+BUNDLE_SCRIPT="${REPO_ROOT}/.github/scripts/release/build-recipe-pack-bundle.sh"
+TAGS_SCRIPT="${REPO_ROOT}/.github/scripts/resolve-recipe-tags.sh"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/rtc-release-tests-XXXXXX")"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
@@ -55,6 +57,20 @@ types:
 EOF
     git -C "$repo" add .
     git -C "$repo" commit -q -m "add ${category} manifest"
+}
+
+create_recipe_pack_repo() {
+    local repo="$1" pack="$2"
+    git init -q "$repo"
+    git -C "$repo" config user.name "Release Test"
+    git -C "$repo" config user.email "release-test@example.com"
+    mkdir -p "$repo/recipe-packs/$pack"
+    cat >"$repo/recipe-packs/$pack/default-recipepack.bicep" <<'EOF'
+extension radius
+EOF
+    echo "# ${pack} recipe pack" >"$repo/recipe-packs/$pack/README.md"
+    git -C "$repo" add .
+    git -C "$repo" commit -q -m "add ${pack} recipe pack"
 }
 
 test_deleted_namespace() {
@@ -102,8 +118,142 @@ test_prerelease_labels() {
     done
 }
 
+test_recipe_pack_versioning() {
+    local repo="$TEST_ROOT/recipe-pack" output="$TEST_ROOT/recipe-pack.out"
+    create_recipe_pack_repo "$repo" "kubernetes"
+
+    REPO_ROOT="$repo" RECIPE_PACK=kubernetes BUMP=minor GITHUB_OUTPUT="$output" \
+        bash "$VERSION_SCRIPT" >/dev/null 2>&1 || fail "initial recipe pack version was rejected"
+    assert_eq "none" "$(output_value "$output" current)" "initial recipe pack current version"
+    assert_eq "recipe-pack/kubernetes/v0.1.0" "$(output_value "$output" tag)" "initial recipe pack tag"
+
+    git -C "$repo" tag "recipe-pack/kubernetes/v0.1.0"
+    : >"$output"
+    REPO_ROOT="$repo" RECIPE_PACK=kubernetes BUMP=patch PRERELEASE_LABEL=rc.1 \
+        GITHUB_OUTPUT="$output" bash "$VERSION_SCRIPT" >/dev/null 2>&1 ||
+        fail "recipe pack patch bump was rejected"
+    assert_eq "0.1.0" "$(output_value "$output" current)" "recipe pack current version"
+    assert_eq "recipe-pack/kubernetes/v0.1.1-rc.1" "$(output_value "$output" tag)" "recipe pack prerelease tag"
+    assert_eq "true" "$(output_value "$output" is_prerelease)" "recipe pack prerelease flag"
+
+    if REPO_ROOT="$repo" RECIPE_PACK=does-not-exist bash "$VERSION_SCRIPT" >/dev/null 2>&1; then
+        fail "unknown recipe pack was accepted"
+    fi
+
+    if REPO_ROOT="$repo" NAMESPACE=Radius.Data RECIPE_PACK=kubernetes \
+        bash "$VERSION_SCRIPT" >/dev/null 2>&1; then
+        fail "NAMESPACE and RECIPE_PACK together were accepted"
+    fi
+}
+
+test_recipe_pack_bundle() {
+    local repo="$TEST_ROOT/recipe-pack-bundle" output="$TEST_ROOT/recipe-pack-bundle.out" asset
+    create_recipe_pack_repo "$repo" "kubernetes"
+
+    (cd "$repo" && REPO_ROOT="$repo" RECIPE_PACK=kubernetes VERSION=0.1.0 \
+        GITHUB_OUTPUT="$output" bash "$BUNDLE_SCRIPT" >/dev/null 2>&1) ||
+        fail "recipe pack bundle build failed"
+
+    asset="$(output_value "$output" asset)"
+    assert_eq "recipe-pack-kubernetes-v0.1.0.tar.gz" "$(basename "$asset")" "recipe pack asset name"
+    assert_eq "1" "$(output_value "$output" count)" "recipe pack template count"
+    [[ -f "$asset" ]] || fail "recipe pack asset was not created"
+    tar -tzf "$asset" | grep -q 'recipe-packs/kubernetes/default-recipepack.bicep' ||
+        fail "recipe pack bundle is missing the pack template"
+    tar -tzf "$asset" | grep -q 'recipe-packs/kubernetes/README.md' ||
+        fail "recipe pack bundle is missing the pack README"
+}
+
+test_recipe_pack_release_is_synced() {
+    local repo="$TEST_ROOT/recipe-pack-sync" output="$TEST_ROOT/recipe-pack-sync.out" payload
+    create_recipe_pack_repo "$repo" "kubernetes"
+
+    REPO_ROOT="$repo" EVENT_NAME=release RELEASE_TAG="recipe-pack/kubernetes/v0.1.0" \
+        GITHUB_OUTPUT="$output" bash "$SYNC_SCRIPT" >/dev/null 2>&1
+    assert_eq "0" "$(output_value "$output" namespace_count)" "recipe pack release namespace count"
+    assert_eq "1" "$(output_value "$output" recipe_pack_count)" "recipe pack release pack count"
+    assert_eq "kubernetes" "$(output_value "$output" affected_recipe_packs)" "recipe pack release affected pack"
+
+    payload="$(output_value "$output" payload)"
+    assert_eq '[{"name":"kubernetes","ref":"recipe-pack/kubernetes/v0.1.0"}]' \
+        "$(jq -c '.recipe_packs' <<<"$payload")" "recipe pack release payload pins"
+    assert_eq "[]" "$(jq -c '.namespaces' <<<"$payload")" "recipe pack release payload namespaces"
+
+    : >"$output"
+    REPO_ROOT="$repo" EVENT_NAME=release RELEASE_TAG="recipe-pack/does-not-exist/v0.1.0" \
+        GITHUB_OUTPUT="$output" bash "$SYNC_SCRIPT" >/dev/null 2>&1
+    assert_eq "0" "$(output_value "$output" unit_count)" "unknown recipe pack unit count"
+    assert_eq "unknown-recipe-pack" "$(output_value "$output" reason)" "unknown recipe pack skip reason"
+}
+
+test_recipe_pack_push_is_synced() {
+    local repo="$TEST_ROOT/recipe-pack-push" output="$TEST_ROOT/recipe-pack-push.out" before after payload
+    create_recipe_pack_repo "$repo" "azure"
+    before="$(git -C "$repo" rev-parse HEAD)"
+    echo "// updated" >>"$repo/recipe-packs/azure/default-recipepack.bicep"
+    git -C "$repo" commit -q -am "update azure recipe pack"
+    after="$(git -C "$repo" rev-parse HEAD)"
+
+    REPO_ROOT="$repo" EVENT_NAME=push BEFORE_SHA="$before" AFTER_SHA="$after" \
+        GITHUB_OUTPUT="$output" bash "$SYNC_SCRIPT" >/dev/null 2>&1
+    assert_eq "0" "$(output_value "$output" namespace_count)" "recipe pack push namespace count"
+    assert_eq "azure" "$(output_value "$output" affected_recipe_packs)" "recipe pack push affected pack"
+
+    payload="$(output_value "$output" payload)"
+    assert_eq "$after" "$(jq -r '.recipe_packs[0].ref' <<<"$payload")" "recipe pack push pin ref"
+}
+
+test_repo_wide_release_covers_all_units() {
+    local repo="$TEST_ROOT/repo-wide" output="$TEST_ROOT/repo-wide.out" payload
+    create_repo "$repo" "Data"
+    mkdir -p "$repo/recipe-packs/kubernetes"
+    echo "extension radius" >"$repo/recipe-packs/kubernetes/default-recipepack.bicep"
+    git -C "$repo" add .
+    git -C "$repo" commit -q -m "add kubernetes recipe pack"
+
+    REPO_ROOT="$repo" EVENT_NAME=release RELEASE_TAG="v0.1.0" \
+        GITHUB_OUTPUT="$output" bash "$SYNC_SCRIPT" >/dev/null 2>&1
+    assert_eq "2" "$(output_value "$output" unit_count)" "repo-wide release unit count"
+    assert_eq "Radius.Data" "$(output_value "$output" affected)" "repo-wide release namespaces"
+    assert_eq "kubernetes" "$(output_value "$output" affected_recipe_packs)" "repo-wide release recipe packs"
+
+    # Radius reads `name` and accepts `namespace` as a legacy alias; both must
+    # be present so one payload works with either consumer version.
+    payload="$(output_value "$output" payload)"
+    assert_eq "Radius.Data" "$(jq -r '.namespaces[0].name' <<<"$payload")" "repo-wide namespace name"
+    assert_eq "Radius.Data" "$(jq -r '.namespaces[0].namespace' <<<"$payload")" "repo-wide namespace alias"
+}
+
+test_recipe_tags() {
+    local sha="0123456789abcdef0123456789abcdef01234567"
+
+    # The commit SHA is unconditional: Radius pins a namespace to a SHA and
+    # reuses it verbatim as the recipe's OCI tag, so every publish must produce
+    # that tag no matter which channel triggered it.
+    assert_eq "$sha edge" "$(COMMIT_SHA="$sha" bash "$TAGS_SCRIPT")" "edge tags"
+    assert_eq "$sha 0.51.0 latest" \
+        "$(COMMIT_SHA="$sha" RELEASE_VERSION=0.51.0 bash "$TAGS_SCRIPT")" "stable release tags"
+    assert_eq "$sha 0.51.0-rc.1" \
+        "$(COMMIT_SHA="$sha" RELEASE_VERSION=0.51.0-rc.1 bash "$TAGS_SCRIPT")" "prerelease tags"
+    assert_eq "$sha" \
+        "$(COMMIT_SHA="$sha" PIN_ONLY=true bash "$TAGS_SCRIPT")" "pin-only tags"
+
+    # An abbreviated or uppercase SHA would never match the pin Radius records.
+    for bad in "${sha:0:7}" "${sha^^}" "" "not-a-sha"; do
+        if COMMIT_SHA="$bad" bash "$TAGS_SCRIPT" >/dev/null 2>&1; then
+            fail "invalid commit SHA '$bad' was accepted"
+        fi
+    done
+}
+
 command -v jq >/dev/null 2>&1 || fail "jq is required"
 test_deleted_namespace
 test_renamed_namespace
 test_prerelease_labels
+test_recipe_pack_versioning
+test_recipe_pack_bundle
+test_recipe_pack_release_is_synced
+test_recipe_pack_push_is_synced
+test_repo_wide_release_covers_all_units
+test_recipe_tags
 echo "Release automation tests passed"

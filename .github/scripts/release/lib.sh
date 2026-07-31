@@ -19,17 +19,23 @@
 # =============================================================================
 # lib.sh
 # -----------------------------------------------------------------------------
-# Shared helpers for the per-namespace release tooling. Source this from the
-# other scripts in this directory:
+# Shared helpers for the release tooling. Source this from the other scripts in
+# this directory:
 #
 #   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 #   source "$SCRIPT_DIR/lib.sh"
 #
-# A "namespace" is `Radius.<Category>` (e.g. Radius.Data) and maps 1:1 to a
-# top-level category directory (e.g. Data/). Each namespace is versioned and
-# tagged independently: tags are `Radius.<Category>/v<major>.<minor>.<patch>`
-# (optionally with a `-<prerelease>` suffix), and git tags are the single source
-# of truth for the current version -- there is no version file to keep in sync.
+# Two kinds of units are released independently, each on its own tag series:
+#
+#   * namespace    `Radius.<Category>` (e.g. Radius.Data), mapping 1:1 to a
+#                  top-level category directory (e.g. Data/).
+#                  tag: Radius.<Category>/v<major>.<minor>.<patch>[-<prerelease>]
+#   * recipe pack  a directory under recipe-packs/ (e.g. recipe-packs/kubernetes).
+#                  tag: recipe-pack/<pack>/v<major>.<minor>.<patch>[-<prerelease>]
+#
+# In both cases git tags are the single source of truth for the current version
+# -- there is no version file to keep in sync -- and a tag is always
+# `<prefix>/v<version>`, where the prefix identifies the released unit.
 # =============================================================================
 
 # Guard against double-sourcing.
@@ -38,19 +44,21 @@ if [[ -n "${RTC_RELEASE_LIB_SOURCED:-}" ]]; then
 fi
 RTC_RELEASE_LIB_SOURCED=1
 
-# Namespace enumeration and folder<->namespace mapping are shared with the
-# Radius sync tooling so there is a single source of truth.
+# Namespace and recipe pack enumeration, plus the folder<->unit mapping, are
+# shared with the Radius sync tooling so there is a single source of truth.
 RTC_RELEASE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=.github/scripts/lib-namespaces.sh
 source "$RTC_RELEASE_LIB_DIR/../lib-namespaces.sh"
 
 # Print the highest existing STABLE version (X.Y.Z, no prerelease suffix) for a
-# namespace, derived from git tags. Empty when the namespace has no release yet.
+# tag series, derived from git tags. `prefix` identifies the released unit (e.g.
+# `Radius.Data` or `recipe-pack/kubernetes`) and tags are `<prefix>/v<version>`.
+# Empty when the unit has no release yet.
 rtc_latest_version() {
-    local ns="$1" tag version
-    git -C "$RTC_REPO_ROOT" tag --list "${ns}/v*" 2>/dev/null |
+    local prefix="$1" tag version
+    git -C "$RTC_REPO_ROOT" tag --list "${prefix}/v*" 2>/dev/null |
         while IFS= read -r tag; do
-            version="${tag#"${ns}/v"}"
+            version="${tag#"${prefix}/v"}"
             if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
                 echo "$version"
             fi
@@ -105,4 +113,64 @@ rtc_is_valid_prerelease() {
         fi
     done
     return 0
+}
+
+# Write a `key=value` step output when running under GitHub Actions; a no-op
+# locally so the same scripts work in both places.
+rtc_emit() {
+    local key="$1" value="$2"
+    if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+        printf '%s=%s\n' "$key" "$value" >>"$GITHUB_OUTPUT"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Release bundles
+#
+# A bundle is a deterministic tarball of repository files laid out under their
+# repo-relative paths (so it extracts back into the same tree) plus a
+# checksums.txt. Shared by the namespace and recipe pack bundle builders:
+#
+#   rtc_bundle_begin
+#   rtc_bundle_add_file "<absolute path under the repo root>"
+#   rtc_bundle_create "$OUT_DIR" "<asset name>.tar.gz"
+#
+# rtc_bundle_create sets RTC_BUNDLE_ASSET and RTC_BUNDLE_CHECKSUMS.
+# rtc_bundle_begin fixes the umask for the rest of the run so staged file modes
+# -- and therefore the checksum -- do not depend on the caller's environment.
+# -----------------------------------------------------------------------------
+RTC_BUNDLE_STAGING=""
+RTC_BUNDLE_ASSET=""
+RTC_BUNDLE_CHECKSUMS=""
+
+rtc_bundle_begin() {
+    # `mkdir` and `cp` mask the mode they create files with, so an unusual
+    # caller umask (e.g. 077) would otherwise change the modes recorded in the
+    # archive and produce a different checksum for identical content.
+    umask 022
+    RTC_BUNDLE_STAGING="$(mktemp -d)"
+    trap 'rm -rf "$RTC_BUNDLE_STAGING"' EXIT
+}
+
+rtc_bundle_add_file() {
+    local src="$1" rel
+    rel="${src#"$RTC_REPO_ROOT"/}"
+    mkdir -p "$RTC_BUNDLE_STAGING/$(dirname "$rel")"
+    cp "$src" "$RTC_BUNDLE_STAGING/$rel"
+}
+
+rtc_bundle_create() {
+    local out_dir="$1" asset_name="$2" out_dir_abs
+    mkdir -p "$out_dir"
+    out_dir_abs="$(cd "$out_dir" && pwd)"
+    RTC_BUNDLE_ASSET="$out_dir_abs/$asset_name"
+
+    # Deterministic archive: fixed order/mtime/ownership so the checksum is
+    # stable across rebuilds of the same content.
+    tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+        -czf "$RTC_BUNDLE_ASSET" -C "$RTC_BUNDLE_STAGING" .
+
+    # shellcheck disable=SC2034 # read by the sourcing bundle script
+    RTC_BUNDLE_CHECKSUMS="$out_dir_abs/checksums.txt"
+    (cd "$out_dir_abs" && sha256sum "$asset_name" >"checksums.txt")
 }

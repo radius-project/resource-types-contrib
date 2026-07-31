@@ -1,55 +1,50 @@
 # yaml-language-server: $schema=https://www.schemastore.org/github-workflow.json
 ---
-name: Release Namespace
+name: Release Recipe Pack
 
-# Cuts an independent, per-namespace release of the resource-type manifests.
+# Cuts an independent, per-recipe-pack release of the Recipe Packs.
 #
-# Each namespace (`Radius.<Category>`) is versioned and tagged on its own series:
-#   tag:     Radius.<Category>/v<major>.<minor>.<patch>[-<prerelease>]
-#   asset:   Radius.<Category>-manifests-v<version>.tar.gz  (+ checksums.txt)
+# Each pack (a directory under `recipe-packs/`) is versioned and tagged on its own
+# series, prefixed so it never collides with the namespace tag series:
+#   tag:     recipe-pack/<pack>/v<major>.<minor>.<patch>[-<prerelease>]
+#   asset:   recipe-pack-<pack>-v<version>.tar.gz  (+ checksums.txt)
 #
 # Every published release artifact gets a signed SLSA build provenance
 # attestation (actions/attest-build-provenance), verifiable with
 #   gh attestation verify <asset> --repo radius-project/resource-types-contrib
 #
 # Git tags are the single source of truth for the current version -- there is no
-# version file to maintain. A maintainer triggers this workflow, picks the
-# namespace and a bump type, and the workflow computes the next version, builds
-# the manifest bundle, and publishes a GitHub Release. This is the release side
-# of the per-namespace sync design (radius PR #12236): publishing per-namespace
-# versioned artifacts is what makes Radius's per-namespace `resourceTypes[].ref`
-# pins meaningful.
+# version file to maintain. A maintainer triggers this workflow, picks the pack
+# and a bump type, and the workflow computes the next version, builds the pack
+# bundle, and publishes a GitHub Release. This mirrors release-namespace.yaml and
+# shares its release scripts.
 #
 # Downstream: publishing the release fires `notify-radius.yaml` on
-# `release: published`, which dispatches the per-namespace pin (this tag) to
-# radius-project/radius as a reviewable sync PR. The release is created with the
-# RESOURCE_TYPES_BOT GitHub App token (not GITHUB_TOKEN) precisely so that the
-# `release: published` event is allowed to trigger that downstream workflow.
-#
-# The pin Radius records is a commit SHA, and a released `rad` reuses that SHA
-# as the OCI tag of every recipe in the namespace (radius PR #12566). So the
-# release commit's recipes are published to GHCR under that SHA *before* the
-# release exists, and the tag is verified to resolve back to it afterwards.
+# `release: published`, which dispatches the pack pin (this tag) to
+# radius-project/radius as a reviewable sync PR. Radius records it under
+# `recipePacks[]` in deploy/manifest/defaults.yaml but does not vendor the pack;
+# its deploy workflows fetch the pack Bicep from here at deploy time. The
+# release is created with the RESOURCE_TYPES_BOT GitHub App token (not
+# GITHUB_TOKEN) precisely so that the `release: published` event is allowed to
+# trigger that downstream workflow.
 #
 # Prerequisite (one-time, admin): the RESOURCE_TYPES_BOT GitHub App must be
 # installed on this repository with `contents: write` so it can create the tag
 # and release. `dry_run` needs no token and is safe to run anytime.
 #
-# To release a new namespace folder, add it to the `namespace` choice list below.
+# To release a new recipe pack folder, add it to the `recipe_pack` choice list
+# below.
 
 on:
   workflow_dispatch:
     inputs:
-      namespace:
-        description: Namespace to release
+      recipe_pack:
+        description: Recipe pack to release
         type: choice
         required: true
         options:
-          - Radius.AI
-          - Radius.Compute
-          - Radius.Data
-          - Radius.Messaging
-          - Radius.Security
+          - azure
+          - kubernetes
       bump:
         description: Semantic version bump
         type: choice
@@ -73,44 +68,21 @@ on:
 permissions: {}
 
 concurrency:
-  # One release at a time per namespace; never cancel an in-flight release.
-  group: release-namespace-${{ inputs.namespace }}
+  # One release at a time per recipe pack; never cancel an in-flight release.
+  group: release-recipe-pack-${{ inputs.recipe_pack }}
   cancel-in-progress: false
 
 jobs:
-  publish-recipes:
-    name: Publish recipes for the release commit
-    # A namespace pin is also an OCI coordinate: a released `rad` resolves
-    # `Radius.<Category>` to the commit SHA this release tag points at and pulls
-    # `ghcr.io/radius-project/kube-recipes/<recipe>:<sha>` (radius PR #12566).
-    # Publishing here makes that tag a precondition of releasing instead of
-    # something a later push has to backfill -- if it fails, no release is cut
-    # and Radius never sees a pin it cannot resolve. `pin_only` keeps the
-    # floating `edge`/`latest` aliases where they are; only the immutable SHA
-    # tag is (re)published.
-    if: ${{ !inputs.dry_run }}
-    permissions:
-      contents: read
-      packages: write
-    uses: ./.github/workflows/publish-bicep-recipes.yaml
-    with:
-      pin_only: true
-
   release:
-    name: Release ${{ inputs.namespace }}
-    needs: publish-recipes
+    name: Release recipe pack ${{ inputs.recipe_pack }}
     if: >-
-      !cancelled() &&
       github.repository == 'radius-project/resource-types-contrib' &&
-      (
-        (inputs.dry_run && needs.publish-recipes.result == 'skipped') ||
-        (!inputs.dry_run && github.ref == 'refs/heads/main' && needs.publish-recipes.result == 'success')
-      )
+      (inputs.dry_run || github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       # Read is enough for checkout; the tag/release is created with the App
-      # token so that `release: published` can trigger notify-radius.yaml.
+      # token so release events behave the same as for namespace releases.
       contents: read
       # Sign and record a build provenance attestation for the release artifact.
       id-token: write
@@ -126,29 +98,29 @@ jobs:
       - name: Resolve version
         id: ver
         env:
-          NAMESPACE: ${{ inputs.namespace }}
+          RECIPE_PACK: ${{ inputs.recipe_pack }}
           BUMP: ${{ inputs.bump }}
           PRERELEASE_LABEL: ${{ inputs.prerelease_label }}
         run: ./.github/scripts/release/next-version.sh
 
-      - name: Build manifest bundle
+      - name: Build recipe pack bundle
         id: bundle
         env:
-          NAMESPACE: ${{ inputs.namespace }}
+          RECIPE_PACK: ${{ inputs.recipe_pack }}
           VERSION: ${{ steps.ver.outputs.next }}
           OUT_DIR: dist
-        run: ./.github/scripts/release/build-namespace-bundle.sh
+        run: ./.github/scripts/release/build-recipe-pack-bundle.sh
 
       - name: Generate release notes
         id: notes
         env:
-          NAMESPACE: ${{ inputs.namespace }}
+          RECIPE_PACK: ${{ inputs.recipe_pack }}
           TAG: ${{ steps.ver.outputs.tag }}
         run: |
           set -euo pipefail
           mkdir -p dist
-          folder="${NAMESPACE#Radius.}"
-          prev="$(git tag --list "${NAMESPACE}/v*" --sort=-v:refname | head -n1 || true)"
+          folder="recipe-packs/${RECIPE_PACK}"
+          prev="$(git tag --list "recipe-pack/${RECIPE_PACK}/v*" --sort=-v:refname | head -n1 || true)"
           if [ -n "$prev" ]; then
             range="${prev}..HEAD"
           else
@@ -160,14 +132,14 @@ jobs:
             if [ -n "$prev" ]; then
               echo "Changes in \`${folder}/\` since \`${prev}\`:"
             else
-              echo "Initial release of the \`${NAMESPACE}\` namespace."
+              echo "Initial release of the \`${RECIPE_PACK}\` recipe pack."
             fi
             echo ""
             changes="$(git log --no-merges --pretty='- %s (%h)' "$range" -- "${folder}/" || true)"
             if [ -n "$changes" ]; then
               echo "$changes"
             else
-              echo "- No manifest changes since the previous release."
+              echo "- No recipe pack changes since the previous release."
             fi
           } > dist/notes.md
           {
@@ -189,7 +161,7 @@ jobs:
 
       - name: Generate App Token
         # Create the release as the RESOURCE_TYPES_BOT App (not GITHUB_TOKEN) so
-        # the `release: published` event triggers notify-radius.yaml. Requires
+        # release events are allowed to trigger downstream workflows. Requires
         # the App installed on this repo with contents:write.
         if: ${{ !inputs.dry_run }}
         id: app-token
@@ -215,25 +187,6 @@ jobs:
           fi
           gh release create "$TAG" "${args[@]}" "$ASSET" "$CHECKSUMS"
 
-      - name: Verify the tag resolves to the published commit
-        # Radius turns this tag into a commit SHA with `git ls-remote` and uses
-        # that SHA as the recipe OCI tag, which the publish-recipes job pushed
-        # as $GITHUB_SHA. `gh release create` makes a lightweight tag, so the
-        # two match; an annotated tag would resolve to the tag object instead
-        # and the pin would point at a SHA that was never published. Fail loudly
-        # rather than ship a release whose recipes are unreachable.
-        if: ${{ !inputs.dry_run }}
-        env:
-          TAG: ${{ steps.ver.outputs.tag }}
-        run: |
-          set -euo pipefail
-          resolved="$(git ls-remote origin "refs/tags/${TAG}" | awk '{print $1}')"
-          if [ "$resolved" != "$GITHUB_SHA" ]; then
-            echo "Error: ${TAG} resolves to '${resolved:-<missing>}' but recipes were published as :${GITHUB_SHA}." >&2
-            exit 1
-          fi
-          echo "${TAG} -> ${resolved}"
-
       - name: Summarize
         env:
           DRY_RUN: ${{ inputs.dry_run }}
@@ -241,19 +194,18 @@ jobs:
           {
             echo "## Release ${{ steps.ver.outputs.tag }}"
             echo ""
-            echo "* Namespace: \`${{ inputs.namespace }}\`"
+            echo "* Recipe pack: \`${{ inputs.recipe_pack }}\`"
             echo "* Current -> next: \`${{ steps.ver.outputs.current }}\` -> \`${{ steps.ver.outputs.next }}\`"
             echo "* Since previous tag: \`${{ steps.notes.outputs.prev }}\`"
             echo "* Prerelease: \`${{ steps.ver.outputs.is_prerelease }}\`"
-            echo "* Manifests bundled: \`${{ steps.bundle.outputs.count }}\`"
+            echo "* Templates bundled: \`${{ steps.bundle.outputs.count }}\`"
             echo "* Asset: \`$(basename "${{ steps.bundle.outputs.asset }}")\`"
             if [ "$DRY_RUN" = "true" ]; then
               echo ""
               echo "_Dry run: no tag, release, or attestation was created._"
             else
               echo "* Provenance: attested (verify with \`gh attestation verify <asset> --repo ${{ github.repository }}\`)"
-              echo "* Recipes: published as \`${GITHUB_SHA}\`, the tag Radius resolves this pin to"
               echo ""
-              echo "Published as \`${{ steps.ver.outputs.tag }}\`; notify-radius.yaml will open the per-namespace sync PR in radius."
+              echo "Published as \`${{ steps.ver.outputs.tag }}\`; no radius sync dispatch is sent for recipe pack releases."
             fi
           } >> "${GITHUB_STEP_SUMMARY}"

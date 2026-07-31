@@ -30,11 +30,11 @@ Some Resource Types ship as defaults in Radius and are available out of the box 
 rad resource-type create Radius.Data/mySqlDatabases -f Data/mySqlDatabases/mySqlDatabases.yaml
 ```
 
-Registering the type also makes it available in Bicep through the generated extension. Your platform engineer must also configure a Recipe for the type in your Environment — Recipes for this repository are grouped into the platform Recipe Packs under [`recipepack/`](../recipepack).
+Registering the type also makes it available in Bicep through the generated extension. Your platform engineer must also configure a Recipe for the type in your Environment — Recipes for this repository are grouped into the platform Recipe Packs under [`recipe-packs/`](../recipe-packs/).
 
 ## Discovering and using Recipe Packs
 
-Recipe Packs live at the repository root under [`recipepack/`](../recipepack). Each platform has its own folder containing a default Recipe Pack that can wire both Bicep and Terraform recipes:
+Recipe Packs live at the repository root under [`recipe-packs/`](../recipe-packs/). Each platform has its own folder containing a default Recipe Pack that can wire both Bicep and Terraform recipes:
 
 - `azure/` — recipes for all types provisioned on Azure.
 - `aws/` — recipes for all types provisioned on AWS.
@@ -46,10 +46,10 @@ Deploy a Recipe Pack to create and configure the Environment:
 
 ```bash
 # Configure an Environment with the Azure recipe pack
-rad deploy recipepack/azure/aks-recipepack.bicep
+rad deploy recipe-packs/azure/aks-recipepack.bicep
 
 # Or start with the zero-config Kubernetes default
-rad deploy recipepack/default-kubernetes/aks-recipepack.bicep
+rad deploy recipe-packs/default-kubernetes/aks-recipepack.bicep
 ```
 
 After a Recipe Pack is deployed, every Resource Type it covers can be used in an application deployed to that Environment.

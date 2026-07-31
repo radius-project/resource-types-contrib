@@ -3,7 +3,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = ">= 3.0"
+      version = "~> 5.0"
     }
   }
 }
@@ -25,7 +25,7 @@ resource "azurerm_key_vault" "vault" {
   resource_group_name        = var.context.azure.resourceGroup.name
   tenant_id                  = data.azurerm_client_config.current.tenant_id
   sku_name                   = "standard"
-  enable_rbac_authorization  = false
+  rbac_authorization_enabled = false
   soft_delete_retention_days = 7
   purge_protection_enabled   = false
 

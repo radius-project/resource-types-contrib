@@ -2,11 +2,55 @@
 ---
 name: Publish Bicep Recipes
 
+# Publishes the Kubernetes Bicep recipes to GHCR as OCI artifacts.
+#
+# Every publish is tagged with the commit SHA it was built from, and that SHA
+# tag is what makes the recipes addressable from Radius. A released `rad`
+# resolves a resource type's namespace to the commit SHA that
+# deploy/manifest/defaults.yaml pins for it and uses that SHA verbatim as the
+# recipe's OCI tag (radius PR #12566). Those pins are exactly the refs
+# notify-radius.yaml dispatches, so the invariant this workflow has to hold is:
+#
+#   every commit SHA notify-radius.yaml can dispatch already exists as a tag
+#   in `$REGISTRY` for every recipe.
+#
+# That is why there is no `paths:` filter -- notify-radius.yaml fires on any
+# manifest or recipe-pack change, and a pinned SHA with no image behind it
+# breaks `rad install` for a released CLI. Republishing unchanged Bicep is
+# cheap: identical content produces an identical digest, so the tag is just
+# re-pointed at blobs that are already there.
+#
+# The floating aliases layered on top mirror the release lifecycle in
+# notify-radius.yaml, so a recipe image tag means the same thing as a sync pin:
+#   * <sha>     -> every publish. Immutable; the tag Radius pins against.
+#   * edge      -> every push to `main`, and manual runs with no version.
+#                  Floating; `edge` always resolves to the newest recipes on
+#                  `main`, matching the CLI's edge channel.
+#   * <version> -> manual dispatch with `release_version`, run alongside a
+#                  Radius release. Immutable; never republished.
+#   * latest    -> moves only with a stable `release_version`, so `latest`
+#                  always resolves to the newest stable release.
+
 on:
+  push:
+    branches:
+      - main
+  workflow_call:
+    inputs:
+      release_version:
+        description: Release version to use as the image tag (e.g. 0.51.0). Leave empty to refresh the floating edge tag.
+        required: false
+        default: ""
+        type: string
+      pin_only:
+        description: Publish only the immutable commit-SHA tag, leaving edge and latest where they are.
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       release_version:
-        description: "Release version to use as the image tag (e.g. 0.51.0). Defaults to 'latest' if not specified."
+        description: Release version to use as the image tag (e.g. 0.51.0). Leave empty to refresh the floating edge tag.
         required: false
         default: ""
         type: string
@@ -15,36 +59,26 @@ permissions: {}
 
 env:
   REGISTRY: ghcr.io/radius-project/kube-recipes
-  TAG: ${{ inputs.release_version || 'latest' }}
+
+concurrency:
+  # Keyed on the ref to avoid unbounded parallel publishes on busy branches.
+  # `queue: max` rather than the default `queue: single`, which cancels the
+  # pending run whenever a newer one queues -- that would drop a commit SHA and
+  # leave notify-radius.yaml able to pin a SHA with no image behind it.
+  # `cancel-in-progress` stays at its default of false; setting it true is a
+  # validation error alongside `queue: max`.
+  group: publish-bicep-recipes-${{ github.event_name }}-${{ github.ref }}
+  queue: max
 
 jobs:
   publish-bicep-recipes:
     name: Publish Bicep Recipes to GHCR
+    if: github.repository == 'radius-project/resource-types-contrib'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
       packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: containers
-            path: Compute/containers/recipes/kubernetes/bicep/kubernetes-containers.bicep
-          - name: containerimages
-            path: Compute/containerImages/recipes/kubernetes/bicep/kubernetes-containerimages.bicep
-          - name: persistentvolumes
-            path: Compute/persistentVolumes/recipes/kubernetes/bicep/kubernetes-volumes.bicep
-          - name: routes
-            path: Compute/routes/recipes/kubernetes/bicep/kubernetes-routes.bicep
-          - name: secrets
-            path: Security/secrets/recipes/kubernetes/bicep/kubernetes-secrets.bicep
-          - name: mysqldatabases
-            path: Data/mySqlDatabases/recipes/kubernetes/bicep/kubernetes-mysql.bicep
-          - name: postgresqldatabases
-            path: Data/postgreSqlDatabases/recipes/kubernetes/bicep/kubernetes-postgresql.bicep
-          - name: rediscaches
-            path: Data/redisCaches/recipes/kubernetes/bicep/kubernetes-redis.bicep
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -62,9 +96,42 @@ jobs:
         run: |
           wget -q "https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh" -O - | /bin/bash
 
-      - name: Publish ${{ matrix.name }} recipe
+      - name: Resolve tags
+        # Exported through $GITHUB_ENV so every publish step below pushes the
+        # same tag set, including the commit SHA Radius pins against.
+        id: tags
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          PIN_ONLY: ${{ inputs.pin_only }}
         run: |
-          echo "Publishing ${{ matrix.name }} recipe to ${{ env.REGISTRY }}/${{ matrix.name }}:${{ env.TAG }}"
-          rad bicep publish \
-            --file ${{ matrix.path }} \
-            --target "br:${{ env.REGISTRY }}/${{ matrix.name }}:${{ env.TAG }}"
+          echo "TAGS=$(./.github/scripts/resolve-recipe-tags.sh)" >>"$GITHUB_ENV"
+
+      # Publishing every recipe from one job means checkout, login and the CLI
+      # install happen once instead of once per recipe. At most 10 of these run
+      # concurrently; the rest queue.
+      - parallel:
+          - name: Publish containers
+            run: ./.github/scripts/publish-bicep-recipe.sh containers Compute/containers/recipes/kubernetes/bicep/kubernetes-containers.bicep
+          - name: Publish containerimages
+            run: ./.github/scripts/publish-bicep-recipe.sh containerimages Compute/containerImages/recipes/kubernetes/bicep/kubernetes-containerimages.bicep
+          - name: Publish persistentvolumes
+            run: ./.github/scripts/publish-bicep-recipe.sh persistentvolumes Compute/persistentVolumes/recipes/kubernetes/bicep/kubernetes-volumes.bicep
+          - name: Publish routes
+            run: ./.github/scripts/publish-bicep-recipe.sh routes Compute/routes/recipes/kubernetes/bicep/kubernetes-routes.bicep
+          - name: Publish secrets
+            run: ./.github/scripts/publish-bicep-recipe.sh secrets Security/secrets/recipes/kubernetes/bicep/kubernetes-secrets.bicep
+          - name: Publish mysqldatabases
+            run: ./.github/scripts/publish-bicep-recipe.sh mysqldatabases Data/mySqlDatabases/recipes/kubernetes/bicep/kubernetes-mysql.bicep
+          - name: Publish postgresqldatabases
+            run: ./.github/scripts/publish-bicep-recipe.sh postgresqldatabases Data/postgreSqlDatabases/recipes/kubernetes/bicep/kubernetes-postgresql.bicep
+          - name: Publish rediscaches
+            run: ./.github/scripts/publish-bicep-recipe.sh rediscaches Data/redisCaches/recipes/kubernetes/bicep/kubernetes-redis.bicep
+
+      - name: Summarize
+        run: |
+          {
+            echo "Published the Kubernetes Bicep recipes to \`$REGISTRY\` with tags \`$TAGS\`."
+            echo ""
+            echo "Radius pins these recipes by commit SHA, so \`$GITHUB_SHA\` is now a resolvable tag for every recipe above."
+          } >>"$GITHUB_STEP_SUMMARY"

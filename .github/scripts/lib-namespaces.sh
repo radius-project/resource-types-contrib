@@ -19,16 +19,20 @@
 # =============================================================================
 # lib-namespaces.sh
 # -----------------------------------------------------------------------------
-# Shared helpers for enumerating resource-type namespaces and mapping them to
-# their category directories. Sourced by both the Radius sync payload script
-# (compute-radius-sync-payload.sh) and the per-namespace release tooling
-# (release/lib.sh) so there is ONE definition of what a namespace is.
+# Shared helpers for enumerating the two kinds of units this repository
+# publishes -- resource-type namespaces and recipe packs -- and mapping them to
+# their directories. Sourced by both the Radius sync payload script
+# (compute-radius-sync-payload.sh) and the release tooling (release/lib.sh) so
+# there is ONE definition of each unit.
 #
 # A namespace is `Radius.<Category>` and maps 1:1 to a top-level category
 # directory (e.g. Radius.Data <-> Data/). A directory is only treated as a
 # category when it actually contains a resource-type manifest -- a YAML file
 # with a top-level `namespace: Radius.*` and a `types:` block -- so unrelated
 # top-level folders are never mistaken for namespaces.
+#
+# A recipe pack is a directory under recipe-packs/ (e.g. recipe-packs/azure)
+# that holds at least one Bicep template.
 #
 # Usage:
 #   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -124,3 +128,36 @@ rtc_is_namespace() {
     done < <(rtc_list_namespaces)
     return 1
 }
+
+# Recipe packs live one directory below this root. Their tags carry a
+# `recipe-pack/` prefix so they never collide with the namespace tag series and
+# so the Radius sync tooling can recognize the scope.
+RTC_RECIPE_PACK_ROOT="${RTC_RECIPE_PACK_ROOT:-recipe-packs}"
+RTC_RECIPE_PACK_TAG_PREFIX="recipe-pack"
+
+# Print the releasable recipe packs (directory names under recipe-packs/), one
+# per line, sorted. A directory is only treated as a pack when it holds a Bicep
+# template, so unrelated folders are never mistaken for a pack.
+rtc_list_recipe_packs() {
+    local dir
+    [[ -d "$RTC_REPO_ROOT/$RTC_RECIPE_PACK_ROOT" ]] || return 0
+    while IFS= read -r dir; do
+        if compgen -G "$dir/*.bicep" >/dev/null; then
+            echo "${dir##*/}"
+        fi
+    done < <(find "$RTC_REPO_ROOT/$RTC_RECIPE_PACK_ROOT" -mindepth 1 -maxdepth 1 -type d | sort)
+}
+
+# True if the argument is a known recipe pack (e.g. "kubernetes").
+rtc_is_recipe_pack() {
+    local pack="$1" candidate
+    while IFS= read -r candidate; do
+        [[ "$candidate" == "$pack" ]] && return 0
+    done < <(rtc_list_recipe_packs)
+    return 1
+}
+
+# Map a recipe pack to its tag prefix and directory
+# (e.g. kubernetes -> recipe-pack/kubernetes, recipe-packs/kubernetes).
+rtc_recipe_pack_tag_prefix() { echo "${RTC_RECIPE_PACK_TAG_PREFIX}/$1"; }
+rtc_recipe_pack_dir() { echo "${RTC_RECIPE_PACK_ROOT}/$1"; }
