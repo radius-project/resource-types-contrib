@@ -21,6 +21,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SYNC_SCRIPT="${REPO_ROOT}/.github/scripts/compute-radius-sync-payload.sh"
 VERSION_SCRIPT="${REPO_ROOT}/.github/scripts/release/next-version.sh"
+CHANGES_SCRIPT="${REPO_ROOT}/.github/scripts/release/detect-changes.sh"
 BUNDLE_SCRIPT="${REPO_ROOT}/.github/scripts/release/build-recipe-pack-bundle.sh"
 TAGS_SCRIPT="${REPO_ROOT}/.github/scripts/resolve-recipe-tags.sh"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/rtc-release-tests-XXXXXX")"
@@ -41,11 +42,20 @@ output_value() {
     sed -n "s/^${key}=//p" "$file" | tail -n1
 }
 
-create_repo() {
-    local repo="$1" category="$2"
+# Local repo config beats the developer's global config, so fixtures still
+# commit and tag on machines that enforce signing.
+init_repo() {
+    local repo="$1"
     git init -q "$repo"
     git -C "$repo" config user.name "Release Test"
     git -C "$repo" config user.email "release-test@example.com"
+    git -C "$repo" config commit.gpgsign false
+    git -C "$repo" config tag.gpgSign false
+}
+
+create_repo() {
+    local repo="$1" category="$2"
+    init_repo "$repo"
     mkdir -p "$repo/$category/widgets"
     cat >"$repo/$category/widgets/widget.yaml" <<EOF
 namespace: Radius.${category}
@@ -61,9 +71,7 @@ EOF
 
 create_recipe_pack_repo() {
     local repo="$1" pack="$2"
-    git init -q "$repo"
-    git -C "$repo" config user.name "Release Test"
-    git -C "$repo" config user.email "release-test@example.com"
+    init_repo "$repo"
     mkdir -p "$repo/recipe-packs/$pack"
     cat >"$repo/recipe-packs/$pack/default-recipepack.bicep" <<'EOF'
 extension radius
@@ -71,6 +79,23 @@ EOF
     echo "# ${pack} recipe pack" >"$repo/recipe-packs/$pack/README.md"
     git -C "$repo" add .
     git -C "$repo" commit -q -m "add ${pack} recipe pack"
+}
+
+commit_file() {
+    local repo="$1" path="$2" content="$3" message="$4"
+    mkdir -p "$repo/$(dirname "$path")"
+    printf '%s\n' "$content" >"$repo/$path"
+    git -C "$repo" add -A
+    git -C "$repo" commit -q -m "$message"
+}
+
+# Run detect-changes.sh for one released unit, writing its outputs to $output.
+detect_changes() {
+    local repo="$1" output="$2" unit_var="$3" unit="$4"
+    : >"$output"
+    env REPO_ROOT="$repo" GITHUB_OUTPUT="$output" "${unit_var}=${unit}" \
+        bash "$CHANGES_SCRIPT" >/dev/null 2>&1 ||
+        fail "change detection failed for ${unit}"
 }
 
 test_deleted_namespace() {
@@ -224,6 +249,67 @@ test_repo_wide_release_covers_all_units() {
     assert_eq "Radius.Data" "$(jq -r '.namespaces[0].namespace' <<<"$payload")" "repo-wide namespace alias"
 }
 
+test_release_change_detection() {
+    local repo="$TEST_ROOT/changes" output="$TEST_ROOT/changes.out"
+    create_repo "$repo" "Data"
+    commit_file "$repo" "recipe-packs/kubernetes/default-recipepack.bicep" \
+        "extension radius" "add kubernetes recipe pack"
+
+    # Never released: there is always something to publish.
+    detect_changes "$repo" "$output" NAMESPACE Radius.Data
+    assert_eq "true" "$(output_value "$output" changed)" "unreleased namespace changed"
+    assert_eq "no-previous-release" "$(output_value "$output" reason)" "unreleased namespace reason"
+    assert_eq "none" "$(output_value "$output" previous_tag)" "unreleased namespace baseline"
+
+    git -C "$repo" tag "Radius.Data/v0.1.0"
+    git -C "$repo" tag "recipe-pack/kubernetes/v0.1.0"
+
+    # Released at this very commit: nothing new to publish.
+    detect_changes "$repo" "$output" NAMESPACE Radius.Data
+    assert_eq "false" "$(output_value "$output" changed)" "released namespace changed"
+    assert_eq "no-changes" "$(output_value "$output" reason)" "released namespace reason"
+    assert_eq "Radius.Data/v0.1.0" "$(output_value "$output" previous_tag)" "released namespace baseline"
+
+    # Test applications never ship, so they are not a reason to release.
+    commit_file "$repo" "Data/widgets/test/app.bicep" "extension radius" "add widget test app"
+    detect_changes "$repo" "$output" NAMESPACE Radius.Data
+    assert_eq "false" "$(output_value "$output" changed)" "test-only change changed"
+
+    # A recipe does ship: it is published under the release commit's SHA.
+    commit_file "$repo" "Data/widgets/recipes/kubernetes/bicep/widget.bicep" \
+        "param context object" "add widget recipe"
+    detect_changes "$repo" "$output" NAMESPACE Radius.Data
+    assert_eq "true" "$(output_value "$output" changed)" "recipe change changed"
+    assert_eq "1" "$(output_value "$output" count)" "recipe change file count"
+
+    # Independent lifecycles: namespace churn must not release the recipe pack.
+    detect_changes "$repo" "$output" RECIPE_PACK kubernetes
+    assert_eq "false" "$(output_value "$output" changed)" "unrelated namespace change changed the pack"
+
+    commit_file "$repo" "recipe-packs/kubernetes/default-recipepack.bicep" \
+        "extension radius // updated" "update kubernetes recipe pack"
+    detect_changes "$repo" "$output" RECIPE_PACK kubernetes
+    assert_eq "true" "$(output_value "$output" changed)" "recipe pack change changed"
+
+    # A reverted change leaves nothing to publish, even though commits exist.
+    local pack_repo="$TEST_ROOT/changes-revert" pack_output="$TEST_ROOT/changes-revert.out"
+    create_recipe_pack_repo "$pack_repo" "azure"
+    git -C "$pack_repo" tag "recipe-pack/azure/v0.1.0"
+    commit_file "$pack_repo" "recipe-packs/azure/default-recipepack.bicep" \
+        "extension radius // temporary" "tweak azure recipe pack"
+    commit_file "$pack_repo" "recipe-packs/azure/default-recipepack.bicep" \
+        "extension radius" "revert azure recipe pack tweak"
+    detect_changes "$pack_repo" "$pack_output" RECIPE_PACK azure
+    assert_eq "false" "$(output_value "$pack_output" changed)" "reverted change changed"
+
+    # Prereleases are staging artifacts, so they are never the baseline --
+    # promoting one to a stable release must not be blocked.
+    git -C "$repo" tag "Radius.Data/v0.2.0-rc.1"
+    detect_changes "$repo" "$output" NAMESPACE Radius.Data
+    assert_eq "Radius.Data/v0.1.0" "$(output_value "$output" previous_tag)" "prerelease used as baseline"
+    assert_eq "true" "$(output_value "$output" changed)" "prerelease promotion changed"
+}
+
 test_recipe_tags() {
     local sha="0123456789abcdef0123456789abcdef01234567"
 
@@ -255,5 +341,6 @@ test_recipe_pack_bundle
 test_recipe_pack_release_is_synced
 test_recipe_pack_push_is_synced
 test_repo_wide_release_covers_all_units
+test_release_change_detection
 test_recipe_tags
 echo "Release automation tests passed"

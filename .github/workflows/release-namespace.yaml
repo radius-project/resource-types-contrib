@@ -20,6 +20,13 @@ name: Release Namespace
 # versioned artifacts is what makes Radius's per-namespace `resourceTypes[].ref`
 # pins meaningful.
 #
+# The run is a no-op unless the namespace has something new to publish. Each
+# namespace is released on its own cadence, so the check compares this commit
+# against the namespace's own latest stable release tag and looks only at the
+# files that namespace ships -- unrelated churn elsewhere in the monorepo never
+# bumps its version. When nothing changed, no tag, release, or recipe publish is
+# created; `force` overrides that for a deliberate re-cut.
+#
 # Downstream: publishing the release fires `notify-radius.yaml` on
 # `release: published`, which dispatches the per-namespace pin (this tag) to
 # radius-project/radius as a reviewable sync PR. The release is created with the
@@ -64,6 +71,11 @@ on:
         type: string
         required: false
         default: ""
+      force:
+        description: Release even when nothing changed since the last release
+        type: boolean
+        required: false
+        default: false
       dry_run:
         description: Compute the version and build the bundle without tagging or publishing
         type: boolean
@@ -78,6 +90,56 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  check:
+    name: Check ${{ inputs.namespace }} for unreleased changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      # The gate for every other job: a release is only worth cutting when this
+      # namespace changed since its own last stable release.
+      should_release: ${{ steps.changes.outputs.changed == 'true' || inputs.force }}
+      changed: ${{ steps.changes.outputs.changed }}
+      previous_tag: ${{ steps.changes.outputs.previous_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history and tags so the baseline release tag resolves.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Detect changes since the last release
+        id: changes
+        env:
+          NAMESPACE: ${{ inputs.namespace }}
+        run: ./.github/scripts/release/detect-changes.sh
+
+      - name: Summarize
+        env:
+          NAMESPACE: ${{ inputs.namespace }}
+          CHANGED: ${{ steps.changes.outputs.changed }}
+          PREVIOUS_TAG: ${{ steps.changes.outputs.previous_tag }}
+          COUNT: ${{ steps.changes.outputs.count }}
+          FORCED: ${{ inputs.force }}
+        run: |
+          {
+            echo "## Unreleased changes in ${NAMESPACE}"
+            echo ""
+            echo "* Baseline: \`${PREVIOUS_TAG}\`"
+            echo "* Changed files in the release scope: \`${COUNT}\`"
+            if [ "$CHANGED" = "true" ]; then
+              echo "* Result: changes found -- continuing with the release"
+            elif [ "$FORCED" = "true" ]; then
+              echo "* Result: unchanged, but \`force\` was set -- continuing with the release"
+            else
+              echo "* Result: **nothing to release**"
+              echo ""
+              echo "\`${NAMESPACE}\` is unchanged since \`${PREVIOUS_TAG}\`, so no tag, release, or recipe publish was created. Re-run with \`force\` to cut a release anyway."
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
   publish-recipes:
     name: Publish recipes for the release commit
     # A namespace pin is also an OCI coordinate: a released `rad` resolves
@@ -88,7 +150,8 @@ jobs:
     # and Radius never sees a pin it cannot resolve. `pin_only` keeps the
     # floating `edge`/`latest` aliases where they are; only the immutable SHA
     # tag is (re)published.
-    if: ${{ !inputs.dry_run }}
+    needs: check
+    if: ${{ !inputs.dry_run && needs.check.outputs.should_release == 'true' }}
     permissions:
       contents: read
       packages: write
@@ -98,10 +161,11 @@ jobs:
 
   release:
     name: Release ${{ inputs.namespace }}
-    needs: publish-recipes
+    needs: [check, publish-recipes]
     if: >-
       !cancelled() &&
       github.repository == 'radius-project/resource-types-contrib' &&
+      needs.check.outputs.should_release == 'true' &&
       (
         (inputs.dry_run && needs.publish-recipes.result == 'skipped') ||
         (!inputs.dry_run && github.ref == 'refs/heads/main' && needs.publish-recipes.result == 'success')
@@ -144,11 +208,17 @@ jobs:
         env:
           NAMESPACE: ${{ inputs.namespace }}
           TAG: ${{ steps.ver.outputs.tag }}
+          # Same baseline the change check used, so the notes and the decision
+          # to release describe the same range.
+          PREV: ${{ needs.check.outputs.previous_tag }}
         run: |
           set -euo pipefail
           mkdir -p dist
           folder="${NAMESPACE#Radius.}"
-          prev="$(git tag --list "${NAMESPACE}/v*" --sort=-v:refname | head -n1 || true)"
+          prev="$PREV"
+          if [ "$prev" = "none" ]; then
+            prev=""
+          fi
           if [ -n "$prev" ]; then
             range="${prev}..HEAD"
           else
@@ -237,6 +307,7 @@ jobs:
       - name: Summarize
         env:
           DRY_RUN: ${{ inputs.dry_run }}
+          FORCED: ${{ needs.check.outputs.changed != 'true' }}
         run: |
           {
             echo "## Release ${{ steps.ver.outputs.tag }}"
@@ -244,6 +315,9 @@ jobs:
             echo "* Namespace: \`${{ inputs.namespace }}\`"
             echo "* Current -> next: \`${{ steps.ver.outputs.current }}\` -> \`${{ steps.ver.outputs.next }}\`"
             echo "* Since previous tag: \`${{ steps.notes.outputs.prev }}\`"
+            if [ "$FORCED" = "true" ]; then
+              echo "* Forced: no changes since the previous release"
+            fi
             echo "* Prerelease: \`${{ steps.ver.outputs.is_prerelease }}\`"
             echo "* Manifests bundled: \`${{ steps.bundle.outputs.count }}\`"
             echo "* Asset: \`$(basename "${{ steps.bundle.outputs.asset }}")\`"

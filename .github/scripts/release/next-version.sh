@@ -56,36 +56,10 @@ RECIPE_PACK="${RECIPE_PACK:-}"
 BUMP="${BUMP:-minor}"
 PRERELEASE_LABEL="${PRERELEASE_LABEL:-}"
 
-if [[ -n "$NAMESPACE" && -n "$RECIPE_PACK" ]]; then
-    echo "Error: set either NAMESPACE or RECIPE_PACK, not both" >&2
-    exit 1
-fi
-
 # Resolve the released unit into its tag prefix; tags are `<prefix>/v<version>`.
-if [[ -n "$RECIPE_PACK" ]]; then
-    if ! rtc_is_recipe_pack "$RECIPE_PACK"; then
-        echo "Error: '$RECIPE_PACK' is not a releasable recipe pack. Known recipe packs:" >&2
-        rtc_list_recipe_packs | sed 's/^/  - /' >&2
-        exit 1
-    fi
-    UNIT_LABEL="Recipe pack:"
-    UNIT="$RECIPE_PACK"
-    PREFIX="$(rtc_recipe_pack_tag_prefix "$RECIPE_PACK")"
-elif [[ -n "$NAMESPACE" ]]; then
-    if ! rtc_is_namespace "$NAMESPACE"; then
-        echo "Error: '$NAMESPACE' is not a releasable namespace. Known namespaces:" >&2
-        rtc_list_namespaces | sed 's/^/  - /' >&2
-        exit 1
-    fi
-    UNIT_LABEL="Namespace:"
-    UNIT="$NAMESPACE"
-    PREFIX="$NAMESPACE"
-else
-    echo "Error: NAMESPACE or RECIPE_PACK is required (e.g. NAMESPACE=Radius.Data or RECIPE_PACK=kubernetes)" >&2
-    exit 1
-fi
+rtc_resolve_unit
 
-CURRENT="$(rtc_latest_version "$PREFIX")"
+CURRENT="$(rtc_latest_version "$RTC_UNIT_TAG_PREFIX")"
 BASE="${CURRENT:-0.0.0}"
 NEXT="$(rtc_semver_bump "$BASE" "$BUMP")"
 
@@ -101,7 +75,7 @@ if [[ -n "$PRERELEASE_LABEL" ]]; then
     IS_PRERELEASE="true"
 fi
 
-TAG="${PREFIX}/v${NEXT}"
+TAG="${RTC_UNIT_TAG_PREFIX}/v${NEXT}"
 
 if git -C "$RTC_REPO_ROOT" rev-parse -q --verify "refs/tags/${TAG}" >/dev/null 2>&1; then
     echo "Error: tag '${TAG}' already exists" >&2
@@ -114,7 +88,7 @@ rtc_emit "tag" "$TAG"
 rtc_emit "is_prerelease" "$IS_PRERELEASE"
 
 {
-    printf '%-14s %s\n' "$UNIT_LABEL" "$UNIT"
+    printf '%-14s %s\n' "$RTC_UNIT_LABEL" "$RTC_UNIT"
     printf '%-14s %s\n' "Current:" "${CURRENT:-none}"
     printf '%-14s %s\n' "Bump:" "$BUMP"
     printf '%-14s %s\n' "Next:" "$NEXT"

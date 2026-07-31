@@ -50,6 +50,52 @@ RTC_RELEASE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=.github/scripts/lib-namespaces.sh
 source "$RTC_RELEASE_LIB_DIR/../lib-namespaces.sh"
 
+# Resolve the unit to release from the NAMESPACE / RECIPE_PACK environment
+# variables (exactly one must be set) and validate it. Every release script
+# takes the same pair, so this is where that contract lives. On success sets:
+#   RTC_UNIT_KIND        namespace | recipe-pack
+#   RTC_UNIT             the unit name (e.g. Radius.Data, kubernetes)
+#   RTC_UNIT_LABEL       label for human-readable summaries
+#   RTC_UNIT_TAG_PREFIX  tag prefix; tags are `<prefix>/v<version>`
+# shellcheck disable=SC2034 # RTC_UNIT_* are read by the calling scripts
+rtc_resolve_unit() {
+    local namespace="${NAMESPACE:-}" recipe_pack="${RECIPE_PACK:-}"
+
+    if [[ -n "$namespace" && -n "$recipe_pack" ]]; then
+        echo "Error: set either NAMESPACE or RECIPE_PACK, not both" >&2
+        return 1
+    fi
+
+    if [[ -n "$recipe_pack" ]]; then
+        if ! rtc_is_recipe_pack "$recipe_pack"; then
+            echo "Error: '$recipe_pack' is not a releasable recipe pack. Known recipe packs:" >&2
+            rtc_list_recipe_packs | sed 's/^/  - /' >&2
+            return 1
+        fi
+        RTC_UNIT_KIND="recipe-pack"
+        RTC_UNIT="$recipe_pack"
+        RTC_UNIT_LABEL="Recipe pack:"
+        RTC_UNIT_TAG_PREFIX="$(rtc_recipe_pack_tag_prefix "$recipe_pack")"
+        return 0
+    fi
+
+    if [[ -n "$namespace" ]]; then
+        if ! rtc_is_namespace "$namespace"; then
+            echo "Error: '$namespace' is not a releasable namespace. Known namespaces:" >&2
+            rtc_list_namespaces | sed 's/^/  - /' >&2
+            return 1
+        fi
+        RTC_UNIT_KIND="namespace"
+        RTC_UNIT="$namespace"
+        RTC_UNIT_LABEL="Namespace:"
+        RTC_UNIT_TAG_PREFIX="$namespace"
+        return 0
+    fi
+
+    echo "Error: NAMESPACE or RECIPE_PACK is required (e.g. NAMESPACE=Radius.Data or RECIPE_PACK=kubernetes)" >&2
+    return 1
+}
+
 # Print the highest existing STABLE version (X.Y.Z, no prerelease suffix) for a
 # tag series, derived from git tags. `prefix` identifies the released unit (e.g.
 # `Radius.Data` or `recipe-pack/kubernetes`) and tags are `<prefix>/v<version>`.
@@ -64,6 +110,16 @@ rtc_latest_version() {
             fi
         done |
         sort -V | tail -n1
+}
+
+# Print the tag of the latest stable release for a series, or nothing when the
+# unit has never been released. This is the baseline both the change detection
+# and the release notes compare against, so they always tell the same story.
+rtc_latest_tag() {
+    local prefix="$1" version
+    version="$(rtc_latest_version "$prefix")"
+    [[ -n "$version" ]] || return 0
+    echo "${prefix}/v${version}"
 }
 
 # Bump a base X.Y.Z version by patch|minor|major. Any prerelease suffix on the
