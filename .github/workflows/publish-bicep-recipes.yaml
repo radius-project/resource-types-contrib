@@ -61,10 +61,14 @@ env:
   REGISTRY: ghcr.io/radius-project/kube-recipes
 
 concurrency:
-  # Keyed on the ref and never cancelled: runs queue so every commit SHA gets published,
-  # but avoids unbounded parallel publishes on busy branches.
+  # Keyed on the ref to avoid unbounded parallel publishes on busy branches.
+  # `queue: max` rather than the default `queue: single`, which cancels the
+  # pending run whenever a newer one queues -- that would drop a commit SHA and
+  # leave notify-radius.yaml able to pin a SHA with no image behind it.
+  # `cancel-in-progress` stays at its default of false; setting it true is a
+  # validation error alongside `queue: max`.
   group: publish-bicep-recipes-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: false
+  queue: max
 
 jobs:
   publish-bicep-recipes:
