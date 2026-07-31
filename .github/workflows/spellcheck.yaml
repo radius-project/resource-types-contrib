@@ -1,4 +1,9 @@
 # yaml-language-server: $schema=https://www.schemastore.org/github-workflow.json
+# ------------------------------------------------------------------------------
+# This file is synced from the radius-project/.github repository.
+# DO NOT EDIT MANUALLY - changes will be overwritten by the next sync.
+# Source: https://github.com/radius-project/.github
+# ------------------------------------------------------------------------------
 ---
 name: Spellcheck
 
@@ -15,7 +20,3 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    with:
-      # Check both Markdown docs and the embedded `description` fields in
-      # resource type YAML schemas (and other YAML docs in the repo).
-      glob: "**/*.{md,yaml,yml}"
