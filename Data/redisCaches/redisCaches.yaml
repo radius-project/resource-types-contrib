@@ -67,6 +67,7 @@ types:
             size:
               type: string
               enum: ['S', 'M', 'L']
+              default: 'S'
               description: "(Optional) The size of the Redis cache. Defaults to `S` if not provided. The recipe maps the size onto a concrete cloud SKU."
             host:
               type: string
