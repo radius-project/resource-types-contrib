@@ -40,7 +40,7 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
         args: ['nginx -g "daemon off;"']
         workingDir: '/usr/share/nginx/html'
         ports: {
-          http: {
+          httpPort: {
             containerPort: 80
             protocol: 'TCP'
           }
@@ -73,15 +73,15 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
         }
         volumeMounts: [
           {
-            volumeName: 'data'
+            volumeName: 'appData'
             mountPath: '/app/data'
           }
           {
-            volumeName: 'cache'
+            volumeName: 'cacheData'
             mountPath: '/tmp/cache'
           }
           {
-            volumeName: 'secrets'
+            volumeName: 'appSecrets'
             mountPath: '/etc/secrets'
           }
         ] 
@@ -137,18 +137,18 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
     }
     restartPolicy: 'Always'
     volumes: {
-      data: {
+      appData: {
         persistentVolume: {
           resourceId: myPersistentVolume.id
           accessMode: 'ReadWriteOnce'
         }
       }
-      cache: {
+      cacheData: {
         emptyDir: {
           medium: 'memory'
         }
       }
-      secrets: {
+      appSecrets: {
         secretName: secret.name
       }
     }

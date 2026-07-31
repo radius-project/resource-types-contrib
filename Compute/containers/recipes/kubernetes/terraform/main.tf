@@ -150,7 +150,7 @@ locals {
       # Ports
       ports = [
         for port_name, port_config in try(config.ports, {}) : {
-          name           = port_name
+          name           = lower(port_name)
           container_port = port_config.containerPort
           protocol       = try(port_config.protocol, "TCP")
         }
@@ -181,7 +181,7 @@ locals {
       # Volume mounts
       volume_mounts = [
         for vm in try(config.volumeMounts, []) : {
-          name       = vm.volumeName
+          name       = lower(vm.volumeName)
           mount_path = vm.mountPath
         }
       ]
@@ -224,7 +224,7 @@ locals {
 locals {
   volume_specs = [
     for vol_name, vol_config in local.volumes : {
-      name = vol_name
+      name = lower(vol_name)
 
       # Persistent Volume Claim - extract PVC name from resourceId (last segment of the path)
       persistent_volume_claim = try(vol_config.persistentVolume, null) != null ? {

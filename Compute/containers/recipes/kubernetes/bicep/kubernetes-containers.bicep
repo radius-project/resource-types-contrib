@@ -128,7 +128,7 @@ var containerSpecs = reduce(containerItems, [], (acc, item) => concat(acc, [{
     // Add ports if they exist
     contains(item.value, 'ports') ? {
       ports: reduce(items(item.value.ports), [], (portAcc, port) => concat(portAcc, [{
-        name: port.key
+        name: toLower(port.key)
         containerPort: port.value.containerPort
         protocol: port.value.?protocol ?? 'TCP'
       }]))
@@ -176,7 +176,7 @@ var containerSpecs = reduce(containerItems, [], (acc, item) => concat(acc, [{
     // Add volume mounts if they exist
     contains(item.value, 'volumeMounts') ? {
       volumeMounts: reduce(item.value.volumeMounts, [], (vmAcc, vm) => concat(vmAcc, [{
-        name: vm.volumeName
+        name: toLower(vm.volumeName)
         mountPath: vm.mountPath
       }]))
     } : {},
@@ -263,7 +263,7 @@ var podInitContainers = reduce(containerSpecs, [], (acc, container) => (containe
 var volumeItems = items(resourceProperties.?volumes ?? {})
 var podVolumes = reduce(volumeItems, [], (acc, vol) => concat(acc, [union(
   {
-    name: vol.key
+    name: toLower(vol.key)
   },
   contains(vol.value, 'persistentVolume') ? {
     persistentVolumeClaim: {
@@ -326,7 +326,7 @@ var servicesConfig = reduce(containerItems, [], (acc, item) =>
     containerName: item.key
     normalizedContainerName: toLower(item.key)
     ports: reduce(items(item.value.ports), [], (portAcc, port) => concat(portAcc, [{
-      name: port.key
+      name: toLower(port.key)
       port: port.value.containerPort
       targetPort: port.value.containerPort
       protocol: port.value.?protocol ?? 'TCP'
