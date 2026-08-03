@@ -24,6 +24,9 @@ param containerImagesRegistry string
 @description('Name of the Kubernetes Secret holding registry credentials for Radius.Compute/containerImages. Leave empty for an unauthenticated registry.')
 param containerImagesRegistrySecretName string = ''
 
+@description('Server parameters forwarded verbatim to the AVM PostgreSQL flexible server `configurations` array for Radius.Data/postgreSqlDatabases. Use the AVM item shape `{ name, source, value }`. Most commonly used to allow-list extensions via the `azure.extensions` parameter, for example `[{ name: \'azure.extensions\', source: \'user-override\', value: \'vector\' }]` to enable pgvector. Defaults to an empty array (no extra server configuration).')
+param postgreSqlServerConfigurations array = []
+
 resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
   name: 'azure-avm'
   properties: {
@@ -211,6 +214,7 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
           lock: {
             kind: 'None'
           }
+          configurations: postgreSqlServerConfigurations
         }
         outputs: {
           host: 'fqdn'
