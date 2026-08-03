@@ -10,6 +10,7 @@ MYSQLDB
 oras
 ORAS
 PGDATA
+pgvector
 rrttest
 SLSA
 tmpfs
