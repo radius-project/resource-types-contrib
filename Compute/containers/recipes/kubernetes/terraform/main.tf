@@ -14,7 +14,7 @@ terraform {
 locals {
   resource_name   = var.context.resource.name
   namespace       = var.context.runtime.kubernetes.namespace
-  normalized_name = local.resource_name
+  normalized_name = lower(local.resource_name)
 
   # Extract resource properties
   resource_properties = try(var.context.resource.properties, {})
@@ -141,7 +141,7 @@ locals {
   container_specs = {
     for name, config in local.containers : name => {
       is_init     = try(config.initContainer, false)
-      name        = name
+      name        = lower(name)
       image       = config.image
       command     = try(config.command, null)
       args        = try(config.args, null)
@@ -150,7 +150,7 @@ locals {
       # Ports
       ports = [
         for port_name, port_config in try(config.ports, {}) : {
-          name           = port_name
+          name           = lower(port_name)
           container_port = port_config.containerPort
           protocol       = try(port_config.protocol, "TCP")
         }
@@ -181,7 +181,7 @@ locals {
       # Volume mounts
       volume_mounts = [
         for vm in try(config.volumeMounts, []) : {
-          name       = vm.volumeName
+          name       = lower(vm.volumeName)
           mount_path = vm.mountPath
         }
       ]
@@ -224,7 +224,7 @@ locals {
 locals {
   volume_specs = [
     for vol_name, vol_config in local.volumes : {
-      name = vol_name
+      name = lower(vol_name)
 
       # Persistent Volume Claim - extract PVC name from resourceId (last segment of the path)
       persistent_volume_claim = try(vol_config.persistentVolume, null) != null ? {
@@ -253,8 +253,9 @@ locals {
   # Build services config - one service per container with ports
   services_config = {
     for name, spec in local.regular_container_specs : name => {
-      container_name = name
-      ports          = spec.ports
+      container_name          = spec.name
+      original_container_name = name
+      ports                   = spec.ports
     }
     if length(spec.ports) > 0
   }
@@ -624,7 +625,7 @@ resource "kubernetes_service" "services" {
     name      = "${local.normalized_name}-${each.value.container_name}"
     namespace = local.namespace
     labels = merge(local.labels, {
-      container = each.value.container_name
+      container = each.value.original_container_name
     })
   }
 

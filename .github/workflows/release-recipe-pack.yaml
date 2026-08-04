@@ -19,12 +19,22 @@ name: Release Recipe Pack
 # bundle, and publishes a GitHub Release. This mirrors release-namespace.yaml and
 # shares its release scripts.
 #
+# The run is a no-op unless the pack has something new to publish. Each pack is
+# released on its own cadence, so the check compares this commit against the
+# pack's own latest stable release tag and looks only at that pack's directory --
+# unrelated churn elsewhere in the monorepo never bumps its version. When nothing
+# changed, no tag or release is created; `force` overrides that for a deliberate
+# re-cut. A `dry_run` publishes nothing, so it previews the version and the
+# bundle either way.
+#
 # Downstream: publishing the release fires `notify-radius.yaml` on
-# `release: published`, which recognizes the `recipe-pack/` scope as a
-# non-namespace scope and sends no sync dispatch to radius-project/radius --
-# Recipe Packs are not part of the default resource-type manifests. The release
-# is still created with the RESOURCE_TYPES_BOT GitHub App token (not
-# GITHUB_TOKEN) so release events behave consistently across both workflows.
+# `release: published`, which dispatches the pack pin (this tag) to
+# radius-project/radius as a reviewable sync PR. Radius records it under
+# `recipePacks[]` in deploy/manifest/defaults.yaml but does not vendor the pack;
+# its deploy workflows fetch the pack Bicep from here at deploy time. The
+# release is created with the RESOURCE_TYPES_BOT GitHub App token (not
+# GITHUB_TOKEN) precisely so that the `release: published` event is allowed to
+# trigger that downstream workflow.
 #
 # Prerequisite (one-time, admin): the RESOURCE_TYPES_BOT GitHub App must be
 # installed on this repository with `contents: write` so it can create the tag
@@ -57,6 +67,11 @@ on:
         type: string
         required: false
         default: ""
+      force:
+        description: Release even when nothing changed since the last release
+        type: boolean
+        required: false
+        default: false
       dry_run:
         description: Compute the version and build the bundle without tagging or publishing
         type: boolean
@@ -71,11 +86,89 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  check:
+    name: Check ${{ inputs.recipe_pack }} for unreleased changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      # The gate for the release job: a release is only worth cutting when this
+      # pack changed since its own last stable release.
+      should_release: ${{ steps.changes.outputs.changed == 'true' || inputs.force }}
+      changed: ${{ steps.changes.outputs.changed }}
+      previous_tag: ${{ steps.changes.outputs.previous_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history and tags so the baseline release tag resolves.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Detect changes since the last release
+        id: changes
+        env:
+          RECIPE_PACK: ${{ inputs.recipe_pack }}
+        run: ./.github/scripts/release/detect-changes.sh
+
+      - name: Summarize
+        env:
+          RECIPE_PACK: ${{ inputs.recipe_pack }}
+          CHANGED: ${{ steps.changes.outputs.changed }}
+          REASON: ${{ steps.changes.outputs.reason }}
+          PREVIOUS_TAG: ${{ steps.changes.outputs.previous_tag }}
+          COUNT: ${{ steps.changes.outputs.count }}
+          FORCED: ${{ inputs.force }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          # With no baseline to diff against, the count is the whole release
+          # scope rather than a change count -- say so instead of reporting it
+          # as if a comparison had happened.
+          case "$REASON" in
+            no-previous-release)
+              scope="Files in the release scope: \`${COUNT}\` (first release, so every file is new)"
+              verdict="first release -- continuing"
+              ;;
+            previous-release-unreachable)
+              scope="Files in the release scope: \`${COUNT}\` (nothing was compared: the baseline is unreachable from this checkout)"
+              verdict="cannot compare against \`${PREVIOUS_TAG}\` -- continuing rather than skip a real release"
+              ;;
+            *)
+              scope="Changed files in the release scope: \`${COUNT}\`"
+              verdict="changes found -- continuing with the release"
+              ;;
+          esac
+          {
+            echo "## Unreleased changes in the ${RECIPE_PACK} recipe pack"
+            echo ""
+            echo "* Baseline: \`${PREVIOUS_TAG}\`"
+            echo "* ${scope}"
+            if [ "$CHANGED" = "true" ]; then
+              echo "* Result: ${verdict}"
+            elif [ "$FORCED" = "true" ]; then
+              echo "* Result: unchanged, but \`force\` was set -- continuing with the release"
+            elif [ "$DRY_RUN" = "true" ]; then
+              echo "* Result: unchanged, but a dry run publishes nothing -- continuing with the preview"
+            else
+              echo "* Result: **nothing to release**"
+              echo ""
+              echo "The \`${RECIPE_PACK}\` recipe pack is unchanged since \`${PREVIOUS_TAG}\`, so no tag or release was created. Re-run with \`force\` to cut a release anyway."
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
   release:
     name: Release recipe pack ${{ inputs.recipe_pack }}
+    needs: check
+    # A dry run publishes nothing, so the change gate does not apply to it --
+    # previewing the version and the bundle must never require `force`. Only a
+    # real release is gated on there being something to release.
     if: >-
       github.repository == 'radius-project/resource-types-contrib' &&
-      (inputs.dry_run || github.ref == 'refs/heads/main')
+      (
+        inputs.dry_run ||
+        (github.ref == 'refs/heads/main' && needs.check.outputs.should_release == 'true')
+      )
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -114,11 +207,17 @@ jobs:
         env:
           RECIPE_PACK: ${{ inputs.recipe_pack }}
           TAG: ${{ steps.ver.outputs.tag }}
+          # Same baseline the change check used, so the notes and the decision
+          # to release describe the same range.
+          PREV: ${{ needs.check.outputs.previous_tag }}
         run: |
           set -euo pipefail
           mkdir -p dist
           folder="recipe-packs/${RECIPE_PACK}"
-          prev="$(git tag --list "recipe-pack/${RECIPE_PACK}/v*" --sort=-v:refname | head -n1 || true)"
+          prev="$PREV"
+          if [ "$prev" = "none" ]; then
+            prev=""
+          fi
           if [ -n "$prev" ]; then
             range="${prev}..HEAD"
           else
@@ -188,6 +287,7 @@ jobs:
       - name: Summarize
         env:
           DRY_RUN: ${{ inputs.dry_run }}
+          UNCHANGED: ${{ needs.check.outputs.changed != 'true' }}
         run: |
           {
             echo "## Release ${{ steps.ver.outputs.tag }}"
@@ -195,6 +295,9 @@ jobs:
             echo "* Recipe pack: \`${{ inputs.recipe_pack }}\`"
             echo "* Current -> next: \`${{ steps.ver.outputs.current }}\` -> \`${{ steps.ver.outputs.next }}\`"
             echo "* Since previous tag: \`${{ steps.notes.outputs.prev }}\`"
+            if [ "$UNCHANGED" = "true" ]; then
+              echo "* Nothing changed since the previous release"
+            fi
             echo "* Prerelease: \`${{ steps.ver.outputs.is_prerelease }}\`"
             echo "* Templates bundled: \`${{ steps.bundle.outputs.count }}\`"
             echo "* Asset: \`$(basename "${{ steps.bundle.outputs.asset }}")\`"

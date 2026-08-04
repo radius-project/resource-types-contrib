@@ -10,7 +10,7 @@ Each pack declares a `Radius.Core/recipePacks` resource whose `recipes` map cont
 
 ## Recipes in this pack
 
-Kube-recipes tagged `:latest` are edge builds; released recipes are pinned to a version tag.
+Kube-recipes tagged `:edge` are rebuilt on every push to `main`; `:latest` and the version tags track stable releases.
 
 | Resource Type | Kind | Source |
 | --- | --- | --- |

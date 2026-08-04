@@ -47,6 +47,16 @@ ifneq ($(and $(strip $(NAMESPACE)),$(strip $(RECIPE_PACK))),)
 endif
 	@NAMESPACE="$(NAMESPACE)" RECIPE_PACK="$(RECIPE_PACK)" BUMP="$(BUMP)" PRERELEASE_LABEL="$(PRERELEASE_LABEL)" ./.github/scripts/release/next-version.sh
 
+.PHONY: release-changes
+release-changes: ## Show whether a namespace or recipe pack has changed since its last release (requires NAMESPACE or RECIPE_PACK)
+ifeq ($(strip $(NAMESPACE))$(strip $(RECIPE_PACK)),)
+	$(error NAMESPACE or RECIPE_PACK parameter is required. Usage: make release-changes NAMESPACE=Radius.Data | make release-changes RECIPE_PACK=kubernetes)
+endif
+ifneq ($(and $(strip $(NAMESPACE)),$(strip $(RECIPE_PACK))),)
+	$(error NAMESPACE and RECIPE_PACK are mutually exclusive. Set exactly one of them)
+endif
+	@NAMESPACE="$(NAMESPACE)" RECIPE_PACK="$(RECIPE_PACK)" ./.github/scripts/release/detect-changes.sh
+
 .PHONY: release-bundle
 release-bundle: ## Build a namespace manifest or recipe pack bundle locally (requires NAMESPACE or RECIPE_PACK, and VERSION; optional OUT_DIR)
 ifeq ($(strip $(NAMESPACE))$(strip $(RECIPE_PACK)),)

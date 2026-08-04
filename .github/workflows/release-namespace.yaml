@@ -17,14 +17,27 @@ name: Release Namespace
 # namespace and a bump type, and the workflow computes the next version, builds
 # the manifest bundle, and publishes a GitHub Release. This is the release side
 # of the per-namespace sync design (radius PR #12236): publishing per-namespace
-# versioned artifacts is what makes Radius's per-namespace `sources[].ref` pins
-# meaningful.
+# versioned artifacts is what makes Radius's per-namespace `resourceTypes[].ref`
+# pins meaningful.
+#
+# The run is a no-op unless the namespace has something new to publish. Each
+# namespace is released on its own cadence, so the check compares this commit
+# against the namespace's own latest stable release tag and looks only at the
+# files that namespace ships -- unrelated churn elsewhere in the monorepo never
+# bumps its version. When nothing changed, no tag, release, or recipe publish is
+# created; `force` overrides that for a deliberate re-cut. A `dry_run` publishes
+# nothing, so it previews the version and the bundle either way.
 #
 # Downstream: publishing the release fires `notify-radius.yaml` on
 # `release: published`, which dispatches the per-namespace pin (this tag) to
 # radius-project/radius as a reviewable sync PR. The release is created with the
 # RESOURCE_TYPES_BOT GitHub App token (not GITHUB_TOKEN) precisely so that the
 # `release: published` event is allowed to trigger that downstream workflow.
+#
+# The pin Radius records is a commit SHA, and a released `rad` reuses that SHA
+# as the OCI tag of every recipe in the namespace (radius PR #12566). So the
+# release commit's recipes are published to GHCR under that SHA *before* the
+# release exists, and the tag is verified to resolve back to it afterwards.
 #
 # Prerequisite (one-time, admin): the RESOURCE_TYPES_BOT GitHub App must be
 # installed on this repository with `contents: write` so it can create the tag
@@ -59,6 +72,11 @@ on:
         type: string
         required: false
         default: ""
+      force:
+        description: Release even when nothing changed since the last release
+        type: boolean
+        required: false
+        default: false
       dry_run:
         description: Compute the version and build the bundle without tagging or publishing
         type: boolean
@@ -73,11 +91,114 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  check:
+    name: Check ${{ inputs.namespace }} for unreleased changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      # The gate for every other job: a release is only worth cutting when this
+      # namespace changed since its own last stable release.
+      should_release: ${{ steps.changes.outputs.changed == 'true' || inputs.force }}
+      changed: ${{ steps.changes.outputs.changed }}
+      previous_tag: ${{ steps.changes.outputs.previous_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history and tags so the baseline release tag resolves.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Detect changes since the last release
+        id: changes
+        env:
+          NAMESPACE: ${{ inputs.namespace }}
+        run: ./.github/scripts/release/detect-changes.sh
+
+      - name: Summarize
+        env:
+          NAMESPACE: ${{ inputs.namespace }}
+          CHANGED: ${{ steps.changes.outputs.changed }}
+          REASON: ${{ steps.changes.outputs.reason }}
+          PREVIOUS_TAG: ${{ steps.changes.outputs.previous_tag }}
+          COUNT: ${{ steps.changes.outputs.count }}
+          FORCED: ${{ inputs.force }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          # With no baseline to diff against, the count is the whole release
+          # scope rather than a change count -- say so instead of reporting it
+          # as if a comparison had happened.
+          case "$REASON" in
+            no-previous-release)
+              scope="Files in the release scope: \`${COUNT}\` (first release, so every file is new)"
+              verdict="first release -- continuing"
+              ;;
+            previous-release-unreachable)
+              scope="Files in the release scope: \`${COUNT}\` (nothing was compared: the baseline is unreachable from this checkout)"
+              verdict="cannot compare against \`${PREVIOUS_TAG}\` -- continuing rather than skip a real release"
+              ;;
+            *)
+              scope="Changed files in the release scope: \`${COUNT}\`"
+              verdict="changes found -- continuing with the release"
+              ;;
+          esac
+          {
+            echo "## Unreleased changes in ${NAMESPACE}"
+            echo ""
+            echo "* Baseline: \`${PREVIOUS_TAG}\`"
+            echo "* ${scope}"
+            if [ "$CHANGED" = "true" ]; then
+              echo "* Result: ${verdict}"
+            elif [ "$FORCED" = "true" ]; then
+              echo "* Result: unchanged, but \`force\` was set -- continuing with the release"
+            elif [ "$DRY_RUN" = "true" ]; then
+              echo "* Result: unchanged, but a dry run publishes nothing -- continuing with the preview"
+            else
+              echo "* Result: **nothing to release**"
+              echo ""
+              echo "\`${NAMESPACE}\` is unchanged since \`${PREVIOUS_TAG}\`, so no tag, release, or recipe publish was created. Re-run with \`force\` to cut a release anyway."
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  publish-recipes:
+    name: Publish recipes for the release commit
+    # A namespace pin is also an OCI coordinate: a released `rad` resolves
+    # `Radius.<Category>` to the commit SHA this release tag points at and pulls
+    # `ghcr.io/radius-project/kube-recipes/<recipe>:<sha>` (radius PR #12566).
+    # Publishing here makes that tag a precondition of releasing instead of
+    # something a later push has to backfill -- if it fails, no release is cut
+    # and Radius never sees a pin it cannot resolve. `pin_only` keeps the
+    # floating `edge`/`latest` aliases where they are; only the immutable SHA
+    # tag is (re)published.
+    needs: check
+    if: ${{ !inputs.dry_run && needs.check.outputs.should_release == 'true' }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish-bicep-recipes.yaml
+    with:
+      pin_only: true
+
   release:
     name: Release ${{ inputs.namespace }}
+    needs: [check, publish-recipes]
+    # A dry run publishes nothing, so the change gate does not apply to it --
+    # previewing the version and the bundle must never require `force`. Only a
+    # real release is gated on there being something to release.
     if: >-
+      !cancelled() &&
       github.repository == 'radius-project/resource-types-contrib' &&
-      (inputs.dry_run || github.ref == 'refs/heads/main')
+      (
+        (inputs.dry_run && needs.publish-recipes.result == 'skipped') ||
+        (
+          !inputs.dry_run &&
+          github.ref == 'refs/heads/main' &&
+          needs.check.outputs.should_release == 'true' &&
+          needs.publish-recipes.result == 'success'
+        )
+      )
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -116,11 +237,17 @@ jobs:
         env:
           NAMESPACE: ${{ inputs.namespace }}
           TAG: ${{ steps.ver.outputs.tag }}
+          # Same baseline the change check used, so the notes and the decision
+          # to release describe the same range.
+          PREV: ${{ needs.check.outputs.previous_tag }}
         run: |
           set -euo pipefail
           mkdir -p dist
           folder="${NAMESPACE#Radius.}"
-          prev="$(git tag --list "${NAMESPACE}/v*" --sort=-v:refname | head -n1 || true)"
+          prev="$PREV"
+          if [ "$prev" = "none" ]; then
+            prev=""
+          fi
           if [ -n "$prev" ]; then
             range="${prev}..HEAD"
           else
@@ -187,9 +314,29 @@ jobs:
           fi
           gh release create "$TAG" "${args[@]}" "$ASSET" "$CHECKSUMS"
 
+      - name: Verify the tag resolves to the published commit
+        # Radius turns this tag into a commit SHA with `git ls-remote` and uses
+        # that SHA as the recipe OCI tag, which the publish-recipes job pushed
+        # as $GITHUB_SHA. `gh release create` makes a lightweight tag, so the
+        # two match; an annotated tag would resolve to the tag object instead
+        # and the pin would point at a SHA that was never published. Fail loudly
+        # rather than ship a release whose recipes are unreachable.
+        if: ${{ !inputs.dry_run }}
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          resolved="$(git ls-remote origin "refs/tags/${TAG}" | awk '{print $1}')"
+          if [ "$resolved" != "$GITHUB_SHA" ]; then
+            echo "Error: ${TAG} resolves to '${resolved:-<missing>}' but recipes were published as :${GITHUB_SHA}." >&2
+            exit 1
+          fi
+          echo "${TAG} -> ${resolved}"
+
       - name: Summarize
         env:
           DRY_RUN: ${{ inputs.dry_run }}
+          UNCHANGED: ${{ needs.check.outputs.changed != 'true' }}
         run: |
           {
             echo "## Release ${{ steps.ver.outputs.tag }}"
@@ -197,6 +344,9 @@ jobs:
             echo "* Namespace: \`${{ inputs.namespace }}\`"
             echo "* Current -> next: \`${{ steps.ver.outputs.current }}\` -> \`${{ steps.ver.outputs.next }}\`"
             echo "* Since previous tag: \`${{ steps.notes.outputs.prev }}\`"
+            if [ "$UNCHANGED" = "true" ]; then
+              echo "* Nothing changed since the previous release"
+            fi
             echo "* Prerelease: \`${{ steps.ver.outputs.is_prerelease }}\`"
             echo "* Manifests bundled: \`${{ steps.bundle.outputs.count }}\`"
             echo "* Asset: \`$(basename "${{ steps.bundle.outputs.asset }}")\`"
@@ -205,6 +355,7 @@ jobs:
               echo "_Dry run: no tag, release, or attestation was created._"
             else
               echo "* Provenance: attested (verify with \`gh attestation verify <asset> --repo ${{ github.repository }}\`)"
+              echo "* Recipes: published as \`${GITHUB_SHA}\`, the tag Radius resolves this pin to"
               echo ""
               echo "Published as \`${{ steps.ver.outputs.tag }}\`; notify-radius.yaml will open the per-namespace sync PR in radius."
             fi
