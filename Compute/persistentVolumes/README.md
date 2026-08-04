@@ -9,7 +9,7 @@ A list of available Recipes for this Resource Type, including links to the Bicep
 
 |Platform| IaC Language| Recipe Name | Stage |
 |---|---|---|---|
-| Azure (ACI) | Bicep | recipes/azure/bicep/azure-file-volumes.bicpe | Alpha |
+| Azure (ACI) | Bicep | recipes/azure/bicep/azure-file-volumes.bicep | Alpha |
 | Kubernetes | Bicep | recipes/kubernetes/bicep/kubernetes-volumes.bicep | Alpha |
 | Kubernetes | Terraform | recipes/kubernetes/terraform/main.tf | Alpha |
 
@@ -43,5 +43,4 @@ The Azure ACI Bicep recipe emits the following output values and secrets:
 - `values.shareQuotaGiB` (integer): File share quota configured from `sizeInGib`.
 - `values.allowedAccessModes` (string): Effective access mode constraints from the PersistentVolume resource (empty when not set).
 - `secrets.storageAccountKey` (string): Storage account key for mounting the Azure File Share.
-
 
