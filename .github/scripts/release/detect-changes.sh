@@ -54,7 +54,10 @@
 #   previous_tag  the release tag compared against, or "none"
 #   reason        no-previous-release | previous-release-unreachable |
 #                 changes-detected | no-changes
-#   count         number of changed files in the release scope
+#   count         number of files in the release scope this run would publish:
+#                 the diff against the baseline, or -- when there is no usable
+#                 baseline to diff against -- every file in the scope. Read it
+#                 together with `reason`.
 #
 # Usage:
 #   NAMESPACE=Radius.Data ./.github/scripts/release/detect-changes.sh
@@ -90,8 +93,7 @@ esac
 
 PREVIOUS_TAG="$(rtc_latest_tag "$RTC_UNIT_TAG_PREFIX")"
 CHANGED="true"
-COUNT=0
-CHANGED_FILES=""
+REASON=""
 
 if [[ -z "$PREVIOUS_TAG" ]]; then
     REASON="no-previous-release"
@@ -100,11 +102,27 @@ elif ! git -C "$RTC_REPO_ROOT" rev-parse -q --verify "${PREVIOUS_TAG}^{commit}" 
     # unfetched tag) is not evidence that nothing changed, and skipping a real
     # release is worse than cutting a redundant one.
     REASON="previous-release-unreachable"
+fi
+
+if [[ -n "$REASON" ]]; then
+    # No usable baseline, so compare against the empty tree: every file the unit
+    # ships reads as added. That keeps a single diff path -- identical pathspec
+    # semantics -- and reports the release scope instead of a bare "0 files",
+    # which would contradict the `changed=true` these cases fail open with.
+    BASELINE="$(git -C "$RTC_REPO_ROOT" hash-object -t tree /dev/null)"
 else
-    CHANGED_FILES="$(git -C "$RTC_REPO_ROOT" diff --name-only \
-        "$PREVIOUS_TAG" "$REF" -- "${PATHSPECS[@]}")"
-    if [[ -n "$CHANGED_FILES" ]]; then
-        COUNT="$(grep -c '' <<<"$CHANGED_FILES")"
+    BASELINE="$PREVIOUS_TAG"
+fi
+
+CHANGED_FILES="$(git -C "$RTC_REPO_ROOT" diff --name-only \
+    "$BASELINE" "$REF" -- "${PATHSPECS[@]}")"
+COUNT=0
+if [[ -n "$CHANGED_FILES" ]]; then
+    COUNT="$(grep -c '' <<<"$CHANGED_FILES")"
+fi
+
+if [[ -z "$REASON" ]]; then
+    if [[ "$COUNT" -gt 0 ]]; then
         REASON="changes-detected"
     else
         CHANGED="false"

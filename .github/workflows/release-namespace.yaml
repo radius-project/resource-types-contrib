@@ -25,7 +25,8 @@ name: Release Namespace
 # against the namespace's own latest stable release tag and looks only at the
 # files that namespace ships -- unrelated churn elsewhere in the monorepo never
 # bumps its version. When nothing changed, no tag, release, or recipe publish is
-# created; `force` overrides that for a deliberate re-cut.
+# created; `force` overrides that for a deliberate re-cut. A `dry_run` publishes
+# nothing, so it previews the version and the bundle either way.
 #
 # Downstream: publishing the release fires `notify-radius.yaml` on
 # `release: published`, which dispatches the per-namespace pin (this tag) to
@@ -120,19 +121,40 @@ jobs:
         env:
           NAMESPACE: ${{ inputs.namespace }}
           CHANGED: ${{ steps.changes.outputs.changed }}
+          REASON: ${{ steps.changes.outputs.reason }}
           PREVIOUS_TAG: ${{ steps.changes.outputs.previous_tag }}
           COUNT: ${{ steps.changes.outputs.count }}
           FORCED: ${{ inputs.force }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
+          # With no baseline to diff against, the count is the whole release
+          # scope rather than a change count -- say so instead of reporting it
+          # as if a comparison had happened.
+          case "$REASON" in
+            no-previous-release)
+              scope="Files in the release scope: \`${COUNT}\` (first release, so every file is new)"
+              verdict="first release -- continuing"
+              ;;
+            previous-release-unreachable)
+              scope="Files in the release scope: \`${COUNT}\` (nothing was compared: the baseline is unreachable from this checkout)"
+              verdict="cannot compare against \`${PREVIOUS_TAG}\` -- continuing rather than skip a real release"
+              ;;
+            *)
+              scope="Changed files in the release scope: \`${COUNT}\`"
+              verdict="changes found -- continuing with the release"
+              ;;
+          esac
           {
             echo "## Unreleased changes in ${NAMESPACE}"
             echo ""
             echo "* Baseline: \`${PREVIOUS_TAG}\`"
-            echo "* Changed files in the release scope: \`${COUNT}\`"
+            echo "* ${scope}"
             if [ "$CHANGED" = "true" ]; then
-              echo "* Result: changes found -- continuing with the release"
+              echo "* Result: ${verdict}"
             elif [ "$FORCED" = "true" ]; then
               echo "* Result: unchanged, but \`force\` was set -- continuing with the release"
+            elif [ "$DRY_RUN" = "true" ]; then
+              echo "* Result: unchanged, but a dry run publishes nothing -- continuing with the preview"
             else
               echo "* Result: **nothing to release**"
               echo ""
@@ -162,13 +184,20 @@ jobs:
   release:
     name: Release ${{ inputs.namespace }}
     needs: [check, publish-recipes]
+    # A dry run publishes nothing, so the change gate does not apply to it --
+    # previewing the version and the bundle must never require `force`. Only a
+    # real release is gated on there being something to release.
     if: >-
       !cancelled() &&
       github.repository == 'radius-project/resource-types-contrib' &&
-      needs.check.outputs.should_release == 'true' &&
       (
         (inputs.dry_run && needs.publish-recipes.result == 'skipped') ||
-        (!inputs.dry_run && github.ref == 'refs/heads/main' && needs.publish-recipes.result == 'success')
+        (
+          !inputs.dry_run &&
+          github.ref == 'refs/heads/main' &&
+          needs.check.outputs.should_release == 'true' &&
+          needs.publish-recipes.result == 'success'
+        )
       )
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -307,7 +336,7 @@ jobs:
       - name: Summarize
         env:
           DRY_RUN: ${{ inputs.dry_run }}
-          FORCED: ${{ needs.check.outputs.changed != 'true' }}
+          UNCHANGED: ${{ needs.check.outputs.changed != 'true' }}
         run: |
           {
             echo "## Release ${{ steps.ver.outputs.tag }}"
@@ -315,8 +344,8 @@ jobs:
             echo "* Namespace: \`${{ inputs.namespace }}\`"
             echo "* Current -> next: \`${{ steps.ver.outputs.current }}\` -> \`${{ steps.ver.outputs.next }}\`"
             echo "* Since previous tag: \`${{ steps.notes.outputs.prev }}\`"
-            if [ "$FORCED" = "true" ]; then
-              echo "* Forced: no changes since the previous release"
+            if [ "$UNCHANGED" = "true" ]; then
+              echo "* Nothing changed since the previous release"
             fi
             echo "* Prerelease: \`${{ steps.ver.outputs.is_prerelease }}\`"
             echo "* Manifests bundled: \`${{ steps.bundle.outputs.count }}\`"
