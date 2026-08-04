@@ -260,6 +260,9 @@ test_release_change_detection() {
     assert_eq "true" "$(output_value "$output" changed)" "unreleased namespace changed"
     assert_eq "no-previous-release" "$(output_value "$output" reason)" "unreleased namespace reason"
     assert_eq "none" "$(output_value "$output" previous_tag)" "unreleased namespace baseline"
+    # A first release publishes the whole scope, so reporting "0 files" would
+    # contradict the `changed=true` it just emitted.
+    assert_eq "1" "$(output_value "$output" count)" "unreleased namespace file count"
 
     git -C "$repo" tag "Radius.Data/v0.1.0"
     git -C "$repo" tag "recipe-pack/kubernetes/v0.1.0"
@@ -308,6 +311,19 @@ test_release_change_detection() {
     detect_changes "$repo" "$output" NAMESPACE Radius.Data
     assert_eq "Radius.Data/v0.1.0" "$(output_value "$output" previous_tag)" "prerelease used as baseline"
     assert_eq "true" "$(output_value "$output" changed)" "prerelease promotion changed"
+
+    # A baseline this checkout cannot resolve fails open, and the count still
+    # describes the release scope instead of claiming nothing changed. The tag
+    # points at a blob, which stands in for any baseline that will not peel to a
+    # commit (shallow clone, deleted or unfetched tag).
+    local broken="$TEST_ROOT/changes-unreachable" broken_output="$TEST_ROOT/changes-unreachable.out" blob
+    create_repo "$broken" "Data"
+    blob="$(git -C "$broken" hash-object -w --stdin <<<"not a commit")"
+    git -C "$broken" update-ref "refs/tags/Radius.Data/v0.1.0" "$blob"
+    detect_changes "$broken" "$broken_output" NAMESPACE Radius.Data
+    assert_eq "true" "$(output_value "$broken_output" changed)" "unreachable baseline changed"
+    assert_eq "previous-release-unreachable" "$(output_value "$broken_output" reason)" "unreachable baseline reason"
+    assert_eq "1" "$(output_value "$broken_output" count)" "unreachable baseline file count"
 }
 
 test_recipe_tags() {
