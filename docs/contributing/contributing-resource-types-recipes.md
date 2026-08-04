@@ -299,7 +299,8 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
         source: 'mcr.microsoft.com/bicep/avm/res/cache/redis-enterprise:0.5.1'
         parameters: {
           // Redis Enterprise names are global, so use a stable hash-based name
-          name: 'redis-{{context.azure.resourceNameHash}}'
+          // prefixed with the Cloud Adoption Framework abbreviation (amr = Azure Managed Redis)
+          name: 'amr-{{context.azure.resourceNameHash}}'
           // Map the developer-authored `size` enum onto a concrete SKU
           skuName: '{{context.resource.properties.size == "S" ? "Balanced_B0" : "Balanced_B1"}}'
           database: {

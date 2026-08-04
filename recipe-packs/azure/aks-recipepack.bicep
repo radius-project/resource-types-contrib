@@ -30,13 +30,13 @@ param postgreSqlServerConfigurations array = []
 resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
   name: 'azure-avm'
   properties: {
-    // Azure resources that need globally unique names use a service prefix and a stable hash.
+    // Globally unique Azure names use the Cloud Adoption Framework resource abbreviation as a prefix, plus a stable hash.
     recipes: {
       'Radius.Data/redisCaches': {
         kind: 'bicep'
         source: 'mcr.microsoft.com/bicep/avm/res/cache/redis-enterprise:0.5.1'
         parameters: {
-          name: 'redis-{{context.azure.resourceNameHash}}'
+          name: 'amr-{{context.azure.resourceNameHash}}'
           skuName: '{{context.resource.properties.size == "S" ? "Balanced_B0" : "Balanced_B1"}}'
           highAvailability: 'Disabled'
           database: {
@@ -61,10 +61,10 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
         kind: 'bicep'
         source: 'mcr.microsoft.com/bicep/avm/res/cognitive-services/account:0.15.0'
         parameters: {
-          name: 'ai-{{context.azure.resourceNameHash}}'
+          name: 'oai-{{context.azure.resourceNameHash}}'
           kind: 'OpenAI'
           sku: 'S0'
-          customSubDomainName: 'ai-{{context.azure.resourceNameHash}}'
+          customSubDomainName: 'oai-{{context.azure.resourceNameHash}}'
           disableLocalAuth: false
           publicNetworkAccess: 'Enabled'
           deployments: [
@@ -97,7 +97,7 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
         kind: 'bicep'
         source: 'mcr.microsoft.com/bicep/avm/res/search/search-service:0.12.2'
         parameters: {
-          name: 'search-{{context.azure.resourceNameHash}}'
+          name: 'srch-{{context.azure.resourceNameHash}}'
           sku: 'basic'
           disableLocalAuth: false
           replicaCount: 1
@@ -118,7 +118,7 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
         kind: 'bicep'
         source: 'mcr.microsoft.com/bicep/avm/res/document-db/database-account:0.19.0'
         parameters: {
-          name: 'cosmos-{{context.azure.resourceNameHash}}'
+          name: 'cosmon-{{context.azure.resourceNameHash}}'
           capabilitiesToAdd: [
             'EnableMongo'
           ]
@@ -183,7 +183,7 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
         kind: 'bicep'
         source: 'mcr.microsoft.com/bicep/avm/res/db-for-postgre-sql/flexible-server:0.15.2'
         parameters: {
-          name: 'postgres-{{context.azure.resourceNameHash}}'
+          name: 'pgsql-{{context.azure.resourceNameHash}}'
           administratorLogin: '{{context.resource.properties.username}}'
           administratorLoginPassword: '{{context.resource.properties.password}}'
           authConfig: {
@@ -261,7 +261,7 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
         kind: 'bicep'
         source: 'mcr.microsoft.com/bicep/avm/res/service-bus/namespace:0.16.2'
         parameters: {
-          name: 'sb-{{context.azure.resourceNameHash}}'
+          name: 'sbns-{{context.azure.resourceNameHash}}'
           skuObject: {
             name: 'Standard'
           }
@@ -288,7 +288,7 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
         kind: 'bicep'
         source: 'mcr.microsoft.com/bicep/avm/res/event-hub/namespace:0.14.2'
         parameters: {
-          name: 'eh-{{context.azure.resourceNameHash}}'
+          name: 'evhns-{{context.azure.resourceNameHash}}'
           skuName: 'Standard'
           skuCapacity: 1
           disableLocalAuth: false
