@@ -35,6 +35,13 @@ on:
 
 permissions: {}
 
+# Only one Azure validation run per PR (or per ref) at a time. This keeps a single
+# pending approval per PR, so a reviewer can't be presented with several runs for
+# different head SHAs and approve the wrong one.
+concurrency:
+  group: validate-azure-recipes-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Detect whether Azure-related files changed. For non-PR events (push, merge_group,
   # workflow_dispatch) the output defaults to 'true' so tests always run.
@@ -100,7 +107,7 @@ jobs:
   # Trust is determined by:
   #   1. Same-repo PR (head repo == base repo): trusted (only users with write access
   #      can push branches to the repo).
-  #   2. Fork PR: external (requires approval).
+  #   2. Fork PR: external — routed to the approval-gated 'azure' Environment below.
   check-trust:
     name: Check Trust
     needs: [check-paths]
@@ -131,6 +138,14 @@ jobs:
 
   # Approval gate for external contributors. Uses GitHub Environment protection
   # to require manual approval before running tests on PRs from non-members.
+  #
+  # NOTE: the 'azure' Environment is deliberately bound to this gate job rather than
+  # to 'validate-azure-recipes' below. Setting 'environment:' on a job replaces the
+  # 'ref:' segment of the GitHub OIDC subject claim with 'environment:<name>', which
+  # no longer matches the Azure federated identity credential, so Azure Login fails
+  # with "no matching federated identity record found". Moving the gate onto the
+  # credential-holding job therefore requires new federated identity credentials in
+  # Azure first.
   approval-gate:
     name: Approval Gate
     needs: [check-trust]
@@ -142,18 +157,30 @@ jobs:
     permissions: {}
     steps:
       - name: Approved
-        run: echo "Tests approved to run for commit ${{ github.event.pull_request.head.sha }}"
+        run: |
+          echo "Approving PR #${{ github.event.pull_request.number }}"
+          echo "Head repo: ${{ github.event.pull_request.head.repo.full_name }}"
+          echo "Head SHA:  ${{ github.event.pull_request.head.sha }}"
+          echo "Review THIS EXACT SHA before approving — approval grants it Azure credentials."
 
   validate-azure-recipes:
     needs: [check-paths, check-trust, approval-gate]
-    # For pull_request_target, require approval-gate to be 'success' or 'skipped' — block
-    # on 'cancelled' (rejected approval) to prevent running PR code with secrets.
+    # Fail-closed for pull_request_target: check-trust must have succeeded, and the
+    # approval gate must have succeeded unless check-trust proved the PR is same-repo.
+    # A rejected approval yields 'cancelled'/'failure', neither of which passes.
     # For push, workflow_dispatch, and merge_group, both gate jobs are skipped.
     if: |
       !cancelled() &&
       needs.check-paths.outputs.azure-changed == 'true' &&
-      (needs.check-trust.result == 'success' || needs.check-trust.result == 'skipped') &&
-      (needs.approval-gate.result == 'success' || needs.approval-gate.result == 'skipped')
+      (
+        (github.event_name == 'pull_request_target' &&
+         needs.check-trust.result == 'success' &&
+         (needs.approval-gate.result == 'success' ||
+          (needs.approval-gate.result == 'skipped' && needs.check-trust.outputs.is-external == 'false'))) ||
+        (github.event_name != 'pull_request_target' &&
+         needs.check-trust.result == 'skipped' &&
+         needs.approval-gate.result == 'skipped')
+      )
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     name: Validate Azure ${{ matrix.recipe }} Recipes
@@ -174,11 +201,27 @@ jobs:
             echo "ref=${{ github.ref }}" >> "${GITHUB_OUTPUT}"
           fi
 
+      # actions/checkout v7.0.1 refuses to check out fork PR code from a
+      # pull_request_target workflow unless this opt-in is set (see
+      # actions/checkout#2454 and https://gh.io/securely-using-pull_request_target).
+      #
+      # We opt in deliberately: for fork PRs this job only runs after the
+      # 'approval-gate' job, which requires a maintainer to approve the 'azure'
+      # Environment before the exact head SHA below is checked out.
+      # 'persist-credentials: false' keeps no write-capable git credential on disk,
+      # and the job runs on an ephemeral GitHub-hosted runner against a throwaway
+      # resource group.
+      #
+      # SECURITY: approval authorizes arbitrary PR-authored code (Makefile targets,
+      # Bicep, Terraform) to execute with this repository's Azure identity. Approve
+      # only after reading the diff, including build scripts and Terraform
+      # provisioners — not just the recipe templates.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.checkout-target.outputs.ref }}
           persist-credentials: false
+          allow-unsafe-pr-checkout: true
 
       - name: Azure Login
         uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
