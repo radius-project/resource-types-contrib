@@ -72,11 +72,13 @@ types:
               description: "(Required) The administrator password for the MySQL database. Marked `x-radius-sensitive`: Radius encrypts it at rest, redacts it on reads, and exposes it decrypted only to the recipe as `{{context.resource.properties.password}}`."
             database:
               type: string
+              default: mysql_db
               description: "(Optional) The name of the database. Defaults to `mysql_db` if not provided."
             version:
               type: string
               enum: ['5.7', '8.0', '8.4']
-              description: "(Optional) The major MySQL server version in the X.Y format. Assumed to be 8.4 if not specified."
+              default: '8.4'
+              description: "(Optional) The major MySQL server version in the X.Y format. Defaults to `8.4` if not provided."
             host:
               type: string
               description: The host name used to connect to the database. Mapped from the recipe module's output.

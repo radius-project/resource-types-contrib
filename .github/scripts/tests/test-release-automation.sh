@@ -22,6 +22,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SYNC_SCRIPT="${REPO_ROOT}/.github/scripts/compute-radius-sync-payload.sh"
 VERSION_SCRIPT="${REPO_ROOT}/.github/scripts/release/next-version.sh"
 BUNDLE_SCRIPT="${REPO_ROOT}/.github/scripts/release/build-recipe-pack-bundle.sh"
+TAGS_SCRIPT="${REPO_ROOT}/.github/scripts/resolve-recipe-tags.sh"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/rtc-release-tests-XXXXXX")"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
@@ -223,6 +224,28 @@ test_repo_wide_release_covers_all_units() {
     assert_eq "Radius.Data" "$(jq -r '.namespaces[0].namespace' <<<"$payload")" "repo-wide namespace alias"
 }
 
+test_recipe_tags() {
+    local sha="0123456789abcdef0123456789abcdef01234567"
+
+    # The commit SHA is unconditional: Radius pins a namespace to a SHA and
+    # reuses it verbatim as the recipe's OCI tag, so every publish must produce
+    # that tag no matter which channel triggered it.
+    assert_eq "$sha edge" "$(COMMIT_SHA="$sha" bash "$TAGS_SCRIPT")" "edge tags"
+    assert_eq "$sha 0.51.0 latest" \
+        "$(COMMIT_SHA="$sha" RELEASE_VERSION=0.51.0 bash "$TAGS_SCRIPT")" "stable release tags"
+    assert_eq "$sha 0.51.0-rc.1" \
+        "$(COMMIT_SHA="$sha" RELEASE_VERSION=0.51.0-rc.1 bash "$TAGS_SCRIPT")" "prerelease tags"
+    assert_eq "$sha" \
+        "$(COMMIT_SHA="$sha" PIN_ONLY=true bash "$TAGS_SCRIPT")" "pin-only tags"
+
+    # An abbreviated or uppercase SHA would never match the pin Radius records.
+    for bad in "${sha:0:7}" "${sha^^}" "" "not-a-sha"; do
+        if COMMIT_SHA="$bad" bash "$TAGS_SCRIPT" >/dev/null 2>&1; then
+            fail "invalid commit SHA '$bad' was accepted"
+        fi
+    done
+}
+
 command -v jq >/dev/null 2>&1 || fail "jq is required"
 test_deleted_namespace
 test_renamed_namespace
@@ -232,4 +255,5 @@ test_recipe_pack_bundle
 test_recipe_pack_release_is_synced
 test_recipe_pack_push_is_synced
 test_repo_wide_release_covers_all_units
+test_recipe_tags
 echo "Release automation tests passed"
