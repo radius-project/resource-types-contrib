@@ -169,7 +169,7 @@ var volumeItems = filter(items(resourceVolumes), vol => contains(vol.value, 'per
 var aciVolumeNames = map(volumeItems, vol => vol.key)
 var aciVolumes = reduce(volumeItems, [], (acc, vol) => concat(acc, [
   union(
-    { name: vol.key },
+    { name: toLower(vol.key) },
     contains(vol.value, 'persistentVolume') && contains(resolvedConnections, vol.key) ? {
       azureFile: {
         shareName: string(resolvedConnections[vol.key].?properties.?status.?computedValues.?shareName ?? '')
@@ -473,7 +473,7 @@ resource containerGroupProfile 'Microsoft.ContainerInstance/containerGroupProfil
             volumeMounts: reduce(filter(item.value.volumeMounts, vm => contains(aciVolumeNames, vm.volumeName)), [], (vmAcc, vm) => concat(vmAcc, [
               union(
                 {
-                  name: vm.volumeName
+                  name: toLower(vm.volumeName)
                   mountPath: vm.mountPath
                 },
                 (vm.?readOnly ?? false) == true ? { readOnly: true } : {}
@@ -516,7 +516,7 @@ resource containerGroupProfile 'Microsoft.ContainerInstance/containerGroupProfil
             volumeMounts: reduce(filter(item.value.volumeMounts, vm => contains(aciVolumeNames, vm.volumeName)), [], (vmAcc, vm) => concat(vmAcc, [
               union(
                 {
-                  name: vm.volumeName
+                  name: toLower(vm.volumeName)
                   mountPath: vm.mountPath
                 },
                 (vm.?readOnly ?? false) == true ? { readOnly: true } : {}
@@ -608,9 +608,9 @@ resource nGroups 'Microsoft.ContainerInstance/NGroups@2024-11-01-preview' = {
     ]
   }
   tags: {
-    'reprovision.enabled': true
-    'metadata.container.environmentVariable.orchestratorId': true
-    'rollingupdate.replace.enabled': true
+    'reprovision.enabled': 'true'
+    'metadata.container.environmentVariable.orchestratorId': 'true'
+    'rollingupdate.replace.enabled': 'true'
   }
   dependsOn: [
     containerGroupProfile
