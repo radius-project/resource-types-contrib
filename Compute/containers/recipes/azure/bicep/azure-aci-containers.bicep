@@ -134,6 +134,7 @@ var firstContainerWithReadinessProbe = length(filter(regularContainerItems, item
 // Extract connection data from linked resources (merged with resource properties)
 var resourceConnections = context.resource.?connections ?? {}
 var connectionDefinitions = context.resource.properties.?connections ?? {}
+var connectionItems = items(connectionDefinitions)
 
 // Properties to exclude from connection environment variables
 var excludedProperties = ['recipe', 'status', 'provisioningState']
@@ -166,15 +167,17 @@ var connectionEnvVars = reduce(items(resourceConnections), [], (acc, conn) =>
 // Instead, secrets are typically provided via secure environment variables (AZURE_CLIENT_ID, AZURE_KEYVAULT_URI)
 // or accessed at runtime (e.g., via managed identity + Azure Key Vault).
 var volumeItems = filter(items(resourceVolumes), vol => contains(vol.value, 'persistentVolume') || contains(vol.value, 'emptyDir'))
-var aciVolumeNames = map(volumeItems, vol => vol.key)
-var aciVolumes = reduce(volumeItems, [], (acc, vol) => concat(acc, [
+// Connection names do not have to match volume names, so persistent volumes are matched by resource ID.
+var aciVolumeItems = filter(volumeItems, vol => contains(vol.value, 'emptyDir') || (contains(vol.value, 'persistentVolume') && length(filter(connectionItems, conn => string(conn.value.?source ?? '') == string(vol.value.persistentVolume.resourceId) && contains(resolvedConnections, conn.key))) > 0))
+var aciVolumeNames = map(aciVolumeItems, vol => vol.key)
+var aciVolumes = reduce(aciVolumeItems, [], (acc, vol) => concat(acc, [
   union(
     { name: toLower(vol.key) },
-    contains(vol.value, 'persistentVolume') && contains(resolvedConnections, vol.key) ? {
+    contains(vol.value, 'persistentVolume') ? {
       azureFile: {
-        shareName: string(resolvedConnections[vol.key].?properties.?status.?computedValues.?shareName ?? '')
-        storageAccountName: string(resolvedConnections[vol.key].?properties.?status.?computedValues.?storageAccountName ?? '')
-        storageAccountKey: string(resolvedConnections[vol.key].?properties.?status.?secrets.?storageAccountKey.?Value ?? '')
+        shareName: string(resolvedConnections[filter(connectionItems, conn => string(conn.value.?source ?? '') == string(vol.value.persistentVolume.resourceId) && contains(resolvedConnections, conn.key))[0].key].?properties.?status.?computedValues.?shareName ?? '')
+        storageAccountName: string(resolvedConnections[filter(connectionItems, conn => string(conn.value.?source ?? '') == string(vol.value.persistentVolume.resourceId) && contains(resolvedConnections, conn.key))[0].key].?properties.?status.?computedValues.?storageAccountName ?? '')
+        storageAccountKey: string(resolvedConnections[filter(connectionItems, conn => string(conn.value.?source ?? '') == string(vol.value.persistentVolume.resourceId) && contains(resolvedConnections, conn.key))[0].key].?properties.?status.?secrets.?storageAccountKey.?Value ?? '')
         readOnly: string(vol.value.persistentVolume.?accessMode ?? '') == 'ReadOnlyMany'
       }
     } : {},
