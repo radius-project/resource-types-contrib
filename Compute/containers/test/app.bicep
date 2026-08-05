@@ -192,6 +192,64 @@ resource noConnectionsContainer 'Radius.Compute/containers@2025-08-01-preview' =
   }
 }
 
+// ---------------------------------------------------------------------------
+// Issue #135 regression coverage: predictable service-to-service DNS.
+//
+// The containers recipe emits a short-name alias Service equal to the container
+// resource name, so a peer must be reachable at http://<resource-name>:<port>.
+// `dnsServer` (resource name `dns-server`) exposes port 80. `dnsClient` has an
+// init container that blocks until it can reach the server by that exact
+// resource-name DNS (`http://dns-server:80`). If the alias Service is missing
+// (the bug this fix addresses), the init container never succeeds, the client
+// pod never becomes ready, and this test deployment fails.
+// ---------------------------------------------------------------------------
+resource dnsServer 'Radius.Compute/containers@2025-08-01-preview' = {
+  name: 'dns-server'
+  properties: {
+    environment: environment
+    application: app.id
+    containers: {
+      server: {
+        image: 'nginx:alpine'
+        ports: {
+          web: {
+            containerPort: 80
+            protocol: 'TCP'
+          }
+        }
+      }
+    }
+  }
+}
+
+resource dnsClient 'Radius.Compute/containers@2025-08-01-preview' = {
+  name: 'dns-client'
+  properties: {
+    environment: environment
+    application: app.id
+    containers: {
+      // Blocks until the server resolves by its resource-name DNS. Retries for
+      // up to ~120s so the server has time to come up in the same deployment.
+      waitForServer: {
+        initContainer: true
+        image: 'busybox:latest'
+        command: ['sh', '-c']
+        args: [
+          'echo "Resolving peer by resource name (issue #135)..."; for i in $(seq 1 60); do if wget -q -T 2 -O /dev/null http://dns-server:80; then echo "Reached http://dns-server:80 by resource-name DNS"; exit 0; fi; echo "attempt $i: dns-server not reachable yet"; sleep 2; done; echo "FAILED: could not reach http://dns-server:80 by resource-name DNS"; exit 1'
+        ]
+      }
+      client: {
+        image: 'nginx:alpine'
+        ports: {
+          web: {
+            containerPort: 80
+          }
+        }
+      }
+    }
+  }
+}
+
 resource myPersistentVolume 'Radius.Compute/persistentVolumes@2025-08-01-preview' = {
   name: 'mypersistentvolume'
   properties: {
