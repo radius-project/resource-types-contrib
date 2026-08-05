@@ -429,7 +429,7 @@ resource containerGroupProfile 'Microsoft.ContainerInstance/containerGroupProfil
       // Init containers (initContainer: true) are placed in the separate initContainers[] array below.
       // Regular containers only — init containers are excluded from this array.
       containers: reduce(regularContainerItems, [], (acc, item) => concat(acc, [{
-        name: item.key
+        name: toLower(item.key)
         properties: union(
           {
             image: item.value.image
@@ -491,7 +491,7 @@ resource containerGroupProfile 'Microsoft.ContainerInstance/containerGroupProfil
       // image, securityContext, and volumeMounts — but NOT ports, resources, livenessProbe,
       // readinessProbe, or configMap.
       initContainers: reduce(initContainerItems, [], (acc, item) => concat(acc, [{
-        name: item.key
+        name: toLower(item.key)
         properties: union(
           {
             image: item.value.image
