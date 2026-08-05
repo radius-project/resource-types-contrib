@@ -18,7 +18,7 @@ param location string = resourceGroup().location
 // ---------------------------------------------------------------------------
 
 // Uses a short prefix + uniqueString hash to stay within the 3–24 char Key Vault name limit.
-var keyVaultName = 'kv-${take(context.resource.name, 7)}-${uniqueString(context.resource.name)}'
+var keyVaultName = 'kv-${take(context.resource.name, 7)}-${uniqueString(context.resource.id, resourceGroup().id)}'
 var identityName = context.resource.name
 
 // If secretKind is not set, set to 'generic'
@@ -164,4 +164,3 @@ output result object = {
     userAssignedIdentityPrincipalId: uai.properties.principalId
   }
 }
-
