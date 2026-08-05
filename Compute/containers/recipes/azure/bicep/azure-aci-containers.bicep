@@ -160,7 +160,7 @@ var connectionEnvVars = reduce(items(resourceConnections), [], (acc, conn) =>
 )
 
 // Build ACI volumes - similar pattern to kubernetes-containers.bicep but
-// for ACI we resolve storage account details from computedValues/secrets
+// for ACI we resolve storage account details from computedValues
 // instead of PVC name, because ACI needs explicit Azure File credentials.
 // Note: Kubernetes-style `secretName` volumes are not supported in ACI.
 // ACI does not support mounting secrets from external stores as volumes.
@@ -168,22 +168,16 @@ var connectionEnvVars = reduce(items(resourceConnections), [], (acc, conn) =>
 // or accessed at runtime (e.g., via managed identity + Azure Key Vault).
 var volumeItems = filter(items(resourceVolumes), vol => contains(vol.value, 'persistentVolume') || contains(vol.value, 'emptyDir'))
 // Connection names do not have to match volume names, so persistent volumes are matched by resource ID.
-var aciVolumeItems = filter(volumeItems, vol => contains(vol.value, 'emptyDir') || (contains(vol.value, 'persistentVolume') && length(filter(connectionItems, conn => string(conn.value.?source ?? '') == string(vol.value.persistentVolume.resourceId) && contains(resolvedConnections, conn.key))) > 0))
+var persistentVolumeItems = filter(volumeItems, vol => contains(vol.value, 'persistentVolume') && length(filter(connectionItems, conn => string(conn.value.?source ?? '') == string(vol.value.persistentVolume.resourceId) && contains(resolvedConnections, conn.key))) > 0)
+var emptyDirVolumeItems = filter(volumeItems, vol => contains(vol.value, 'emptyDir'))
+var persistentVolumeConnectionKeys = map(persistentVolumeItems, vol => filter(connectionItems, conn => string(conn.value.?source ?? '') == string(vol.value.persistentVolume.resourceId) && contains(resolvedConnections, conn.key))[0].key)
+var persistentVolumeNames = map(persistentVolumeItems, vol => vol.key)
+var aciVolumeItems = concat(persistentVolumeItems, emptyDirVolumeItems)
 var aciVolumeNames = map(aciVolumeItems, vol => vol.key)
-var aciVolumes = reduce(aciVolumeItems, [], (acc, vol) => concat(acc, [
-  union(
-    { name: toLower(vol.key) },
-    contains(vol.value, 'persistentVolume') ? {
-      azureFile: {
-        shareName: string(resolvedConnections[filter(connectionItems, conn => string(conn.value.?source ?? '') == string(vol.value.persistentVolume.resourceId) && contains(resolvedConnections, conn.key))[0].key].?properties.?status.?computedValues.?shareName ?? '')
-        storageAccountName: string(resolvedConnections[filter(connectionItems, conn => string(conn.value.?source ?? '') == string(vol.value.persistentVolume.resourceId) && contains(resolvedConnections, conn.key))[0].key].?properties.?status.?computedValues.?storageAccountName ?? '')
-        storageAccountKey: string(resolvedConnections[filter(connectionItems, conn => string(conn.value.?source ?? '') == string(vol.value.persistentVolume.resourceId) && contains(resolvedConnections, conn.key))[0].key].?properties.?status.?secrets.?storageAccountKey.?Value ?? '')
-        readOnly: string(vol.value.persistentVolume.?accessMode ?? '') == 'ReadOnlyMany'
-      }
-    } : {},
-    contains(vol.value, 'emptyDir') ? { emptyDir: {} } : {}
-  )
-]))
+
+resource storageAccounts 'Microsoft.Storage/storageAccounts@2023-05-01' existing = [for connectionKey in persistentVolumeConnectionKeys: {
+  name: string(resolvedConnections[connectionKey].?properties.?status.?computedValues.?storageAccountName ?? '')
+}]
 
 // DDoS Protection Plan — use existing if already present (limit: 1 per subscription per region)
 resource ddosProtectionPlan 'Microsoft.Network/ddosProtectionPlans@2022-07-01' existing = if (enableDdosProtection) {
@@ -430,9 +424,8 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-07-01' = {
 resource containerGroupProfile 'Microsoft.ContainerInstance/containerGroupProfiles@2024-11-01-preview' = {
   name: cgProfileName
   location: effectiveLocation
-  properties: union(
-    {
-      sku: isConfidential ? 'Confidential' : 'Standard'
+  properties: {
+    sku: isConfidential ? 'Confidential' : 'Standard'
       // Init containers (initContainer: true) are placed in the separate initContainers[] array below.
       // Regular containers only — init containers are excluded from this array.
       containers: reduce(regularContainerItems, [], (acc, item) => concat(acc, [{
@@ -534,14 +527,26 @@ resource containerGroupProfile 'Microsoft.ContainerInstance/containerGroupProfil
           } : {}
         )
       }]))
-      volumes: !empty(aciVolumes)
-        ? aciVolumes
-        : [
-            {
-              name: 'cachevolume'
+      volumes: [for vol in aciVolumeItems: union(
+        {
+          name: toLower(vol.key)
+        },
+        contains(vol.value, 'persistentVolume')
+          ? {
+              azureFile: {
+                shareName: string(resolvedConnections[persistentVolumeConnectionKeys[indexOf(persistentVolumeNames, vol.key)]].?properties.?status.?computedValues.?shareName ?? '')
+                storageAccountName: storageAccounts[indexOf(persistentVolumeNames, vol.key)].name
+                storageAccountKey: storageAccounts[indexOf(persistentVolumeNames, vol.key)].listKeys().keys[0].value
+                readOnly: string(vol.value.persistentVolume.?accessMode ?? '') == 'ReadOnlyMany'
+              }
+            }
+          : {},
+        contains(vol.value, 'emptyDir')
+          ? {
               emptyDir: {}
             }
-          ]
+          : {}
+      )]
       restartPolicy: resourceProperties.?restartPolicy ?? 'Always'
       ipAddress: {
         ports: [
@@ -552,15 +557,12 @@ resource containerGroupProfile 'Microsoft.ContainerInstance/containerGroupProfil
         ]
         type: 'Private'
       }
-      osType: 'Linux'
-    },
-    isConfidential ? {
-      confidentialComputeProperties: {
+    osType: 'Linux'
+    confidentialComputeProperties: isConfidential ? {
         ccePolicy: ccePolicy
         isolationType: 'SevSnp'
-      }
-    } : {}
-  )
+      } : null
+  }
 }
 
 // NGroups
