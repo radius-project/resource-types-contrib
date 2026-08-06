@@ -351,30 +351,6 @@ resource services 'core/Service@v1' = [for svc in servicesConfig: {
   }
 }]
 
-// Short-name alias Service: when the resource has exactly one container with
-// ports, also expose a Service named after the container resource itself. This
-// gives peers a predictable, stable DNS name equal to the resource name
-// (e.g. http://<resource>:<port>) instead of requiring the
-// <resource>-<containerKey> form. Resource names are unique within a namespace,
-// so the alias is collision-safe. It is restricted to the single-service case
-// to avoid ambiguity about which container the bare resource name should target.
-resource aliasService 'core/Service@v1' = [for svc in (length(servicesConfig) == 1 ? servicesConfig : []): {
-  metadata: {
-    name: normalizedName
-    namespace: namespace
-    labels: union(labels, {
-      container: svc.containerName
-    })
-  }
-  spec: {
-    type: 'ClusterIP'
-    selector: {
-      'radapp.io/resource': resourceName
-    }
-    ports: svc.ports
-  }
-}]
-
 // Add Horizontal Pod Autoscaler (if autoScaling specified)
 var autoScaling = resourceProperties.?autoScaling
 var hasAutoScaling = autoScaling != null
@@ -434,11 +410,19 @@ resource hpa 'autoscaling/HorizontalPodAutoscaler@v2' = if (hasAutoScaling) {
 
 var deploymentResource = '/planes/kubernetes/local/namespaces/${namespace}/providers/apps/Deployment/${normalizedName}'
 var serviceResources = reduce(servicesConfig, [], (acc, svc) => concat(acc, ['/planes/kubernetes/local/namespaces/${namespace}/providers/core/Service/${normalizedName}-${svc.normalizedContainerName}']))
-var aliasServiceResources = length(servicesConfig) == 1 ? ['/planes/kubernetes/local/namespaces/${namespace}/providers/core/Service/${normalizedName}'] : []
 var hpaResource = hasAutoScaling ? ['/planes/kubernetes/local/namespaces/${namespace}/providers/autoscaling/HorizontalPodAutoscaler/${normalizedName}'] : []
 
-var allResources = concat([deploymentResource], serviceResources, aliasServiceResources, hpaResource)
+var allResources = concat([deploymentResource], serviceResources, hpaResource)
+
+// Expose this resource's in-cluster Service DNS host as a read-only output so peer
+// containers can address it by reference (`<peer>.properties.host`) instead of
+// hardcoding a Kubernetes Service name. Only a single-container resource has an
+// unambiguous Service, so `host` is populated just for that case; a multi-container
+// resource omits it and peers must target a specific container's Service directly.
+var singleService = length(servicesConfig) == 1
+var hostValue = singleService ? '${normalizedName}-${servicesConfig[0].normalizedContainerName}.${namespace}.svc.cluster.local' : ''
 
 output result object = {
   resources: allResources
+  values: singleService ? { host: hostValue } : {}
 }

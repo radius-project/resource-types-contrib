@@ -11,14 +11,15 @@ environment for both the Bicep and Terraform Kubernetes recipes; a green deploy
 [radius-project/ai-extensions#135](https://github.com/radius-project/ai-extensions/issues/135):
 
 - `dns-server` exposes port 80.
-- `dns-client` has an init container that blocks until it can reach the server by
-  its **resource name** DNS (`http://dns-server:80`), retrying for ~120s.
+- `dns-client` injects `dnsServer.properties.host` into an init container that
+  blocks until it can reach the server at that host, retrying for ~120s.
 
-The containers recipe emits a short-name alias Service equal to the container
-resource name, so `http://dns-server:80` resolves. Without that alias (the bug),
-the only Service is `dns-server-server`, the init container never succeeds, the
-client pod never becomes ready, and the deploy fails. The test therefore gates
-directly on the fix.
+A single-container resource publishes its Kubernetes Service DNS name as the
+read-only `host` output property, so peers address it by referencing
+`<peer>.properties.host` instead of hardcoding a Service name. Without that output
+(the bug), the reference is empty, the init container never succeeds, the client
+pod never becomes ready, and the deploy fails. The test therefore gates directly
+on the fix.
 
 ## Run
 
@@ -32,15 +33,14 @@ make test RESOURCE_TYPE_ROOT="$(pwd)" RECIPE_TYPE=bicep
 
 ## Manual verification
 
-After deploying `app.bicep`, confirm both the prefixed Service and the short-name
-alias exist in the test namespace:
+After deploying `app.bicep`, confirm the container Service exists and its DNS name
+matches the published `host` output:
 
 ```bash
 kubectl get svc -n testapp | grep dns-server
-# dns-server-server   ClusterIP   ...   80/TCP   (existing, routes depend on it)
-# dns-server          ClusterIP   ...   80/TCP   (short-name alias added by the fix)
+# dns-server-server   ClusterIP   ...   80/TCP   (the container's Service; `host` points here)
 
-# Resolve the peer by resource name from inside the cluster:
+# Resolve the peer by its published host from inside the cluster:
 kubectl run dns-check --rm -it --image=busybox:latest -n testapp -- \
-  wget -q -T 2 -O - http://dns-server:80
+  wget -q -T 2 -O - http://dns-server-server:80
 ```

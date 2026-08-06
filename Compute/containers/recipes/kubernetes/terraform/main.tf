@@ -648,45 +648,6 @@ resource "kubernetes_service" "services" {
   }
 }
 
-# ========================================
-# Short-name alias Service
-# ========================================
-# When the resource has exactly one container with ports, also expose a Service
-# named after the container resource itself so peers can resolve it by resource
-# name (predictable DNS, e.g. http://<resource>:<port>) rather than the
-# <resource>-<containerKey> form. Resource names are unique within a namespace,
-# so the alias is collision-safe. Restricted to the single-service case to avoid
-# ambiguity about which container the bare resource name targets.
-# See radius-project/ai-extensions#135.
-resource "kubernetes_service" "alias" {
-  for_each = length(local.services_config) == 1 ? local.services_config : {}
-
-  metadata {
-    name      = local.normalized_name
-    namespace = local.namespace
-    labels = merge(local.labels, {
-      container = each.value.original_container_name
-    })
-  }
-
-  spec {
-    type = "ClusterIP"
-
-    selector = {
-      "radapp.io/resource" = local.resource_name
-    }
-
-    dynamic "port" {
-      for_each = each.value.ports
-      content {
-        name        = port.value.name
-        port        = port.value.container_port
-        target_port = port.value.container_port
-        protocol    = port.value.protocol
-      }
-    }
-  }
-}
 resource "kubernetes_horizontal_pod_autoscaler_v2" "hpa" {
   count = local.has_autoscaling ? 1 : 0
 
@@ -755,8 +716,14 @@ output "result" {
     resources = concat(
       ["/planes/kubernetes/local/namespaces/${local.namespace}/providers/apps/Deployment/${local.normalized_name}"],
       [for svc_name, svc_config in local.services_config : "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Service/${local.normalized_name}-${svc_config.container_name}"],
-      length(local.services_config) == 1 ? ["/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Service/${local.normalized_name}"] : [],
       local.has_autoscaling ? ["/planes/kubernetes/local/namespaces/${local.namespace}/providers/autoscaling/HorizontalPodAutoscaler/${local.normalized_name}"] : []
     )
+    # Expose the single-container Service's in-cluster DNS host so peer containers
+    # can address this resource by referencing `<peer>.properties.host` instead of
+    # hardcoding a Service name. Populated only for the unambiguous single-container
+    # case; a multi-container resource omits it.
+    values = length(local.services_config) == 1 ? {
+      host = "${local.normalized_name}-${values(local.services_config)[0].container_name}.${local.namespace}.svc.cluster.local"
+    } : {}
   }
 }

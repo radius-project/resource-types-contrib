@@ -48,7 +48,7 @@ types:
       }
       ```
       
-      When a port is included, a Kubernetes Service of type ClusterIP is created for the container. Its name is `<container-resource-name>-<container-name>`, lowercased to satisfy Kubernetes naming rules — for the example above, `mycontainer-demo`. When the resource has a single container with ports, an additional short-name alias Service equal to the container resource name (`mycontainer`) is also created, giving a predictable, stable DNS name that peers can reference (for example, `http://mycontainer:3000`).
+      When a port is included, a Kubernetes Service of type ClusterIP is created for the container. Its name is `<container-resource-name>-<container-name>`, lowercased to satisfy Kubernetes naming rules — for the example above, `mycontainer-demo`. For a single-container resource, the recipe publishes that Service's in-cluster DNS name as the read-only `host` property, so peer containers can address this resource by referencing `<peer>.properties.host` instead of hardcoding a Service name.
       
       To create an ephemeral emptyDir shared between two containers add a Containers.properties.volumes.
 
@@ -100,6 +100,10 @@ types:
             application:
               type: string
               description: (Required) The Radius Application ID. `myApplication.id` for example.
+            host:
+              type: string
+              readOnly: true
+              description: "(Read Only) The in-cluster DNS host of this container's Kubernetes Service, populated by the recipe for a single-container resource (for example `mycontainer-demo.<namespace>.svc.cluster.local`). Peer containers address this resource by referencing `<peer>.properties.host` instead of hardcoding a Service name. Omitted for a multi-container resource, where peers must target a specific container's Service directly."
             connections:
               type: object
               description: '(Optional) Map of resources this container is dependent upon. `db: { source: db.id } for example.'
