@@ -36,6 +36,11 @@ var port = 5672
 var username = context.resource.properties.?username ?? 'radius'
 var password = context.resource.properties.?password ?? uniqueString(context.resource.id, 'rabbitmq')
 
+// The queue is pre-provisioned on the broker (see the definitions ConfigMap and the
+// init container below) so the named queue exists as soon as the broker is ready,
+// rather than relying on a client to declare it first.
+var queue = context.resource.properties.?queue ?? 'jobs'
+
 var labels = {
   'radapp.io/resource':       resourceName
   'radapp.io/application':    applicationName
@@ -47,9 +52,9 @@ var labels = {
 //////////////////////////////////////////
 // RabbitMQ credentials
 //
-// Store the generated broker credentials in a Kubernetes Secret so the RabbitMQ
-// container references them via secretKeyRef rather than carrying them inline in the
-// Pod spec (consistent with the MySQL/PostgreSQL Kubernetes recipes).
+// Store the broker credentials in a Kubernetes Secret so the init container reads them
+// via secretKeyRef (to build the definitions file) rather than carrying them inline in
+// the Pod spec (consistent with the MySQL/PostgreSQL Kubernetes recipes).
 //////////////////////////////////////////
 
 resource brokerSecret 'core/Secret@v1' = {
@@ -61,6 +66,29 @@ resource brokerSecret 'core/Secret@v1' = {
   stringData: {
     USERNAME: username
     PASSWORD: password
+  }
+}
+
+//////////////////////////////////////////
+// RabbitMQ definitions import config
+//
+// Point the broker at a definitions file (written by the init container below) so it
+// imports the vhost, user, permissions, and the pre-provisioned queue on boot. The
+// file lives in a shared emptyDir; this ConfigMap only carries the small conf.d
+// snippet that enables the import.
+//////////////////////////////////////////
+
+resource brokerConfig 'core/ConfigMap@v1' = {
+  metadata: {
+    name: '${uniqueName}-config'
+    namespace: namespace
+    labels: labels
+  }
+  data: {
+    '20-definitions.conf': join([
+      'definitions.import_backend = local_filesystem'
+      'definitions.local.path = /etc/rabbitmq/definitions/definitions.json'
+    ], '\n')
   }
 }
 
@@ -91,21 +119,23 @@ resource rabbitmq 'apps/Deployment@v1' = {
         labels: labels
       }
       spec: {
-        containers: [
+        // Generate the broker definitions file (vhost, user, permissions, and the
+        // pre-provisioned queue) into a shared volume before the broker starts.
+        // rabbitmqctl hash_password computes the password hash offline, so the
+        // plaintext password is only read from the mounted Secret and is never baked
+        // into the definitions file or the image.
+        initContainers: [
           {
-            // The running RabbitMQ broker. RABBITMQ_DEFAULT_USER/PASS provision a
-            // non-loopback user on first start so workload Pods can authenticate over
-            // AMQP 0-9-1 on port 5672.
-            name: 'rabbitmq'
+            name: 'generate-definitions'
             image: 'rabbitmq:${tag}'
-            ports: [
-              {
-                containerPort: port
-              }
+            command: [
+              'sh'
+              '-c'
+              'set -eu\nHASH=$(rabbitmqctl hash_password "$RABBITMQ_PASSWORD" | tail -n1 | tr -d \'[:space:]\')\nprintf \'{"users":[{"name":"%s","password_hash":"%s","hashing_algorithm":"rabbit_password_hashing_sha256","tags":["administrator"]}],"vhosts":[{"name":"/"}],"permissions":[{"user":"%s","vhost":"/","configure":".*","write":".*","read":".*"}],"queues":[{"name":"%s","vhost":"/","durable":true,"auto_delete":false,"arguments":{}}],"exchanges":[],"bindings":[]}\\n\' "$RABBITMQ_USER" "$HASH" "$RABBITMQ_USER" "$RABBITMQ_QUEUE" > /etc/rabbitmq/definitions/definitions.json'
             ]
             env: [
               {
-                name: 'RABBITMQ_DEFAULT_USER'
+                name: 'RABBITMQ_USER'
                 valueFrom: {
                   secretKeyRef: {
                     name: brokerSecret.metadata.name
@@ -114,13 +144,50 @@ resource rabbitmq 'apps/Deployment@v1' = {
                 }
               }
               {
-                name: 'RABBITMQ_DEFAULT_PASS'
+                name: 'RABBITMQ_PASSWORD'
                 valueFrom: {
                   secretKeyRef: {
                     name: brokerSecret.metadata.name
                     key: 'PASSWORD'
                   }
                 }
+              }
+              {
+                name: 'RABBITMQ_QUEUE'
+                value: queue
+              }
+            ]
+            volumeMounts: [
+              {
+                name: 'definitions'
+                mountPath: '/etc/rabbitmq/definitions'
+              }
+            ]
+          }
+        ]
+        containers: [
+          {
+            // The running RabbitMQ broker. On boot it imports the definitions file,
+            // which creates the non-loopback user and the pre-provisioned queue, then
+            // accepts AMQP 0-9-1 connections from workload Pods on port 5672.
+            name: 'rabbitmq'
+            image: 'rabbitmq:${tag}'
+            ports: [
+              {
+                containerPort: port
+              }
+            ]
+            volumeMounts: [
+              {
+                name: 'definitions'
+                mountPath: '/etc/rabbitmq/definitions'
+                readOnly: true
+              }
+              {
+                name: 'config'
+                mountPath: '/etc/rabbitmq/conf.d/20-definitions.conf'
+                subPath: '20-definitions.conf'
+                readOnly: true
               }
             ]
             resources: {
@@ -130,6 +197,18 @@ resource rabbitmq 'apps/Deployment@v1' = {
               limits: {
                 memory: '1Gi'
               }
+            }
+          }
+        ]
+        volumes: [
+          {
+            name: 'definitions'
+            emptyDir: {}
+          }
+          {
+            name: 'config'
+            configMap: {
+              name: brokerConfig.metadata.name
             }
           }
         ]
@@ -166,6 +245,7 @@ var host = '${svc.metadata.name}.${svc.metadata.namespace}.svc.cluster.local'
 output result object = {
   resources: [
     '/planes/kubernetes/local/namespaces/${brokerSecret.metadata.namespace}/providers/core/Secret/${brokerSecret.metadata.name}'
+    '/planes/kubernetes/local/namespaces/${brokerConfig.metadata.namespace}/providers/core/ConfigMap/${brokerConfig.metadata.name}'
     '/planes/kubernetes/local/namespaces/${svc.metadata.namespace}/providers/core/Service/${svc.metadata.name}'
     '/planes/kubernetes/local/namespaces/${rabbitmq.metadata.namespace}/providers/apps/Deployment/${rabbitmq.metadata.name}'
   ]
