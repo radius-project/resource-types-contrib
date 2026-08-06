@@ -2,7 +2,7 @@
 # Azure (a Kubernetes RabbitMQ recipe on the AKS cluster), AWS Amazon MQ via
 # Terraform modules, and Kubernetes RabbitMQ recipes. Only the recipePack source
 # plus parameters/outputs mapping changes per platform; the developer-facing queue
-# knob and readOnly connection surface stay identical.
+# name and readOnly connection surface stay identical.
 namespace: Radius.Messaging
 types:
   rabbitMQ:
@@ -51,7 +51,7 @@ types:
             queue:
               type: string
               default: jobs
-              description: "(Optional) The queue name to create. Defaults to `jobs` if not provided."
+              description: "(Optional) The logical queue name your application uses. RabbitMQ creates queues on demand when a client first declares them, so the broker recipe does not pre-provision this queue; it names the queue your workload is expected to declare. Defaults to `jobs` if not provided."
             host:
               type: string
               description: The host or namespace name used to connect to the queue. Mapped from the recipe module's output.

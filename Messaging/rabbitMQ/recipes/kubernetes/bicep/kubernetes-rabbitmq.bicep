@@ -41,6 +41,26 @@ var labels = {
 }
 
 //////////////////////////////////////////
+// RabbitMQ credentials
+//
+// Store the generated broker credentials in a Kubernetes Secret so the RabbitMQ
+// container references them via secretKeyRef rather than carrying them inline in the
+// Pod spec (consistent with the MySQL/PostgreSQL Kubernetes recipes).
+//////////////////////////////////////////
+
+resource brokerSecret 'core/Secret@v1' = {
+  metadata: {
+    name: '${resourceName}-credentials'
+    namespace: namespace
+    labels: labels
+  }
+  stringData: {
+    USERNAME: username
+    PASSWORD: password
+  }
+}
+
+//////////////////////////////////////////
 // RabbitMQ Deployment
 //////////////////////////////////////////
 
@@ -82,11 +102,21 @@ resource rabbitmq 'apps/Deployment@v1' = {
             env: [
               {
                 name: 'RABBITMQ_DEFAULT_USER'
-                value: username
+                valueFrom: {
+                  secretKeyRef: {
+                    name: brokerSecret.metadata.name
+                    key: 'USERNAME'
+                  }
+                }
               }
               {
                 name: 'RABBITMQ_DEFAULT_PASS'
-                value: password
+                valueFrom: {
+                  secretKeyRef: {
+                    name: brokerSecret.metadata.name
+                    key: 'PASSWORD'
+                  }
+                }
               }
             ]
             resources: {
@@ -131,6 +161,7 @@ var host = '${svc.metadata.name}.${svc.metadata.namespace}.svc.cluster.local'
 
 output result object = {
   resources: [
+    '/planes/kubernetes/local/namespaces/${brokerSecret.metadata.namespace}/providers/core/Secret/${brokerSecret.metadata.name}'
     '/planes/kubernetes/local/namespaces/${svc.metadata.namespace}/providers/core/Service/${svc.metadata.name}'
     '/planes/kubernetes/local/namespaces/${rabbitmq.metadata.namespace}/providers/apps/Deployment/${rabbitmq.metadata.name}'
   ]
