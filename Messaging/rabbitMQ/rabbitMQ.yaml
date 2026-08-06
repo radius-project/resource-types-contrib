@@ -50,7 +50,8 @@ types:
               description: "(Optional) The Radius Application ID. `myApplication.id` for example."
             queue:
               type: string
-              description: "(Optional) The logical queue name your application uses. RabbitMQ creates queues on demand when a client first declares them, so the broker Recipe does not pre-provision this queue; it names the queue your workload is expected to declare."
+              default: jobs
+              description: "(Optional) The logical queue name your application uses. RabbitMQ creates queues on demand when a client first declares them, so the broker Recipe does not pre-provision this queue; it names the queue your workload is expected to declare. Defaults to `jobs` if not provided."
             host:
               type: string
               description: The host or namespace name used to connect to the queue. Mapped from the recipe module's output.
