@@ -5,10 +5,10 @@
 environment for both the Bicep and Terraform Kubernetes recipes; a green deploy
 (and clean delete) is the pass condition.
 
-## Issue #135 regression: predictable service-to-service DNS
+## Predictable service-to-service DNS
 
-`app.bicep` includes a `dns-server` / `dns-client` pair that reproduces
-[radius-project/ai-extensions#135](https://github.com/radius-project/ai-extensions/issues/135):
+`app.bicep` includes a `dns-server` / `dns-client` pair that exercises
+predictable service-to-service DNS:
 
 - `dns-server` exposes port 80.
 - `dns-client` injects `dnsServer.properties.host` into an init container that
@@ -16,10 +16,10 @@ environment for both the Bicep and Terraform Kubernetes recipes; a green deploy
 
 A single-container resource publishes its Kubernetes Service DNS name as the
 read-only `host` output property, so peers address it by referencing
-`<peer>.properties.host` instead of hardcoding a Service name. Without that output
-(the bug), the reference is empty, the init container never succeeds, the client
-pod never becomes ready, and the deploy fails. The test therefore gates directly
-on the fix.
+`<peer>.properties.host` instead of hardcoding a Service name. Without that output,
+the reference is empty, the init container never succeeds, the client pod never
+becomes ready, and the deploy fails. The test therefore gates directly on the
+`host` output.
 
 ## Run
 
