@@ -29,11 +29,12 @@ var port = 5672
 // The default `guest` account is restricted to loopback connections, so a client
 // running in another Pod cannot authenticate as `guest`. A non-`guest` user is not
 // loopback-restricted, so the broker accepts AMQP connections from workload Pods.
-// These are in-cluster credentials for a single-replica dev broker; they are
-// materialized into the managed Radius.Security/secrets resource via the
-// connectionString output below, never written onto the rabbitMQ resource.
-var username = 'radius'
-var password = uniqueString(context.resource.id, 'rabbitmq')
+// The username/password come from the resource properties when supplied; otherwise
+// the Recipe falls back to a default user and a generated password. Either way the
+// credentials are materialized into the managed Radius.Security/secrets resource via
+// the connectionString output below, and are never written onto the rabbitMQ resource.
+var username = context.resource.properties.?username ?? 'radius'
+var password = context.resource.properties.?password ?? uniqueString(context.resource.id, 'rabbitmq')
 
 var labels = {
   'radapp.io/resource':       resourceName

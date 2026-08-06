@@ -13,6 +13,8 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `environment` | string | Required | The Radius Environment ID. Typically set by the `rad` CLI. |
 | `application` | string | Optional | The Radius Application ID. |
 | `queue` | string | Optional | The logical queue name your application declares. RabbitMQ creates queues on demand, so the Recipe does not pre-provision it. Defaults to `jobs`. |
+| `username` | string | Optional | The username the broker is provisioned with. Defaults to `radius`. Avoid `guest` (loopback-only in RabbitMQ). |
+| `password` | string | Optional | The password the broker is provisioned with. If omitted, the Recipe generates one. Surfaced only through the managed secret's `connectionString`, never stored on the resource. |
 | `host` | string | Read only | The host or namespace name used to connect to the queue. Set from the Recipe module's output. |
 | `secrets` | object | Read only | Recipe secrets. `secrets.name` references the managed `Radius.Security/secrets` resource; `secrets.connectionString` is the secret key (delivered via that managed secret, never stored on the resource). |
 
