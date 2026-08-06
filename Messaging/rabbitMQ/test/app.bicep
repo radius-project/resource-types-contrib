@@ -16,6 +16,8 @@ resource queue 'Radius.Messaging/rabbitMQ@2025-08-01-preview' = {
     environment: environment
     application: app.id
     queue: 'jobs'
+    username: 'radius'
+    password: 'rabbitmq-test-password'
   }
 }
 
