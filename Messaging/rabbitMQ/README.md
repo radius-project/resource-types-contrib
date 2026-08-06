@@ -2,9 +2,9 @@
 
 ## Overview
 
-The **Radius.Messaging/rabbitMQ** resource type represents a queue-compatible messaging resource. It allows developers to create and connect to a queue as part of their Radius applications. The Azure Recipe Pack provisions this type with Azure Service Bus via the Service Bus AMQP endpoint.
+The **Radius.Messaging/rabbitMQ** resource type represents a RabbitMQ message broker that speaks AMQP 0-9-1. It allows developers to create and connect to a queue as part of their Radius applications. The Azure Recipe Pack provisions this type by running the official `rabbitmq` container on the target AKS cluster.
 
-> **Note:** Azure Service Bus exposes AMQP 1.0 but is not a RabbitMQ broker and does not provide RabbitMQ's native AMQP 0-9-1 wire protocol. The validated Azure recipe verifies provisioning and AMQP 1.0 connectivity rather than RabbitMQ-native broker compatibility.
+> **Note:** Azure has no first-party managed RabbitMQ, and Azure Service Bus exposes AMQP 1.0 (with an `Endpoint=sb://...` connection string) rather than RabbitMQ's native AMQP 0-9-1 wire protocol, so it is not a drop-in RabbitMQ broker. The Azure/AKS recipe therefore deploys a real RabbitMQ broker container and emits an `amqp://user:pass@host:5672` connection string that RabbitMQ clients connect to directly.
 
 Developer documentation is embedded in the resource type definition YAML file and is accessible via the `rad resource-type show Radius.Messaging/rabbitMQ` command.
 

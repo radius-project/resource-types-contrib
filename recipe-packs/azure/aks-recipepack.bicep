@@ -256,32 +256,14 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
           host: 'fullyQualifiedDomainName'
         }
       }
+      // Azure has no first-party managed RabbitMQ, and Azure Service Bus speaks
+      // AMQP 1.0 (with an `Endpoint=sb://...` connection string) rather than the
+      // AMQP 0-9-1 protocol RabbitMQ clients require. So this type deploys an actual
+      // RabbitMQ broker container onto the AKS cluster via the Kubernetes recipe,
+      // the same way the compute recipes above run on the cluster.
       'Radius.Messaging/rabbitMQ': {
         kind: 'bicep'
-        source: 'mcr.microsoft.com/bicep/avm/res/service-bus/namespace:0.16.2'
-        parameters: {
-          name: '{{context.resource.name}}'
-          skuObject: {
-            name: 'Standard'
-          }
-          zoneRedundant: false
-          disableLocalAuth: false
-          queues: [
-            {
-              name: '{{context.resource.properties.queue}}'
-            }
-          ]
-          enableTelemetry: false
-          lock: {
-            kind: 'None'
-          }
-        }
-        outputs: {
-          host: 'name'
-          secrets: {
-            connectionString: 'primaryConnectionString'
-          }
-        }
+        source: 'ghcr.io/radius-project/kube-recipes/rabbitmq:latest'
       }
       'Radius.Messaging/kafka': {
         kind: 'bicep'
