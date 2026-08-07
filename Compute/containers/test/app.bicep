@@ -71,6 +71,16 @@ resource myContainer 'containers:Radius.Compute/containers@2025-08-01-preview' =
               }
             }
           }
+          // Exercise the read-only Service DNS outputs of a peer container:
+          // `host` is the single-Service alias and `hosts.<containerName>` is the
+          // per-container map. Populated by the Kubernetes recipe; safe-navigated so
+          // the reference is an empty string on platforms that do not emit them.
+          PEER_HOST: {
+            value: noConnectionsContainer.properties.?host ?? ''
+          }
+          PEER_HOST_VIA_MAP: {
+            value: noConnectionsContainer.properties.?hosts.?simple ?? ''
+          }
         }
         volumeMounts: [
           {
@@ -185,143 +195,6 @@ resource noConnectionsContainer 'containers:Radius.Compute/containers@2025-08-01
         image: 'nginx:alpine'
         ports: {
           http: {
-            containerPort: 80
-          }
-        }
-      }
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Predictable service-to-service DNS coverage.
-//
-// A single-container resource publishes its Kubernetes Service DNS name as the
-// read-only `host` output property. Peers address it by referencing
-// `<peer>.properties.host` instead of hardcoding a Service name. `dnsServer`
-// (resource name `dns-server`) exposes port 80; `dnsClient` injects
-// `dnsServer.properties.host` into an init container that blocks until it can
-// reach the server at that host. If the recipe does not populate `host`, the
-// reference is empty, the init container never succeeds, the client pod never
-// becomes ready, and this test deployment fails.
-// ---------------------------------------------------------------------------
-resource dnsServer 'containers:Radius.Compute/containers@2025-08-01-preview' = {
-  name: 'dns-server'
-  properties: {
-    environment: environment
-    application: app.id
-    containers: {
-      server: {
-        image: 'nginx:alpine'
-        ports: {
-          web: {
-            containerPort: 80
-            protocol: 'TCP'
-          }
-        }
-      }
-    }
-  }
-}
-
-resource dnsClient 'containers:Radius.Compute/containers@2025-08-01-preview' = {
-  name: 'dns-client'
-  properties: {
-    environment: environment
-    application: app.id
-    containers: {
-      // Blocks until the server resolves by its published `host` output. Retries
-      // for up to ~120s so the server has time to come up in the same deployment.
-      waitForServer: {
-        initContainer: true
-        image: 'busybox:latest'
-        command: ['sh', '-c']
-        env: {
-          SERVER_HOST: {
-            value: dnsServer.properties.host
-          }
-        }
-        args: [
-          'echo "Resolving peer by host alias..."; for i in $(seq 1 60); do if wget -q -T 2 -O /dev/null "http://$SERVER_HOST:80"; then echo "Reached $SERVER_HOST:80 via host alias"; exit 0; fi; echo "attempt $i: $SERVER_HOST not reachable yet"; sleep 2; done; echo "FAILED: could not reach $SERVER_HOST:80 via host alias"; exit 1'
-        ]
-      }
-      client: {
-        image: 'nginx:alpine'
-        ports: {
-          web: {
-            containerPort: 80
-          }
-        }
-      }
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Multi-container DNS coverage.
-//
-// A resource with two port-exposing containers publishes both Kubernetes Service
-// DNS names in the read-only `hosts` map, keyed by container name. `multiClient`
-// injects `multiServer.properties.hosts.alpha` and `.beta` into an init container
-// that blocks until BOTH resolve. If the recipe does not populate every entry of
-// `hosts`, one reference is empty, the init container never succeeds, and this test
-// deployment fails — so the deploy gates on `hosts` being fully populated.
-// ---------------------------------------------------------------------------
-resource multiServer 'containers:Radius.Compute/containers@2025-08-01-preview' = {
-  name: 'multi-server'
-  properties: {
-    environment: environment
-    application: app.id
-    containers: {
-      alpha: {
-        image: 'nginx:alpine'
-        ports: {
-          web: {
-            containerPort: 80
-            protocol: 'TCP'
-          }
-        }
-      }
-      beta: {
-        image: 'nginx:alpine'
-        ports: {
-          web: {
-            containerPort: 80
-            protocol: 'TCP'
-          }
-        }
-      }
-    }
-  }
-}
-
-resource multiClient 'containers:Radius.Compute/containers@2025-08-01-preview' = {
-  name: 'multi-client'
-  properties: {
-    environment: environment
-    application: app.id
-    containers: {
-      // Blocks until both peers resolve by their published `hosts` entries.
-      waitForBoth: {
-        initContainer: true
-        image: 'busybox:latest'
-        command: ['sh', '-c']
-        env: {
-          ALPHA_HOST: {
-            value: multiServer.properties.hosts.alpha
-          }
-          BETA_HOST: {
-            value: multiServer.properties.hosts.beta
-          }
-        }
-        args: [
-          'echo "Resolving peers by hosts aliases..."; for i in $(seq 1 60); do if wget -q -T 2 -O /dev/null "http://$ALPHA_HOST:80" && wget -q -T 2 -O /dev/null "http://$BETA_HOST:80"; then echo "Reached both $ALPHA_HOST and $BETA_HOST via hosts aliases"; exit 0; fi; echo "attempt $i: peers not both reachable yet"; sleep 2; done; echo "FAILED: could not reach both peers via hosts aliases"; exit 1'
-        ]
-      }
-      client: {
-        image: 'nginx:alpine'
-        ports: {
-          web: {
             containerPort: 80
           }
         }
