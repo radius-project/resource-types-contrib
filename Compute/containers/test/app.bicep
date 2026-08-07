@@ -1,4 +1,5 @@
 extension radius
+extension containers
 
 param environment string
 
@@ -18,7 +19,7 @@ resource app 'Radius.Core/applications@2025-08-01-preview' = {
 }
 
 // Create a container that mounts the persistent volume
-resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
+resource myContainer 'containers:Radius.Compute/containers@2025-08-01-preview' = {
   name: 'myApp'
   properties: {
     environment: environment
@@ -69,6 +70,13 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
                 key: 'password'
               }
             }
+          }
+          // Exercise the read-only `hosts` map of a peer container: it maps each
+          // port-exposing container name to its Kubernetes Service DNS host. Populated
+          // by the Kubernetes recipe; safe-navigated so the reference is an empty string
+          // on platforms that do not emit it.
+          PEER_HOST: {
+            value: noConnectionsContainer.properties.?hosts.?simple ?? ''
           }
         }
         volumeMounts: [
@@ -174,7 +182,7 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
 }
 
 // Container with no connections - validates that the recipe handles missing connections gracefully
-resource noConnectionsContainer 'Radius.Compute/containers@2025-08-01-preview' = {
+resource noConnectionsContainer 'containers:Radius.Compute/containers@2025-08-01-preview' = {
   name: 'no-connections-app'
   properties: {
     environment: environment
