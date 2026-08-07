@@ -8,6 +8,12 @@ This folder contains the **Azure Recipe Pack** — a collection of Recipes that 
 
 Each pack declares a `Radius.Core/recipePacks` resource whose `recipes` map contains an entry for every Resource Type, and a `Radius.Core/environments` resource that references the pack and configures the Azure provider.
 
+## Azure resource naming
+
+Some Azure services require names that are unique across Azure, so their Recipes combine a short service prefix with `{{context.azure.resourceNameHash}}`. The expression returns the first 16 lowercase hexadecimal characters of a SHA-256 hash over the lowercased Azure resource-group ID and Radius resource ID. The same resource in the same resource group keeps its name across deployments, while changing either ID produces a different name.
+
+This Recipe Pack requires a Radius runtime that supports the `context.azure.resourceNameHash` direct-module expression. Earlier revisions used `context.resource.name` directly, and adopting this revision changes those Azure resource names, which may cause existing edge deployments to provision replacement resources.
+
 ## Recipes in this pack
 
 | Resource Type | Kind | Source |
