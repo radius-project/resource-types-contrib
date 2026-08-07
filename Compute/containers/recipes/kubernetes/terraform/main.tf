@@ -648,6 +648,9 @@ resource "kubernetes_service" "services" {
   }
 }
 
+# ========================================
+# Horizontal Pod Autoscaler
+# ========================================
 resource "kubernetes_horizontal_pod_autoscaler_v2" "hpa" {
   count = local.has_autoscaling ? 1 : 0
 
