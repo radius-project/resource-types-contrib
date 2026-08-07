@@ -71,14 +71,11 @@ resource myContainer 'containers:Radius.Compute/containers@2025-08-01-preview' =
               }
             }
           }
-          // Exercise the read-only Service DNS outputs of a peer container:
-          // `host` is the single-Service alias and `hosts.<containerName>` is the
-          // per-container map. Populated by the Kubernetes recipe; safe-navigated so
-          // the reference is an empty string on platforms that do not emit them.
+          // Exercise the read-only `hosts` map of a peer container: it maps each
+          // port-exposing container name to its Kubernetes Service DNS host. Populated
+          // by the Kubernetes recipe; safe-navigated so the reference is an empty string
+          // on platforms that do not emit it.
           PEER_HOST: {
-            value: noConnectionsContainer.properties.?host ?? ''
-          }
-          PEER_HOST_VIA_MAP: {
             value: noConnectionsContainer.properties.?hosts.?simple ?? ''
           }
         }

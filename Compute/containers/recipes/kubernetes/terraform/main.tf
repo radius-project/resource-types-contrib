@@ -731,13 +731,7 @@ output "result" {
     # Publish each port-exposing container's in-cluster Service DNS host as a read-only
     # output so peers can address it by reference instead of hardcoding a Service name.
     # `hosts` maps container name to its Service DNS host for every Service this resource
-    # creates; `host` is a convenience alias populated only when the resource exposes
-    # exactly one Service (the common single-container case).
-    values = merge(
-      length(local.container_hosts) > 0 ? { hosts = local.container_hosts } : {},
-      length(local.services_config) == 1 ? {
-        host = values(local.container_hosts)[0]
-      } : {}
-    )
+    # creates, so peers reference `<peer>.properties.hosts.<containerName>`.
+    values = length(local.container_hosts) > 0 ? { hosts = local.container_hosts } : {}
   }
 }
