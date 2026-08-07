@@ -419,7 +419,7 @@ var allResources = concat([deploymentResource], serviceResources, hpaResource)
 // `hosts` maps container name to its Service DNS host for every Service this resource
 // creates, so a multi-container resource exposes all of them. `host` is a convenience
 // alias populated only when the resource exposes exactly one Service (the common
-// single-container case, `<peer>.properties.host`).
+// single-container case, `<peer>.host`).
 var hostsMap = toObject(servicesConfig, svc => svc.containerName, svc => '${normalizedName}-${svc.normalizedContainerName}.${namespace}.svc.cluster.local')
 var singleService = length(servicesConfig) == 1
 var singleHost = singleService ? '${normalizedName}-${servicesConfig[0].normalizedContainerName}.${namespace}.svc.cluster.local' : ''

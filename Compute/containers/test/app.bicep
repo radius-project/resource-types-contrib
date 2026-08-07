@@ -197,9 +197,9 @@ resource noConnectionsContainer 'Radius.Compute/containers@2025-08-01-preview' =
 //
 // A single-container resource publishes its Kubernetes Service DNS name as the
 // read-only `host` output property. Peers address it by referencing
-// `<peer>.properties.host` instead of hardcoding a Service name. `dnsServer`
+// `<peer>.host` instead of hardcoding a Service name. `dnsServer`
 // (resource name `dns-server`) exposes port 80; `dnsClient` injects
-// `dnsServer.properties.host` into an init container that blocks until it can
+// `dnsServer.host` into an init container that blocks until it can
 // reach the server at that host. If the recipe does not populate `host`, the
 // reference is empty, the init container never succeeds, the client pod never
 // becomes ready, and this test deployment fails.
@@ -237,11 +237,11 @@ resource dnsClient 'Radius.Compute/containers@2025-08-01-preview' = {
         command: ['sh', '-c']
         env: {
           SERVER_HOST: {
-            value: dnsServer.properties.host
+            value: dnsServer.host
           }
         }
         args: [
-          'echo "Resolving peer by properties.host..."; for i in $(seq 1 60); do if wget -q -T 2 -O /dev/null "http://$SERVER_HOST:80"; then echo "Reached $SERVER_HOST:80 via properties.host"; exit 0; fi; echo "attempt $i: $SERVER_HOST not reachable yet"; sleep 2; done; echo "FAILED: could not reach $SERVER_HOST:80 via properties.host"; exit 1'
+          'echo "Resolving peer by host alias..."; for i in $(seq 1 60); do if wget -q -T 2 -O /dev/null "http://$SERVER_HOST:80"; then echo "Reached $SERVER_HOST:80 via host alias"; exit 0; fi; echo "attempt $i: $SERVER_HOST not reachable yet"; sleep 2; done; echo "FAILED: could not reach $SERVER_HOST:80 via host alias"; exit 1'
         ]
       }
       client: {
@@ -261,7 +261,7 @@ resource dnsClient 'Radius.Compute/containers@2025-08-01-preview' = {
 //
 // A resource with two port-exposing containers publishes both Kubernetes Service
 // DNS names in the read-only `hosts` map, keyed by container name. `multiClient`
-// injects `multiServer.properties.hosts.alpha` and `.beta` into an init container
+// injects `multiServer.hosts.alpha` and `.beta` into an init container
 // that blocks until BOTH resolve. If the recipe does not populate every entry of
 // `hosts`, one reference is empty, the init container never succeeds, and this test
 // deployment fails — so the deploy gates on `hosts` being fully populated.
@@ -307,14 +307,14 @@ resource multiClient 'Radius.Compute/containers@2025-08-01-preview' = {
         command: ['sh', '-c']
         env: {
           ALPHA_HOST: {
-            value: multiServer.properties.hosts.alpha
+            value: multiServer.hosts.alpha
           }
           BETA_HOST: {
-            value: multiServer.properties.hosts.beta
+            value: multiServer.hosts.beta
           }
         }
         args: [
-          'echo "Resolving peers by properties.hosts..."; for i in $(seq 1 60); do if wget -q -T 2 -O /dev/null "http://$ALPHA_HOST:80" && wget -q -T 2 -O /dev/null "http://$BETA_HOST:80"; then echo "Reached both $ALPHA_HOST and $BETA_HOST via properties.hosts"; exit 0; fi; echo "attempt $i: peers not both reachable yet"; sleep 2; done; echo "FAILED: could not reach both peers via properties.hosts"; exit 1'
+          'echo "Resolving peers by hosts aliases..."; for i in $(seq 1 60); do if wget -q -T 2 -O /dev/null "http://$ALPHA_HOST:80" && wget -q -T 2 -O /dev/null "http://$BETA_HOST:80"; then echo "Reached both $ALPHA_HOST and $BETA_HOST via hosts aliases"; exit 0; fi; echo "attempt $i: peers not both reachable yet"; sleep 2; done; echo "FAILED: could not reach both peers via hosts aliases"; exit 1'
         ]
       }
       client: {
