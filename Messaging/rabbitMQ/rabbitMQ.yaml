@@ -1,17 +1,19 @@
 # Portability note: this schema is platform-neutral so the same type works with
-# Azure AVM (Bicep), AWS Amazon MQ via Terraform modules, and Kubernetes RabbitMQ
-# recipes. Only the recipePack source plus parameters/outputs mapping changes per
-# platform; the developer-facing queue knob and readOnly connection surface stay
-# identical.
+# Azure (a Kubernetes RabbitMQ recipe on the AKS cluster), AWS Amazon MQ via
+# Terraform modules, and Kubernetes RabbitMQ recipes. Only the recipePack source
+# plus parameters/outputs mapping changes per platform; the developer-facing queue
+# name and readOnly connection surface stay identical.
 namespace: Radius.Messaging
 types:
   rabbitMQ:
     description: |
-      The Radius.Messaging/rabbitMQ Resource Type deploys a queue-compatible
-      messaging resource. In the Azure verification recipe, the platform engineer
-      maps this type to Azure Service Bus using the Service Bus AMQP endpoint. This
-      provisions the resource and maps its connection outputs; it does not prove
-      RabbitMQ broker API compatibility.
+      The Radius.Messaging/rabbitMQ Resource Type deploys a RabbitMQ message broker
+      that speaks AMQP 0-9-1. The Azure/AKS recipe runs the official `rabbitmq`
+      container on the target Kubernetes cluster (Azure has no first-party managed
+      RabbitMQ, and Azure Service Bus speaks AMQP 1.0 with an `Endpoint=sb://...`
+      string that RabbitMQ clients cannot use). The recipe emits an
+      `amqp://user:pass@host:5672` connection string that RabbitMQ clients connect
+      to directly.
       ```bicep
       resource queue 'Radius.Messaging/rabbitMQ@2025-08-01-preview' = {
         name: 'rabbitmq'
@@ -49,7 +51,14 @@ types:
             queue:
               type: string
               default: jobs
-              description: "(Optional) The queue name to create. Defaults to `jobs` if not provided."
+              description: "(Optional) The name of the queue to pre-provision on the broker. The Recipe creates this durable queue on the default virtual host when the broker starts, so it exists before your workload connects. Defaults to `jobs` if not provided."
+            username:
+              type: string
+              default: radius
+              description: "(Optional) The username the broker is provisioned with and that the emitted connection string authenticates as. Defaults to `radius` if not provided. Avoid `guest`, which RabbitMQ restricts to loopback connections."
+            password:
+              type: string
+              description: "(Optional) The password the broker is provisioned with and that the emitted connection string authenticates with. If not provided, the Recipe generates a value. It is written only into the managed `Radius.Security/secrets` resource (via the `connectionString`), never returned on this resource."
             host:
               type: string
               description: The host or namespace name used to connect to the queue. Mapped from the recipe module's output.
