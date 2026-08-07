@@ -1,4 +1,5 @@
 extension radius
+extension containers
 
 param environment string
 
@@ -18,7 +19,7 @@ resource app 'Radius.Core/applications@2025-08-01-preview' = {
 }
 
 // Create a container that mounts the persistent volume
-resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
+resource myContainer 'containers:Radius.Compute/containers@2025-08-01-preview' = {
   name: 'myApp'
   properties: {
     environment: environment
@@ -174,7 +175,7 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
 }
 
 // Container with no connections - validates that the recipe handles missing connections gracefully
-resource noConnectionsContainer 'Radius.Compute/containers@2025-08-01-preview' = {
+resource noConnectionsContainer 'containers:Radius.Compute/containers@2025-08-01-preview' = {
   name: 'no-connections-app'
   properties: {
     environment: environment
@@ -197,14 +198,14 @@ resource noConnectionsContainer 'Radius.Compute/containers@2025-08-01-preview' =
 //
 // A single-container resource publishes its Kubernetes Service DNS name as the
 // read-only `host` output property. Peers address it by referencing
-// `<peer>.properties.service.host` instead of hardcoding a Service name. `dnsServer`
+// `<peer>.properties.host` instead of hardcoding a Service name. `dnsServer`
 // (resource name `dns-server`) exposes port 80; `dnsClient` injects
-// `dnsServer.properties.service.host` into an init container that blocks until it can
+// `dnsServer.properties.host` into an init container that blocks until it can
 // reach the server at that host. If the recipe does not populate `host`, the
 // reference is empty, the init container never succeeds, the client pod never
 // becomes ready, and this test deployment fails.
 // ---------------------------------------------------------------------------
-resource dnsServer 'Radius.Compute/containers@2025-08-01-preview' = {
+resource dnsServer 'containers:Radius.Compute/containers@2025-08-01-preview' = {
   name: 'dns-server'
   properties: {
     environment: environment
@@ -223,7 +224,7 @@ resource dnsServer 'Radius.Compute/containers@2025-08-01-preview' = {
   }
 }
 
-resource dnsClient 'Radius.Compute/containers@2025-08-01-preview' = {
+resource dnsClient 'containers:Radius.Compute/containers@2025-08-01-preview' = {
   name: 'dns-client'
   properties: {
     environment: environment
@@ -237,7 +238,7 @@ resource dnsClient 'Radius.Compute/containers@2025-08-01-preview' = {
         command: ['sh', '-c']
         env: {
           SERVER_HOST: {
-            value: dnsServer.properties.service.host
+            value: dnsServer.properties.host
           }
         }
         args: [
@@ -261,12 +262,12 @@ resource dnsClient 'Radius.Compute/containers@2025-08-01-preview' = {
 //
 // A resource with two port-exposing containers publishes both Kubernetes Service
 // DNS names in the read-only `hosts` map, keyed by container name. `multiClient`
-// injects `multiServer.properties.service.hosts.alpha` and `.beta` into an init container
+// injects `multiServer.properties.hosts.alpha` and `.beta` into an init container
 // that blocks until BOTH resolve. If the recipe does not populate every entry of
 // `hosts`, one reference is empty, the init container never succeeds, and this test
 // deployment fails — so the deploy gates on `hosts` being fully populated.
 // ---------------------------------------------------------------------------
-resource multiServer 'Radius.Compute/containers@2025-08-01-preview' = {
+resource multiServer 'containers:Radius.Compute/containers@2025-08-01-preview' = {
   name: 'multi-server'
   properties: {
     environment: environment
@@ -294,7 +295,7 @@ resource multiServer 'Radius.Compute/containers@2025-08-01-preview' = {
   }
 }
 
-resource multiClient 'Radius.Compute/containers@2025-08-01-preview' = {
+resource multiClient 'containers:Radius.Compute/containers@2025-08-01-preview' = {
   name: 'multi-client'
   properties: {
     environment: environment
@@ -307,10 +308,10 @@ resource multiClient 'Radius.Compute/containers@2025-08-01-preview' = {
         command: ['sh', '-c']
         env: {
           ALPHA_HOST: {
-            value: multiServer.properties.service.hosts.alpha
+            value: multiServer.properties.hosts.alpha
           }
           BETA_HOST: {
-            value: multiServer.properties.service.hosts.beta
+            value: multiServer.properties.hosts.beta
           }
         }
         args: [

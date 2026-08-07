@@ -88,7 +88,7 @@ locals {
     for conn_name, conn in local.connections :
     # Only process non-secrets connections here (secrets use envFrom)
     !try(local.is_secrets_resource[conn_name], false) &&
-      try(local.connection_definitions[conn_name].disableDefaultEnvVars, false) != true
+    try(local.connection_definitions[conn_name].disableDefaultEnvVars, false) != true
     ? concat(
       # Add top-level connection properties (excluding metadata, nested properties bag, and secretName)
       [
@@ -728,18 +728,16 @@ output "result" {
       [for svc_name, svc_config in local.services_config : "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Service/${local.normalized_name}-${svc_config.container_name}"],
       local.has_autoscaling ? ["/planes/kubernetes/local/namespaces/${local.namespace}/providers/autoscaling/HorizontalPodAutoscaler/${local.normalized_name}"] : []
     )
-    # Publish each port-exposing container's in-cluster Service DNS host under the read-only
-    # `service` object so peers can address it by reference instead of hardcoding a Service
-    # name. `service.hosts` maps container name to its Service DNS host for every Service this
-    # resource creates; `service.host` is a convenience alias populated only when the resource
-    # exposes exactly one Service (the common single-container case).
-    values = length(local.container_hosts) > 0 ? {
-      service = merge(
-        { hosts = local.container_hosts },
-        length(local.services_config) == 1 ? {
-          host = values(local.container_hosts)[0]
-        } : {}
-      )
-    } : {}
+    # Publish each port-exposing container's in-cluster Service DNS host as a read-only
+    # output so peers can address it by reference instead of hardcoding a Service name.
+    # `hosts` maps container name to its Service DNS host for every Service this resource
+    # creates; `host` is a convenience alias populated only when the resource exposes
+    # exactly one Service (the common single-container case).
+    values = merge(
+      length(local.container_hosts) > 0 ? { hosts = local.container_hosts } : {},
+      length(local.services_config) == 1 ? {
+        host = values(local.container_hosts)[0]
+      } : {}
+    )
   }
 }
