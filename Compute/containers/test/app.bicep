@@ -256,6 +256,79 @@ resource dnsClient 'Radius.Compute/containers@2025-08-01-preview' = {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Multi-container DNS coverage.
+//
+// A resource with two port-exposing containers publishes both Kubernetes Service
+// DNS names in the read-only `hosts` map, keyed by container name. `multiClient`
+// injects `multiServer.properties.hosts.alpha` and `.beta` into an init container
+// that blocks until BOTH resolve. If the recipe does not populate every entry of
+// `hosts`, one reference is empty, the init container never succeeds, and this test
+// deployment fails — so the deploy gates on `hosts` being fully populated.
+// ---------------------------------------------------------------------------
+resource multiServer 'Radius.Compute/containers@2025-08-01-preview' = {
+  name: 'multi-server'
+  properties: {
+    environment: environment
+    application: app.id
+    containers: {
+      alpha: {
+        image: 'nginx:alpine'
+        ports: {
+          web: {
+            containerPort: 80
+            protocol: 'TCP'
+          }
+        }
+      }
+      beta: {
+        image: 'nginx:alpine'
+        ports: {
+          web: {
+            containerPort: 80
+            protocol: 'TCP'
+          }
+        }
+      }
+    }
+  }
+}
+
+resource multiClient 'Radius.Compute/containers@2025-08-01-preview' = {
+  name: 'multi-client'
+  properties: {
+    environment: environment
+    application: app.id
+    containers: {
+      // Blocks until both peers resolve by their published `hosts` entries.
+      waitForBoth: {
+        initContainer: true
+        image: 'busybox:latest'
+        command: ['sh', '-c']
+        env: {
+          ALPHA_HOST: {
+            value: multiServer.properties.hosts.alpha
+          }
+          BETA_HOST: {
+            value: multiServer.properties.hosts.beta
+          }
+        }
+        args: [
+          'echo "Resolving peers by properties.hosts..."; for i in $(seq 1 60); do if wget -q -T 2 -O /dev/null "http://$ALPHA_HOST:80" && wget -q -T 2 -O /dev/null "http://$BETA_HOST:80"; then echo "Reached both $ALPHA_HOST and $BETA_HOST via properties.hosts"; exit 0; fi; echo "attempt $i: peers not both reachable yet"; sleep 2; done; echo "FAILED: could not reach both peers via properties.hosts"; exit 1'
+        ]
+      }
+      client: {
+        image: 'nginx:alpine'
+        ports: {
+          web: {
+            containerPort: 80
+          }
+        }
+      }
+    }
+  }
+}
+
 resource myPersistentVolume 'Radius.Compute/persistentVolumes@2025-08-01-preview' = {
   name: 'mypersistentvolume'
   properties: {

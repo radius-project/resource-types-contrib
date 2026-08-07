@@ -414,15 +414,20 @@ var hpaResource = hasAutoScaling ? ['/planes/kubernetes/local/namespaces/${names
 
 var allResources = concat([deploymentResource], serviceResources, hpaResource)
 
-// Expose this resource's in-cluster Service DNS host as a read-only output so peer
-// containers can address it by reference (`<peer>.properties.host`) instead of
-// hardcoding a Kubernetes Service name. Only a single-container resource has an
-// unambiguous Service, so `host` is populated just for that case; a multi-container
-// resource omits it and peers must target a specific container's Service directly.
+// Publish each port-exposing container's in-cluster Service DNS host as a read-only
+// output so peers can address it by reference instead of hardcoding a Service name.
+// `hosts` maps container name to its Service DNS host for every Service this resource
+// creates, so a multi-container resource exposes all of them. `host` is a convenience
+// alias populated only when the resource exposes exactly one Service (the common
+// single-container case, `<peer>.properties.host`).
+var hostsMap = toObject(servicesConfig, svc => svc.containerName, svc => '${normalizedName}-${svc.normalizedContainerName}.${namespace}.svc.cluster.local')
 var singleService = length(servicesConfig) == 1
-var hostValue = singleService ? '${normalizedName}-${servicesConfig[0].normalizedContainerName}.${namespace}.svc.cluster.local' : ''
+var singleHost = singleService ? '${normalizedName}-${servicesConfig[0].normalizedContainerName}.${namespace}.svc.cluster.local' : ''
 
 output result object = {
   resources: allResources
-  values: singleService ? { host: hostValue } : {}
+  values: union(
+    empty(servicesConfig) ? {} : { hosts: hostsMap },
+    singleService ? { host: singleHost } : {}
+  )
 }

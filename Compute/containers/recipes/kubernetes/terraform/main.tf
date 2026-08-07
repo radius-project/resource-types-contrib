@@ -259,6 +259,13 @@ locals {
     }
     if length(spec.ports) > 0
   }
+
+  # DNS host of each port-exposing container's Kubernetes Service, keyed by container
+  # name. Derived from services_config so it matches the Services actually created.
+  container_hosts = {
+    for name, svc in local.services_config :
+    svc.original_container_name => "${local.normalized_name}-${svc.container_name}.${local.namespace}.svc.cluster.local"
+  }
 }
 
 # ========================================
@@ -721,12 +728,16 @@ output "result" {
       [for svc_name, svc_config in local.services_config : "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Service/${local.normalized_name}-${svc_config.container_name}"],
       local.has_autoscaling ? ["/planes/kubernetes/local/namespaces/${local.namespace}/providers/autoscaling/HorizontalPodAutoscaler/${local.normalized_name}"] : []
     )
-    # Expose the single-container Service's in-cluster DNS host so peer containers
-    # can address this resource by referencing `<peer>.properties.host` instead of
-    # hardcoding a Service name. Populated only for the unambiguous single-container
-    # case; a multi-container resource omits it.
-    values = length(local.services_config) == 1 ? {
-      host = "${local.normalized_name}-${values(local.services_config)[0].container_name}.${local.namespace}.svc.cluster.local"
-    } : {}
+    # Publish each port-exposing container's in-cluster Service DNS host as a read-only
+    # output so peers can address it by reference instead of hardcoding a Service name.
+    # `hosts` maps container name to its Service DNS host for every Service this resource
+    # creates; `host` is a convenience alias populated only when the resource exposes
+    # exactly one Service (the common single-container case).
+    values = merge(
+      length(local.container_hosts) > 0 ? { hosts = local.container_hosts } : {},
+      length(local.services_config) == 1 ? {
+        host = values(local.container_hosts)[0]
+      } : {}
+    )
   }
 }
