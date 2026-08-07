@@ -197,9 +197,9 @@ resource noConnectionsContainer 'Radius.Compute/containers@2025-08-01-preview' =
 //
 // A single-container resource publishes its Kubernetes Service DNS name as the
 // read-only `host` output property. Peers address it by referencing
-// `<peer>.host` instead of hardcoding a Service name. `dnsServer`
+// `<peer>.properties.service.host` instead of hardcoding a Service name. `dnsServer`
 // (resource name `dns-server`) exposes port 80; `dnsClient` injects
-// `dnsServer.host` into an init container that blocks until it can
+// `dnsServer.properties.service.host` into an init container that blocks until it can
 // reach the server at that host. If the recipe does not populate `host`, the
 // reference is empty, the init container never succeeds, the client pod never
 // becomes ready, and this test deployment fails.
@@ -237,7 +237,7 @@ resource dnsClient 'Radius.Compute/containers@2025-08-01-preview' = {
         command: ['sh', '-c']
         env: {
           SERVER_HOST: {
-            value: dnsServer.host
+            value: dnsServer.properties.service.host
           }
         }
         args: [
@@ -261,7 +261,7 @@ resource dnsClient 'Radius.Compute/containers@2025-08-01-preview' = {
 //
 // A resource with two port-exposing containers publishes both Kubernetes Service
 // DNS names in the read-only `hosts` map, keyed by container name. `multiClient`
-// injects `multiServer.hosts.alpha` and `.beta` into an init container
+// injects `multiServer.properties.service.hosts.alpha` and `.beta` into an init container
 // that blocks until BOTH resolve. If the recipe does not populate every entry of
 // `hosts`, one reference is empty, the init container never succeeds, and this test
 // deployment fails — so the deploy gates on `hosts` being fully populated.
@@ -307,10 +307,10 @@ resource multiClient 'Radius.Compute/containers@2025-08-01-preview' = {
         command: ['sh', '-c']
         env: {
           ALPHA_HOST: {
-            value: multiServer.hosts.alpha
+            value: multiServer.properties.service.hosts.alpha
           }
           BETA_HOST: {
-            value: multiServer.hosts.beta
+            value: multiServer.properties.service.hosts.beta
           }
         }
         args: [
