@@ -270,6 +270,8 @@ Recipes for a Resource Type are added to the platform Recipe Packs under `recipe
 
 Today Radius supports Bicep and Terraform Recipe drivers, so a Recipe can be a Bicep template or a Terraform configuration. It can also point to well-maintained community modules like the [Azure Verified Modules](https://azure.github.io/Azure-Verified-Modules/) or the [AWS Terraform modules](https://registry.terraform.io/namespaces/terraform-aws-modules). When pointing at a standard module, Radius resolves any `{{context.*}}` expressions in the Recipe's `parameters` against the resource being deployed and maps the module's outputs onto the resource's read-only properties via the `outputs` field, so no Radius-specific wrapping is required.
 
+For Azure resources whose names must be globally unique, `{{context.azure.resourceNameHash}}` returns the first 16 lowercase hexadecimal characters of a SHA-256 hash over the lowercased Azure resource-group ID and Radius resource ID. This gives Recipes a stable suffix that meets the naming restrictions of the Azure services in this Recipe Pack.
+
 - Familiarize yourself with the IaC language of your choice, [Bicep](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/overview?tabs=bicep) or [Terraform](https://developer.hashicorp.com/terraform)
 - Familiarize yourself with the Radius [Recipe](https://docs.radapp.io/guides/recipes) concept
 - Follow this [how-to guide](https://docs.radapp.io/guides/recipes/howto-author-recipes/) to write your first Recipe
@@ -296,8 +298,9 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
         // Standard Azure Verified Module, version pinned with `:<tag>`
         source: 'mcr.microsoft.com/bicep/avm/res/cache/redis-enterprise:0.5.1'
         parameters: {
-          // Derive the resource name from the Radius context
-          name: '{{context.resource.name}}'
+          // Redis Enterprise names are global, so use a stable hash-based name
+          // prefixed with the Cloud Adoption Framework abbreviation (amr = Azure Managed Redis)
+          name: 'amr-{{context.azure.resourceNameHash}}'
           // Map the developer-authored `size` enum onto a concrete SKU
           skuName: '{{context.resource.properties.size == "S" ? "Balanced_B0" : "Balanced_B1"}}'
           database: {
