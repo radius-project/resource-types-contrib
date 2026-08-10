@@ -59,4 +59,4 @@ Note: The Azure ACI recipe always deploys to `resourceGroup().location`; `contex
 
 | Radius Property | Kubernetes Property | Notes |
 |---|---|---|
-| context.resource.properties.hosts | Service in-cluster DNS names | Read-only. Map of container name to that container's Kubernetes Service DNS name (`<container-resource-name>-<container-name>.<namespace>.svc.cluster.local`). Populated for every container that exposes a port, so a multi-container resource publishes all of its Service hosts. Peers reference `<peer>.properties.hosts.<containerName>`. |
+| context.resource.properties.hosts | Service in-cluster DNS names | Read-only. Map of container name to that container's Kubernetes Service DNS name (`<container-resource-name>-<container-name>.<namespace>`). The name is cluster-domain-independent, so it resolves regardless of the cluster's configured DNS domain. Populated for every container that exposes a port, so a multi-container resource publishes all of its Service hosts. Peers reference `<peer>.properties.hosts.<containerName>`. |

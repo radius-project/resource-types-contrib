@@ -261,10 +261,12 @@ locals {
   }
 
   # DNS host of each port-exposing container's Kubernetes Service, keyed by container
-  # name. Derived from services_config so it matches the Services actually created.
+  # name. Derived from services_config so it matches the Services actually created. The
+  # name is cluster-domain-independent (`<service>.<namespace>`), so it resolves
+  # regardless of the cluster's configured DNS domain.
   container_hosts = {
     for name, svc in local.services_config :
-    svc.original_container_name => "${local.normalized_name}-${svc.container_name}.${local.namespace}.svc.cluster.local"
+    svc.original_container_name => "${local.normalized_name}-${svc.container_name}.${local.namespace}"
   }
 }
 
