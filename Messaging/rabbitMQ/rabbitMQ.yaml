@@ -8,12 +8,8 @@ types:
   rabbitMQ:
     description: |
       The Radius.Messaging/rabbitMQ Resource Type deploys a RabbitMQ message broker
-      that speaks AMQP 0-9-1. The Azure/AKS recipe runs the official `rabbitmq`
-      container on the target Kubernetes cluster (Azure has no first-party managed
-      RabbitMQ, and Azure Service Bus speaks AMQP 1.0 with an `Endpoint=sb://...`
-      string that RabbitMQ clients cannot use). Clients connect to the broker over
-      AMQP 0-9-1 on port 5672 using the exposed `host`, `port`, and `username`, plus
-      the password they supply through a `Radius.Security/secrets` resource.
+      that speaks AMQP 0-9-1. It allows developers to create and connect to a queue
+      as part of their Radius applications.
 
       Provision the broker password by creating a `Radius.Security/secrets` resource
       (with the value passed to `rad deploy` as a `@secure()` parameter) and pass its

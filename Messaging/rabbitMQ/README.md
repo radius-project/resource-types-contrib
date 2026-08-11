@@ -27,8 +27,6 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 | Azure | [`recipe-packs/azure/aks-recipepack.bicep`](../../recipe-packs/azure/aks-recipepack.bicep) | In-cluster RabbitMQ `Deployment` + `Service` on AKS [`recipes/kubernetes`](recipes/kubernetes) |
 | Kubernetes | [`recipe-packs/kubernetes/default-recipepack.bicep`](../../recipe-packs/kubernetes/default-recipepack.bicep) | In-cluster RabbitMQ `Deployment` + `Service` [`recipes/kubernetes`](recipes/kubernetes) |
 
-> **Note:** The Azure Recipe Pack provisions this type by running the official `rabbitmq` container on the target AKS cluster rather than a managed Azure service. Azure has no first-party managed RabbitMQ, and Azure Service Bus exposes AMQP 1.0 (with an `Endpoint=sb://...` connection string) rather than RabbitMQ's native AMQP 0-9-1 wire protocol, so it is not a drop-in RabbitMQ broker. The Azure/AKS recipe therefore deploys a real RabbitMQ broker container that RabbitMQ clients connect to directly over AMQP 0-9-1 on port 5672.
-
 ## Using the resource type
 
 Create a `Radius.Security/secrets` resource holding the broker `password` (from a `@secure()` parameter), add a `rabbitMQ` resource that references it via `passwordSecret`, and connect a container to the broker. Radius injects the queue's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_RABBITMQ_HOST`, `CONNECTION_RABBITMQ_PORT`, `CONNECTION_RABBITMQ_USERNAME`). The password is not emitted by this resource — read it from the same `Radius.Security/secrets` resource with a container `secretKeyRef` (`secretName: rabbitmqSecret.name`, key `password`). See [`test/app.bicep`](test/app.bicep) for a complete example.
