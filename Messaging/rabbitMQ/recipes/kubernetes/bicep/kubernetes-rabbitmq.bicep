@@ -29,12 +29,19 @@ var port = 5672
 // The default `guest` account is restricted to loopback connections, so a client
 // running in another Pod cannot authenticate as `guest`. A non-`guest` user is not
 // loopback-restricted, so the broker accepts AMQP connections from workload Pods.
-// The username/password come from the resource properties when supplied; otherwise
-// the Recipe falls back to a default user and a generated password. Either way the
-// credentials are materialized into the managed Radius.Security/secrets resource via
-// the connectionString output below, and are never written onto the rabbitMQ resource.
+// The username is not sensitive and comes from the resource properties (default
+// `radius`). The password is NOT passed to the Recipe in plaintext: the developer
+// supplies it via a Radius.Security/secrets resource and references that resource's
+// ID on the `passwordSecret` property. The Recipe derives the materialized
+// Kubernetes Secret name from that ID and mounts the password into the broker via
+// `secretKeyRef`, so the plaintext password is never written into the pod spec.
 var username = context.resource.properties.?username ?? 'radius'
-var password = context.resource.properties.?password ?? uniqueString(context.resource.id, 'rabbitmq')
+
+// Resource ID of the developer-supplied Radius.Security/secrets resource. The
+// Kubernetes secrets Recipe names the materialized Secret after the resource name,
+// which is the last segment of the resource ID.
+var passwordSecretId = context.resource.properties.passwordSecret
+var credentialsSecretName = last(split(passwordSecretId, '/'))
 
 // The queue is pre-provisioned on the broker (see the definitions ConfigMap and the
 // init container below) so the named queue exists as soon as the broker is ready,
@@ -101,9 +108,10 @@ resource rabbitmq 'apps/Deployment@v1' = {
       spec: {
         // Generate the broker definitions file (vhost, user, permissions, and the
         // pre-provisioned queue) into a shared volume before the broker starts.
-        // rabbitmqctl hash_password computes the password hash offline, so the
-        // plaintext password is only read from the mounted Secret and is never baked
-        // into the definitions file or the image.
+        // rabbitmqctl hash_password computes the password hash offline. The plaintext
+        // password is injected only at runtime from the developer-supplied
+        // Radius.Security/secrets Kubernetes Secret via secretKeyRef; it is never
+        // baked into the pod spec, the definitions file, or the image.
         initContainers: [
           {
             name: 'generate-definitions'
@@ -119,8 +127,15 @@ resource rabbitmq 'apps/Deployment@v1' = {
                 value: username
               }
               {
+                // Sourced from the developer-supplied Radius.Security/secrets
+                // Kubernetes Secret — never a literal value in the pod spec.
                 name: 'RABBITMQ_PASSWORD'
-                value: password
+                valueFrom: {
+                  secretKeyRef: {
+                    name: credentialsSecretName
+                    key: 'password'
+                  }
+                }
               }
               {
                 name: 'RABBITMQ_QUEUE'
@@ -219,12 +234,12 @@ output result object = {
     '/planes/kubernetes/local/namespaces/${rabbitmq.metadata.namespace}/providers/apps/Deployment/${rabbitmq.metadata.name}'
   ]
   values: {
+    // Non-secret connection values. Clients build their AMQP 0-9-1 connection from
+    // these plus the password, which they read directly from the same
+    // Radius.Security/secrets resource (via secretKeyRef) — the Recipe never sees
+    // or emits the plaintext password.
     host: host
-  }
-  secrets: {
-    // A RabbitMQ AMQP 0-9-1 URI (amqp://user:pass@host:5672) — the format
-    // RabbitMQ clients expect. Radius materializes it into the managed
-    // Radius.Security/secrets resource; it is never written onto the resource.
-    connectionString: 'amqp://${username}:${password}@${host}:${port}'
+    port: port
+    username: username
   }
 }
