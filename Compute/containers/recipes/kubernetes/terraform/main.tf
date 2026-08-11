@@ -88,7 +88,7 @@ locals {
     for conn_name, conn in local.connections :
     # Only process non-secrets connections here (secrets use envFrom)
     !try(local.is_secrets_resource[conn_name], false) &&
-      try(local.connection_definitions[conn_name].disableDefaultEnvVars, false) != true
+    try(local.connection_definitions[conn_name].disableDefaultEnvVars, false) != true
     ? concat(
       # Add top-level connection properties (excluding metadata, nested properties bag, and secretName)
       [
@@ -258,6 +258,15 @@ locals {
       ports                   = spec.ports
     }
     if length(spec.ports) > 0
+  }
+
+  # DNS host of each port-exposing container's Kubernetes Service, keyed by container
+  # name. Derived from services_config so it matches the Services actually created. The
+  # name is cluster-domain-independent (`<service>.<namespace>`), so it resolves
+  # regardless of the cluster's configured DNS domain.
+  container_hosts = {
+    for name, svc in local.services_config :
+    svc.original_container_name => "${local.normalized_name}-${svc.container_name}.${local.namespace}"
   }
 }
 
@@ -721,5 +730,10 @@ output "result" {
       [for svc_name, svc_config in local.services_config : "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Service/${local.normalized_name}-${svc_config.container_name}"],
       local.has_autoscaling ? ["/planes/kubernetes/local/namespaces/${local.namespace}/providers/autoscaling/HorizontalPodAutoscaler/${local.normalized_name}"] : []
     )
+    # Publish each port-exposing container's in-cluster Service DNS host as a read-only
+    # output so peers can address it by reference instead of hardcoding a Service name.
+    # `hosts` maps container name to its Service DNS host for every Service this resource
+    # creates, so peers reference `<peer>.properties.hosts.<containerName>`.
+    values = length(local.container_hosts) > 0 ? { hosts = local.container_hosts } : {}
   }
 }

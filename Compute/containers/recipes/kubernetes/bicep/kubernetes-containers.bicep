@@ -414,6 +414,15 @@ var hpaResource = hasAutoScaling ? ['/planes/kubernetes/local/namespaces/${names
 
 var allResources = concat([deploymentResource], serviceResources, hpaResource)
 
+// Publish each port-exposing container's in-cluster Service DNS host as a read-only
+// output so peers can address it by reference instead of hardcoding a Service name.
+// `hosts` maps container name to its Service DNS host for every Service this resource
+// creates, so peers reference `<peer>.properties.hosts.<containerName>`. The name is
+// cluster-domain-independent (`<service>.<namespace>`), so it resolves regardless of
+// the cluster's configured DNS domain.
+var hostsMap = toObject(servicesConfig, svc => svc.containerName, svc => '${normalizedName}-${svc.normalizedContainerName}.${namespace}')
+
 output result object = {
   resources: allResources
+  values: empty(servicesConfig) ? {} : { hosts: hostsMap }
 }
