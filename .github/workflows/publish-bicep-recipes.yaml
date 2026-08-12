@@ -132,6 +132,8 @@ jobs:
             run: ./.github/scripts/publish-bicep-recipe.sh postgresqldatabases Data/postgreSqlDatabases/recipes/kubernetes/bicep/kubernetes-postgresql.bicep
           - name: Publish rediscaches
             run: ./.github/scripts/publish-bicep-recipe.sh rediscaches Data/redisCaches/recipes/kubernetes/bicep/kubernetes-redis.bicep
+          - name: Publish rabbitmq
+            run: ./.github/scripts/publish-bicep-recipe.sh rabbitmq Messaging/rabbitMQ/recipes/kubernetes/bicep/kubernetes-rabbitmq.bicep
 
       - name: Summarize
         run: |
