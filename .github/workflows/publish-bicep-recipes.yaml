@@ -8,20 +8,21 @@ name: Publish Bicep Recipes
 # tag is what makes the recipes addressable from Radius. A released `rad`
 # resolves a resource type's namespace to the commit SHA that
 # deploy/manifest/defaults.yaml pins for it and uses that SHA verbatim as the
-# recipe's OCI tag (radius PR #12566). Those pins are exactly the refs
-# notify-radius.yaml dispatches, so the invariant this workflow has to hold is:
+# recipe's OCI tag (radius PR #12566). Stable releases are authoritative, while
+# units with no stable release can still notify Radius through the edge
+# fallback. release-namespace.yaml calls this workflow with `pin_only` before
+# creating a release, so the invariant this workflow has to hold is:
 #
-#   every commit SHA notify-radius.yaml can dispatch already exists as a tag
-#   in `$REGISTRY` for every recipe.
+#   every stable namespace release Radius can receive already has its commit
+#   SHA as a tag in `$REGISTRY` for every recipe.
 #
-# That is why there is no `paths:` filter -- notify-radius.yaml fires on any
-# manifest or recipe-pack change, and a pinned SHA with no image behind it
-# breaks `rad install` for a released CLI. Republishing unchanged Bicep is
-# cheap: identical content produces an identical digest, so the tag is just
-# re-pointed at blobs that are already there.
+# Main pushes also publish the SHA and refresh `edge`; there is no `paths:`
+# filter so every main revision remains addressable. Release correctness does
+# not depend on that push run: the namespace release workflow republishes its
+# exact SHA and fails closed before creating the release. Republishing unchanged
+# Bicep is cheap because identical content produces an identical digest.
 #
-# The floating aliases layered on top mirror the release lifecycle in
-# notify-radius.yaml, so a recipe image tag means the same thing as a sync pin:
+# The floating aliases layered on top support the recipe publication lifecycle:
 #   * <sha>     -> every publish. Immutable; the tag Radius pins against.
 #   * edge      -> every push to `main`, and manual runs with no version.
 #                  Floating; `edge` always resolves to the newest recipes on
@@ -63,8 +64,8 @@ env:
 concurrency:
   # Keyed on the ref to avoid unbounded parallel publishes on busy branches.
   # `queue: max` rather than the default `queue: single`, which cancels the
-  # pending run whenever a newer one queues -- that would drop a commit SHA and
-  # leave notify-radius.yaml able to pin a SHA with no image behind it.
+  # pending run whenever a newer one queues -- that would leave some advertised
+  # main commit SHA tags unpublished.
   # `cancel-in-progress` stays at its default of false; setting it true is a
   # validation error alongside `queue: max`.
   group: publish-bicep-recipes-${{ github.event_name }}-${{ github.ref }}
@@ -73,7 +74,11 @@ concurrency:
 jobs:
   publish-bicep-recipes:
     name: Publish Bicep Recipes to GHCR
-    if: github.repository == 'radius-project/resource-types-contrib'
+    # Direct dispatches and reusable callers must both originate from main;
+    # otherwise a feature branch could move edge/latest or publish release pins.
+    if: >-
+      github.repository == 'radius-project/resource-types-contrib' &&
+      github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

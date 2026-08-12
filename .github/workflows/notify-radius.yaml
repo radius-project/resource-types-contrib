@@ -2,19 +2,18 @@
 ---
 name: Notify Radius
 
-# Fires a `repository_dispatch` event to radius-project/radius so it can re-sync
-# what it consumes from this repository.
+# Fires a `repository_dispatch` event to radius-project/radius after a stable
+# release, or as an edge fallback for a unit that has no stable release yet.
 #
 # This is the resource-types-contrib side of the "sync default resource types
 # without a fake Go module" design (radius PR #12236), Phase A. It adopts the
 # hybrid of Option 3 (pinned git-ref) and Option 6 (automated, Dependabot-like
 # PR sync), with the per-unit variant:
 #
-#   * Option 3 (pinned git-ref): the dispatch carries an immutable pin -- the
-#     pushed commit SHA on the moving channel, or the release tag on the release
-#     channel -- that Radius records in `deploy/manifest/defaults.yaml`. The pin
-#     is no longer "informational only" (the old fake-module model fetched via
-#     `go get ...@latest`); it is the exact revision Radius vendors.
+#   * Option 3 (pinned git-ref): the dispatch carries an immutable stable
+#     release tag, or a pushed commit SHA until the affected unit has its first
+#     stable release. Radius records that exact revision in
+#     `deploy/manifest/defaults.yaml`.
 #   * Option 6 (automated PR sync): Radius's contrib-update-resource-types.yaml
 #     turns the dispatch into a reviewable `bot/update-resource-types` PR that
 #     runs `make update-resource-types` / `make update-recipe-packs`, surfacing
@@ -30,15 +29,10 @@ name: Notify Radius
 #                           workflows fetch the pack Bicep from here at deploy
 #                           time, so the pin records which revision they target.
 #
-# Channels (both delivered as a reviewable PR, nothing fetched at build/runtime):
-#   * edge    -> push to `main`. Keeps Radius `latest`/`edge` current with this
-#                repo's `main`; affected units come from the changed manifest
-#                YAML files and `recipe-packs/` files, pinned to the pushed
-#                commit SHA.
-#   * release -> a published release. Pins a stable upstream tag at Radius
-#                release time; a scope-prefixed tag affects a single namespace
-#                (`Radius.Data/vX.Y.Z`) or a single recipe pack
-#                (`recipe-pack/azure/vX.Y.Z`), a plain `vX.Y.Z` tag affects all.
+# Stable releases are authoritative. Before a namespace or recipe pack has a
+# stable release, relevant pushes to `main` keep its Radius pin on edge. Once a
+# stable tag exists for that unit, pushes are ignored and only stable releases
+# can advance it. Prereleases never notify Radius.
 #
 # End-to-end flow:
 #   1. This workflow computes the per-unit payload and fires
@@ -60,53 +54,53 @@ on:
     branches:
       - main
     paths:
-      # Trigger on any YAML change that could be a resource type manifest.
-      # Excludes .github/ and docs/ which contain non-manifest YAML files.
-      # This avoids hardcoding namespace folder names (Compute/, Data/, etc.)
-      # so new top-level namespace folders are automatically covered.
       - "**/*.yaml"
       - "**/*.yml"
+      - "*/*/recipes/**"
       - "!.github/**"
       - "!docs/**"
-      # Recipe packs are Bicep, not YAML, and Radius pins them separately.
       - recipe-packs/**
   release:
-    # Release channel: pin a stable upstream tag at Radius release time.
+    # Unlike `published`, `released` excludes prereleases.
     types:
-      - published
-  # workflow_dispatch: # Enable during development for manual testing
+      - released
 
 permissions: {}
 
 concurrency:
-  # Serialize per event + ref so an edge push and a release don't race, but
-  # never cancel an in-flight dispatch.
-  group: notify-radius-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: false
+  # Preserve every fallback push and serialize it with release notifications.
+  # Separate event/ref groups could let an older edge run finish after a stable
+  # release and overwrite the authoritative release pin.
+  group: notify-radius
+  queue: max
 
 jobs:
   dispatch:
     name: Notify radius-project/radius
-    if: github.repository == 'radius-project/resource-types-contrib'
+    # Pushes are admitted only so the payload script can apply the per-unit edge
+    # fallback. Release events must still be stable.
+    if: >-
+      github.repository == 'radius-project/resource-types-contrib' &&
+      (
+        github.event_name == 'push' ||
+        github.event.release.prerelease == false
+      )
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
-      # Needed for actions/checkout to read this repository's history so the
-      # push diff can resolve which namespaces changed.
+      # Needed for checkout so the payload script can inspect the push diff and
+      # stable tag series for each affected unit.
       contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Full history so the per-namespace diff can resolve `event.before`.
           fetch-depth: 0
+          fetch-tags: true
 
       - name: Compute sync payload
-        # Resolves the channel, the immutable pin (SHA or tag), and the set of
-        # affected units -- `Radius.<Category>` namespaces and `recipe-packs/`
-        # packs -- then emits the compact JSON client-payload. Emits
-        # unit_count=0 when nothing relevant changed (e.g. a prerelease), which
-        # short-circuits the dispatch.
+        # Stable releases resolve their tagged unit. Pushes resolve changed
+        # units and retain only those with no stable release tag.
         id: payload
         env:
           EVENT_NAME: ${{ github.event_name }}
