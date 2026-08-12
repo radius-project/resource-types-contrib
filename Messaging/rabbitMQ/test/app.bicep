@@ -37,7 +37,7 @@ resource queue 'Radius.Messaging/rabbitMQ@2025-08-01-preview' = {
     application: app.id
     queue: 'jobs'
     username: 'radius'
-    passwordSecret: rabbitmqSecret.id
+    password: rabbitmqSecret.id
   }
 }
 

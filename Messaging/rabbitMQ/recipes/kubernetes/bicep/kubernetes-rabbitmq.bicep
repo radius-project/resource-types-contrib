@@ -32,15 +32,15 @@ var port = 5672
 // The username is not sensitive and comes from the resource properties (default
 // `radius`). The password is NOT passed to the Recipe in plaintext: the developer
 // supplies it via a Radius.Security/secrets resource and references that resource's
-// ID on the `passwordSecret` property. The Recipe derives the materialized
-// Kubernetes Secret name from that ID and mounts the password into the broker via
+// ID on the `password` property. The Recipe derives the materialized Kubernetes
+// Secret name from that ID and mounts the password into the broker via
 // `secretKeyRef`, so the plaintext password is never written into the pod spec.
 var username = context.resource.properties.?username ?? 'radius'
 
 // Resource ID of the developer-supplied Radius.Security/secrets resource. The
 // Kubernetes secrets Recipe names the materialized Secret after the resource name,
 // which is the last segment of the resource ID.
-var passwordSecretId = context.resource.properties.passwordSecret
+var passwordSecretId = context.resource.properties.password
 var credentialsSecretName = last(split(passwordSecretId, '/'))
 
 // The queue is pre-provisioned on the broker (see the definitions ConfigMap and the
