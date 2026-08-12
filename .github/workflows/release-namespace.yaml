@@ -28,11 +28,11 @@ name: Release Namespace
 # created; `force` overrides that for a deliberate re-cut. A `dry_run` publishes
 # nothing, so it previews the version and the bundle either way.
 #
-# Downstream: publishing the release fires `notify-radius.yaml` on
-# `release: published`, which dispatches the per-namespace pin (this tag) to
-# radius-project/radius as a reviewable sync PR. The release is created with the
-# RESOURCE_TYPES_BOT GitHub App token (not GITHUB_TOKEN) precisely so that the
-# `release: published` event is allowed to trigger that downstream workflow.
+# Downstream: publishing a stable release fires `notify-radius.yaml` on
+# `release: released`, which dispatches the per-namespace pin (this tag) to
+# radius-project/radius as a reviewable sync PR. Prereleases do not notify. The
+# release is created with the RESOURCE_TYPES_BOT GitHub App token (not
+# GITHUB_TOKEN) so the release event can trigger that downstream workflow.
 #
 # The pin Radius records is a commit SHA, and a released `rad` reuses that SHA
 # as the OCI tag of every recipe in the namespace (radius PR #12566). So the
@@ -58,6 +58,7 @@ on:
           - Radius.Data
           - Radius.Messaging
           - Radius.Security
+          - Radius.Storage
       bump:
         description: Semantic version bump
         type: choice
@@ -68,7 +69,7 @@ on:
           - minor
           - major
       prerelease_label:
-        description: "Optional prerelease label (e.g. rc.1, beta.1); marks the release as a prerelease"
+        description: Optional prerelease label (e.g. rc.1, beta.1); marks the release as a prerelease
         type: string
         required: false
         default: ""
@@ -173,7 +174,11 @@ jobs:
     # floating `edge`/`latest` aliases where they are; only the immutable SHA
     # tag is (re)published.
     needs: check
-    if: ${{ !inputs.dry_run && needs.check.outputs.should_release == 'true' }}
+    if: >-
+      github.repository == 'radius-project/resource-types-contrib' &&
+      github.ref == 'refs/heads/main' &&
+      !inputs.dry_run &&
+      needs.check.outputs.should_release == 'true'
     permissions:
       contents: read
       packages: write
@@ -203,7 +208,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       # Read is enough for checkout; the tag/release is created with the App
-      # token so that `release: published` can trigger notify-radius.yaml.
+      # token so that a stable `release: released` can trigger notify-radius.yaml.
       contents: read
       # Sign and record a build provenance attestation for the release artifact.
       id-token: write
@@ -288,7 +293,7 @@ jobs:
 
       - name: Generate App Token
         # Create the release as the RESOURCE_TYPES_BOT App (not GITHUB_TOKEN) so
-        # the `release: published` event triggers notify-radius.yaml. Requires
+        # the stable `release: released` event triggers notify-radius.yaml. Requires
         # the App installed on this repo with contents:write.
         if: ${{ !inputs.dry_run }}
         id: app-token
@@ -337,6 +342,7 @@ jobs:
         env:
           DRY_RUN: ${{ inputs.dry_run }}
           UNCHANGED: ${{ needs.check.outputs.changed != 'true' }}
+          IS_PRERELEASE: ${{ steps.ver.outputs.is_prerelease }}
         run: |
           {
             echo "## Release ${{ steps.ver.outputs.tag }}"
@@ -357,6 +363,10 @@ jobs:
               echo "* Provenance: attested (verify with \`gh attestation verify <asset> --repo ${{ github.repository }}\`)"
               echo "* Recipes: published as \`${GITHUB_SHA}\`, the tag Radius resolves this pin to"
               echo ""
-              echo "Published as \`${{ steps.ver.outputs.tag }}\`; notify-radius.yaml will open the per-namespace sync PR in radius."
+              if [ "$IS_PRERELEASE" = "true" ]; then
+                echo "Published as \`${{ steps.ver.outputs.tag }}\`; prereleases do not notify Radius."
+              else
+                echo "Published as \`${{ steps.ver.outputs.tag }}\`; notify-radius.yaml will open the per-namespace sync PR in Radius."
+              fi
             fi
           } >> "${GITHUB_STEP_SUMMARY}"

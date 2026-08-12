@@ -27,14 +27,14 @@ name: Release Recipe Pack
 # re-cut. A `dry_run` publishes nothing, so it previews the version and the
 # bundle either way.
 #
-# Downstream: publishing the release fires `notify-radius.yaml` on
-# `release: published`, which dispatches the pack pin (this tag) to
-# radius-project/radius as a reviewable sync PR. Radius records it under
-# `recipePacks[]` in deploy/manifest/defaults.yaml but does not vendor the pack;
-# its deploy workflows fetch the pack Bicep from here at deploy time. The
-# release is created with the RESOURCE_TYPES_BOT GitHub App token (not
-# GITHUB_TOKEN) precisely so that the `release: published` event is allowed to
-# trigger that downstream workflow.
+# Downstream: publishing a stable release fires `notify-radius.yaml` on
+# `release: released`, which dispatches the pack pin (this tag) to
+# radius-project/radius as a reviewable sync PR. Prereleases do not notify.
+# Radius records the stable tag under `recipePacks[]` in
+# deploy/manifest/defaults.yaml but does not vendor the pack; its deploy
+# workflows fetch the pack Bicep from here at deploy time. The release is
+# created with the RESOURCE_TYPES_BOT GitHub App token (not GITHUB_TOKEN) so the
+# release event can trigger that downstream workflow.
 #
 # Prerequisite (one-time, admin): the RESOURCE_TYPES_BOT GitHub App must be
 # installed on this repository with `contents: write` so it can create the tag
@@ -63,7 +63,7 @@ on:
           - minor
           - major
       prerelease_label:
-        description: "Optional prerelease label (e.g. rc.1, beta.1); marks the release as a prerelease"
+        description: Optional prerelease label (e.g. rc.1, beta.1); marks the release as a prerelease
         type: string
         required: false
         default: ""
@@ -288,6 +288,7 @@ jobs:
         env:
           DRY_RUN: ${{ inputs.dry_run }}
           UNCHANGED: ${{ needs.check.outputs.changed != 'true' }}
+          IS_PRERELEASE: ${{ steps.ver.outputs.is_prerelease }}
         run: |
           {
             echo "## Release ${{ steps.ver.outputs.tag }}"
@@ -307,6 +308,10 @@ jobs:
             else
               echo "* Provenance: attested (verify with \`gh attestation verify <asset> --repo ${{ github.repository }}\`)"
               echo ""
-              echo "Published as \`${{ steps.ver.outputs.tag }}\`; no radius sync dispatch is sent for recipe pack releases."
+              if [ "$IS_PRERELEASE" = "true" ]; then
+                echo "Published as \`${{ steps.ver.outputs.tag }}\`; prereleases do not notify Radius."
+              else
+                echo "Published as \`${{ steps.ver.outputs.tag }}\`; notify-radius.yaml will open the recipe-pack sync PR in Radius."
+              fi
             fi
           } >> "${GITHUB_STEP_SUMMARY}"

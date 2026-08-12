@@ -24,15 +24,13 @@
 # Every publish carries the full commit SHA it was built from. That SHA tag is
 # the contract with Radius: a released `rad` resolves a resource type's
 # namespace to the commit SHA that deploy/manifest/defaults.yaml pins for it and
-# uses that SHA verbatim as the recipe's OCI tag (radius PR #12566). The pins in
-# defaults.yaml come from the dispatches notify-radius.yaml sends, so every SHA
-# this repository can dispatch has to already exist as a tag in the registry --
-# otherwise a released CLI resolves a reference that 404s. The SHA tag is
-# therefore unconditional, immutable, and republishing it is a no-op because
-# identical Bicep produces an identical digest.
+# uses that SHA verbatim as the recipe's OCI tag (radius PR #12566). Before a
+# stable namespace release notifies Radius, release-namespace.yaml invokes the
+# publisher for that exact SHA and fails closed if it cannot be pushed. The SHA
+# tag is therefore unconditional and immutable; republishing it is a no-op
+# because identical Bicep produces an identical digest.
 #
-# The remaining tags are floating aliases layered on top and mirror the release
-# lifecycle in notify-radius.yaml:
+# The remaining tags are aliases layered on top of that immutable coordinate:
 #   * edge      -> pushes to `main` and manual runs with no version.
 #   * <version> -> manual dispatch with RELEASE_VERSION.
 #   * latest    -> only for a stable RELEASE_VERSION; SemVer marks a prerelease
@@ -40,7 +38,8 @@
 #
 # Inputs (environment variables):
 #   COMMIT_SHA       required, full lowercase 40-character commit SHA
-#   RELEASE_VERSION  optional, e.g. 0.51.0
+#   RELEASE_VERSION  optional SemVer without a leading v, e.g. 0.51.0 or
+#                    0.51.0-rc.1
 #   PIN_ONLY         optional, "true" publishes the SHA tag alone
 #   GITHUB_OUTPUT    optional; when set, `tags` is written there too
 #
@@ -61,6 +60,32 @@ PIN_ONLY="${PIN_ONLY:-false}"
 # uppercase SHA can never match and would silently publish an unreachable tag.
 if [[ ! "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
     echo "Error: COMMIT_SHA must be a full lowercase 40-character commit SHA, got '$COMMIT_SHA'" >&2
+    exit 1
+fi
+
+is_valid_release_version() {
+    local version="$1" core prerelease identifier
+    local -a identifiers=()
+
+    core="${version%%-*}"
+    [[ "$core" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || return 1
+    [[ "$version" == *-* ]] || return 0
+
+    prerelease="${version#*-}"
+    [[ -n "$prerelease" ]] || return 1
+    [[ "$prerelease" =~ ^[0-9A-Za-z.-]+$ ]] || return 1
+    [[ "$prerelease" != .* && "$prerelease" != *. && "$prerelease" != *..* ]] || return 1
+
+    IFS='.' read -r -a identifiers <<<"$prerelease"
+    for identifier in "${identifiers[@]}"; do
+        if [[ "$identifier" =~ ^[0-9]+$ && "$identifier" =~ ^0[0-9]+$ ]]; then
+            return 1
+        fi
+    done
+}
+
+if [[ -n "$RELEASE_VERSION" ]] && ! is_valid_release_version "$RELEASE_VERSION"; then
+    echo "Error: RELEASE_VERSION must be a SemVer version without a leading 'v', got '$RELEASE_VERSION'" >&2
     exit 1
 fi
 
