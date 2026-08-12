@@ -243,7 +243,7 @@ add_edge_namespace_for_path_at_ref() {
                 add_edge_namespace "Radius.$top"
             fi
             ;;
-        "$top"/*/recipes/*)
+        "$top"/*/recipes/*/*/*)
             # Recipe-only changes also need the namespace SHA pin because a
             # released rad uses that SHA as the recipe OCI tag.
             if rtc_is_category "$top"; then

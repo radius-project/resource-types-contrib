@@ -82,6 +82,7 @@ is_valid_release_version() {
             return 1
         fi
     done
+    return 0
 }
 
 if [[ -n "$RELEASE_VERSION" ]] && ! is_valid_release_version "$RELEASE_VERSION"; then
