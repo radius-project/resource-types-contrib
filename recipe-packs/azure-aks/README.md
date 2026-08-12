@@ -22,7 +22,7 @@ This Recipe Pack requires a Radius runtime that supports the `context.azure.reso
 | `Radius.Data/postgreSqlDatabases` | Bicep | Azure Verified Module — `avm/res/db-for-postgre-sql/flexible-server` |
 | `Radius.AI/search` | Bicep | Azure Verified Module — `avm/res/search/search-service` |
 | `Radius.AI/models` | Bicep | Azure Verified Module — `avm/res/cognitive-services/account` |
-| `Radius.Messaging/rabbitMQ` | Bicep | Azure Verified Module — `avm/res/service-bus/namespace` |
+| `Radius.Messaging/rabbitMQ` | Bicep | `ghcr.io/radius-project/kube-recipes/rabbitmq` |
 | `Radius.Messaging/kafka` | Bicep | Azure Verified Module — `avm/res/event-hub/namespace` |
 | `Radius.Data/mongoDatabases` | Bicep | Azure Verified Module — `avm/res/document-db/database-account` |
 | `Radius.Data/mySqlDatabases` | Bicep | Azure Verified Module — `avm/res/db-for-my-sql/flexible-server` |
