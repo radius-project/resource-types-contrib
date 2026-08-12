@@ -1,5 +1,4 @@
 extension radius
-extension rabbitMQ
 
 @description('The ID of your Radius Environment. Set automatically by the rad CLI.')
 param environment string
@@ -31,7 +30,7 @@ resource rabbitmqSecret 'Radius.Security/secrets@2025-08-01-preview' = {
   }
 }
 
-resource queue 'rabbitMQ:Radius.Messaging/rabbitMQ@2025-08-01-preview' = {
+resource queue 'Radius.Messaging/rabbitMQ@2025-08-01-preview' = {
   name: 'rabbitmq'
   properties: {
     environment: environment
