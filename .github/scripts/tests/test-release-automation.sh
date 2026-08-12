@@ -73,7 +73,7 @@ create_recipe_pack_repo() {
     local repo="$1" pack="$2"
     init_repo "$repo"
     mkdir -p "$repo/recipe-packs/$pack"
-    cat >"$repo/recipe-packs/$pack/default-recipepack.bicep" <<'EOF'
+    cat >"$repo/recipe-packs/$pack/test-recipe-pack.bicep" <<'EOF'
 extension radius
 EOF
     echo "# ${pack} recipe pack" >"$repo/recipe-packs/$pack/README.md"
@@ -145,27 +145,27 @@ test_prerelease_labels() {
 
 test_recipe_pack_versioning() {
     local repo="$TEST_ROOT/recipe-pack" output="$TEST_ROOT/recipe-pack.out"
-    create_recipe_pack_repo "$repo" "kubernetes"
+    create_recipe_pack_repo "$repo" "sample"
 
-    REPO_ROOT="$repo" RECIPE_PACK=kubernetes BUMP=minor GITHUB_OUTPUT="$output" \
+    REPO_ROOT="$repo" RECIPE_PACK=sample BUMP=minor GITHUB_OUTPUT="$output" \
         bash "$VERSION_SCRIPT" >/dev/null 2>&1 || fail "initial recipe pack version was rejected"
     assert_eq "none" "$(output_value "$output" current)" "initial recipe pack current version"
-    assert_eq "recipe-pack/kubernetes/v0.1.0" "$(output_value "$output" tag)" "initial recipe pack tag"
+    assert_eq "recipe-pack/sample/v0.1.0" "$(output_value "$output" tag)" "initial recipe pack tag"
 
-    git -C "$repo" tag "recipe-pack/kubernetes/v0.1.0"
+    git -C "$repo" tag "recipe-pack/sample/v0.1.0"
     : >"$output"
-    REPO_ROOT="$repo" RECIPE_PACK=kubernetes BUMP=patch PRERELEASE_LABEL=rc.1 \
+    REPO_ROOT="$repo" RECIPE_PACK=sample BUMP=patch PRERELEASE_LABEL=rc.1 \
         GITHUB_OUTPUT="$output" bash "$VERSION_SCRIPT" >/dev/null 2>&1 ||
         fail "recipe pack patch bump was rejected"
     assert_eq "0.1.0" "$(output_value "$output" current)" "recipe pack current version"
-    assert_eq "recipe-pack/kubernetes/v0.1.1-rc.1" "$(output_value "$output" tag)" "recipe pack prerelease tag"
+    assert_eq "recipe-pack/sample/v0.1.1-rc.1" "$(output_value "$output" tag)" "recipe pack prerelease tag"
     assert_eq "true" "$(output_value "$output" is_prerelease)" "recipe pack prerelease flag"
 
     if REPO_ROOT="$repo" RECIPE_PACK=does-not-exist bash "$VERSION_SCRIPT" >/dev/null 2>&1; then
         fail "unknown recipe pack was accepted"
     fi
 
-    if REPO_ROOT="$repo" NAMESPACE=Radius.Data RECIPE_PACK=kubernetes \
+    if REPO_ROOT="$repo" NAMESPACE=Radius.Data RECIPE_PACK=sample \
         bash "$VERSION_SCRIPT" >/dev/null 2>&1; then
         fail "NAMESPACE and RECIPE_PACK together were accepted"
     fi
@@ -173,34 +173,34 @@ test_recipe_pack_versioning() {
 
 test_recipe_pack_bundle() {
     local repo="$TEST_ROOT/recipe-pack-bundle" output="$TEST_ROOT/recipe-pack-bundle.out" asset
-    create_recipe_pack_repo "$repo" "kubernetes"
+    create_recipe_pack_repo "$repo" "sample"
 
-    (cd "$repo" && REPO_ROOT="$repo" RECIPE_PACK=kubernetes VERSION=0.1.0 \
+    (cd "$repo" && REPO_ROOT="$repo" RECIPE_PACK=sample VERSION=0.1.0 \
         GITHUB_OUTPUT="$output" bash "$BUNDLE_SCRIPT" >/dev/null 2>&1) ||
         fail "recipe pack bundle build failed"
 
     asset="$(output_value "$output" asset)"
-    assert_eq "recipe-pack-kubernetes-v0.1.0.tar.gz" "$(basename "$asset")" "recipe pack asset name"
+    assert_eq "recipe-pack-sample-v0.1.0.tar.gz" "$(basename "$asset")" "recipe pack asset name"
     assert_eq "1" "$(output_value "$output" count)" "recipe pack template count"
     [[ -f "$asset" ]] || fail "recipe pack asset was not created"
-    tar -tzf "$asset" | grep -q 'recipe-packs/kubernetes/default-recipepack.bicep' ||
+    tar -tzf "$asset" | grep -q 'recipe-packs/sample/test-recipe-pack.bicep' ||
         fail "recipe pack bundle is missing the pack template"
-    tar -tzf "$asset" | grep -q 'recipe-packs/kubernetes/README.md' ||
+    tar -tzf "$asset" | grep -q 'recipe-packs/sample/README.md' ||
         fail "recipe pack bundle is missing the pack README"
 }
 
 test_recipe_pack_release_is_synced() {
     local repo="$TEST_ROOT/recipe-pack-sync" output="$TEST_ROOT/recipe-pack-sync.out" payload
-    create_recipe_pack_repo "$repo" "kubernetes"
+    create_recipe_pack_repo "$repo" "sample"
 
-    REPO_ROOT="$repo" EVENT_NAME=release RELEASE_TAG="recipe-pack/kubernetes/v0.1.0" \
+    REPO_ROOT="$repo" EVENT_NAME=release RELEASE_TAG="recipe-pack/sample/v0.1.0" \
         GITHUB_OUTPUT="$output" bash "$SYNC_SCRIPT" >/dev/null 2>&1
     assert_eq "0" "$(output_value "$output" namespace_count)" "recipe pack release namespace count"
     assert_eq "1" "$(output_value "$output" recipe_pack_count)" "recipe pack release pack count"
-    assert_eq "kubernetes" "$(output_value "$output" affected_recipe_packs)" "recipe pack release affected pack"
+    assert_eq "sample" "$(output_value "$output" affected_recipe_packs)" "recipe pack release affected pack"
 
     payload="$(output_value "$output" payload)"
-    assert_eq '[{"name":"kubernetes","ref":"recipe-pack/kubernetes/v0.1.0"}]' \
+    assert_eq '[{"name":"sample","ref":"recipe-pack/sample/v0.1.0"}]' \
         "$(jq -c '.recipe_packs' <<<"$payload")" "recipe pack release payload pins"
     assert_eq "[]" "$(jq -c '.namespaces' <<<"$payload")" "recipe pack release payload namespaces"
 
@@ -213,16 +213,16 @@ test_recipe_pack_release_is_synced() {
 
 test_recipe_pack_push_is_synced() {
     local repo="$TEST_ROOT/recipe-pack-push" output="$TEST_ROOT/recipe-pack-push.out" before after payload
-    create_recipe_pack_repo "$repo" "azure"
+    create_recipe_pack_repo "$repo" "sample"
     before="$(git -C "$repo" rev-parse HEAD)"
-    echo "// updated" >>"$repo/recipe-packs/azure/default-recipepack.bicep"
-    git -C "$repo" commit -q -am "update azure recipe pack"
+    echo "// updated" >>"$repo/recipe-packs/sample/test-recipe-pack.bicep"
+    git -C "$repo" commit -q -am "update sample recipe pack"
     after="$(git -C "$repo" rev-parse HEAD)"
 
     REPO_ROOT="$repo" EVENT_NAME=push BEFORE_SHA="$before" AFTER_SHA="$after" \
         GITHUB_OUTPUT="$output" bash "$SYNC_SCRIPT" >/dev/null 2>&1
     assert_eq "0" "$(output_value "$output" namespace_count)" "recipe pack push namespace count"
-    assert_eq "azure" "$(output_value "$output" affected_recipe_packs)" "recipe pack push affected pack"
+    assert_eq "sample" "$(output_value "$output" affected_recipe_packs)" "recipe pack push affected pack"
 
     payload="$(output_value "$output" payload)"
     assert_eq "$after" "$(jq -r '.recipe_packs[0].ref' <<<"$payload")" "recipe pack push pin ref"
@@ -231,16 +231,16 @@ test_recipe_pack_push_is_synced() {
 test_repo_wide_release_covers_all_units() {
     local repo="$TEST_ROOT/repo-wide" output="$TEST_ROOT/repo-wide.out" payload
     create_repo "$repo" "Data"
-    mkdir -p "$repo/recipe-packs/kubernetes"
-    echo "extension radius" >"$repo/recipe-packs/kubernetes/default-recipepack.bicep"
+    mkdir -p "$repo/recipe-packs/sample"
+    echo "extension radius" >"$repo/recipe-packs/sample/test-recipe-pack.bicep"
     git -C "$repo" add .
-    git -C "$repo" commit -q -m "add kubernetes recipe pack"
+    git -C "$repo" commit -q -m "add sample recipe pack"
 
     REPO_ROOT="$repo" EVENT_NAME=release RELEASE_TAG="v0.1.0" \
         GITHUB_OUTPUT="$output" bash "$SYNC_SCRIPT" >/dev/null 2>&1
     assert_eq "2" "$(output_value "$output" unit_count)" "repo-wide release unit count"
     assert_eq "Radius.Data" "$(output_value "$output" affected)" "repo-wide release namespaces"
-    assert_eq "kubernetes" "$(output_value "$output" affected_recipe_packs)" "repo-wide release recipe packs"
+    assert_eq "sample" "$(output_value "$output" affected_recipe_packs)" "repo-wide release recipe packs"
 
     # Radius reads `name` and accepts `namespace` as a legacy alias; both must
     # be present so one payload works with either consumer version.
@@ -252,8 +252,8 @@ test_repo_wide_release_covers_all_units() {
 test_release_change_detection() {
     local repo="$TEST_ROOT/changes" output="$TEST_ROOT/changes.out"
     create_repo "$repo" "Data"
-    commit_file "$repo" "recipe-packs/kubernetes/default-recipepack.bicep" \
-        "extension radius" "add kubernetes recipe pack"
+    commit_file "$repo" "recipe-packs/sample/test-recipe-pack.bicep" \
+        "extension radius" "add sample recipe pack"
 
     # Never released: there is always something to publish.
     detect_changes "$repo" "$output" NAMESPACE Radius.Data
@@ -265,7 +265,7 @@ test_release_change_detection() {
     assert_eq "1" "$(output_value "$output" count)" "unreleased namespace file count"
 
     git -C "$repo" tag "Radius.Data/v0.1.0"
-    git -C "$repo" tag "recipe-pack/kubernetes/v0.1.0"
+    git -C "$repo" tag "recipe-pack/sample/v0.1.0"
 
     # Released at this very commit: nothing new to publish.
     detect_changes "$repo" "$output" NAMESPACE Radius.Data
@@ -286,23 +286,23 @@ test_release_change_detection() {
     assert_eq "1" "$(output_value "$output" count)" "recipe change file count"
 
     # Independent lifecycles: namespace churn must not release the recipe pack.
-    detect_changes "$repo" "$output" RECIPE_PACK kubernetes
+    detect_changes "$repo" "$output" RECIPE_PACK sample
     assert_eq "false" "$(output_value "$output" changed)" "unrelated namespace change changed the pack"
 
-    commit_file "$repo" "recipe-packs/kubernetes/default-recipepack.bicep" \
-        "extension radius // updated" "update kubernetes recipe pack"
-    detect_changes "$repo" "$output" RECIPE_PACK kubernetes
+    commit_file "$repo" "recipe-packs/sample/test-recipe-pack.bicep" \
+        "extension radius // updated" "update sample recipe pack"
+    detect_changes "$repo" "$output" RECIPE_PACK sample
     assert_eq "true" "$(output_value "$output" changed)" "recipe pack change changed"
 
     # A reverted change leaves nothing to publish, even though commits exist.
     local pack_repo="$TEST_ROOT/changes-revert" pack_output="$TEST_ROOT/changes-revert.out"
-    create_recipe_pack_repo "$pack_repo" "azure"
-    git -C "$pack_repo" tag "recipe-pack/azure/v0.1.0"
-    commit_file "$pack_repo" "recipe-packs/azure/default-recipepack.bicep" \
-        "extension radius // temporary" "tweak azure recipe pack"
-    commit_file "$pack_repo" "recipe-packs/azure/default-recipepack.bicep" \
-        "extension radius" "revert azure recipe pack tweak"
-    detect_changes "$pack_repo" "$pack_output" RECIPE_PACK azure
+    create_recipe_pack_repo "$pack_repo" "sample"
+    git -C "$pack_repo" tag "recipe-pack/sample/v0.1.0"
+    commit_file "$pack_repo" "recipe-packs/sample/test-recipe-pack.bicep" \
+        "extension radius // temporary" "tweak sample recipe pack"
+    commit_file "$pack_repo" "recipe-packs/sample/test-recipe-pack.bicep" \
+        "extension radius" "revert sample recipe pack tweak"
+    detect_changes "$pack_repo" "$pack_output" RECIPE_PACK sample
     assert_eq "false" "$(output_value "$pack_output" changed)" "reverted change changed"
 
     # Prereleases are staging artifacts, so they are never the baseline --

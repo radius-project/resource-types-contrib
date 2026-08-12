@@ -17,7 +17,7 @@
 # ------------------------------------------------------------
 
 # =============================================================================
-# Publish one Kubernetes Bicep recipe to a container registry under every tag in
+# Publish one Bicep recipe to a container registry under every tag in
 # $TAGS. Called once per recipe by the publish-bicep-recipes workflow, which
 # runs the invocations as parallel steps in a single job.
 #

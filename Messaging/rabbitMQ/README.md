@@ -24,7 +24,7 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 | Platform | Recipe Pack | Recipe source |
 | --- | --- | --- |
-| Azure | [`recipe-packs/azure/bicep-recipepack.bicep`](../../recipe-packs/azure/bicep-recipepack.bicep) | Direct module — Azure Verified Module `avm/res/service-bus/namespace` |
+| Azure | [`recipe-packs/azure-aks/aks-recipe-pack.bicep`](../../recipe-packs/azure-aks/aks-recipe-pack.bicep) | Direct module — Azure Verified Module `avm/res/service-bus/namespace` |
 
 ## Using the resource type
 
