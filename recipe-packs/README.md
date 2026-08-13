@@ -2,7 +2,7 @@
 
 A **Recipe Pack** is a manifest of recipes by Resource Type referenced in a Radius Environment. Each pack is a directory under `recipe-packs/` containing:
 
-- `<name>-recipe-pack.bicep`: declares one `Radius.Core/recipePacks` resource whose `recipes` map has an entry per Resource Type.
+- a `.bicep` file named after the pack (for example `azure-aks.bicep`; the default Kubernetes pack is `default.bicep`): declares one `Radius.Core/recipePacks` resource whose `recipes` map has an entry per Resource Type.
 - `README.md`: documents the pack, its parameters, and the recipes it includes.
 
 ## Available Recipe Packs
@@ -19,7 +19,7 @@ A **Recipe Pack** is a manifest of recipes by Resource Type referenced in a Radi
 
 ## How to create a new Recipe Pack
 
-1. **Create the folder and files.** Add `recipe-packs/<pack-name>/` with a `<name>-recipe-pack.bicep` and a `README.md`. Use a folder name that identifies the platform and, where a cloud offers more than one compute target, the compute runtime (for example `azure-aks`, `azure-aci`, `kubernetes`). Name the Bicep file `<short-name>-recipe-pack.bicep`.
+1. **Create the folder and files.** Add `recipe-packs/<pack-name>/` with a `.bicep` file and a `README.md`. Use a folder name that identifies the platform and, where a cloud offers more than one compute target, the compute runtime (for example `azure-aks`, `azure-aci`, `kubernetes`). Name the Bicep file after the pack (for example `azure-aci.bicep`).
 2. **Declare the pack.** In the Bicep file, declare a single `Radius.Core/recipePacks` resource whose `recipes` map has an entry keyed by each Resource Type (for example `Radius.Data/redisCaches`).
 3. **Wire each Recipe.** Point each entry at its module `source` and map `parameters` (using `{{context.*}}` expressions) and `outputs`. Reuse published modules such as Azure Verified Modules where possible, and reference in-repo Bicep recipes by their published OCI image.
 4. **Publish any in-repo Bicep recipes** the pack references by adding them to [`.github/workflows/publish-bicep-recipes.yaml`](../.github/workflows/publish-bicep-recipes.yaml) so the `source` images exist.
