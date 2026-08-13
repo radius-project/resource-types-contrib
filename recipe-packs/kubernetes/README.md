@@ -4,7 +4,7 @@ This folder contains the **Kubernetes Recipe Pack** — a collection of Recipes 
 
 | File | Description |
 | --- | --- |
-| `kubernetes-recipe-pack.bicep` | Recipe Pack wiring the Bicep recipes for all Kubernetes-provisioned types, plus the Environment definition. |
+| `default.bicep` | Recipe Pack wiring the Bicep recipes for all Kubernetes-provisioned types, plus the Environment definition. |
 
 Each pack declares a `Radius.Core/recipePacks` resource whose `recipes` map contains an entry for every Resource Type, and a `Radius.Core/environments` resource that references the pack.
 
@@ -27,7 +27,7 @@ Kube-recipes tagged `:edge` are rebuilt on every push to `main`; `:latest` and t
 Deploy the pack with the `rad` CLI. Deploying the file creates the `Radius.Core/recipePacks` resource and configures the `default` Environment to use it:
 
 ```bash
-rad deploy recipe-packs/kubernetes/kubernetes-recipe-pack.bicep
+rad deploy recipe-packs/kubernetes/default.bicep
 ```
 
 After the pack is deployed, every Resource Type it covers can be used in an application deployed to that Environment.

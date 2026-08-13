@@ -47,10 +47,10 @@ Deploy a Recipe Pack to create and configure the Environment:
 
 ```bash
 # Configure an Environment with the Azure AKS recipe pack
-rad deploy recipe-packs/azure-aks/aks-recipe-pack.bicep
+rad deploy recipe-packs/azure-aks/azure-aks.bicep
 
 # Or start with the zero-config Kubernetes default
-rad deploy recipe-packs/kubernetes/kubernetes-recipe-pack.bicep
+rad deploy recipe-packs/kubernetes/default.bicep
 ```
 
 After a Recipe Pack is deployed, every Resource Type it covers can be used in an application deployed to that Environment.

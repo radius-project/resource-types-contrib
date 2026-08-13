@@ -4,7 +4,7 @@ This folder contains the **Azure AKS Recipe Pack** — a collection of Recipes t
 
 | File | Description |
 | --- | --- |
-| `aks-recipe-pack.bicep` | Recipe Pack wiring the Bicep recipes for all Azure-provisioned types, plus the Environment definition. |
+| `azure-aks.bicep` | Recipe Pack wiring the Bicep recipes for all Azure-provisioned types, plus the Environment definition. |
 
 Each pack declares a `Radius.Core/recipePacks` resource whose `recipes` map contains an entry for every Resource Type, and a `Radius.Core/environments` resource that references the pack and configures the Azure and Kubernetes providers.
 
@@ -55,7 +55,7 @@ The Azure pack accepts the provider configuration it needs to provision into you
 Deploy the pack with the `rad` CLI, supplying the parameters it requires. Deploying the file creates the `Radius.Core/recipePacks` resource and configures the `default` Environment to use it:
 
 ```bash
-rad deploy recipe-packs/azure-aks/aks-recipe-pack.bicep \
+rad deploy recipe-packs/azure-aks/azure-aks.bicep \
   --parameters azureSubscriptionId=<subscription-id> \
   --parameters azureResourceGroup=<resource-group> \
   --parameters routesGatewayName=<gateway-name> \

@@ -25,7 +25,7 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 | Platform | Recipe Pack | Recipe source |
 | --- | --- | --- |
-| Azure | [`recipe-packs/azure-aks/aks-recipe-pack.bicep`](../../recipe-packs/azure-aks/aks-recipe-pack.bicep) | Direct module — Azure Verified Module `avm/res/db-for-my-sql/flexible-server` |
+| Azure | [`recipe-packs/azure-aks/azure-aks.bicep`](../../recipe-packs/azure-aks/azure-aks.bicep) | Direct module — Azure Verified Module `avm/res/db-for-my-sql/flexible-server` |
 
 ## Using the resource type
 

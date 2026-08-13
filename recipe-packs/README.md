@@ -15,7 +15,7 @@ A **Recipe Pack** is a manifest of recipes by Resource Type referenced in a Radi
 
 ## The default Recipe Pack
 
-The **Kubernetes Recipe Pack** ([`kubernetes/kubernetes-recipe-pack.bicep`](kubernetes/kubernetes-recipe-pack.bicep)) is the default: it is the pack `rad init` installs so a fresh Radius installation can deploy resources to the host Kubernetes cluster with no extra configuration. `rad init` embeds its own copy of this pack rather than fetching this file at run time, and the two are kept in sync.
+`rad init` installs the **Kubernetes Recipe Pack** ([`kubernetes/default.bicep`](kubernetes/default.bicep)) as the `default` pack (it embeds its own copy, kept in sync with this file), so a fresh Radius installation needs no extra configuration.
 
 ## How to create a new Recipe Pack
 

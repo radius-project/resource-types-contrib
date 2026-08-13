@@ -4,7 +4,7 @@ This directory contains the **Azure ACI Recipe Pack**, a collection of Recipes t
 
 | File | Description |
 | --- | --- |
-| `aci-recipe-pack.bicep` | Recipe Pack wiring the Bicep recipes for the ACI-provisioned Resource Types. |
+| `azure-aci.bicep` | Recipe Pack wiring the Bicep recipes for the ACI-provisioned Resource Types. |
 
 The pack declares a single `Radius.Core/recipePacks` resource whose `recipes` map contains an entry per Resource Type. It does not define an Environment; reference the pack from an Environment configured with the Azure provider to make its Recipes available.
 
@@ -23,7 +23,7 @@ The pack declares a single `Radius.Core/recipePacks` resource whose `recipes` ma
 Deploy the pack with the `rad` CLI to create the `Radius.Core/recipePacks` resource:
 
 ```bash
-rad deploy recipe-packs/azure-aci/aci-recipe-pack.bicep
+rad deploy recipe-packs/azure-aci/azure-aci.bicep
 ```
 
 Because this pack does not define an Environment, reference it from an Environment configured with the Azure provider. For example, add the `azure-aci` pack to an existing Environment:

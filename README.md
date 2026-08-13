@@ -33,16 +33,16 @@ resource-types-contrib/
 └── recipe-packs/                       # Recipe packs cover recipe definitions for all types in the repo
     ├── azure-aks/                      # Azure AKS recipe pack (Azure services with AKS compute)
     │       ├── README.md               # Documentation for the Azure AKS recipe pack
-    │       └── aks-recipe-pack.bicep   # Recipe pack wiring the Bicep recipes
+    │       └── azure-aks.bicep   # Recipe pack wiring the Bicep recipes
     ├── azure-aci/                      # Azure ACI recipe pack (Azure services with ACI compute)
     │       ├── README.md               # Documentation for the Azure ACI recipe pack
-    │       └── aci-recipe-pack.bicep   # Recipe pack wiring the Bicep recipes
+    │       └── azure-aci.bicep   # Recipe pack wiring the Bicep recipes
     ├── aws/                            # AWS recipe pack
     │       ├── README.md
     │       └── eks-recipe-pack.bicep
     ├── kubernetes/                     # Kubernetes recipe pack (zero-config, in-cluster)
             ├── README.md
-            └── kubernetes-recipe-pack.bicep
+            └── default.bicep
 
 ```
 

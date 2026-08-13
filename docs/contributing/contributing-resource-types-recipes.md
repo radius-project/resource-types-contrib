@@ -48,16 +48,16 @@ resource-types-contrib/
 └── recipe-packs/                      # Recipe Packs cover recipes for all types in the repo
     ├── azure-aks/                    # Azure AKS recipe pack (Azure services with AKS compute)
     │       ├── README.md                  # Documentation for the Azure AKS recipe pack
-    │       └── aks-recipe-pack.bicep   # Recipe pack wiring the Bicep recipes
+    │       └── azure-aks.bicep   # Recipe pack wiring the Bicep recipes
     ├── azure-aci/                    # Azure ACI recipe pack (Azure services with ACI compute)
     │       ├── README.md                  # Documentation for the Azure ACI recipe pack
-    │       └── aci-recipe-pack.bicep   # Recipe pack wiring the Bicep recipes
+    │       └── azure-aci.bicep   # Recipe pack wiring the Bicep recipes
     ├── aws/                          # AWS recipe pack
     │       ├── README.md
     │       └──eks-recipe-pack.bicep
     └── kubernetes/           # Kubernetes recipe pack (zero-config, in-cluster)
             ├── README.md
-            └── kubernetes-recipe-pack.bicep
+            └── default.bicep
 ```
 
 ### 4. Define Your Resource Type Definition
@@ -236,9 +236,9 @@ A list of the Recipes provided for this Resource Type, including the platform Re
 
 | Platform | Recipe Pack | Module Source |
 |---|---|---|
-| Azure | recipe-packs/azure-aks/aks-recipe-pack.bicep | mcr.microsoft.com/bicep/avm/res/cache/redis-enterprise |
+| Azure | recipe-packs/azure-aks/azure-aks.bicep | mcr.microsoft.com/bicep/avm/res/cache/redis-enterprise |
 | AWS | recipe-packs/aws/eks-recipe-pack.bicep | ... |
-| Kubernetes | recipe-packs/kubernetes/kubernetes-recipe-pack.bicep | ghcr.io/radius-project/kube-recipes/... |
+| Kubernetes | recipe-packs/kubernetes/default.bicep | ghcr.io/radius-project/kube-recipes/... |
 
 ## Recipe Input Properties
 
@@ -269,7 +269,7 @@ A brief description of what the Recipe does and how to use it.
 
 ## Recipes and Recipe Packs
 
-Recipes for a Resource Type are added to the platform Recipe Packs under `recipe-packs/` at the repository root. Each platform has its own folder (`azure-aks/`, `azure-aci/`, `aws/`, and `kubernetes/`) containing a single Recipe Pack Bicep file (for example `aks-recipe-pack.bicep`) that wires both Bicep and Terraform recipes. Each Recipe Pack declares a single `Radius.Core/recipePacks` resource whose `recipes` map contains an entry for every Resource Type, plus a `Radius.Core/environments` resource that references the pack.
+Recipes for a Resource Type are added to the platform Recipe Packs under `recipe-packs/` at the repository root. Each platform has its own folder (`azure-aks/`, `azure-aci/`, `aws/`, and `kubernetes/`) containing a single Recipe Pack Bicep file (for example `azure-aks.bicep`) that wires both Bicep and Terraform recipes. Each Recipe Pack declares a single `Radius.Core/recipePacks` resource whose `recipes` map contains an entry for every Resource Type, plus a `Radius.Core/environments` resource that references the pack.
 
 Today Radius supports Bicep and Terraform Recipe drivers, so a Recipe can be a Bicep template or a Terraform configuration. It can also point to well-maintained community modules like the [Azure Verified Modules](https://azure.github.io/Azure-Verified-Modules/) or the [AWS Terraform modules](https://registry.terraform.io/namespaces/terraform-aws-modules). When pointing at a standard module, Radius resolves any `{{context.*}}` expressions in the Recipe's `parameters` against the resource being deployed and maps the module's outputs onto the resource's read-only properties via the `outputs` field, so no Radius-specific wrapping is required.
 
@@ -281,7 +281,7 @@ For Azure resources whose names must be globally unique, `{{context.azure.resour
 
 ### Example Recipe Pack
 
-The example below shows an Azure Recipe Pack (`recipe-packs/azure-aks/aks-recipe-pack.bicep`) that registers a Recipe for `Radius.Data/redisCaches` pointing at a standard Azure Verified Module, and a Recipe for `Radius.Compute/containers` using a published Kubernetes container recipe. The developer-authored `size` property is mapped onto a concrete SKU, and the module's outputs are mapped back onto the resource's `host`, `port`, and `url` properties.
+The example below shows an Azure Recipe Pack (`recipe-packs/azure-aks/azure-aks.bicep`) that registers a Recipe for `Radius.Data/redisCaches` pointing at a standard Azure Verified Module, and a Recipe for `Radius.Compute/containers` using a published Kubernetes container recipe. The developer-authored `size` property is mapped onto a concrete SKU, and the module's outputs are mapped back onto the resource's `host`, `port`, and `url` properties.
 
 ```bicep
 extension radius
@@ -377,7 +377,7 @@ After creating your Resource Type and Recipes, test them locally using the provi
 
 3. **Deploy the Recipe Pack to configure your Environment**:
 
-   A Recipe Pack declares the `Radius.Core/recipePacks` and `Radius.Core/environments` resources, so deploying it registers the Recipes for every Resource Type it covers in the Environment. Add your Resource Type's Recipe to the pack for your target platform, then deploy that pack. For example, the Azure AKS pack (`recipe-packs/azure-aks/aks-recipe-pack.bicep`) holds the Recipe definitions for all Azure-provisioned types and is deployed with the `rad` CLI, supplying the pack's parameters:
+   A Recipe Pack declares the `Radius.Core/recipePacks` and `Radius.Core/environments` resources, so deploying it registers the Recipes for every Resource Type it covers in the Environment. Add your Resource Type's Recipe to the pack for your target platform, then deploy that pack. For example, the Azure AKS pack (`recipe-packs/azure-aks/azure-aks.bicep`) holds the Recipe definitions for all Azure-provisioned types and is deployed with the `rad` CLI, supplying the pack's parameters:
 
    ```bash
    # Configure the Radius Azure provider credentials (requires AZURE_* env vars:
@@ -385,7 +385,7 @@ After creating your Resource Type and Recipes, test them locally using the provi
    make configure-azure-provider
 
    # Deploy the Recipe Pack, supplying its parameters
-   rad deploy recipe-packs/azure-aks/aks-recipe-pack.bicep \
+   rad deploy recipe-packs/azure-aks/azure-aks.bicep \
      --parameters azureSubscriptionId=<subscription-id> \
      --parameters azureResourceGroup=<resource-group>
    ```

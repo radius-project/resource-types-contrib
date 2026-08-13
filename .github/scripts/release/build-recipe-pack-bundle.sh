@@ -21,7 +21,7 @@
 # -----------------------------------------------------------------------------
 # Package a recipe pack into a release bundle plus a checksums file. The bundle
 # contains the pack's Bicep templates and its README.md, laid out under the
-# repo-relative path (e.g. `recipe-packs/kubernetes/kubernetes-recipe-pack.bicep`) so
+# repo-relative path (e.g. `recipe-packs/kubernetes/default.bicep`) so
 # it extracts back into the same tree. This is the recipe pack counterpart of
 # build-namespace-bundle.sh and shares its bundling helpers.
 #
