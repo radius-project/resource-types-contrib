@@ -81,7 +81,7 @@ types:
               description: "(Optional) The username the broker is provisioned with and that clients authenticate as. Defaults to `radius` if not provided. Avoid `guest`, which RabbitMQ restricts to loopback connections. The username is not sensitive and is exposed as a read-only connection value."
             password:
               type: string
-              description: "(Required) The resource ID of the `Radius.Security/secrets` resource that holds the broker password under the data key `password`. Set to `<secretResource>.id`. The Kubernetes Recipe references the materialized Kubernetes Secret by name and mounts the password into the broker via `secretKeyRef`, so the plaintext password is never written into the pod spec or onto this resource."
+              description: "(Optional) The resource ID of the `Radius.Security/secrets` resource that holds the broker password under the data key `password`. Set to `<secretResource>.id`. Recipes that use this property reference the materialized secret without writing the plaintext password into the resource or workload specification."
             host:
               type: string
               description: (Read Only) The host name used to connect to the broker. Mapped from the recipe's Service DNS name.
@@ -90,4 +90,4 @@ types:
               type: integer
               description: (Read Only) The port used to connect to the broker over AMQP 0-9-1 (5672). Mapped from the recipe's output.
               readOnly: true
-          required: [environment, password]
+          required: [environment]

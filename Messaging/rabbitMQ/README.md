@@ -14,7 +14,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `application` | string | Optional | The Radius Application ID. |
 | `queue` | string | Optional | The name of the queue to pre-provision on the broker. The Recipe creates this durable queue when the broker starts. Defaults to `jobs`. |
 | `username` | string | Optional | The username the broker is provisioned with. Defaults to `radius`. Avoid `guest` (loopback-only in RabbitMQ). Not sensitive; exposed as a read-only connection value. |
-| `password` | string | Required | The resource ID of the `Radius.Security/secrets` resource that holds the broker password under key `password` (set to `<secretResource>.id`). The Recipe mounts the password into the broker via `secretKeyRef`, so the plaintext password never lands in the pod spec or on this resource. |
+| `password` | string | Optional | The resource ID of the `Radius.Security/secrets` resource that holds the broker password under key `password` (set to `<secretResource>.id`). Recipes that use this property mount the password via `secretKeyRef`, so the plaintext password never lands in the pod spec or on this resource. |
 | `host` | string | Read only | The host name used to connect to the broker. Set from the Recipe's Service DNS name. |
 | `port` | integer | Read only | The port used to connect to the broker over AMQP 0-9-1 (5672). Set from the Recipe's output. |
 
