@@ -11,27 +11,14 @@ types:
       that speaks AMQP 0-9-1. It allows developers to create and connect to a queue
       as part of their Radius applications.
 
-      You can provision the broker password by creating a `Radius.Security/secrets`
-      resource and passing its resource ID on the optional `password` property. If
-      omitted, the Kubernetes Recipe generates a random password and
-      returns it through the resource's managed secrets. In both cases, the password
-      is mounted into the broker via `secretKeyRef`.
+      You can provide the broker password directly through the optional sensitive
+      `password` property. If omitted, the Kubernetes Recipe generates a random
+      password. In both cases, the Recipe returns the effective password through the
+      resource's managed `Radius.Security/secrets` resource and mounts it into the
+      broker via `secretKeyRef`.
       ```bicep
       @secure()
       param password string
-
-      resource rabbitmqSecret 'Radius.Security/secrets@2025-08-01-preview' = {
-        name: 'rabbitmq-credentials'
-        properties: {
-          environment: environment
-          application: myApplication.id
-          data: {
-            password: {
-              value: password
-            }
-          }
-        }
-      }
 
       resource queue 'Radius.Messaging/rabbitMQ@2025-08-01-preview' = {
         name: 'rabbitmq'
@@ -40,7 +27,7 @@ types:
           application: myApplication.id
           queue: 'jobs'
           username: 'radius'
-          password: rabbitmqSecret.id
+          password: password
         }
       }
       ```
@@ -54,10 +41,10 @@ types:
       - CONNECTION_RABBITMQ_PORT
       - CONNECTION_RABBITMQ_USERNAME
 
-      The password is NOT emitted by this resource. Read it from the same
-      `Radius.Security/secrets` resource you created above by binding it into a
-      container env var with a `secretKeyRef`, using `rabbitmqSecret.name` as the
-      `secretName` and key `password`.
+      The effective password is emitted only through the managed
+      `Radius.Security/secrets` resource. Bind it into a container env var with a
+      `secretKeyRef`, using `queue.properties.secrets.name` as the `secretName` and
+      key `password`.
 
     apiVersions:
       '2025-08-01-preview':
@@ -80,7 +67,8 @@ types:
               description: "(Optional) The username the broker is provisioned with and that clients authenticate as. Defaults to `radius` if not provided. Avoid `guest`, which RabbitMQ restricts to loopback connections. The username is not sensitive and is exposed as a read-only connection value."
             password:
               type: string
-              description: "(Optional) The resource ID of the `Radius.Security/secrets` resource that holds the broker password under the data key `password`. Set to `<secretResource>.id`. If omitted, the Kubernetes Recipe generates a random password and returns it through the managed `secrets.password` output."
+              x-radius-sensitive: true
+              description: "(Optional) The broker password. Radius encrypts this value at rest, redacts it on reads, and exposes it decrypted only to the Recipe. If omitted, the Kubernetes Recipe generates a random password. The effective password is always returned through the managed `secrets.password` output."
             host:
               type: string
               description: (Read Only) The host name used to connect to the broker. Mapped from the recipe's Service DNS name.
@@ -103,5 +91,5 @@ types:
                 password:
                   type: string
                   readOnly: true
-                  description: (Read Only) The Recipe-generated fallback password, delivered through the managed secret when the `password` input is omitted.
+                  description: (Read Only) The effective broker password, delivered through the managed secret whether supplied or generated.
           required: [environment]
