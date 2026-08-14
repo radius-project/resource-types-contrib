@@ -13,7 +13,7 @@ types:
 
       You can provision the broker password by creating a `Radius.Security/secrets`
       resource and passing its resource ID on the optional `password` property. If
-      omitted, the Kubernetes Recipe derives a stable resource-specific password and
+      omitted, the Kubernetes Recipe generates a random password and
       returns it through the resource's managed secrets. In both cases, the password
       is mounted into the broker via `secretKeyRef`.
       ```bicep
@@ -80,7 +80,7 @@ types:
               description: "(Optional) The username the broker is provisioned with and that clients authenticate as. Defaults to `radius` if not provided. Avoid `guest`, which RabbitMQ restricts to loopback connections. The username is not sensitive and is exposed as a read-only connection value."
             password:
               type: string
-              description: "(Optional) The resource ID of the `Radius.Security/secrets` resource that holds the broker password under the data key `password`. Set to `<secretResource>.id`. If omitted, the Kubernetes Recipe derives a stable resource-specific password and returns it through the managed `secrets.password` output."
+              description: "(Optional) The resource ID of the `Radius.Security/secrets` resource that holds the broker password under the data key `password`. Set to `<secretResource>.id`. If omitted, the Kubernetes Recipe generates a random password and returns it through the managed `secrets.password` output."
             host:
               type: string
               description: (Read Only) The host name used to connect to the broker. Mapped from the recipe's Service DNS name.
