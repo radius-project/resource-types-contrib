@@ -30,18 +30,16 @@ var port = 5672
 // running in another Pod cannot authenticate as `guest`. A non-`guest` user is not
 // loopback-restricted, so the broker accepts AMQP connections from workload Pods.
 // The username is not sensitive and comes from the resource properties (default
-// `radius`). The password is NOT passed to the Recipe in plaintext: the developer
-// supplies it via a Radius.Security/secrets resource and references that resource's
-// ID on the `password` property. The Recipe derives the materialized Kubernetes
-// Secret name from that ID and mounts the password into the broker via
-// `secretKeyRef`, so the plaintext password is never written into the pod spec.
+// `radius`). When supplied, `password` references a Radius.Security/secrets resource.
+// Otherwise, the Recipe derives a stable resource-specific password and returns it
+// through Radius managed secrets. Both paths mount the password through secretKeyRef.
 var username = context.resource.properties.?username ?? 'radius'
 
-// Resource ID of the developer-supplied Radius.Security/secrets resource. The
-// Kubernetes secrets Recipe names the materialized Secret after the resource name,
-// which is the last segment of the resource ID.
-var passwordSecretId = context.resource.properties.password
-var credentialsSecretName = last(split(passwordSecretId, '/'))
+var passwordSecretId = context.resource.properties.?password ?? ''
+var usesSuppliedPassword = !empty(passwordSecretId)
+var fallbackPassword = '${uniqueString(context.resource.id, 'rabbitmq-password-1')}${uniqueString(context.resource.id, 'rabbitmq-password-2')}${uniqueString(context.resource.id, 'rabbitmq-password-3')}'
+var fallbackCredentialsSecretName = '${uniqueName}-credentials'
+var credentialsSecretName = usesSuppliedPassword ? last(split(passwordSecretId, '/')) : fallbackCredentialsSecretName
 
 // The queue is pre-provisioned on the broker (see the definitions ConfigMap and the
 // init container below) so the named queue exists as soon as the broker is ready,
@@ -54,6 +52,17 @@ var labels = {
   'radapp.io/environment':    environmentName
   'radapp.io/resource-type':  replace(context.resource.type, '/', '-')
   'radapp.io/resource-group': resourceGroupName
+}
+
+resource fallbackCredentials 'core/Secret@v1' = if (!usesSuppliedPassword) {
+  metadata: {
+    name: fallbackCredentialsSecretName
+    namespace: namespace
+    labels: labels
+  }
+  stringData: {
+    password: fallbackPassword
+  }
 }
 
 //////////////////////////////////////////
@@ -109,9 +118,8 @@ resource rabbitmq 'apps/Deployment@v1' = {
         // Generate the broker definitions file (vhost, user, permissions, and the
         // pre-provisioned queue) into a shared volume before the broker starts.
         // rabbitmqctl hash_password computes the password hash offline. The plaintext
-        // password is injected only at runtime from the developer-supplied
-        // Radius.Security/secrets Kubernetes Secret via secretKeyRef; it is never
-        // baked into the pod spec, the definitions file, or the image.
+        // password is injected only at runtime from a Kubernetes Secret via
+        // secretKeyRef; it is never baked into the pod spec, definitions, or image.
         initContainers: [
           {
             name: 'generate-definitions'
@@ -127,8 +135,8 @@ resource rabbitmq 'apps/Deployment@v1' = {
                 value: username
               }
               {
-                // Sourced from the developer-supplied Radius.Security/secrets
-                // Kubernetes Secret — never a literal value in the pod spec.
+                // Sourced from either the supplied or Recipe-created Kubernetes
+                // Secret — never a literal value in the pod spec.
                 name: 'RABBITMQ_PASSWORD'
                 valueFrom: {
                   secretKeyRef: {
@@ -228,18 +236,21 @@ resource svc 'core/Service@v1' = {
 var host = '${svc.metadata.name}.${svc.metadata.namespace}.svc.cluster.local'
 
 output result object = {
-  resources: [
+  resources: concat(!usesSuppliedPassword ? [
+    '/planes/kubernetes/local/namespaces/${namespace}/providers/core/Secret/${fallbackCredentialsSecretName}'
+  ] : [], [
     '/planes/kubernetes/local/namespaces/${brokerConfig.metadata.namespace}/providers/core/ConfigMap/${brokerConfig.metadata.name}'
     '/planes/kubernetes/local/namespaces/${svc.metadata.namespace}/providers/core/Service/${svc.metadata.name}'
     '/planes/kubernetes/local/namespaces/${rabbitmq.metadata.namespace}/providers/apps/Deployment/${rabbitmq.metadata.name}'
-  ]
+  ])
   values: {
-    // Non-secret connection values. Clients build their AMQP 0-9-1 connection from
-    // these plus the password, which they read directly from the same
-    // Radius.Security/secrets resource (via secretKeyRef) — the Recipe never sees
-    // or emits the plaintext password.
+    // Non-secret connection values. Clients combine these with either their
+    // supplied password secret or the Recipe-generated managed secret.
     host: host
     port: port
     username: username
+  }
+  secrets: usesSuppliedPassword ? {} : {
+    password: fallbackPassword
   }
 }
