@@ -3,14 +3,32 @@ extension radius
 @description('The ID of your Radius Environment. Set automatically by the rad CLI.')
 param environment string
 
-@description('Database admin password. Set on the resource `password` property (x-radius-sensitive), so Radius encrypts it at rest and injects it decrypted into the Recipe as the flexible server administrator password.')
+@description('Database admin password. Set on the `password` property of the database (x-radius-sensitive, so Radius encrypts it at rest and injects it decrypted into the Recipe) and stored in a Radius.Security/secrets resource for the consuming container to bind by reference.')
 @secure()
 param password string
 
 resource app 'Radius.Core/applications@2025-08-01-preview' = {
-  name: 'postgresql-azure-test'
+  name: 'postgresql-test'
   properties: {
     environment: environment
+  }
+}
+
+// The password is also needed by the consuming container. Store it in a
+// Radius.Security/secrets resource rather than passing it to the container as a
+// plain `env` value: `data.value` is x-radius-sensitive (encrypted at rest,
+// redacted on reads), whereas a container `env.value` is stored unencrypted on
+// the container resource and rendered literally into the Pod spec.
+resource dbCreds 'Radius.Security/secrets@2025-08-01-preview' = {
+  name: 'postgresql-credentials'
+  properties: {
+    environment: environment
+    application: app.id
+    data: {
+      password: {
+        value: password
+      }
+    }
   }
 }
 
@@ -34,6 +52,20 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
     containers: {
       demo: {
         image: 'ghcr.io/radius-project/samples/demo:latest'
+        // Host, port, and database arrive automatically as
+        // CONNECTION_POSTGRES_* env vars from the connection below. Only the
+        // password needs wiring, and it is bound by reference so the value
+        // never lands in the Pod spec or on this container's state.
+        env: {
+          POSTGRES_PASSWORD: {
+            valueFrom: {
+              secretKeyRef: {
+                secretName: dbCreds.name
+                key: 'password'
+              }
+            }
+          }
+        }
         ports: {
           web: {
             containerPort: 3000
