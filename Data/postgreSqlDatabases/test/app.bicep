@@ -52,12 +52,14 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
     containers: {
       demo: {
         image: 'ghcr.io/radius-project/samples/demo:latest'
-        // Host, port, and database arrive automatically as
-        // CONNECTION_POSTGRES_* env vars from the connection below. Only the
-        // password needs wiring, and it is bound by reference so the value
-        // never lands in the Pod spec or on this container's state.
+        // Host, port, username, and database arrive automatically as
+        // CONNECTION_POSTGRESQL_* env vars from the connection below. The
+        // connection cannot carry the password (x-radius-sensitive properties
+        // redact to null on reads and are skipped), so it is bound by reference
+        // here under the same naming scheme, filling the one gap the connection
+        // leaves. The value never lands in the Pod spec or on this container.
         env: {
-          POSTGRES_PASSWORD: {
+          CONNECTION_POSTGRESQL_PASSWORD: {
             valueFrom: {
               secretKeyRef: {
                 secretName: dbCreds.name
@@ -74,7 +76,9 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
       }
     }
     connections: {
-      postgres: {
+      // Named `postgresql` so the injected variables are CONNECTION_POSTGRESQL_*,
+      // which is the prefix the demo image looks for.
+      postgresql: {
         source: postgresql.id
       }
     }
