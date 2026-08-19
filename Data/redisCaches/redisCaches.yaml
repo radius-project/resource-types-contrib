@@ -48,10 +48,11 @@ types:
       - CONNECTION_REDIS_HOST
       - CONNECTION_REDIS_PORT
 
-      The `url` secret is NOT injected via the connection — it is materialized into
-      a managed `Radius.Security/secrets` resource. Bind it into a container env var
-      with a `secretKeyRef`, using `redis.properties.secrets.name` as the `secretName`
-      and key `url` (see the `secrets` property).
+      The `url` secret is materialized into a managed `Radius.Security/secrets`
+      resource. The same `redis` connection injects it through a Kubernetes secret
+      reference as `CONNECTION_REDIS_URL`; `host` and `port` remain ordinary values.
+      For custom Kubernetes configuration, use `redis.properties.secrets.name` as
+      the `secretName` and `url` as the key in an explicitly authored `secretKeyRef`.
 
     apiVersions:
       '2025-08-01-preview':

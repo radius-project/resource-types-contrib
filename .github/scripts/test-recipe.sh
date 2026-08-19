@@ -48,6 +48,47 @@ ensure_workspace_context() {
     rad workspace switch "$WORKSPACE_NAME" >/dev/null 2>&1 || true
 }
 
+validate_connection_environment_variables() {
+    if [[ "$PLATFORM" != "kubernetes" ]]; then
+        return 0
+    fi
+
+    if [[ "$RESOURCE_TYPE" == "Radius.Compute/containers" ]]; then
+        echo "==> Validating direct Secret connection environment variables"
+        local deployment_json
+        deployment_json=$(kubectl get deployment myapp -n testapp -o json) || return 1
+
+        echo "$deployment_json" | jq -e '
+            (.spec.template.spec.containers[] | select(.name == "orderprocessor").env) as $app |
+            (.spec.template.spec.initContainers[] | select(.name == "dbmigration").env) as $init |
+            ($app | any(.name == "CONNECTION_SECRETS_USERNAME" and .value == "explicit-user")) and
+            ($app | any(.name == "CONNECTION_SECRETS_PASSWORD" and .valueFrom.secretKeyRef.key == "password")) and
+            ($app | any(.name == "CONNECTION_SECRETS_APIKEY" and .valueFrom.secretKeyRef.key == "apikey")) and
+            ($app | all(.name | startswith("CONNECTION_DISABLEDSECRETS_") | not)) and
+            ($init | any(.name == "CONNECTION_SECRETS_USERNAME" and .valueFrom.secretKeyRef.key == "username")) and
+            ($init | any(.name == "CONNECTION_SECRETS_PASSWORD" and .valueFrom.secretKeyRef.key == "password")) and
+            ($init | any(.name == "CONNECTION_SECRETS_APIKEY" and .valueFrom.secretKeyRef.key == "apikey")) and
+            ($init | all(.name | startswith("CONNECTION_DISABLEDSECRETS_") | not))
+        ' >/dev/null
+    elif [[ "$RESOURCE_TYPE" == "Radius.Data/redisCaches" ]]; then
+        echo "==> Validating producer managed-secret environment variables"
+        local deployment_json
+        deployment_json=$(kubectl get deployment democontainer -n testapp -o json) || return 1
+
+        echo "$deployment_json" | jq -e '
+            (.spec.template.spec.containers[] | select(.name == "demo").env) as $env |
+            ($env | any(.name == "CONNECTION_REDIS_HOST" and has("value"))) and
+            ($env | any(.name == "CONNECTION_REDIS_PORT" and has("value"))) and
+            ($env | any(
+                .name == "CONNECTION_REDIS_URL" and
+                .valueFrom.secretKeyRef.key == "url" and
+                (.valueFrom.secretKeyRef.name | length > 0)
+            )) and
+            ($env | all(.name != "CONNECTION_REDIS_SECRETS"))
+        ' >/dev/null
+    fi
+}
+
 resolve_environment_path() {
     # Resolve the full environment resource ID to avoid hardcoding the provider path
     if ! ENVIRONMENT_JSON=$(rad env show "$ENVIRONMENT_NAME" --workspace "$WORKSPACE_NAME" -o json --preview 2>/dev/null); then
@@ -180,6 +221,15 @@ fi
 # Deploy the test app
 if rad deploy "$TEST_FILE" --application "$APP_NAME" -e "$ENVIRONMENT_PATH" $PARAMS; then
     echo "==> Test deployment successful"
+
+    if ! validate_connection_environment_variables; then
+        echo "==> Connection environment variable validation failed"
+        rad app delete "$APP_NAME" --yes 2>/dev/null || true
+        kubectl delete secrets --all -n testapp 2>/dev/null || true
+        kubectl delete deployments --all -n testapp 2>/dev/null || true
+        kubectl delete services --all -n testapp 2>/dev/null || true
+        exit 1
+    fi
     
     # Cleanup: delete the app
     echo "==> Cleaning up test application"
