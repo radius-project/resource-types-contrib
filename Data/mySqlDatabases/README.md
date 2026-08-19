@@ -18,7 +18,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `version` | string (`5.7`, `8.0`, `8.4`) | Optional | The major MySQL server version. Defaults to `8.4`. |
 | `host` | string | Read only | The host name used to connect to the database. Set from the Recipe module's output. |
 | `port` | integer | Read only | The port number used to connect to the database. Set from the Recipe module's output. |
-| `sslMode` | string (`required`, `disabled`) | Read only | Whether the database requires an encrypted (TLS/SSL) connection. Every Recipe in this repository currently sets this to `disabled`; the Azure Recipe explicitly disables the flexible server's `require_secure_transport` setting to match. |
+| `sslMode` | string (`required`, `disabled`) | Read only | Whether the database requires an encrypted (TLS/SSL) connection. The Kubernetes and AWS Recipes set this to `disabled`. The Azure Recipe Pack keeps `require_secure_transport` `ON` by default and does not set this property; override the Recipe Pack's `mySqlServerConfigurations` parameter to disable it if you want Azure to match. |
 
 ## Recipe Packs
 

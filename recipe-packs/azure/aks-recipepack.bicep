@@ -24,19 +24,19 @@ param containerImagesRegistry string
 @description('Name of the Kubernetes Secret holding registry credentials for Radius.Compute/containerImages. Leave empty for an unauthenticated registry.')
 param containerImagesRegistrySecretName string = ''
 
-@description('Server parameters forwarded verbatim to the AVM PostgreSQL flexible server configurations array for Radius.Data/postgreSqlDatabases, using the AVM item shape with name, source, and value fields. Defaults to disabling the `require_secure_transport` server parameter so the Recipe matches the Kubernetes Recipe for this Resource Type, whose `sslMode` output is always `disabled`. Commonly overridden to allow-list extensions via the azure.extensions parameter (for example to enable pgvector) or to re-enable `require_secure_transport`. See recipe-packs/azure/README.md for an example and a link to the supported extensions.')
+@description('Server parameters forwarded verbatim to the AVM PostgreSQL flexible server configurations array for Radius.Data/postgreSqlDatabases, using the AVM item shape with name, source, and value fields. Defaults to `[{ name: "require_secure_transport", value: "ON" }]`, preserving the flexible server default so existing deployments keep requiring TLS. Commonly overridden to allow-list extensions via the azure.extensions parameter (for example to enable pgvector) or to disable `require_secure_transport` so this Recipe matches the Kubernetes Recipe for this Resource Type, whose `sslMode` output is always `disabled`. See recipe-packs/azure/README.md for an example and a link to the supported extensions.')
 param postgreSqlServerConfigurations array = [
   {
     name: 'require_secure_transport'
-    value: 'OFF'
+    value: 'ON'
   }
 ]
 
-@description('Server parameters forwarded verbatim to the AVM MySQL flexible server configurations array for Radius.Data/mySqlDatabases, using the AVM item shape with name, source, and value fields. Defaults to disabling the `require_secure_transport` server parameter so the Recipe matches the Kubernetes and AWS Recipes for this Resource Type, whose `sslMode` output is always `disabled`. Override to re-enable `require_secure_transport` if your application connects over TLS/SSL.')
+@description('Server parameters forwarded verbatim to the AVM MySQL flexible server configurations array for Radius.Data/mySqlDatabases, using the AVM item shape with name, source, and value fields. Defaults to `[{ name: "require_secure_transport", value: "ON" }]`, preserving the flexible server default so existing deployments keep requiring TLS. Override to disable `require_secure_transport` if you want this Recipe to match the Kubernetes and AWS Recipes for this Resource Type, whose `sslMode` output is always `disabled`.')
 param mySqlServerConfigurations array = [
   {
     name: 'require_secure_transport'
-    value: 'OFF'
+    value: 'ON'
   }
 ]
 

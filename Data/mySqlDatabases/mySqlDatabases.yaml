@@ -53,7 +53,7 @@ types:
       - CONNECTION_MYSQLDB_PORT
       - CONNECTION_MYSQLDB_SSLMODE
 
-      Every Recipe for this Resource Type provisions the database so `sslMode` is `disabled` (no Recipe in this repository requires an encrypted connection), so application definitions that rely on the documented outputs can connect the same way on every platform without adding TLS options to their client. The Azure Recipe explicitly disables the `require_secure_transport` server setting so its behavior matches the Kubernetes and AWS Recipes for this Resource Type.
+      The Kubernetes and AWS Recipes for this Resource Type provision the database so `sslMode` is `disabled`. The Azure Recipe Pack keeps the flexible server's `require_secure_transport` setting `ON` by default (matching Azure's own default), so `sslMode` is left unset when deployed through that Recipe; configure your client accordingly, or override the Azure Recipe Pack's `mySqlServerConfigurations` parameter to disable `require_secure_transport` if you want Azure to match the Kubernetes and AWS Recipes.
 
     apiVersions:
       '2025-08-01-preview':
