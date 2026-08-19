@@ -161,6 +161,7 @@ output "result" {
       host     = "${kubernetes_service.postgres.metadata[0].name}.${kubernetes_service.postgres.metadata[0].namespace}.svc.cluster.local"
       port     = local.port
       database = local.database
+      sslMode  = "disabled"
     }
     secrets = {
       password         = local.password

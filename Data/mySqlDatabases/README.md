@@ -18,6 +18,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `version` | string (`5.7`, `8.0`, `8.4`) | Optional | The major MySQL server version. Defaults to `8.4`. |
 | `host` | string | Read only | The host name used to connect to the database. Set from the Recipe module's output. |
 | `port` | integer | Read only | The port number used to connect to the database. Set from the Recipe module's output. |
+| `sslMode` | string (`required`, `disabled`) | Read only | Whether the database requires an encrypted (TLS/SSL) connection. Every Recipe in this repository currently sets this to `disabled`; the Azure Recipe explicitly disables the flexible server's `require_secure_transport` setting to match. |
 
 ## Recipe Packs
 
@@ -29,4 +30,4 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 ## Using the resource type
 
-Add a `mySqlDatabases` resource to your application and connect a container to it. Radius injects the database's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_MYSQLDB_HOST`, `CONNECTION_MYSQLDB_PORT`, and `CONNECTION_MYSQLDB_DATABASE`). See [`test/app.bicep`](test/app.bicep) for a complete example.
+Add a `mySqlDatabases` resource to your application and connect a container to it. Radius injects the database's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_MYSQLDB_HOST`, `CONNECTION_MYSQLDB_PORT`, `CONNECTION_MYSQLDB_DATABASE`, and `CONNECTION_MYSQLDB_SSLMODE`). See [`test/app.bicep`](test/app.bicep) for a complete example.

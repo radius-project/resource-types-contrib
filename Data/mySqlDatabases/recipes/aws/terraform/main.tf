@@ -134,6 +134,7 @@ output "result" {
       host     = module.db.db_instance_address
       port     = module.db.db_instance_port
       database = local.sanitized_database
+      sslMode  = "disabled"
     }
   }
 }

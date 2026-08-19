@@ -162,6 +162,7 @@ output result object = {
     host: '${svc.metadata.name}.${svc.metadata.namespace}.svc.cluster.local'
     port: port
     database: database
+    sslMode: 'disabled'
   }
   secrets: {
     password: password

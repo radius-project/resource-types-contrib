@@ -19,6 +19,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `initSql` | string | Optional | Optional SQL script executed on first initialization to create tables, indexes, and seed data. |
 | `host` | string | Read only | The host name used to connect to the database. Set from the Recipe module's output. |
 | `port` | integer | Read only | The port number used to connect to the database. Set from the Recipe module's output. |
+| `sslMode` | string (`required`, `disabled`) | Read only | Whether the database requires an encrypted (TLS/SSL) connection. Every Recipe in this repository currently sets this to `disabled`; the Azure Recipe explicitly disables the flexible server's `require_secure_transport` setting to match. |
 
 ## Recipe Packs
 
@@ -30,4 +31,4 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 ## Using the resource type
 
-Add a `postgreSqlDatabases` resource to your application and connect a container to it. Radius injects the database's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_POSTGRES_HOST`, `CONNECTION_POSTGRES_PORT`, and `CONNECTION_POSTGRES_DATABASE`). See [`test/app.bicep`](test/app.bicep) for a complete example.
+Add a `postgreSqlDatabases` resource to your application and connect a container to it. Radius injects the database's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_POSTGRES_HOST`, `CONNECTION_POSTGRES_PORT`, `CONNECTION_POSTGRES_DATABASE`, and `CONNECTION_POSTGRES_SSLMODE`). See [`test/app.bicep`](test/app.bicep) for a complete example.
