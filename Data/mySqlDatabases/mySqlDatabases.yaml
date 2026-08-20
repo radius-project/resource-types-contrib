@@ -51,6 +51,16 @@ types:
       - CONNECTION_MYSQLDB_DATABASE
       - CONNECTION_MYSQLDB_HOST
       - CONNECTION_MYSQLDB_PORT
+      - CONNECTION_MYSQLDB_SSLMODE
+
+      Recipes differ in whether the database they provision accepts unencrypted connections, so the `sslMode` property reports the transport the provisioned server requires. Read it rather than assuming a transport: the Azure Recipe sets it to `required` because Azure Database for MySQL flexible server runs with `require_secure_transport` `ON`, while the Kubernetes and AWS Recipes set it to `disabled`. A client that always negotiates TLS works against both.
+      ```bicep
+      env: {
+        MYSQL_SSL_MODE: {
+          value: mysql.properties.sslMode
+        }
+      }
+      ```
 
     apiVersions:
       '2025-08-01-preview':
@@ -86,5 +96,10 @@ types:
             port:
               type: integer
               description: The port number used to connect to the database. Mapped from the recipe module's output (MySQL flexible server uses 3306).
+              readOnly: true
+            sslMode:
+              type: string
+              enum: ['required', 'disabled']
+              description: "(Read Only) The transport the provisioned database requires. Set by the Recipe. `required` means the server rejects unencrypted connections, so the client must negotiate TLS/SSL; `disabled` means the server accepts unencrypted connections. Configure the client from this value rather than assuming a transport."
               readOnly: true
           required: [environment,username,password]

@@ -162,6 +162,10 @@ output result object = {
     host: '${svc.metadata.name}.${svc.metadata.namespace}.svc.cluster.local'
     port: port
     database: database
+    // The stock mysql image is started without TLS enforcement, so the server
+    // accepts unencrypted connections. Reported so a connected client can pick
+    // its transport from the contract instead of assuming one.
+    sslMode: 'disabled'
   }
   secrets: {
     password: password

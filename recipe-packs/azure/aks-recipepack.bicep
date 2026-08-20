@@ -24,8 +24,11 @@ param containerImagesRegistry string
 @description('Name of the Kubernetes Secret holding registry credentials for Radius.Compute/containerImages. Leave empty for an unauthenticated registry.')
 param containerImagesRegistrySecretName string = ''
 
-@description('Server parameters forwarded verbatim to the AVM PostgreSQL flexible server configurations array for Radius.Data/postgreSqlDatabases, using the AVM item shape with name, source, and value fields. Commonly used to allow-list extensions via the azure.extensions parameter (for example to enable pgvector). See recipe-packs/azure/README.md for an example and a link to the supported extensions. Defaults to an empty array (no extra server configuration).')
+@description('Additional PostgreSQL server parameters applied to the flexible server for Radius.Data/postgreSqlDatabases, using the shape with name and value fields. Most commonly used to allow-list extensions via the azure.extensions parameter, for example to enable pgvector. See recipe-packs/azure/README.md for an example and a link to the supported extensions. Defaults to an empty array (no extra server configuration). The server keeps require_secure_transport on, which the Recipe reports through the resource type sslMode property, so do not set that parameter here.')
 param postgreSqlServerConfigurations array = []
+
+@description('Additional MySQL server parameters applied to the flexible server for Radius.Data/mySqlDatabases, using the shape with name and value fields. Defaults to an empty array (no extra server configuration). The server keeps require_secure_transport ON, which the Recipe reports through the resource type sslMode property, so do not set that parameter here.')
+param mySqlServerConfigurations array = []
 
 resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
   name: 'azure-avm'
@@ -143,82 +146,23 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
           }
         }
       }
+      // These two types are provisioned by Recipes in this repository rather than
+      // by a direct AVM module reference. A direct module can only map outputs the
+      // module itself declares, and neither flexible server module declares the
+      // transport the provisioned server requires, so the type's sslMode property
+      // could not be populated on Azure. See Data/mySqlDatabases/recipes/azure/bicep.
       'Radius.Data/mySqlDatabases': {
         kind: 'bicep'
-        source: 'mcr.microsoft.com/bicep/avm/res/db-for-my-sql/flexible-server:0.10.3'
+        source: 'ghcr.io/radius-project/kube-recipes/azuremysqldatabases:latest'
         parameters: {
-          name: 'mysql-{{context.azure.resourceNameHash}}'
-          administratorLogin: '{{context.resource.properties.username}}'
-          administratorLoginPassword: '{{context.resource.properties.password}}'
-          skuName: 'Standard_B1ms'
-          tier: 'Burstable'
-          version: '{{context.resource.properties.version == "5.7" ? "5.7" : "8.0.21"}}'
-          databases: [
-            {
-              name: '{{context.resource.properties.database}}'
-            }
-          ]
-          availabilityZone: -1
-          highAvailability: 'Disabled'
-          geoRedundantBackup: 'Disabled'
-          storageSizeGB: 32
-          publicNetworkAccess: 'Enabled'
-          firewallRules: [
-            {
-              name: 'allow-all'
-              startIpAddress: '0.0.0.0'
-              endIpAddress: '255.255.255.255'
-            }
-          ]
-          enableTelemetry: false
-          lock: {
-            kind: 'None'
-          }
-        }
-        outputs: {
-          host: 'fqdn'
+          serverConfigurations: mySqlServerConfigurations
         }
       }
       'Radius.Data/postgreSqlDatabases': {
         kind: 'bicep'
-        source: 'mcr.microsoft.com/bicep/avm/res/db-for-postgre-sql/flexible-server:0.15.2'
+        source: 'ghcr.io/radius-project/kube-recipes/azurepostgresqldatabases:latest'
         parameters: {
-          name: 'pgsql-{{context.azure.resourceNameHash}}'
-          administratorLogin: '{{context.resource.properties.username}}'
-          administratorLoginPassword: '{{context.resource.properties.password}}'
-          authConfig: {
-            activeDirectoryAuth: 'Enabled'
-            passwordAuth: 'Enabled'
-          }
-          skuName: '{{context.resource.properties.size == "S" ? "Standard_B1ms" : "Standard_D2ds_v5"}}'
-          tier: '{{context.resource.properties.size == "S" ? "Burstable" : "GeneralPurpose"}}'
-          databases: [
-            {
-              name: '{{context.resource.properties.database}}'
-            }
-          ]
-          version: '16'
-          availabilityZone: -1
-          highAvailability: 'Disabled'
-          geoRedundantBackup: 'Disabled'
-          storageSizeGB: 32
-          publicNetworkAccess: 'Enabled'
-          firewallRules: [
-            {
-              name: 'allow-all'
-              startIpAddress: '0.0.0.0'
-              endIpAddress: '255.255.255.255'
-            }
-          ]
-          enableAdvancedThreatProtection: false
-          enableTelemetry: false
-          lock: {
-            kind: 'None'
-          }
-          configurations: postgreSqlServerConfigurations
-        }
-        outputs: {
-          host: 'fqdn'
+          serverConfigurations: postgreSqlServerConfigurations
         }
       }
       'Radius.Data/sqlServerDatabases': {

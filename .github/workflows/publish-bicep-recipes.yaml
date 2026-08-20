@@ -2,7 +2,7 @@
 ---
 name: Publish Bicep Recipes
 
-# Publishes the Kubernetes Bicep recipes to GHCR as OCI artifacts.
+# Publishes the Kubernetes and Azure Bicep recipes to GHCR as OCI artifacts.
 #
 # Every publish is tagged with the commit SHA it was built from, and that SHA
 # tag is what makes the recipes addressable from Radius. A released `rad`
@@ -128,8 +128,12 @@ jobs:
             run: ./.github/scripts/publish-bicep-recipe.sh secrets Security/secrets/recipes/kubernetes/bicep/kubernetes-secrets.bicep
           - name: Publish mysqldatabases
             run: ./.github/scripts/publish-bicep-recipe.sh mysqldatabases Data/mySqlDatabases/recipes/kubernetes/bicep/kubernetes-mysql.bicep
+          - name: Publish azuremysqldatabases
+            run: ./.github/scripts/publish-bicep-recipe.sh azuremysqldatabases Data/mySqlDatabases/recipes/azure/bicep/azure-mysql.bicep
           - name: Publish postgresqldatabases
             run: ./.github/scripts/publish-bicep-recipe.sh postgresqldatabases Data/postgreSqlDatabases/recipes/kubernetes/bicep/kubernetes-postgresql.bicep
+          - name: Publish azurepostgresqldatabases
+            run: ./.github/scripts/publish-bicep-recipe.sh azurepostgresqldatabases Data/postgreSqlDatabases/recipes/azure/bicep/azure-postgresql.bicep
           - name: Publish rediscaches
             run: ./.github/scripts/publish-bicep-recipe.sh rediscaches Data/redisCaches/recipes/kubernetes/bicep/kubernetes-redis.bicep
           - name: Publish rabbitmq
@@ -138,7 +142,7 @@ jobs:
       - name: Summarize
         run: |
           {
-            echo "Published the Kubernetes Bicep recipes to \`$REGISTRY\` with tags \`$TAGS\`."
+            echo "Published the Kubernetes and Azure Bicep recipes to \`$REGISTRY\` with tags \`$TAGS\`."
             echo ""
             echo "Radius pins these recipes by commit SHA, so \`$GITHUB_SHA\` is now a resolvable tag for every recipe above."
           } >>"$GITHUB_STEP_SUMMARY"

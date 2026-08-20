@@ -51,6 +51,16 @@ types:
       - CONNECTION_POSTGRESQL_DATABASE
       - CONNECTION_POSTGRESQL_HOST
       - CONNECTION_POSTGRESQL_PORT
+      - CONNECTION_POSTGRESQL_SSLMODE
+
+      Recipes differ in whether the database they provision accepts unencrypted connections, so the `sslMode` property reports the transport the provisioned server requires. Read it rather than assuming a transport: the Azure Recipe sets it to `required` because Azure Database for PostgreSQL flexible server runs with `require_secure_transport` `on`, while the Kubernetes Recipe sets it to `disabled`. Note that these values are the Radius contract, not libpq's `sslmode` vocabulary — map `required` to libpq's `require` and `disabled` to `disable` before passing the value to a libpq-based client.
+      ```bicep
+      env: {
+        PGSSLMODE: {
+          value: postgresql.properties.sslMode == 'required' ? 'require' : 'disable'
+        }
+      }
+      ```
 
     apiVersions:
       '2025-08-01-preview':
@@ -89,5 +99,10 @@ types:
             port:
               type: string
               description: The port number used to connect to the database.
+              readOnly: true
+            sslMode:
+              type: string
+              enum: ['required', 'disabled']
+              description: "(Read Only) The transport the provisioned database requires. Set by the Recipe. `required` means the server rejects unencrypted connections, so the client must negotiate TLS/SSL; `disabled` means the server accepts unencrypted connections. Configure the client from this value rather than assuming a transport."
               readOnly: true
           required: [environment,username,password]

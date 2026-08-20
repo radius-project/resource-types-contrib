@@ -161,6 +161,10 @@ output "result" {
       host     = "${kubernetes_service.postgres.metadata[0].name}.${kubernetes_service.postgres.metadata[0].namespace}.svc.cluster.local"
       port     = local.port
       database = local.database
+      # The stock postgres image ships with ssl off, so the server accepts
+      # unencrypted connections. Reported so a connected client can pick its
+      # transport from the contract instead of assuming one.
+      sslMode = "disabled"
     }
     secrets = {
       password         = local.password

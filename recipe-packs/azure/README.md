@@ -19,13 +19,13 @@ This Recipe Pack requires a Radius runtime that supports the `context.azure.reso
 | Resource Type | Kind | Source |
 | --- | --- | --- |
 | `Radius.Data/sqlServerDatabases` | Bicep | Azure Verified Module — `mcr.microsoft.com/bicep/avm/res/sql/server:0.21.4` |
-| `Radius.Data/postgreSqlDatabases` | Bicep | Azure Verified Module — `avm/res/db-for-postgre-sql/flexible-server` |
+| `Radius.Data/postgreSqlDatabases` | Bicep | `ghcr.io/radius-project/kube-recipes/azurepostgresqldatabases` |
 | `Radius.AI/search` | Bicep | Azure Verified Module — `avm/res/search/search-service` |
 | `Radius.AI/models` | Bicep | Azure Verified Module — `avm/res/cognitive-services/account` |
 | `Radius.Messaging/rabbitMQ` | Bicep | `ghcr.io/radius-project/kube-recipes/rabbitmq` |
 | `Radius.Messaging/kafka` | Bicep | Azure Verified Module — `avm/res/event-hub/namespace` |
 | `Radius.Data/mongoDatabases` | Bicep | Azure Verified Module — `avm/res/document-db/database-account` |
-| `Radius.Data/mySqlDatabases` | Bicep | Azure Verified Module — `avm/res/db-for-my-sql/flexible-server` |
+| `Radius.Data/mySqlDatabases` | Bicep | `ghcr.io/radius-project/kube-recipes/azuremysqldatabases` |
 | `Radius.Data/redisCaches` | Bicep | Azure Verified Module — `avm/res/cache/redis-enterprise` |
 | `Radius.Storage/objectStorage` | Bicep | Azure Verified Module — `avm/res/storage/storage-account` |
 | `Radius.Compute/containers` | Bicep | `ghcr.io/radius-project/kube-recipes/containers` |
@@ -48,7 +48,8 @@ The Azure pack accepts the provider configuration it needs to provision into you
 | `routesGatewayNamespace` | Namespace of the Gateway resource for `Radius.Compute/routes`. Defaults to `default`. |
 | `containerImagesRegistry` | Registry path (e.g. `ghcr.io/my-org`) that `Radius.Compute/containerImages` pushes built images to. |
 | `containerImagesRegistrySecretName` | Name of the Kubernetes Secret holding registry credentials for `Radius.Compute/containerImages`. Optional; leave empty for an unauthenticated registry. |
-| `postgreSqlServerConfigurations` | Server parameters forwarded verbatim to the AVM PostgreSQL flexible server `configurations` array for `Radius.Data/postgreSqlDatabases`, using the AVM item shape `{ name, source, value }`. Most commonly used to allow-list extensions via `azure.extensions` — for example `[{ name: 'azure.extensions', source: 'user-override', value: 'vector' }]` to enable pgvector. See [Extensions and modules by name in Azure Database for PostgreSQL flexible server](https://learn.microsoft.com/en-us/azure/postgresql/extensions/concepts-extensions-versions) for the supported extension names. Optional; defaults to an empty array (no extra server configuration). |
+| `postgreSqlServerConfigurations` | Additional PostgreSQL server parameters applied to the flexible server for `Radius.Data/postgreSqlDatabases`, using the shape `{ name, value }`. Most commonly used to allow-list extensions via `azure.extensions` — for example `[{ name: 'azure.extensions', value: 'vector' }]` to enable pgvector. See [Extensions and modules by name in Azure Database for PostgreSQL flexible server](https://learn.microsoft.com/en-us/azure/postgresql/extensions/concepts-extensions-versions) for the supported extension names. Optional; defaults to an empty array (no extra server configuration). The Recipe keeps `require_secure_transport` `on` and reports it through the resource type's `sslMode` property, so do not set that parameter here. |
+| `mySqlServerConfigurations` | Additional MySQL server parameters applied to the flexible server for `Radius.Data/mySqlDatabases`, using the shape `{ name, value }`. Optional; defaults to an empty array (no extra server configuration). The Recipe keeps `require_secure_transport` `ON` and reports it through the resource type's `sslMode` property, so do not set that parameter here. |
 
 ## Deploying
 

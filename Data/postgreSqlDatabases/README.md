@@ -16,9 +16,10 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `password` | string (`x-radius-sensitive`) | Required | The administrator password. Encrypted at rest, redacted on reads, and injected decrypted into the Recipe as `{{context.resource.properties.password}}`. |
 | `database` | string | Optional | The name of the database. Defaults to `postgres_db`. |
 | `size` | string (`S`, `M`, `L`) | Optional | The size of the PostgreSQL database. Defaults to `S`. The Recipe maps the size onto a concrete cloud SKU/tier. |
-| `initSql` | string | Optional | Optional SQL script executed on first initialization to create tables, indexes, and seed data. |
+| `initSql` | string | Optional | Optional SQL script executed on first initialization to create tables, indexes, and seed data. Applied by the Kubernetes Recipe through the `postgres` image's init hook; the Azure Recipe does not apply it, because a managed flexible server exposes no equivalent. |
 | `host` | string | Read only | The host name used to connect to the database. Set from the Recipe module's output. |
-| `port` | integer | Read only | The port number used to connect to the database. Set from the Recipe module's output. |
+| `port` | string | Read only | The port number used to connect to the database. Set from the Recipe module's output. |
+| `sslMode` | string (`required`, `disabled`) | Read only | The transport the provisioned database requires. Set by the Recipe. The Azure Recipe sets `required`, because Azure Database for PostgreSQL flexible server runs with `require_secure_transport` `on`; the Kubernetes Recipe sets `disabled`. Read this value rather than assuming a transport. |
 
 ## Recipe Packs
 
@@ -26,8 +27,23 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 | Platform | Recipe Pack | Recipe source |
 | --- | --- | --- |
-| Azure | [`recipe-packs/azure/aks-recipepack.bicep`](../../recipe-packs/azure/aks-recipepack.bicep) | Direct module — Azure Verified Module `avm/res/db-for-postgre-sql/flexible-server` |
+| Azure | [`recipe-packs/azure/aks-recipepack.bicep`](../../recipe-packs/azure/aks-recipepack.bicep) | Azure Database for PostgreSQL flexible server [`recipes/azure`](recipes/azure) |
 
 ## Using the resource type
 
-Add a `postgreSqlDatabases` resource to your application and connect a container to it. Radius injects the database's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_POSTGRES_HOST`, `CONNECTION_POSTGRES_PORT`, and `CONNECTION_POSTGRES_DATABASE`). See [`test/app.bicep`](test/app.bicep) for a complete example.
+Add a `postgreSqlDatabases` resource to your application and connect a container to it. Radius injects the database's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_POSTGRES_HOST`, `CONNECTION_POSTGRES_PORT`, `CONNECTION_POSTGRES_DATABASE`, and `CONNECTION_POSTGRES_SSLMODE`). See [`test/app.bicep`](test/app.bicep) for a complete example.
+
+### Connecting over TLS
+
+The same application definition can be deployed to any platform that offers a Recipe for this type, but the provisioned servers do not all accept the same transport. Rather than hard-coding a transport, read `sslMode` and configure the client from it. Note that `required`/`disabled` is the Radius contract, not libpq's `sslmode` vocabulary, so map the value before passing it to a libpq-based client:
+
+```bicep
+env: {
+  PGSSLMODE: {
+    value: postgresql.properties.sslMode == 'required' ? 'require' : 'disable'
+  }
+}
+```
+
+A client that always negotiates TLS also works against every Recipe in this repository only if the server supports it; the Kubernetes Recipe runs the stock `postgres` image with `ssl` off, so use the mapping above rather than forcing `require` everywhere.
+

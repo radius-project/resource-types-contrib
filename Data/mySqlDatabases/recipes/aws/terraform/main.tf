@@ -134,6 +134,11 @@ output "result" {
       host     = module.db.db_instance_address
       port     = module.db.db_instance_port
       database = local.sanitized_database
+      # The RDS parameter group above leaves require_secure_transport at its
+      # default of OFF, so the server accepts unencrypted connections. Reported
+      # so a connected client can pick its transport from the contract instead
+      # of assuming one.
+      sslMode = "disabled"
     }
   }
 }
