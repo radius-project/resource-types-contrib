@@ -27,6 +27,19 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
     containers: {
       demo: {
         image: 'ghcr.io/radius-project/samples/demo:latest'
+        // The recipe's secret output(s) are materialized into a managed
+        // Radius.Security/secrets resource and consumed here BY REFERENCE via
+        // secretKeyRef — the value never lands on redis state.
+        env: {
+          REDIS_URL: {
+            valueFrom: {
+              secretKeyRef: {
+                secretName: redis.properties.secrets.name
+                key: 'url'
+              }
+            }
+          }
+        }
         ports: {
           web: {
             containerPort: 3000
@@ -35,7 +48,6 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
       }
     }
     connections: {
-      // Injects host/port plus secret-backed CONNECTION_REDIS_URL.
       redis: {
         source: redis.id
       }

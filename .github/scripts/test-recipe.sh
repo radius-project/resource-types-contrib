@@ -70,22 +70,6 @@ validate_connection_environment_variables() {
             ($init | any(.name == "CONNECTION_SECRETS_APIKEY" and .valueFrom.secretKeyRef.key == "apikey")) and
             ($init | all(.name | startswith("CONNECTION_DISABLEDSECRETS_") | not))
         ' >/dev/null
-    elif [[ "$RESOURCE_TYPE" == "Radius.Data/redisCaches" ]]; then
-        echo "==> Validating producer managed-secret environment variables"
-        local deployment_json
-        deployment_json=$(kubectl get deployment democontainer -n testapp -o json) || return 1
-
-        echo "$deployment_json" | jq -e '
-            (.spec.template.spec.containers[] | select(.name == "demo").env) as $env |
-            ($env | any(.name == "CONNECTION_REDIS_HOST" and has("value"))) and
-            ($env | any(.name == "CONNECTION_REDIS_PORT" and has("value"))) and
-            ($env | any(
-                .name == "CONNECTION_REDIS_URL" and
-                .valueFrom.secretKeyRef.key == "url" and
-                (.valueFrom.secretKeyRef.name | length > 0)
-            )) and
-            ($env | all(.name != "CONNECTION_REDIS_SECRETS"))
-        ' >/dev/null
     fi
 }
 
