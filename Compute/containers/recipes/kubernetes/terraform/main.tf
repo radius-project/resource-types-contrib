@@ -43,25 +43,65 @@ locals {
   connection_definitions = try(var.context.resource.properties.connections, {})
 
   # Properties to exclude from connection environment variables
-  excluded_properties = ["recipe", "status", "provisioningState"]
+  excluded_properties = ["recipe", "secrets", "status", "provisioningState"]
+  top_level_excluded_properties = [
+    "recipe",
+    "secrets",
+    "status",
+    "provisioningState",
+    "properties",
+    "secretName",
+  ]
 
-  # Helper to check if a connection is a secrets resource (from source in connection definition)
+  # Identify direct Radius secret connections from resolved resource metadata.
   is_secrets_resource = {
-    for conn_name, conn_def in local.connection_definitions :
-    conn_name => can(regex("Radius.Security/secrets", try(conn_def.source, "")))
+    for conn_name, conn in local.connections :
+    conn_name => try(conn.type, "") == "Radius.Security/secrets" ||
+    can(regex("Radius.Security/secrets", try(local.connection_definitions[conn_name].source, "")))
   }
 
-  # Secrets connections to inject via envFrom.secretRef
-  # The K8s secret name is the Radius resource name (last segment of the source ID)
-  secrets_env_from = [
+  # Direct Radius.Security/secrets connections inject every declared data key.
+  direct_secret_env_vars = flatten([
     for conn_name, conn in local.connections :
-    {
-      # Extract the secret name from the connection source (last segment of the resource ID)
-      name   = element(split("/", local.connection_definitions[conn_name].source), length(split("/", local.connection_definitions[conn_name].source)) - 1)
-      prefix = upper("CONNECTION_${conn_name}_")
-    }
-    if try(local.is_secrets_resource[conn_name], false) &&
+    try(local.is_secrets_resource[conn_name], false) &&
     try(local.connection_definitions[conn_name].disableDefaultEnvVars, false) != true
+    ? [
+      for secret_key, secret in try(conn.properties.data, {}) : {
+        name  = upper("CONNECTION_${conn_name}_${secret_key}")
+        value = null
+        value_from = {
+          secret_key_ref = {
+            name = element(split("/", local.connection_definitions[conn_name].source), length(split("/", local.connection_definitions[conn_name].source)) - 1)
+            key  = secret_key
+          }
+        }
+      }
+    ]
+    : []
+  ])
+
+  # Producer Recipe secrets are reference metadata, separate from ordinary properties.
+  managed_secret_env_vars = flatten([
+    for conn_name, conn in local.connections :
+    !try(local.is_secrets_resource[conn_name], false) &&
+    try(local.connection_definitions[conn_name].disableDefaultEnvVars, false) != true
+    ? [
+      for secret_name, secret_ref in try(conn.secrets, {}) : {
+        name  = upper("CONNECTION_${conn_name}_${secret_name}")
+        value = null
+        value_from = {
+          secret_key_ref = {
+            name = element(split("/", try(tostring(secret_ref.source), "")), length(split("/", try(tostring(secret_ref.source), ""))) - 1)
+            key  = try(tostring(secret_ref.key), "")
+          }
+        }
+      }
+    ]
+    : []
+  ])
+  secret_connection_env_vars = concat(local.direct_secret_env_vars, local.managed_secret_env_vars)
+  secret_connection_env_var_names = [
+    for env in local.secret_connection_env_vars : env.name
   ]
 
   # Connections with a secretName property - inject all keys via envFrom.secretRef
@@ -77,28 +117,21 @@ locals {
     (can(tostring(conn.secretName)) || can(tostring(conn.properties.secretName)))
   ]
 
-  # Properties to exclude at the top level of a connection (metadata + nested bags)
-  top_level_excluded = ["recipe", "status", "provisioningState", "properties", "secretName"]
-
-  # Connection-derived environment variables for non-secrets connections
-  # Secrets connections use envFrom.secretRef instead for cleaner injection
-  # Each connection's resource properties become CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>
+  # Ordinary top-level scalar values and nested producer properties become
+  # CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>.
   # Note: disableDefaultEnvVars is on connection_definitions, not the merged connections data
-  connection_env_vars = flatten([
+  raw_connection_env_vars = flatten([
     for conn_name, conn in local.connections :
-    # Only process non-secrets connections here (secrets use envFrom)
     !try(local.is_secrets_resource[conn_name], false) &&
     try(local.connection_definitions[conn_name].disableDefaultEnvVars, false) != true
     ? concat(
-      # Add top-level connection properties (excluding metadata, nested properties bag, and secretName)
       [
         for prop_name, prop_value in conn : {
           name  = upper("CONNECTION_${conn_name}_${prop_name}")
           value = tostring(prop_value)
         }
-        if !contains(local.top_level_excluded, prop_name) && can(tostring(prop_value))
+        if !contains(local.top_level_excluded_properties, prop_name) && can(tostring(prop_value))
       ],
-      # Flatten nested connection.properties bag
       [
         for prop_name, prop_value in try(conn.properties, {}) : {
           name  = upper("CONNECTION_${conn_name}_${prop_name}")
@@ -109,6 +142,12 @@ locals {
     )
     : []
   ])
+
+  # Managed secret references take precedence over ordinary outputs with the same name.
+  connection_env_vars = [
+    for env in local.raw_connection_env_vars : env
+    if !contains(local.secret_connection_env_var_names, env.name)
+  ]
 
   # Replica count - use from properties or default to 1
   replica_count = try(local.resource_properties.replicas, 1)
@@ -171,12 +210,18 @@ locals {
             } : null
           }
         ],
-        local.connection_env_vars
+        [
+          for env in local.secret_connection_env_vars : env
+          if !contains(keys(try(config.env, {})), env.name)
+        ],
+        [
+          for env in local.connection_env_vars : env
+          if !contains(keys(try(config.env, {})), env.name)
+        ]
       )
 
-      # Environment variables from secrets (via envFrom.secretRef)
-      # Injects all keys from direct connections to secrets and connections with secretName property
-      env_from = concat(local.secrets_env_from, local.secret_name_env_from)
+      # Connections that surface secretName still use envFrom.secretRef.
+      env_from = local.secret_name_env_from
 
       # Volume mounts
       volume_mounts = [
@@ -310,6 +355,13 @@ locals {
 # ========================================
 resource "kubernetes_deployment" "deployment" {
   wait_for_rollout = false
+
+  lifecycle {
+    precondition {
+      condition     = length(local.secret_connection_env_var_names) == length(distinct(local.secret_connection_env_var_names))
+      error_message = "Connection secret keys must produce unique environment variable names after uppercasing."
+    }
+  }
 
   metadata {
     name      = local.normalized_name

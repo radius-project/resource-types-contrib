@@ -40,31 +40,66 @@ var resourceConnections = context.resource.?connections ?? {}
 var connectionDefinitions = context.resource.properties.?connections ?? {}
 
 // Properties to exclude from connection environment variables
-var excludedProperties = ['recipe', 'status', 'provisioningState']
+var excludedProperties = ['recipe', 'secrets', 'status', 'provisioningState']
+var topLevelExcludedProperties = ['recipe', 'secrets', 'status', 'provisioningState', 'properties', 'secretName']
 
-// Helper function to check if a connection is a secrets resource (using source from original connection definition)
-var isSecretsResource = reduce(items(connectionDefinitions), {}, (acc, conn) => union(acc, {
-  '${conn.key}': contains(string(conn.value.?source ?? ''), 'Radius.Security/secrets')
+// Identify direct Radius secret connections from resolved resource metadata.
+var isSecretsResource = reduce(items(resourceConnections), {}, (acc, conn) => union(acc, {
+  '${conn.key}': string(conn.value.?type ?? '') == 'Radius.Security/secrets' || (contains(connectionDefinitions, conn.key) && contains(string(connectionDefinitions[conn.key].?source ?? ''), 'Radius.Security/secrets'))
 }))
 
-// When a connection is to Radius.Security/secrets. The K8s secret name is the Radius resource name (last segment of the source ID) or a surfaced secretName property on the connection
-var secretsEnvFrom = reduce(items(resourceConnections), [], (acc, conn) => 
-  connectionDefinitions[conn.key].?disableDefaultEnvVars == true
+// Resolved and declared connection maps can briefly differ while dependencies update.
+var disableDefaultEnvVars = reduce(items(resourceConnections), {}, (acc, conn) => union(acc, {
+  '${conn.key}': contains(connectionDefinitions, conn.key)
+    ? connectionDefinitions[conn.key].?disableDefaultEnvVars == true
+    : false
+}))
+
+// A direct Radius.Security/secrets connection injects each declared data key.
+var directSecretEnvVars = reduce(items(resourceConnections), [], (acc, conn) =>
+  disableDefaultEnvVars[conn.key] || !isSecretsResource[conn.key]
     ? acc
-    : isSecretsResource[conn.key]
-      ? concat(acc, [{
-          prefix: toUpper('CONNECTION_${conn.key}_')
-          secretRef: {
-            // Extract the secret name from the connection source (last segment of the resource ID)
-            name: last(split(string(connectionDefinitions[conn.key].source), '/'))
+    : concat(
+        acc,
+        reduce(items(conn.value.?properties.?data ?? {}), [], (envAcc, secret) => concat(envAcc, [{
+          name: toUpper('CONNECTION_${conn.key}_${secret.key}')
+          valueFrom: {
+            secretKeyRef: {
+              name: last(split(string(connectionDefinitions[conn.key].source), '/'))
+              key: secret.key
+            }
           }
-        }])
-      : acc
+        }]))
+      )
 )
 
+// Producer Recipe secrets arrive as reference metadata, separate from ordinary properties.
+var managedSecretEnvVars = reduce(items(resourceConnections), [], (acc, conn) =>
+  disableDefaultEnvVars[conn.key] || isSecretsResource[conn.key]
+    ? acc
+    : concat(
+        acc,
+        reduce(items(conn.value.?secrets ?? {}), [], (envAcc, secret) => concat(envAcc, [{
+          name: toUpper('CONNECTION_${conn.key}_${secret.key}')
+          valueFrom: {
+            secretKeyRef: {
+              name: last(split(string(secret.value.source), '/'))
+              key: string(secret.value.key)
+            }
+          }
+        }]))
+      )
+)
+
+var secretConnectionEnvVars = concat(directSecretEnvVars, managedSecretEnvVars)
+var secretConnectionEnvVarNames = map(secretConnectionEnvVars, envVar => envVar.name)
+var validatedSecretConnectionEnvVars = length(secretConnectionEnvVarNames) == length(union(secretConnectionEnvVarNames, secretConnectionEnvVarNames))
+  ? secretConnectionEnvVars
+  : fail('Connection secret keys must produce unique environment variable names after uppercasing.')
+
 // When a connection has a secretName property, inject all secret keys via envFrom.secretRef
-var secretNameEnvFrom = reduce(items(resourceConnections), [], (acc, conn) => 
-  connectionDefinitions[conn.key].?disableDefaultEnvVars == true
+var secretNameEnvFrom = reduce(items(resourceConnections), [], (acc, conn) =>
+  disableDefaultEnvVars[conn.key]
     ? acc
     : contains(conn.value ?? {}, 'secretName')
       ? concat(acc, [{
@@ -83,36 +118,37 @@ var secretNameEnvFrom = reduce(items(resourceConnections), [], (acc, conn) =>
         : acc
 )
 
-// Each connection's resource properties (including the nested properties bag) become CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>
+// Ordinary top-level scalar values and nested producer properties become
+// CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>.
 // Null-valued properties are skipped: sensitive properties (e.g. a database
 // password marked x-radius-sensitive) are redacted to null on reads, and
 // string(null) fails ARM template validation with "InvalidTemplate".
-var connectionEnvVars = reduce(items(resourceConnections), [], (acc, conn) => 
-// Only process non-secrets connections here (secrets use envFrom)
-  !isSecretsResource[conn.key] && connectionDefinitions[conn.key].?disableDefaultEnvVars != true
-    ? concat(
+var rawConnectionEnvVars = reduce(items(resourceConnections), [], (acc, conn) =>
+  isSecretsResource[conn.key] || disableDefaultEnvVars[conn.key]
+    ? acc
+    : concat(
         acc,
-        // Add top-level connection properties (excluding metadata and the nested properties bag)
-        reduce(items(conn.value ?? {}), [], (envAcc, prop) => 
-          (prop.key == 'properties' || prop.key == 'secretName' || contains(excludedProperties, prop.key) || prop.value == null)
-            ? envAcc 
+        reduce(items(conn.value ?? {}), [], (envAcc, prop) =>
+          (contains(topLevelExcludedProperties, prop.key) || prop.value == null)
+            ? envAcc
             : concat(envAcc, [{
                 name: toUpper('CONNECTION_${conn.key}_${prop.key}')
                 value: string(prop.value)
               }])
         ),
-        // Flatten the nested connection.properties bag so values like host/port become their own env vars
-        reduce(items(conn.value.?properties ?? {}), [], (envAcc, prop) => 
+        reduce(items(conn.value.?properties ?? {}), [], (envAcc, prop) =>
           (prop.key == 'secretName' || contains(excludedProperties, prop.key) || prop.value == null)
-            ? envAcc 
+            ? envAcc
             : concat(envAcc, [{
                 name: toUpper('CONNECTION_${conn.key}_${prop.key}')
                 value: string(prop.value)
               }])
         )
       )
-    : acc
 )
+
+// Managed secret references take precedence over an ordinary output with the same name.
+var connectionEnvVars = filter(rawConnectionEnvVars, envVar => !contains(secretConnectionEnvVarNames, envVar.name))
 
 // Use replicas from properties, default to 1 if not specified
 var replicaCount = resourceProperties.?replicas != null ? int(resourceProperties.replicas) : 1
@@ -135,7 +171,7 @@ var containerSpecs = reduce(containerItems, [], (acc, item) => concat(acc, [{
     } : {},
     // Add environment variables from container definition and connections
     // Connection environment variables are automatically added from output values
-    (contains(item.value, 'env') || length(connectionEnvVars) > 0) ? {
+    (contains(item.value, 'env') || length(connectionEnvVars) > 0 || length(validatedSecretConnectionEnvVars) > 0) ? {
       // Kubelet expands $(VAR) in an env var's value ONLY against env vars defined
       // earlier in this container's ordered env list. Emit secret/valueFrom env vars
       // FIRST so plain value env vars can compose them via $(VAR) without leaking
@@ -155,7 +191,9 @@ var containerSpecs = reduce(containerItems, [], (acc, item) => concat(acc, [{
                 }
               }])
             : envAcc),
-        // 2. Container-defined plain value env vars (may reference the secrets above).
+        // 2. Connection secret variables, unless an explicit variable uses the same name.
+        filter(validatedSecretConnectionEnvVars, envVar => !contains(item.value.?env ?? {}, envVar.name)),
+        // 3. Container-defined plain value env vars (may reference the secrets above).
         reduce(items(item.value.?env ?? {}), [], (envAcc, envItem) =>
           contains(envItem.value, 'value')
             ? concat(envAcc, [{
@@ -163,15 +201,13 @@ var containerSpecs = reduce(containerItems, [], (acc, item) => concat(acc, [{
                 value: envItem.value.value
               }])
             : envAcc),
-        // 3. Connection-derived env vars (non-secrets connections)
-        connectionEnvVars
+        // 4. Ordinary connection values, unless an explicit variable uses the same name.
+        filter(connectionEnvVars, envVar => !contains(item.value.?env ?? {}, envVar.name))
       )
     } : {},
-    // Add envFrom for secrets connections and secretName-based connections
-    // secretsEnvFrom: injects all keys from a Radius.Security/secrets source
-    // secretNameEnvFrom: injects all keys from a K8s secret referenced by secretName property
-    (length(secretsEnvFrom) > 0 || length(secretNameEnvFrom) > 0) ? {
-      envFrom: concat(secretsEnvFrom, secretNameEnvFrom)
+    // Connections that surface secretName still inject that Kubernetes Secret via envFrom.
+    length(secretNameEnvFrom) > 0 ? {
+      envFrom: secretNameEnvFrom
     } : {},
     // Add volume mounts if they exist
     contains(item.value, 'volumeMounts') ? {
