@@ -43,11 +43,13 @@ types:
       connection name is `kafka` so the environment variables will be:
 
       - CONNECTION_KAFKA_HOST
+      - CONNECTION_KAFKA_CONNECTIONSTRING (secret-backed)
 
-      The `connectionString` secret is NOT injected via the connection — it is
-      materialized into a managed `Radius.Security/secrets` resource. Bind it into
-      a container env var with a `secretKeyRef`, using `kafka.properties.secrets.name`
-      as the `secretName` and key `connectionString` (see the `secrets` property).
+      The same connection injects `connectionString` through a Kubernetes secret
+      reference; no second managed-Secret connection is needed. For custom
+      Kubernetes configuration, use `kafka.properties.secrets.name` as the
+      `secretName` and `connectionString` as the key in an explicitly authored
+      `secretKeyRef`.
 
       Portability note: the schema is platform-neutral so the same type works
       with Azure AVM (Bicep), AWS Terraform registry modules, and Kubernetes

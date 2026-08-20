@@ -26,4 +26,4 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 ## Using the resource type
 
-Add a `kafka` resource to your application and connect a container to it. Radius injects the Kafka connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_KAFKA_HOST`). The `connectionString` secret is not injected — bind it from the managed `Radius.Security/secrets` resource with a container `secretKeyRef` using `kafka.properties.secrets.name`. See [`test/app.bicep`](test/app.bicep) for a complete example.
+Add a `kafka` resource to your application and connect a container to it. One connection named `kafka` injects the ordinary `CONNECTION_KAFKA_HOST` value plus the secret-backed `CONNECTION_KAFKA_CONNECTIONSTRING`. No second managed-Secret connection is needed. For custom Kubernetes configuration, `kafka.properties.secrets.name` remains available as the `secretName` for an explicitly authored `secretKeyRef`. See [`test/app.bicep`](test/app.bicep) for a complete example.
