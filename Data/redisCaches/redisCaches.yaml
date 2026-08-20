@@ -48,13 +48,17 @@ types:
       - CONNECTION_REDIS_HOST
       - CONNECTION_REDIS_PORT
 
-      The secrets are NOT injected via the connection — they are materialized into
-      a managed `Radius.Security/secrets` resource. Bind one into a container env
-      var with a `secretKeyRef`, using `cache.properties.secrets.name` as the
-      `secretName` and the key you need (see the `secrets` property). Use `url`
-      for a client that parses a connection URL, or `accessKey` for a client
-      that takes host, port, and password separately — the access key is the
-      password such a client authenticates with:
+      Recipe-generated secrets are materialized into a managed
+      `Radius.Security/secrets` resource. With compatible Radius control-plane and
+      Kubernetes Container Recipe versions, the same `redis` connection injects
+      each key returned in `result.secrets`: `CONNECTION_REDIS_URL`, and
+      `CONNECTION_REDIS_ACCESSKEY` when the Recipe returns `accessKey`. `host` and
+      `port` remain ordinary values.
+
+      For custom, older, or mixed-version Kubernetes deployments, bind the key
+      explicitly with `secretKeyRef`, using `cache.properties.secrets.name` as the
+      `secretName`. Use `url` for a client that parses a connection URL, or
+      `accessKey` for a client that takes host, port, and password separately:
 
       ```bicep
       env: {

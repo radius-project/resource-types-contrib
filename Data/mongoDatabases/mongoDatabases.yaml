@@ -45,11 +45,13 @@ types:
 
       - CONNECTION_MONGO_DATABASE
       - CONNECTION_MONGO_ENDPOINT
+      - CONNECTION_MONGO_CONNECTIONSTRING (secret-backed)
 
-      The `connectionString` secret is NOT injected via the connection — it is
-      materialized into a managed `Radius.Security/secrets` resource. Bind it into
-      a container env var with a `secretKeyRef`, using `mongo.properties.secrets.name`
-      as the `secretName` and key `connectionString` (see the `secrets` property).
+      The same connection injects `connectionString` through a Kubernetes secret
+      reference; no second managed-Secret connection is needed. For custom
+      Kubernetes configuration, use `mongo.properties.secrets.name` as the
+      `secretName` and `connectionString` as the key in an explicitly authored
+      `secretKeyRef`.
 
       Portability note: this schema is platform-neutral so the same resource
       type works with Azure AVM, AWS Terraform modules, and Kubernetes recipes.
