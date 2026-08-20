@@ -204,7 +204,10 @@ output result object = {
   )
   values: {
     host: '${svc.metadata.name}.${svc.metadata.namespace}.svc.cluster.local'
-    port: port
+    // The resource type declares `port` as a string, while the Kubernetes
+    // container and Service ports must stay numeric, so it is converted here at
+    // the boundary rather than changing `port` itself.
+    port: string(port)
     database: database
     // The stock postgres image ships with ssl off, so the server accepts
     // unencrypted connections. Reported so a connected client can pick its

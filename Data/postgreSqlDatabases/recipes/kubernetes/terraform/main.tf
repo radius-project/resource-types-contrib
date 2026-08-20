@@ -159,7 +159,10 @@ output "result" {
     ]
     values = {
       host     = "${kubernetes_service.postgres.metadata[0].name}.${kubernetes_service.postgres.metadata[0].namespace}.svc.cluster.local"
-      port     = local.port
+      # The resource type declares `port` as a string, while the Kubernetes
+      # container and Service ports must stay numeric, so it is converted here at
+      # the boundary rather than changing local.port itself.
+      port     = tostring(local.port)
       database = local.database
       # The stock postgres image ships with ssl off, so the server accepts
       # unencrypted connections. Reported so a connected client can pick its
