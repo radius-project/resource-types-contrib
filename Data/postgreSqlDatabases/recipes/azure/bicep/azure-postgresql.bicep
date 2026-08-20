@@ -87,11 +87,14 @@ resource flexibleServer 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' =
     administratorLoginPassword: password
     version: version
     authConfig: {
-      // The Recipe authenticates with the administrator username and password
-      // from the resource, and never uses Entra ID. Enabling activeDirectoryAuth
-      // would buy nothing here and would require a tenantId that this Recipe has
-      // no reliable way to determine.
-      activeDirectoryAuth: 'Disabled'
+      // The Recipe itself authenticates with the administrator username and
+      // password from the resource, so passwordAuth carries every connection it
+      // hands back. Entra ID auth stays enabled alongside it so an operator can
+      // still assign an Entra ID administrator to the server out of band, which
+      // is what the AVM module this Recipe replaced did. `authConfig.tenantId`
+      // is optional and only matters for an `administrators` child resource,
+      // which this Recipe does not create.
+      activeDirectoryAuth: 'Enabled'
       passwordAuth: 'Enabled'
     }
     storage: {
