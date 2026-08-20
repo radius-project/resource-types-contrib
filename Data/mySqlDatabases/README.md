@@ -15,7 +15,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `username` | string | Required | The administrator username for the MySQL database. Passed to the Recipe as `{{context.resource.properties.username}}`. |
 | `password` | string (`x-radius-sensitive`) | Required | The administrator password. Encrypted at rest, redacted on reads, and injected decrypted into the Recipe as `{{context.resource.properties.password}}`. |
 | `database` | string | Optional | The name of the database. Defaults to `mysql_db`. |
-| `version` | string (`5.7`, `8.0`, `8.4`) | Optional | The major MySQL server version. Defaults to `8.4`. |
+| `version` | string (`5.7`, `8.0`, `8.4`) | Optional | The major MySQL server version. Defaults to `8.4`. Azure Database for MySQL flexible server has no 8.4 offering, so the Azure Recipe provisions 8.0 for any requested version other than 5.7. |
 | `host` | string | Read only | The host name used to connect to the database. Set from the Recipe module's output. |
 | `port` | integer | Read only | The port number used to connect to the database. Set from the Recipe module's output. |
 | `sslMode` | string (`required`, `disabled`) | Read only | The transport the provisioned database requires. Set by the Recipe. The Azure Recipe sets `required`, because Azure Database for MySQL flexible server runs with `require_secure_transport` `ON`; the Kubernetes and AWS Recipes set `disabled`. Read this value rather than assuming a transport. |

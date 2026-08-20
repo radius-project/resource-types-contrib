@@ -53,7 +53,7 @@ types:
       - CONNECTION_MYSQLDB_PORT
       - CONNECTION_MYSQLDB_SSLMODE
 
-      Recipes differ in whether the database they provision accepts unencrypted connections, so the `sslMode` property reports the transport the provisioned server requires. Read it rather than assuming a transport: the Azure Recipe sets it to `required` because Azure Database for MySQL flexible server runs with `require_secure_transport` `ON`, while the Kubernetes and AWS Recipes set it to `disabled`. A client that always negotiates TLS works against both.
+      Recipes differ in whether the database they provision accepts unencrypted connections, so the `sslMode` property reports the transport the provisioned server requires. Read it rather than assuming a transport: the Azure Recipe sets it to `required` because Azure Database for MySQL flexible server runs with `require_secure_transport` `ON`, while the Kubernetes and AWS Recipes set it to `disabled`. A client that negotiates TLS without requiring certificate verification works against all three, since the Kubernetes Recipe's server presents the self-signed certificate the `mysql` image generates on first start.
       ```bicep
       env: {
         MYSQL_SSL_MODE: {
@@ -88,7 +88,7 @@ types:
               type: string
               enum: ['5.7', '8.0', '8.4']
               default: '8.4'
-              description: "(Optional) The major MySQL server version in the X.Y format. Defaults to `8.4` if not provided."
+              description: "(Optional) The major MySQL server version in the X.Y format. Defaults to `8.4` if not provided. Recipes provision the closest version their platform offers: Azure Database for MySQL flexible server has no 8.4 offering, so the Azure Recipe provisions 8.0 for any requested version other than 5.7."
             host:
               type: string
               description: The host name used to connect to the database. Mapped from the recipe module's output.

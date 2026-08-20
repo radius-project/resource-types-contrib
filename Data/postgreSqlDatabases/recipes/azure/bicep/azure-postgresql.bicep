@@ -43,11 +43,14 @@ var tier = size == 'S' ? 'Burstable' : 'GeneralPurpose'
 // the target resource group.
 var serverName = toLower('pgsql-${take(uniqueString(context.resource.id, resourceGroup().id), 16)}')
 
-// Azure tag names cannot contain '/', so the Radius labels use '-'.
+// Azure tag names cannot contain '/', so the Radius labels use '-'. `application`
+// is optional on this type, so it is reached with safe navigation: ARM resolves a
+// plain property path before evaluating any fallback, and would fail the
+// deployment outright if the key were absent.
 var tags = {
   'radapp.io-resource': context.resource.name
-  'radapp.io-application': context.application != null ? context.application.name : ''
-  'radapp.io-environment': context.environment != null ? context.environment.name : ''
+  'radapp.io-application': context.?application.?name ?? ''
+  'radapp.io-environment': context.?environment.?name ?? ''
   'radapp.io-resource-type': replace(context.resource.type, '/', '-')
 }
 
@@ -84,7 +87,11 @@ resource flexibleServer 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' =
     administratorLoginPassword: password
     version: version
     authConfig: {
-      activeDirectoryAuth: 'Enabled'
+      // The Recipe authenticates with the administrator username and password
+      // from the resource, and never uses Entra ID. Enabling activeDirectoryAuth
+      // would buy nothing here and would require a tenantId that this Recipe has
+      // no reliable way to determine.
+      activeDirectoryAuth: 'Disabled'
       passwordAuth: 'Enabled'
     }
     storage: {
