@@ -19,7 +19,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `initSql` | string | Optional | Optional SQL script executed on first initialization to create tables, indexes, and seed data. |
 | `host` | string | Read only | The host name used to connect to the database. Set from the Recipe module's output. |
 | `port` | integer | Read only | The port number used to connect to the database. Set from the Recipe module's output. |
-| `sslMode` | string (`required`, `disabled`) | Read only | Whether the database requires an encrypted (TLS/SSL) connection. The Kubernetes Recipe sets this to `disabled`. The Azure Recipe Pack keeps `require_secure_transport` `ON` by default and does not set this property; override the Recipe Pack's `postgreSqlServerConfigurations` parameter to disable it if you want Azure to match. |
+| `sslMode` | string (`required`, `disabled`) | Read only | Whether the database requires an encrypted (TLS/SSL) connection. The Kubernetes Recipe sets this to `disabled`. The Azure Recipe Pack disables TLS enforcement by default by setting `require_secure_transport` to `OFF`; override the Recipe Pack's `postgreSqlServerConfigurations` parameter to set `require_secure_transport` to `ON` if you want Azure to require TLS. |
 
 ## Recipe Packs
 
