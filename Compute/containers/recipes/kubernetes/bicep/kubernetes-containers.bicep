@@ -41,10 +41,11 @@ var connectionDefinitions = context.resource.properties.?connections ?? {}
 
 // Properties to exclude from connection environment variables
 var excludedProperties = ['recipe', 'secrets', 'status', 'provisioningState']
+var topLevelExcludedProperties = ['recipe', 'secrets', 'status', 'provisioningState', 'properties', 'secretName']
 
 // Identify direct Radius secret connections from resolved resource metadata.
 var isSecretsResource = reduce(items(resourceConnections), {}, (acc, conn) => union(acc, {
-  '${conn.key}': string(conn.value.?type ?? '') == 'Radius.Security/secrets'
+  '${conn.key}': string(conn.value.?type ?? '') == 'Radius.Security/secrets' || (contains(connectionDefinitions, conn.key) && contains(string(connectionDefinitions[conn.key].?source ?? ''), 'Radius.Security/secrets'))
 }))
 
 // Resolved and declared connection maps can briefly differ while dependencies update.
@@ -73,12 +74,7 @@ var directSecretEnvVars = reduce(items(resourceConnections), [], (acc, conn) =>
 )
 
 // Producer Recipe secrets arrive as reference metadata, separate from ordinary properties.
-var managedSecretReferencesValid = reduce(items(resourceConnections), true, (connectionsValid, conn) =>
-  connectionsValid && reduce(items(conn.value.?secrets ?? {}), true, (secretsValid, secret) =>
-    secretsValid && secret.value.?source != null && secret.value.?key != null
-  )
-)
-var managedSecretEnvVars = managedSecretReferencesValid ? reduce(items(resourceConnections), [], (acc, conn) =>
+var managedSecretEnvVars = reduce(items(resourceConnections), [], (acc, conn) =>
   disableDefaultEnvVars[conn.key] || isSecretsResource[conn.key]
     ? acc
     : concat(
@@ -93,7 +89,7 @@ var managedSecretEnvVars = managedSecretReferencesValid ? reduce(items(resourceC
           }
         }]))
       )
-) : fail('Managed connection secret references must include source and key.')
+)
 
 var secretConnectionEnvVars = concat(directSecretEnvVars, managedSecretEnvVars)
 var secretConnectionEnvVarNames = map(secretConnectionEnvVars, envVar => envVar.name)
@@ -122,7 +118,8 @@ var secretNameEnvFrom = reduce(items(resourceConnections), [], (acc, conn) =>
         : acc
 )
 
-// Ordinary producer properties become CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>.
+// Ordinary top-level scalar values and nested producer properties become
+// CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>.
 // Null-valued properties are skipped: sensitive properties (e.g. a database
 // password marked x-radius-sensitive) are redacted to null on reads, and
 // string(null) fails ARM template validation with "InvalidTemplate".
@@ -131,6 +128,14 @@ var rawConnectionEnvVars = reduce(items(resourceConnections), [], (acc, conn) =>
     ? acc
     : concat(
         acc,
+        reduce(items(conn.value ?? {}), [], (envAcc, prop) =>
+          (contains(topLevelExcludedProperties, prop.key) || prop.value == null)
+            ? envAcc
+            : concat(envAcc, [{
+                name: toUpper('CONNECTION_${conn.key}_${prop.key}')
+                value: string(prop.value)
+              }])
+        ),
         reduce(items(conn.value.?properties ?? {}), [], (envAcc, prop) =>
           (prop.key == 'secretName' || contains(excludedProperties, prop.key) || prop.value == null)
             ? envAcc
@@ -141,13 +146,9 @@ var rawConnectionEnvVars = reduce(items(resourceConnections), [], (acc, conn) =>
         )
       )
 )
-var connectionEnvVarNames = map(rawConnectionEnvVars, envVar => envVar.name)
-var validatedConnectionEnvVars = length(connectionEnvVarNames) == length(union(connectionEnvVarNames, connectionEnvVarNames))
-  ? rawConnectionEnvVars
-  : fail('Connection properties must produce unique environment variable names after uppercasing.')
 
 // Managed secret references take precedence over an ordinary output with the same name.
-var connectionEnvVars = filter(validatedConnectionEnvVars, envVar => !contains(secretConnectionEnvVarNames, envVar.name))
+var connectionEnvVars = filter(rawConnectionEnvVars, envVar => !contains(secretConnectionEnvVarNames, envVar.name))
 
 // Use replicas from properties, default to 1 if not specified
 var replicaCount = resourceProperties.?replicas != null ? int(resourceProperties.replicas) : 1

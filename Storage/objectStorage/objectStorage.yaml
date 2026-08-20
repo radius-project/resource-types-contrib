@@ -49,13 +49,12 @@ types:
       - CONNECTION_STORAGE_CONTAINERNAME
       - CONNECTION_STORAGE_ENDPOINT
       - CONNECTION_STORAGE_ACCOUNTNAME
-      - CONNECTION_STORAGE_CONNECTIONSTRING (secret-backed)
-      - CONNECTION_STORAGE_ACCOUNTKEY (secret-backed)
 
-      The same connection injects `connectionString` and `accountKey` through
-      Kubernetes secret references; no second managed-Secret connection is needed.
-      For custom Kubernetes configuration, use `store.properties.secrets.name` as
-      the `secretName` and the desired key in an explicitly authored `secretKeyRef`.
+      The `connectionString` and `accountKey` secrets are NOT injected via the
+      connection — they are materialized into a managed `Radius.Security/secrets`
+      resource. Bind them into container env vars with a `secretKeyRef`, using
+      `store.properties.secrets.name` as the `secretName` and the desired key
+      (`connectionString` or `accountKey`; see the `secrets` property).
 
       The schema is platform-neutral: the same developer-facing properties can be
       backed by Azure Blob Storage, AWS S3, or a Kubernetes object-store recipe by

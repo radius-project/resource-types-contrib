@@ -26,7 +26,7 @@ Properties for the Secrets resource are provided to the recipe via the [Recipe C
 
 ## Using Secrets with Containers
 
-On Kubernetes, a Container can connect directly to a user-authored `Radius.Security/secrets` resource. The Container Recipes inject every data key through a Kubernetes `secretKeyRef` using the uppercased name `CONNECTION_<CONNECTION-NAME>_<SECRET-KEY>`. For example, a connection named `credentials` to a Secret containing `username` and `apiKey` creates `CONNECTION_CREDENTIALS_USERNAME` and `CONNECTION_CREDENTIALS_APIKEY` in every regular and init container.
+On Kubernetes, a Container can connect directly to a user-authored `Radius.Security/secrets` resource. The Container Recipes inject every data key through a Kubernetes `secretKeyRef` using the uppercased name `CONNECTION_<CONNECTION-NAME>_<SECRET-KEY>`. For example, a connection named `credentials` to a Secret containing `username` and `apiKey` creates `CONNECTION_CREDENTIALS_USERNAME` and `CONNECTION_CREDENTIALS_APIKEY` in every regular and init container. This intentionally differs from the previous `envFrom` behavior: the full generated name is now uppercase instead of preserving the Secret data key's casing.
 
 Set `disableDefaultEnvVars: true` on the connection to disable injection. An explicitly declared container environment variable takes precedence over an automatically generated variable with the same name. Names that collide after uppercasing are rejected. The Azure Recipe stores values in Key Vault and is unchanged by this Kubernetes behavior.
 

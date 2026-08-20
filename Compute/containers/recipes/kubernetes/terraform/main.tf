@@ -44,11 +44,20 @@ locals {
 
   # Properties to exclude from connection environment variables
   excluded_properties = ["recipe", "secrets", "status", "provisioningState"]
+  top_level_excluded_properties = [
+    "recipe",
+    "secrets",
+    "status",
+    "provisioningState",
+    "properties",
+    "secretName",
+  ]
 
   # Identify direct Radius secret connections from resolved resource metadata.
   is_secrets_resource = {
     for conn_name, conn in local.connections :
-    conn_name => try(conn.type, "") == "Radius.Security/secrets"
+    conn_name => try(conn.type, "") == "Radius.Security/secrets" ||
+    can(regex("Radius.Security/secrets", try(local.connection_definitions[conn_name].source, "")))
   }
 
   # Direct Radius.Security/secrets connections inject every declared data key.
@@ -90,14 +99,6 @@ locals {
     ]
     : []
   ])
-  managed_secret_references_valid = alltrue(flatten([
-    for conn_name, conn in local.connections : [
-      for secret_name, secret_ref in try(conn.secrets, {}) :
-      can(tostring(secret_ref.source)) && can(tostring(secret_ref.key))
-    ]
-    if !try(local.is_secrets_resource[conn_name], false)
-  ]))
-
   secret_connection_env_vars = concat(local.direct_secret_env_vars, local.managed_secret_env_vars)
   secret_connection_env_var_names = [
     for env in local.secret_connection_env_vars : env.name
@@ -116,24 +117,31 @@ locals {
     (can(tostring(conn.secretName)) || can(tostring(conn.properties.secretName)))
   ]
 
-  # Ordinary producer properties become CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>.
+  # Ordinary top-level scalar values and nested producer properties become
+  # CONNECTION_<CONNECTION_NAME>_<PROPERTY_NAME>.
   # Note: disableDefaultEnvVars is on connection_definitions, not the merged connections data
   raw_connection_env_vars = flatten([
     for conn_name, conn in local.connections :
     !try(local.is_secrets_resource[conn_name], false) &&
     try(local.connection_definitions[conn_name].disableDefaultEnvVars, false) != true
-    ? [
-      for prop_name, prop_value in try(conn.properties, {}) : {
-        name  = upper("CONNECTION_${conn_name}_${prop_name}")
-        value = tostring(prop_value)
-      }
-      if prop_name != "secretName" && !contains(local.excluded_properties, prop_name) && can(tostring(prop_value))
-    ]
+    ? concat(
+      [
+        for prop_name, prop_value in conn : {
+          name  = upper("CONNECTION_${conn_name}_${prop_name}")
+          value = tostring(prop_value)
+        }
+        if !contains(local.top_level_excluded_properties, prop_name) && can(tostring(prop_value))
+      ],
+      [
+        for prop_name, prop_value in try(conn.properties, {}) : {
+          name  = upper("CONNECTION_${conn_name}_${prop_name}")
+          value = tostring(prop_value)
+        }
+        if prop_name != "secretName" && !contains(local.excluded_properties, prop_name) && can(tostring(prop_value))
+      ]
+    )
     : []
   ])
-  connection_env_var_names = [
-    for env in local.raw_connection_env_vars : env.name
-  ]
 
   # Managed secret references take precedence over ordinary outputs with the same name.
   connection_env_vars = [
@@ -352,14 +360,6 @@ resource "kubernetes_deployment" "deployment" {
     precondition {
       condition     = length(local.secret_connection_env_var_names) == length(distinct(local.secret_connection_env_var_names))
       error_message = "Connection secret keys must produce unique environment variable names after uppercasing."
-    }
-    precondition {
-      condition     = local.managed_secret_references_valid
-      error_message = "Managed connection secret references must include source and key."
-    }
-    precondition {
-      condition     = length(local.connection_env_var_names) == length(distinct(local.connection_env_var_names))
-      error_message = "Connection properties must produce unique environment variable names after uppercasing."
     }
   }
 

@@ -26,4 +26,4 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 ## Using the resource type
 
-Add a `models` resource to your application and connect a container to it. One connection named `llm` injects ordinary `CONNECTION_LLM_MODEL` and `CONNECTION_LLM_ENDPOINT` values plus the secret-backed `CONNECTION_LLM_APIKEY`. No second managed-Secret connection is needed. For custom Kubernetes configuration, `model.properties.secrets.name` remains available as the `secretName` for an explicitly authored `secretKeyRef`. See [`test/app.bicep`](test/app.bicep) for a complete example.
+Add a `models` resource to your application and connect a container to it. Radius injects the model's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_LLM_MODEL` and `CONNECTION_LLM_ENDPOINT`). The `apiKey` secret is not injected — bind it from the managed `Radius.Security/secrets` resource with a container `secretKeyRef` using `model.properties.secrets.name`. See [`test/app.bicep`](test/app.bicep) for a complete example.

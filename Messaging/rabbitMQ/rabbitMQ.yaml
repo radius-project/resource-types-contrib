@@ -53,14 +53,11 @@ types:
       - CONNECTION_RABBITMQ_HOST
       - CONNECTION_RABBITMQ_PORT
       - CONNECTION_RABBITMQ_USERNAME
-      - CONNECTION_RABBITMQ_PASSWORD (secret-backed, when `password` is omitted)
 
-      When `password` is omitted, the same connection injects the Recipe-generated
-      password; `queue.properties.secrets.name` remains available for an explicitly
-      authored custom `secretKeyRef`. When `password` supplies a user-authored
-      `Radius.Security/secrets` resource, the Recipe emits no managed secret and the
-      queue connection has no password variable. Connect the workload directly to
-      the supplied Secret to inject its keys.
+      When `password` is supplied, bind the same `Radius.Security/secrets` resource
+      into the workload. When it is omitted, bind the Recipe-generated managed
+      secret using `queue.properties.secrets.name` as the `secretName`. In both cases,
+      use key `password`.
 
     apiVersions:
       '2025-08-01-preview':
