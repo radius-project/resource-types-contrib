@@ -33,10 +33,6 @@ resource myContainer 'containers:Radius.Compute/containers@2025-08-01-preview' =
         source: secret.id
         disableDefaultEnvVars: false
       }
-      disabledSecrets: {
-        source: secret.id
-        disableDefaultEnvVars: true
-      }
     }
     containers: {
       orderProcessor: {
@@ -51,9 +47,29 @@ resource myContainer 'containers:Radius.Compute/containers@2025-08-01-preview' =
           }
         }
         env: {
-          // Explicit variables take precedence over generated connection variables.
-          CONNECTION_SECRETS_USERNAME: {
-            value: 'explicit-user'
+          CONNECTIONS_SECRET_USERNAME: {
+            valueFrom: {
+              secretKeyRef: {
+                secretName: secret.name
+                key: 'username'
+              }
+            }
+          }
+          CONNECTIONS_SECRET_APIKEY: {
+            valueFrom: {
+              secretKeyRef: {
+                secretName: secret.name
+                key: 'apikey'
+              }
+            }
+          }
+          CONNECTIONS_SECRET_PASSWORD: {
+            valueFrom: {
+              secretKeyRef: {
+                secretName: secret.name
+                key: 'password'
+              }
+            }
           }
           // Exercise the read-only `hosts` map of a peer container: it maps each
           // port-exposing container name to its Kubernetes Service DNS host. Populated
@@ -76,11 +92,11 @@ resource myContainer 'containers:Radius.Compute/containers@2025-08-01-preview' =
             volumeName: 'appSecrets'
             mountPath: '/etc/secrets'
           }
-        ]
+        ] 
         resources: {
           requests: {
-            cpu: '0.1'
-            memoryInMib: 128
+            cpu: '0.1'       
+            memoryInMib: 128   
           }
           limits: {
             cpu: '0.5'
