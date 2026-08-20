@@ -20,7 +20,9 @@ resource app 'Radius.Core/applications@2025-08-01-preview' = {
 // redacted on reads), whereas a container `env.value` is stored unencrypted on
 // the container resource and rendered literally into the Pod spec.
 resource dbCreds 'Radius.Security/secrets@2025-08-01-preview' = {
-  name: 'postgresql-credentials'
+  // Keep this distinct from the Recipe-owned `postgresql-credentials`
+  // Kubernetes Secret that configures the PostgreSQL container.
+  name: 'postgresql-client-credentials'
   properties: {
     environment: environment
     application: app.id
