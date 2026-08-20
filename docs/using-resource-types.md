@@ -116,7 +116,13 @@ Deploy the application with the `rad` CLI:
 rad deploy app.bicep
 ```
 
-When a container declares a `connection` to a resource, Radius injects the resource's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_DB_HOST` and `CONNECTION_DB_PORT`).
+When a container declares a `connection` to a resource, Radius injects the resource's ordinary connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_DB_HOST` and `CONNECTION_DB_PORT`).
+
+On Kubernetes, the same connection also injects Recipe secrets as individual `valueFrom.secretKeyRef` variables. For example, a Redis connection named `redis` provides ordinary `CONNECTION_REDIS_HOST` and `CONNECTION_REDIS_PORT` values plus the secret-backed `CONNECTION_REDIS_URL`. Radius passes only Secret reference metadata to the Container Recipe, so secret values are never copied into container configuration or Recipe output.
+
+Explicit container environment variables take precedence over generated variables. Otherwise a managed secret reference takes precedence over an ordinary property that produces the same name. Set `disableDefaultEnvVars: true` to disable both ordinary and secret-backed variables for a connection. Generated names must remain unique after uppercasing.
+
+Direct connections to user-authored `Radius.Security/secrets` resources continue to inject one secret-backed variable per data key. These Kubernetes behaviors apply to regular and init containers; the Azure ACI Recipe is unchanged.
 
 ## Finding examples
 
