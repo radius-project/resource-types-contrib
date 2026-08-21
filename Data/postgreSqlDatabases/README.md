@@ -20,13 +20,41 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `host` | string | Read only | The host name used to connect to the database. Set from the Recipe module's output. |
 | `port` | integer | Read only | The port number used to connect to the database. Set from the Recipe module's output. |
 
+## Naming constraints
+
+`database` and `username` are used verbatim as cloud resource names, so from API version
+`2026-09-01-preview` they carry format constraints. Radius validates them when the resource is
+submitted, which means a bad value is rejected before a Recipe runs and before a billable
+database server exists. API version `2025-08-01-preview` is unconstrained and unchanged.
+
+| Property | Accepted format |
+| --- | --- |
+| `database` | 1-63 characters. Starts with a letter or an underscore, followed by letters, digits or underscores. |
+| `username` | 1-63 letters and digits. Azure PostgreSQL Flexible Server rejects every other character, including hyphens and underscores. |
+
+### Reserved names
+
+Some names satisfy the format above but are still rejected, or are unsafe to use, because the
+provider or the engine has already claimed them. These cannot be expressed as schema constraints
+today — Radius rejects the `not` and `oneOf` keywords, and the pattern engine has no negative
+lookahead — so they are listed here instead.
+
+| Name | Behaviour |
+| --- | --- |
+| `postgres` | Created automatically on every server. The Azure Recipe binds your application to the existing database instead of trying to create it again, so this value works. |
+| `azure_maintenance`, `azure_sys` | Created automatically by Azure for internal use. Requesting them fails the deployment. |
+| `template0`, `template1` | PostgreSQL template databases. `template0` refuses connections. Requesting them fails the deployment. |
+| Usernames starting with `pg_` | Reserved by PostgreSQL for system roles. Already excluded by the `username` format, which allows no underscores. |
+| `azure_superuser`, `azure_pg_admin` | Reserved by Azure. Already excluded by the `username` format. |
+| `admin`, `administrator`, `root`, `guest`, `public` | Rejected by Azure as administrator logins. |
+
 ## Recipe Packs
 
 Recipes for this resource type are provided through the platform Recipe Packs at the repository root under [`recipe-packs/`](../../recipe-packs/). A platform engineer configures an Environment by deploying the Recipe Pack for their target platform, which registers the Recipe for `Radius.Data/postgreSqlDatabases` along with the Recipes for every other Resource Type on that platform.
 
 | Platform | Recipe Pack | Recipe source |
 | --- | --- | --- |
-| Azure | [`recipe-packs/azure/aks-recipepack.bicep`](../../recipe-packs/azure/aks-recipepack.bicep) | Direct module — Azure Verified Module `avm/res/db-for-postgre-sql/flexible-server` |
+| Azure | [`recipe-packs/azure/aks-recipepack.bicep`](../../recipe-packs/azure/aks-recipepack.bicep) | [`recipes/azure/bicep/azure-postgresql.bicep`](recipes/azure/bicep/azure-postgresql.bicep), which wraps the Azure Verified Module `avm/res/db-for-postgre-sql/flexible-server` |
 
 ## Using the resource type
 

@@ -16,6 +16,21 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `host` | string | Read only | The host name used to connect to the Kafka-compatible endpoint. Set from the Recipe module's output. |
 | `secrets` | object | Read only | Recipe secrets. `secrets.name` references the managed `Radius.Security/secrets` resource; `secrets.connectionString` is the secret key (delivered via that managed secret, never stored on the resource). |
 
+## Naming constraints
+
+`topic` is used verbatim as a cloud resource name, so from API version `2026-09-01-preview` it
+carries format constraints. Radius validates it when the resource is submitted, which means a bad
+value is rejected before a Recipe runs and before a billable namespace exists. API version
+`2025-08-01-preview` is unconstrained and unchanged.
+
+| Property | Accepted format |
+| --- | --- |
+| `topic` | 1-249 characters of letters, digits, periods, underscores or hyphens. Must start and end with a letter or a digit. |
+
+The 249 character limit is Kafka's, not the Event Hubs limit of 256, so the same topic name works
+against either backend. The start and end rule also rules out the Kafka reserved names `.` and
+`..` and the reserved `__` prefix, so those need no separate note.
+
 ## Recipe Packs
 
 Recipes for this resource type are provided through the platform Recipe Packs at the repository root under [`recipe-packs/`](../../recipe-packs/). A platform engineer configures an Environment by deploying the Recipe Pack for their target platform, which registers the Recipe for `Radius.Messaging/kafka` along with the Recipes for every other Resource Type on that platform.

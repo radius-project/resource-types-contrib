@@ -2,7 +2,9 @@
 ---
 name: Publish Bicep Recipes
 
-# Publishes the Kubernetes Bicep recipes to GHCR as OCI artifacts.
+# Publishes the Bicep recipes to GHCR as OCI artifacts.
+#
+# Kubernetes recipes go to `$REGISTRY` and Azure recipes to `$AZURE_REGISTRY`.
 #
 # Every publish is tagged with the commit SHA it was built from, and that SHA
 # tag is what makes the recipes addressable from Radius. A released `rad`
@@ -60,6 +62,9 @@ permissions: {}
 
 env:
   REGISTRY: ghcr.io/radius-project/kube-recipes
+  # Azure recipes are published separately from the Kubernetes recipes so the
+  # `kube-recipes` path keeps meaning "runs on the cluster".
+  AZURE_REGISTRY: ghcr.io/radius-project/azure-recipes
 
 concurrency:
   # Keyed on the ref to avoid unbounded parallel publishes on busy branches.
@@ -134,11 +139,18 @@ jobs:
             run: ./.github/scripts/publish-bicep-recipe.sh rediscaches Data/redisCaches/recipes/kubernetes/bicep/kubernetes-redis.bicep
           - name: Publish rabbitmq
             run: ./.github/scripts/publish-bicep-recipe.sh rabbitmq Messaging/rabbitMQ/recipes/kubernetes/bicep/kubernetes-rabbitmq.bicep
+          # Azure recipes publish to their own repository path. `REGISTRY` is
+          # overridden per step rather than globally so the Kubernetes recipes
+          # above keep their existing, already-pinned locations.
+          - name: Publish azure postgresqldatabases
+            env:
+              REGISTRY: ${{ env.AZURE_REGISTRY }}
+            run: ./.github/scripts/publish-bicep-recipe.sh postgresqldatabases Data/postgreSqlDatabases/recipes/azure/bicep/azure-postgresql.bicep
 
       - name: Summarize
         run: |
           {
-            echo "Published the Kubernetes Bicep recipes to \`$REGISTRY\` with tags \`$TAGS\`."
+            echo "Published the Kubernetes Bicep recipes to \`$REGISTRY\` and the Azure Bicep recipes to \`$AZURE_REGISTRY\` with tags \`$TAGS\`."
             echo ""
             echo "Radius pins these recipes by commit SHA, so \`$GITHUB_SHA\` is now a resolvable tag for every recipe above."
           } >>"$GITHUB_STEP_SUMMARY"

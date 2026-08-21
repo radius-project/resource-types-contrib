@@ -4,7 +4,7 @@ types:
     description: |
       The Radius.Data/mySqlDatabases Resource Type deploys a MySQL database. Provide the administrator `username` and `password` directly on the resource. The `password` property is marked `x-radius-sensitive`, so Radius encrypts it at rest, redacts it on reads, and exposes it (decrypted) only to the platform-engineer recipe that provisions the database.
       ```bicep
-      resource mysql 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
+      resource mysql 'Radius.Data/mySqlDatabases@2026-09-01-preview' = {
         name: 'mysql'
         properties: {
           environment: environment
@@ -74,6 +74,52 @@ types:
               type: string
               default: mysql_db
               description: "(Optional) The name of the database. Defaults to `mysql_db` if not provided."
+            version:
+              type: string
+              enum: ['5.7', '8.0', '8.4']
+              default: '8.4'
+              description: "(Optional) The major MySQL server version in the X.Y format. Defaults to `8.4` if not provided."
+            host:
+              type: string
+              description: The host name used to connect to the database. Mapped from the recipe module's output.
+              readOnly: true
+            port:
+              type: integer
+              description: The port number used to connect to the database. Mapped from the recipe module's output (MySQL flexible server uses 3306).
+              readOnly: true
+          required: [environment,username,password]
+      # Identical to 2025-08-01-preview apart from the format constraints on
+      # `database` and `username`. Those two properties are used verbatim as
+      # provider resource names, so Radius now rejects values the provider would
+      # reject, before a recipe creates a billable server. See the README's
+      # "Naming constraints" section and issue #299.
+      '2026-09-01-preview':
+        schema:
+          type: object
+          properties:
+            environment:
+              type: string
+              description: "(Required) The Radius Environment ID. Typically set by the rad CLI. Typically value should be `environment`."
+            application:
+              type: string
+              description: "(Optional) The Radius Application ID. `myApplication.id` for example."
+            username:
+              type: string
+              minLength: 1
+              maxLength: 16
+              pattern: '^[A-Za-z][A-Za-z0-9]*$'
+              description: "(Required) The administrator username for the MySQL database. Provided directly on the resource and passed to the recipe as `{{context.resource.properties.username}}`. Must be 1-16 letters and digits, starting with a letter. Both bounds come from AWS RDS, which is stricter than Azure on length (16 rather than 32) and on characters (no underscores); the AWS recipe in this repository passes the username through unmodified, so the schema uses the portable intersection."
+            password:
+              type: string
+              x-radius-sensitive: true
+              description: "(Required) The administrator password for the MySQL database. Marked `x-radius-sensitive`: Radius encrypts it at rest, redacts it on reads, and exposes it decrypted only to the recipe as `{{context.resource.properties.password}}`."
+            database:
+              type: string
+              minLength: 1
+              maxLength: 63
+              pattern: '^[A-Za-z][A-Za-z0-9_]*$'
+              default: mysql_db
+              description: "(Optional) The name of the database. Defaults to `mysql_db` if not provided. Must be 1-63 characters, starting with a letter, followed by letters, digits or underscores. Azure caps the child database name at 63 characters even though MySQL itself allows 64. Note that AWS RDS additionally rejects underscores in the initial database name; the underscore is kept here because the shipped default and the existing AWS recipe's own sanitizer both rely on it."
             version:
               type: string
               enum: ['5.7', '8.0', '8.4']

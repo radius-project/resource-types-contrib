@@ -14,7 +14,7 @@ resource app 'Radius.Core/applications@2025-08-01-preview' = {
   }
 }
 
-resource mysql 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
+resource mysql 'Radius.Data/mySqlDatabases@2026-09-01-preview' = {
   name: 'mysql'
   properties: {
     environment: environment

@@ -9,6 +9,15 @@ on:
       - "**/azure/**"
       - "**/azure-*/**"
       - "**/test/app.bicep"
+      # Resource Type manifests. A schema change alters what the Azure recipes
+      # are handed at deploy time, so it has to run Azure validation even though
+      # no file under an azure/ directory was touched.
+      - "AI/**/*.yaml"
+      - "Compute/**/*.yaml"
+      - "Data/**/*.yaml"
+      - "Messaging/**/*.yaml"
+      - "Security/**/*.yaml"
+      - "Storage/**/*.yaml"
       - ".github/workflows/validate-azure-recipes.yaml"
       - ".github/scripts/**"
       - ".github/build/**"
@@ -56,6 +65,7 @@ jobs:
     steps:
       # REST API mode: no checkout needed, works with fork PRs. Only supports
       # pull_request* events — non-PR events skip this and default to azure-changed=true.
+      # Keep this list in sync with the push paths filter above.
       - name: Detect Azure file changes
         id: filter
         if: github.event_name == 'pull_request_target'
@@ -66,6 +76,12 @@ jobs:
             **/azure/**
             **/azure-*/**
             **/test/app.bicep
+            AI/**/*.yaml
+            Compute/**/*.yaml
+            Data/**/*.yaml
+            Messaging/**/*.yaml
+            Security/**/*.yaml
+            Storage/**/*.yaml
             .github/workflows/validate-azure-recipes.yaml
             .github/scripts/**
             .github/build/**

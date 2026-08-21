@@ -4,7 +4,7 @@ types:
     description: |
       The Radius.Data/postgreSqlDatabases Resource Type deploys a PostgreSQL database. Provide the administrator `username` and `password` directly on the resource. The `password` property is marked `x-radius-sensitive`, so Radius encrypts it at rest, redacts it on reads, and exposes it (decrypted) only to the recipe that provisions the database.
       ```bicep
-      resource postgresql 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
+      resource postgresql 'Radius.Data/postgreSqlDatabases@2026-09-01-preview' = {
           name: 'postgresql'
           properties: {
             environment: environment
@@ -79,6 +79,55 @@ types:
               type: string
               default: postgres_db
               description: "(Optional) The name of the database. Defaults to `postgres_db` if not provided."
+            initSql:
+              type: string
+              description: "(Optional) SQL script mounted into the PostgreSQL container's `/docker-entrypoint-initdb.d/` directory and executed whenever PGDATA is empty. With the default ephemeral storage this runs on every pod restart. If a PersistentVolumeClaim is used, the script runs only on the very first startup and subsequent changes to initSql are ignored on existing volumes. Limited to ~1 MiB. Useful for creating tables, indexes, and inserting seed data."
+            host:
+              type: string
+              description: The host name used to connect to the database.
+              readOnly: true
+            port:
+              type: string
+              description: The port number used to connect to the database.
+              readOnly: true
+          required: [environment,username,password]
+      # Identical to 2025-08-01-preview apart from the format constraints on
+      # `database` and `username`. Those two properties are used verbatim as
+      # provider resource names, so Radius now rejects values the provider would
+      # reject, before a recipe creates a billable server. See the READMEs
+      # "Naming constraints" section and issue #299.
+      '2026-09-01-preview':
+        schema: 
+          type: object
+          properties:
+            environment:
+              type: string
+              description: "(Required) The Radius Environment ID. Typically set by the rad CLI. Typically value should be `environment`."
+            application:
+              type: string
+              description: "(Optional) The Radius Application ID. `myApplication.id` for example."
+            size:
+              type: string
+              enum: ['S', 'M', 'L']
+              default: 'S'
+              description: "(Optional) The size of the PostgreSQL database. Defaults to `S` if not provided."
+            username:
+              type: string
+              minLength: 1
+              maxLength: 63
+              pattern: '^[A-Za-z0-9]+$'
+              description: "(Required) The administrator username for the PostgreSQL database. Provided directly on the resource and passed to the recipe as `{{context.resource.properties.username}}`. Must be 1-63 letters and digits. Azure PostgreSQL Flexible Server rejects any other character, and the restriction also excludes the reserved `pg_` and `azure_` prefixes."
+            password:
+              type: string
+              x-radius-sensitive: true
+              description: "(Required) The administrator password for the PostgreSQL database. Marked `x-radius-sensitive`: Radius encrypts it at rest, redacts it on reads, and exposes it decrypted only to the recipe as `{{context.resource.properties.password}}`."
+            database:
+              type: string
+              minLength: 1
+              maxLength: 63
+              pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
+              default: postgres_db
+              description: "(Optional) The name of the database. Defaults to `postgres_db` if not provided. Must be a PostgreSQL identifier: 1-63 characters, starting with a letter or underscore, followed by letters, digits or underscores."
             initSql:
               type: string
               description: "(Optional) SQL script mounted into the PostgreSQL container's `/docker-entrypoint-initdb.d/` directory and executed whenever PGDATA is empty. With the default ephemeral storage this runs on every pod restart. If a PersistentVolumeClaim is used, the script runs only on the very first startup and subsequent changes to initSql are ignored on existing volumes. Limited to ~1 MiB. Useful for creating tables, indexes, and inserting seed data."

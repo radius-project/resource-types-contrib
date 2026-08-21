@@ -125,6 +125,49 @@ The following guidelines should be followed when contributing new Resource Types
 
 - Resource Types are made for developers and must be application-oriented. Avoid infrastructure-specific or platform-specific properties. Make sure the schema is simple and intuitive, avoiding unnecessary complexity.
 
+#### Constraining properties that become provider resource names
+
+Any property whose value a Recipe passes through as the name of a cloud resource, a database name,
+or an administrator login must declare `pattern`, `minLength` and `maxLength`. Without them Radius
+accepts a value the provider will later reject, and the failure surfaces as
+`RecipeDeploymentFailed` only *after* the Recipe has created — and started billing for — the parent
+resource. With them Radius returns `InvalidRequestContent` at submission time and nothing is
+provisioned.
+
+When writing these constraints:
+
+- **Constrain the portable intersection, not one provider's rule.** A single schema is shared by
+  every Recipe for that Resource Type, so the accepted format has to satisfy the strictest platform
+  the Resource Type ships a Recipe for. `Radius.Data/mySqlDatabases` caps `username` at 16
+  characters because AWS RDS does, even though Azure allows 32. Check the other Recipes in the
+  directory, including the Terraform ones, before settling on a bound.
+- **Anchor every pattern.** Radius matches with Go's `regexp.MatchString`, which is unanchored, so
+  a pattern without a leading `^` and trailing `$` will match a substring and let bad values
+  through.
+- **Only these keywords are available.** Radius validates a manifest at registration and *rejects*
+  `not`, `anyOf`, `oneOf`, `allOf` and `discriminator`. `pattern`, `minLength`, `maxLength`,
+  `minimum`, `maximum`, `enum` and `default` all pass through and are enforced. `const` is silently
+  dropped.
+- **There is no negative lookahead.** Patterns compile with RE2, so you cannot write "anything
+  except `master`". Reserved names have to be excluded structurally where possible — restricting
+  the character set to exclude a reserved prefix, for instance — and documented in the Resource
+  Type README otherwise. [radius-project/radius#12784](https://github.com/radius-project/radius/issues/12784)
+  tracks adding a denylist mechanism.
+- **Check the default against its own pattern.** A `default` the schema rejects breaks every
+  resource that omits the property.
+- **Add the constraints under a new API version.** Tightening a published version is a breaking
+  change: an existing resource holding a now-invalid value fails its next PUT, including the
+  reconcile paths that resubmit stored properties. Leave the published version as it shipped and
+  add the constrained schema alongside it.
+
+Constraints are enforced by the Radius server, not by Bicep. `bicep-tools` does not project
+`pattern` or the length bounds into the generated Bicep types, so a developer gets no editor
+warning; the value is rejected at deploy time.
+
+The same scrutiny applies beyond schema constraints. A property interpolated into JSON, YAML, a
+connection string, or a Kubernetes object name inside a Recipe needs escaping or validation for the
+same reason.
+
 ## Document Your Resource Type and Recipes
 
 Each Resource Type has two types of documentation written specifically for developers, and separately, for platform engineers.

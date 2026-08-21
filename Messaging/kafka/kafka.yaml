@@ -7,7 +7,7 @@ types:
       Event Hubs with its Kafka surface enabled by the Standard tier and creates
       an Event Hub named by the developer-authored `topic` property.
       ```bicep
-      resource kafka 'Radius.Messaging/kafka@2025-08-01-preview' = {
+      resource kafka 'Radius.Messaging/kafka@2026-09-01-preview' = {
         name: 'kafka'
         properties: {
           environment: environment
@@ -72,6 +72,49 @@ types:
               type: string
               default: events
               description: "(Optional) The Kafka topic/Event Hub name to create. Defaults to `events`."
+            host:
+              type: string
+              description: The host name used to connect to the Kafka-compatible endpoint. For Azure Event Hubs this is the namespace name; the bootstrap server is `<host>.servicebus.windows.net:9093`.
+              readOnly: true
+            secrets:
+              type: object
+              description: >-
+                (Read-only) Recipe secrets. The reserved `name` sub-property references the managed
+                Radius.Security/secrets resource Radius materializes from the recipe's `outputs.secrets`;
+                the other sub-properties declare secret keys whose values are written only into that
+                managed secret (never onto this resource). Consumers bind a key into a container env var
+                via `secretKeyRef`, using `<resource>.properties.secrets.name` as `secretName`.
+              properties:
+                name:
+                  type: string
+                  readOnly: true
+                  description: (Reserved) Name of the managed Radius.Security/secrets resource. Use as `secretName` in a container `secretKeyRef`.
+                connectionString:
+                  type: string
+                  readOnly: true
+                  description: The connection string used to connect to the Kafka-compatible endpoint. Mapped from the recipe module's `primaryConnectionString` output; delivered via the managed secret.
+          required: [environment]
+      # Identical to 2025-08-01-preview apart from the format constraints on
+      # `topic`, which is used verbatim as a provider resource name, so Radius now
+      # rejects values the provider would reject, before a recipe creates a
+      # billable namespace. See the README's "Naming constraints" section and issue #299.
+      '2026-09-01-preview':
+        schema:
+          type: object
+          properties:
+            environment:
+              type: string
+              description: "(Required) The Radius Environment ID. Typically set by the rad CLI. Typically value should be `environment`."
+            application:
+              type: string
+              description: "(Optional) The Radius Application ID. `myApplication.id` for example."
+            topic:
+              type: string
+              minLength: 1
+              maxLength: 249
+              pattern: '^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$'
+              default: events
+              description: "(Optional) The Kafka topic/Event Hub name to create. Defaults to `events`. Must be 1-249 characters of letters, digits, periods, underscores or hyphens, and must start and end with a letter or a digit. The limit is Kafka's 249 rather than the Event Hubs 256 so the same name works on either backend, and the start/end rule excludes the Kafka reserved names `.` and `..` along with the reserved `__` prefix."
             host:
               type: string
               description: The host name used to connect to the Kafka-compatible endpoint. For Azure Event Hubs this is the namespace name; the bootstrap server is `<host>.servicebus.windows.net:9093`.
