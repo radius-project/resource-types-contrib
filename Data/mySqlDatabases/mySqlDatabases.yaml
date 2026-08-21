@@ -53,12 +53,12 @@ types:
       - CONNECTION_MYSQLDB_PORT
       - CONNECTION_MYSQLDB_TLS
 
-      The `tls` property states the requested transport policy for connections to the database server and defaults to `required`. Where the Recipe enforces it — the Azure Recipe does — the server then rejects connections that do not use TLS, so configure your client for TLS accordingly. For example, with the Node.js `mysql2` driver:
+      The `tls` property states the requested transport policy for connections to the database server and defaults to `required`. The Azure Recipe enforces it on the server, which then rejects connections that do not use TLS, so configure your client for TLS accordingly. For example, with the Node.js `mysql2` driver:
       ```js
       mysql.createPool({ host, user, password, database, ssl: { minVersion: 'TLSv1.2' } })
       ```
 
-      Set `tls: 'optional'` when the client cannot use TLS, which lets the server also accept connections that do not use TLS. The Azure Recipe enforces this policy on the database server. The Kubernetes and AWS Recipes do not enforce it today, so on those platforms the value states the requested policy rather than observed server behavior.
+      Set `tls: 'optional'` when the client cannot use TLS, which lets the server also accept connections that do not use TLS. The Kubernetes and AWS Recipes do not enforce this policy today, so on those platforms the value states the requested policy rather than observed server behavior.
 
     apiVersions:
       '2025-08-01-preview':
