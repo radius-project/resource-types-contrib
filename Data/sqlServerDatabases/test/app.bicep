@@ -18,7 +18,7 @@ resource app 'Radius.Core/applications@2025-08-01-preview' = {
   }
 }
 
-resource sqlserver 'Radius.Data/sqlServerDatabases@2025-08-01-preview' = {
+resource sqlserver 'Radius.Data/sqlServerDatabases@2026-09-01-preview' = {
   name: 'sqlserver'
   properties: {
     environment: environment

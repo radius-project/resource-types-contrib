@@ -9,7 +9,7 @@ types:
       generates its own account keys, so the platform-engineer recipe needs no
       injected credentials.
       ```bicep
-      resource store 'Radius.Storage/objectStorage@2025-08-01-preview' = {
+      resource store 'Radius.Storage/objectStorage@2026-09-01-preview' = {
         name: 'store'
         properties: {
           environment: environment
@@ -75,6 +75,58 @@ types:
               type: string
               default: data
               description: "(Optional) The object container (blob container / S3 bucket) name to create inside the storage account. Defaults to `data` if not provided."
+            endpoint:
+              type: string
+              description: The object storage endpoint used to connect to the store. Mapped from the recipe module's `primaryBlobEndpoint` output.
+              readOnly: true
+            accountName:
+              type: string
+              description: The Azure Storage account name. Mapped from the recipe module's `name` output.
+              readOnly: true
+            secrets:
+              type: object
+              description: >-
+                (Read-only) Recipe secrets. The reserved `name` sub-property references the managed
+                Radius.Security/secrets resource Radius materializes from the recipe's `outputs.secrets`;
+                the other sub-properties declare secret keys whose values are written only into that
+                managed secret (never onto this resource). Consumers bind a key into a container env var
+                via `secretKeyRef`, using `<resource>.properties.secrets.name` as `secretName`.
+              properties:
+                name:
+                  type: string
+                  readOnly: true
+                  description: (Reserved) Name of the managed Radius.Security/secrets resource. Use as `secretName` in a container `secretKeyRef`.
+                connectionString:
+                  type: string
+                  readOnly: true
+                  description: The storage account connection string. Mapped from the recipe module's `primaryConnectionString` output; delivered via the managed secret.
+                accountKey:
+                  type: string
+                  readOnly: true
+                  description: The Azure Storage account access key. Mapped from the recipe module's `primaryAccessKey` output; delivered via the managed secret.
+          required: [environment]
+      # Identical to 2025-08-01-preview apart from the format constraints on
+      # `containerName`, which is used verbatim as a provider resource name, so
+      # Radius now rejects values the provider would reject, before a recipe
+      # creates a billable storage account. See the README's "Naming constraints"
+      # section and issue #299.
+      '2026-09-01-preview':
+        schema:
+          type: object
+          properties:
+            environment:
+              type: string
+              description: "(Required) The Radius Environment ID. Typically set by the rad CLI. Typically value should be `environment`."
+            application:
+              type: string
+              description: "(Optional) The Radius Application ID. `myApplication.id` for example."
+            containerName:
+              type: string
+              minLength: 3
+              maxLength: 63
+              pattern: '^[a-z0-9]+(-[a-z0-9]+)*$'
+              default: data
+              description: "(Optional) The object container (blob container / S3 bucket) name to create inside the storage account. Defaults to `data` if not provided. Must be 3-63 characters of lowercase letters, digits and single hyphens, starting and ending with a letter or a digit. This is the portable subset shared by Azure blob containers and S3 buckets; S3 additionally rejects IP-address-shaped names and a few reserved prefixes and suffixes, and requires global uniqueness, none of which can be expressed here."
             endpoint:
               type: string
               description: The object storage endpoint used to connect to the store. Mapped from the recipe module's `primaryBlobEndpoint` output.

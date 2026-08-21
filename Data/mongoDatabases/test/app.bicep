@@ -12,7 +12,7 @@ resource app 'Radius.Core/applications@2025-08-01-preview' = {
   }
 }
 
-resource mongo 'Radius.Data/mongoDatabases@2025-08-01-preview' = {
+resource mongo 'Radius.Data/mongoDatabases@2026-09-01-preview' = {
   name: 'mongo'
   properties: {
     environment: environment

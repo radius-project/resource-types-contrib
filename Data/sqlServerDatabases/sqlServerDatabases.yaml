@@ -4,7 +4,7 @@ types:
     description: |
       The Radius.Data/sqlServerDatabases Resource Type deploys a SQL database. Provide the administrator `username` and `password` directly on the resource. The `password` property is marked `x-radius-sensitive`, so Radius encrypts it at rest, redacts it on reads, and exposes it (decrypted) only to the recipe that provisions the database.
       ```bicep
-      resource sqlserver 'Radius.Data/sqlServerDatabases@2025-08-01-preview' = {
+      resource sqlserver 'Radius.Data/sqlServerDatabases@2026-09-01-preview' = {
         name: 'sqlserver'
         properties: {
           environment: environment
@@ -75,6 +75,47 @@ types:
             username:
               type: string
               description: "(Required) The administrator username for the SQL database. Provided directly on the resource and passed to the recipe as `{{context.resource.properties.username}}`."
+            password:
+              type: string
+              x-radius-sensitive: true
+              description: "(Required) The administrator password for the SQL database. Marked `x-radius-sensitive`: Radius encrypts it at rest, redacts it on reads, and exposes it decrypted only to the recipe as `{{context.resource.properties.password}}`."
+            host:
+              type: string
+              description: The SQL Server fully qualified domain name. Mapped from the recipe module's `fullyQualifiedDomainName` output.
+              readOnly: true
+            port:
+              type: string
+              description: The SQL Server TCP port. Azure SQL Database listens on 1433.
+              readOnly: true
+          required: [environment, database, username, password]
+      # Identical to 2025-08-01-preview apart from the format constraints on
+      # `database` and `username`. Those two properties are used verbatim as
+      # provider resource names, so Radius now rejects values the provider would
+      # reject, before a recipe creates a billable server. See the README's
+      # "Naming constraints" section and issue #299.
+      '2026-09-01-preview':
+        schema:
+          type: object
+          properties:
+            environment:
+              type: string
+              description: "(Required) The Radius Environment ID. Typically set by the rad CLI. Typically value should be `environment`."
+            application:
+              type: string
+              description: "(Optional) The Radius Application ID. `myApplication.id` for example."
+            database:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: '^[^<>*%&:\\/?\x00-\x1F]*[^<>*%&:\\/?\x00-\x1F. ]$'
+              default: appdb
+              description: "(Required) The SQL database name to create on the server. Defaults to `appdb` in the sample application. Must be 1-128 characters. The characters `< > * % & : \\ / ?` and control characters are not allowed anywhere, and the name may not end with a period or a space."
+            username:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: '^[A-Za-z][A-Za-z0-9_]*$'
+              description: "(Required) The administrator username for the SQL database. Provided directly on the resource and passed to the recipe as `{{context.resource.properties.username}}`. Must be 1-128 characters, starting with a letter, followed by letters, digits or underscores."
             password:
               type: string
               x-radius-sensitive: true

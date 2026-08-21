@@ -14,13 +14,30 @@ resource app 'Radius.Core/applications@2025-08-01-preview' = {
   }
 }
 
-resource postgresql 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
+resource postgresql 'Radius.Data/postgreSqlDatabases@2026-09-01-preview' = {
   name: 'postgresql'
   properties: {
     environment: environment
     application: app.id
     size: 'S'
     database: 'appdb'
+    username: 'radadmin'
+    password: password
+  }
+}
+
+// Regression coverage for issue #299. Azure pre-creates a `postgres` database on
+// every PostgreSQL flexible server, so the Azure Recipe must bind to the existing
+// one rather than ask Azure to create it a second time. Before the fix this
+// deployment failed with `InvalidParameterValue: Invalid value given for parameter
+// databaseName`, after the server had already been created.
+resource postgresqlReservedName 'Radius.Data/postgreSqlDatabases@2026-09-01-preview' = {
+  name: 'postgresql-reserved-name'
+  properties: {
+    environment: environment
+    application: app.id
+    size: 'S'
+    database: 'postgres'
     username: 'radadmin'
     password: password
   }

@@ -16,6 +16,32 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `endpoint` | string | Read only | The endpoint used to connect to the database. Set from the Recipe module's output. |
 | `secrets` | object | Read only | Recipe secrets. `secrets.name` references the managed `Radius.Security/secrets` resource; `secrets.connectionString` is the secret key (delivered via that managed secret, never stored on the resource). |
 
+## Naming constraints
+
+`database` is used verbatim as a cloud resource name, so from API version `2026-09-01-preview` it
+carries format constraints. Radius validates it when the resource is submitted, which means a bad
+value is rejected before a Recipe runs and before a billable account exists. API version
+`2025-08-01-preview` is unconstrained and unchanged.
+
+| Property | Accepted format |
+| --- | --- |
+| `database` | 1-63 characters. May not contain spaces, control characters, or any of `/ \ . " $ * < > : \| ? #`. |
+
+Azure does not publish a naming contract for the Cosmos DB Mongo child database, so this is a
+deliberately conservative subset: the intersection of the MongoDB database-name rules across
+operating systems with the characters Azure disallows in a resource ID. Some names it rejects may
+in fact be accepted by a given backend.
+
+### Reserved names
+
+Some names satisfy the format above but are still rejected by the engine. These cannot be
+expressed as schema constraints today — Radius rejects the `not` and `oneOf` keywords, and the
+pattern engine has no negative lookahead — so they are listed here instead.
+
+| Name | Behaviour |
+| --- | --- |
+| `admin`, `local`, `config` | MongoDB internal databases. Using them as an application database fails or behaves unexpectedly. |
+
 ## Recipe Packs
 
 Recipes for this resource type are provided through the platform Recipe Packs at the repository root under [`recipe-packs/`](../../recipe-packs/). A platform engineer configures an Environment by deploying the Recipe Pack for their target platform, which registers the Recipe for `Radius.Data/mongoDatabases` along with the Recipes for every other Resource Type on that platform.

@@ -19,6 +19,25 @@ Developer documentation is embedded in the resource type definition YAML file an
 
 The schema is platform-neutral: the same developer-facing properties can be backed by Azure Blob Storage, AWS S3, or a Kubernetes object-store recipe by changing only the platform recipe's module source, parameters, and outputs.
 
+## Naming constraints
+
+`containerName` is used verbatim as a cloud resource name, so from API version
+`2026-09-01-preview` it carries format constraints. Radius validates it when the resource is
+submitted, which means a bad value is rejected before a Recipe runs and before a billable storage
+account exists. API version `2025-08-01-preview` is unconstrained and unchanged.
+
+| Property | Accepted format |
+| --- | --- |
+| `containerName` | 3-63 characters of lowercase letters, digits and single hyphens. Must start and end with a letter or a digit, and may not contain two hyphens in a row. |
+
+This is the portable subset shared by Azure blob containers and S3 buckets. S3 imposes rules that
+cannot be expressed here and are not checked: bucket names may not look like an IP address, may
+not use certain reserved prefixes and suffixes, and must be globally unique. A name that satisfies
+the format above may therefore still be rejected by S3.
+
+The Azure system containers `$root` and `$logs` need no separate note; `$` is not an accepted
+character, so they are already excluded.
+
 ## Recipe Packs
 
 Recipes for this resource type are provided through the platform Recipe Packs at the repository root under [`recipe-packs/`](../../recipe-packs/). A platform engineer configures an Environment by deploying the Recipe Pack for their target platform, which registers the Recipe for `Radius.Storage/objectStorage` along with the Recipes for every other Resource Type on that platform.

@@ -8,7 +8,7 @@ types:
       MongoDB and exposes its endpoint and connection string as resource
       properties.
       ```bicep
-      resource database 'Radius.Data/mongoDatabases@2025-08-01-preview' = {
+      resource database 'Radius.Data/mongoDatabases@2026-09-01-preview' = {
         name: 'mongo'
         properties: {
           environment: environment
@@ -71,6 +71,49 @@ types:
               type: string
               default: mongo_db
               description: "(Optional) The Mongo database name. Defaults to `mongo_db` if not provided."
+            endpoint:
+              type: string
+              description: The endpoint used to connect to the database. Mapped from the recipe module's output.
+              readOnly: true
+            secrets:
+              type: object
+              description: >-
+                (Read-only) Recipe secrets. The reserved `name` sub-property references the managed
+                Radius.Security/secrets resource Radius materializes from the recipe's `outputs.secrets`;
+                the other sub-properties declare secret keys whose values are written only into that
+                managed secret (never onto this resource). Consumers bind a key into a container env var
+                via `secretKeyRef`, using `<resource>.properties.secrets.name` as `secretName`.
+              properties:
+                name:
+                  type: string
+                  readOnly: true
+                  description: (Reserved) Name of the managed Radius.Security/secrets resource. Use as `secretName` in a container `secretKeyRef`.
+                connectionString:
+                  type: string
+                  readOnly: true
+                  description: The connection string used to connect to the database. Mapped from the recipe module's output; delivered via the managed secret.
+          required: [environment]
+      # Identical to 2025-08-01-preview apart from the format constraints on
+      # `database`, which is used verbatim as a provider resource name, so Radius
+      # now rejects values the provider would reject, before a recipe creates a
+      # billable account. See the README's "Naming constraints" section and issue #299.
+      '2026-09-01-preview':
+        schema:
+          type: object
+          properties:
+            environment:
+              type: string
+              description: "(Required) The Radius Environment ID. Typically set by the rad CLI. Typically value should be `environment`."
+            application:
+              type: string
+              description: "(Optional) The Radius Application ID. `myApplication.id` for example."
+            database:
+              type: string
+              minLength: 1
+              maxLength: 63
+              pattern: '^[^/\\."$*<>:|?#\x00-\x1F ]+$'
+              default: mongo_db
+              description: "(Optional) The Mongo database name. Defaults to `mongo_db` if not provided. Must be 1-63 characters and may not contain spaces, control characters, or any of `/ \\ . \" $ * < > : | ? #`. This is a deliberately conservative subset: it is the intersection of the MongoDB database-name rules across operating systems with the characters Azure disallows in a resource ID."
             endpoint:
               type: string
               description: The endpoint used to connect to the database. Mapped from the recipe module's output.

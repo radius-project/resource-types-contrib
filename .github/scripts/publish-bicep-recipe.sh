@@ -17,7 +17,7 @@
 # ------------------------------------------------------------
 
 # =============================================================================
-# Publish one Kubernetes Bicep recipe to a container registry under every tag in
+# Publish one Bicep recipe to a container registry under every tag in
 # $TAGS. Called once per recipe by the publish-bicep-recipes workflow, which
 # runs the invocations as parallel steps in a single job.
 #
@@ -26,7 +26,9 @@
 #   $2  path to the Bicep recipe, relative to the repository root
 #
 # Inputs (environment variables):
-#   REGISTRY  required, e.g. ghcr.io/radius-project/kube-recipes
+#   REGISTRY  required, e.g. ghcr.io/radius-project/kube-recipes. The workflow
+#             overrides this per step for recipes that target another platform,
+#             so the same recipe name can exist under more than one path.
 #   TAGS      required, space-separated tags, e.g. "0.51.0 latest"
 #
 # Usage:

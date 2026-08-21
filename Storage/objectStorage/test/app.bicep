@@ -10,7 +10,7 @@ resource app 'Radius.Core/applications@2025-08-01-preview' = {
   }
 }
 
-resource store 'Radius.Storage/objectStorage@2025-08-01-preview' = {
+resource store 'Radius.Storage/objectStorage@2026-09-01-preview' = {
   name: 'store'
   properties: {
     environment: environment

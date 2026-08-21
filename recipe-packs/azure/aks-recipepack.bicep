@@ -179,46 +179,18 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
           host: 'fqdn'
         }
       }
+      // Points at an authored Recipe rather than the AVM module directly. The AVM
+      // module is still what provisions the server -- the Recipe wraps it -- but the
+      // wrapper can skip creating the child database when the requested name is one
+      // Azure pre-creates on every flexible server. Passing `database: 'postgres'`
+      // straight to AVM asks Azure to create a database it already made, which fails
+      // the deployment after the server exists. See
+      // Data/postgreSqlDatabases/recipes/azure/bicep/azure-postgresql.bicep.
       'Radius.Data/postgreSqlDatabases': {
         kind: 'bicep'
-        source: 'mcr.microsoft.com/bicep/avm/res/db-for-postgre-sql/flexible-server:0.15.2'
+        source: 'ghcr.io/radius-project/azure-recipes/postgresqldatabases:latest'
         parameters: {
-          name: 'pgsql-{{context.azure.resourceNameHash}}'
-          administratorLogin: '{{context.resource.properties.username}}'
-          administratorLoginPassword: '{{context.resource.properties.password}}'
-          authConfig: {
-            activeDirectoryAuth: 'Enabled'
-            passwordAuth: 'Enabled'
-          }
-          skuName: '{{context.resource.properties.size == "S" ? "Standard_B1ms" : "Standard_D2ds_v5"}}'
-          tier: '{{context.resource.properties.size == "S" ? "Burstable" : "GeneralPurpose"}}'
-          databases: [
-            {
-              name: '{{context.resource.properties.database}}'
-            }
-          ]
-          version: '16'
-          availabilityZone: -1
-          highAvailability: 'Disabled'
-          geoRedundantBackup: 'Disabled'
-          storageSizeGB: 32
-          publicNetworkAccess: 'Enabled'
-          firewallRules: [
-            {
-              name: 'allow-all'
-              startIpAddress: '0.0.0.0'
-              endIpAddress: '255.255.255.255'
-            }
-          ]
-          enableAdvancedThreatProtection: false
-          enableTelemetry: false
-          lock: {
-            kind: 'None'
-          }
-          configurations: postgreSqlServerConfigurations
-        }
-        outputs: {
-          host: 'fqdn'
+          postgreSqlServerConfigurations: postgreSqlServerConfigurations
         }
       }
       'Radius.Data/sqlServerDatabases': {

@@ -10,7 +10,7 @@ resource app 'Radius.Core/applications@2025-08-01-preview' = {
   }
 }
 
-resource kafkaBroker 'Radius.Messaging/kafka@2025-08-01-preview' = {
+resource kafkaBroker 'Radius.Messaging/kafka@2026-09-01-preview' = {
   name: 'kafka'
   properties: {
     environment: environment

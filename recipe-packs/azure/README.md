@@ -14,12 +14,55 @@ Some Azure services require names that are unique across Azure, so their Recipes
 
 This Recipe Pack requires a Radius runtime that supports the `context.azure.resourceNameHash` direct-module expression. Earlier revisions used `context.resource.name` directly, and adopting this revision changes those Azure resource names, which may cause existing edge deployments to provision replacement resources.
 
+## Azure naming constraints
+
+Several Recipes in this pack pass a developer-supplied property straight through as the name of an
+Azure child resource or as an administrator login. Azure enforces its own rules on those values, so
+a name Radius accepts can still fail the deployment — historically *after* the parent server or
+storage account had been created and billed.
+
+From API version `2026-09-01-preview` the affected Resource Types constrain these properties in
+their schemas, so Radius rejects a malformed value at submission time, before any Recipe runs.
+Resources still using `2025-08-01-preview` are unconstrained and behave as before.
+
+| Resource Type | Property | Becomes | Accepted format |
+| --- | --- | --- | --- |
+| `Radius.Data/postgreSqlDatabases` | `database` | flexible server child database | 1-63; starts with a letter or underscore, then letters, digits, underscores |
+| `Radius.Data/postgreSqlDatabases` | `username` | `administratorLogin` | 1-63 letters and digits only |
+| `Radius.Data/mySqlDatabases` | `database` | flexible server child database | 1-63; starts with a letter, then letters, digits, underscores |
+| `Radius.Data/mySqlDatabases` | `username` | `administratorLogin` | 1-16; starts with a letter, then letters, digits, underscores (AWS RDS limit, stricter than Azure's 32) |
+| `Radius.Data/sqlServerDatabases` | `database` | SQL Server child database | 1-128; no `< > * % & : \ / ?` or control characters; no trailing period or space |
+| `Radius.Data/sqlServerDatabases` | `username` | `administratorLogin` | 1-128; starts with a letter, then letters, digits, underscores |
+| `Radius.Data/mongoDatabases` | `database` | Cosmos DB Mongo database | 1-63; no spaces, control characters or ``/ \ . " $ * < > : | ? #`` |
+| `Radius.Messaging/kafka` | `topic` | Event Hub | 1-249 of letters, digits, `.`, `_`, `-`; starts and ends alphanumeric |
+| `Radius.Storage/objectStorage` | `containerName` | blob container | 3-63 lowercase letters, digits and single hyphens; starts and ends alphanumeric |
+
+Each Resource Type README documents the rule and any reserved names in full.
+
+### Reserved names are not covered
+
+A schema constraint can describe a *format*, but it cannot exclude a specific value: Radius rejects
+the `not` and `oneOf` keywords when a Resource Type is registered, and its pattern engine has no
+negative lookahead. Names such as `master` on SQL Server or `azure_superuser` on MySQL therefore
+still reach the provider and still fail there. They are documented per Resource Type, and
+[radius-project/radius](https://github.com/radius-project/radius) is asked to add a denylist
+mechanism so they can be caught at submission time too.
+
+The one exception is `Radius.Data/postgreSqlDatabases` with `database: 'postgres'`, the case
+reported in issue #299. Azure pre-creates a `postgres` database on every flexible server, so the
+pack's old inline AVM reference asked Azure to create it twice and failed. That Resource Type now
+points at an authored Recipe,
+[`Data/postgreSqlDatabases/recipes/azure/bicep/azure-postgresql.bicep`](../../Data/postgreSqlDatabases/recipes/azure/bicep/azure-postgresql.bicep),
+which provisions the server with no child database in that case and binds the application to the
+one Azure already created. The Recipe reproduces the pack's `pgsql-{{context.azure.resourceNameHash}}`
+server name exactly, so existing deployments are not renamed.
+
 ## Recipes in this pack
 
 | Resource Type | Kind | Source |
 | --- | --- | --- |
 | `Radius.Data/sqlServerDatabases` | Bicep | Azure Verified Module — `mcr.microsoft.com/bicep/avm/res/sql/server:0.21.4` |
-| `Radius.Data/postgreSqlDatabases` | Bicep | Azure Verified Module — `avm/res/db-for-postgre-sql/flexible-server` |
+| `Radius.Data/postgreSqlDatabases` | Bicep | `ghcr.io/radius-project/azure-recipes/postgresqldatabases`, which wraps the Azure Verified Module `avm/res/db-for-postgre-sql/flexible-server` |
 | `Radius.AI/search` | Bicep | Azure Verified Module — `avm/res/search/search-service` |
 | `Radius.AI/models` | Bicep | Azure Verified Module — `avm/res/cognitive-services/account` |
 | `Radius.Messaging/rabbitMQ` | Bicep | `ghcr.io/radius-project/kube-recipes/rabbitmq` |
