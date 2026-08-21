@@ -34,6 +34,8 @@ This Recipe Pack requires a Radius runtime that supports the `context.azure.reso
 | `Radius.Compute/routes` | Bicep | `ghcr.io/radius-project/kube-recipes/routes` |
 | `Radius.Compute/containerImages` | Bicep | `ghcr.io/radius-project/kube-recipes/containerimages` |
 
+The `Radius.Data/mySqlDatabases` Recipe maps the resource's `tls` property onto the flexible server's `require_secure_transport` parameter, so the server rejects connections that do not use TLS unless the application sets `tls: 'optional'`. This relies on the Radius runtime materializing schema defaults into the resource's properties, so applications that omit `tls` still resolve to `required`.
+
 ## Parameters
 
 The Azure pack accepts the provider configuration it needs to provision into your subscription:

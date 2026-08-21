@@ -23,6 +23,10 @@ resource mysql 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
     database: 'appdb'
     username: 'radadmin'
     password: password
+    // `tls` is deliberately omitted so this test deploys the schema-default path
+    // (`required`) rather than an explicitly set value. The Kubernetes Recipe this
+    // test runs against does not enforce the policy, so this exercises schema
+    // acceptance and deployment only, not TLS enforcement.
   }
 }
 
