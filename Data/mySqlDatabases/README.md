@@ -29,11 +29,19 @@ database server exists. API version `2025-08-01-preview` is unconstrained and un
 | Property | Accepted format |
 | --- | --- |
 | `database` | 1-63 characters. Starts with a letter, followed by letters, digits or underscores. Azure caps the child database name at 63 even though MySQL itself allows 64. |
-| `username` | 1-16 characters. Starts with a letter, followed by letters, digits or underscores. |
+| `username` | 1-16 letters and digits, starting with a letter. |
 
-The 16 character username limit comes from AWS RDS, not Azure, which allows 32. Because this
-resource type ships both an Azure and an AWS Recipe and the schema is shared, the constraint is
-the stricter of the two so that the same application definition deploys on either platform.
+Both `username` bounds come from AWS RDS rather than Azure. RDS allows 16 characters where Azure
+allows 32, and RDS allows no underscores at all. This resource type ships both an Azure and an AWS
+Recipe against a single shared schema, and the AWS Recipe passes `username` through unmodified, so
+the schema uses the portable intersection and the same application definition deploys on either
+platform.
+
+`database` is the one place that portability is not complete. AWS RDS also rejects underscores in
+the initial database name, but the shipped default is `mysql_db` and the AWS Recipe's own sanitizer
+at [`recipes/aws/terraform/main.tf`](recipes/aws/terraform/main.tf) deliberately preserves
+underscores, so removing them from the schema would reject the default. A `database` containing an
+underscore is accepted by Radius and by Azure, and may be rejected by AWS RDS.
 
 ### Reserved names
 

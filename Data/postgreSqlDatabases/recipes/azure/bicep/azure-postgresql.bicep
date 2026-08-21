@@ -18,7 +18,8 @@ var username = context.resource.properties.username
 var password = context.resource.properties.password
 var database = context.resource.properties.?database ?? 'postgres_db'
 var size = context.resource.properties.?size ?? 'S'
-var port = 5432
+// The schema types `port` as a string, so emit it as one rather than as a number.
+var port = '5432'
 
 // The server name must match the name the Azure Recipe Pack generated before this
 // Recipe replaced its inline AVM reference, otherwise redeploying an existing
@@ -43,10 +44,18 @@ var serverName = 'pgsql-${context.azure.resourceNameHash}'
 // an application to them would silently produce a broken deployment. They continue
 // to fail at Azure, and are called out in the resource type README. Rejecting them
 // up front needs a denylist the Resource Type schema cannot express today, because
-// Radius rejects `not`/`oneOf` and Go RE2 has no negative lookahead.
+// Radius rejects `not`/`oneOf` and Go RE2 has no negative lookahead. Tracked in
+// radius-project/radius#12784.
 //////////////////////////////////////////
 
 var isPreCreatedDatabase = toLower(database) == 'postgres'
+
+// PostgreSQL database names are case sensitive, and the database Azure created is
+// named exactly `postgres`. The match above is case insensitive because Azure
+// rejects `POSTGRES` as a duplicate too, so report the name that actually exists
+// rather than the casing the developer happened to type. Connecting with
+// `dbname=POSTGRES` would otherwise fail with "database does not exist".
+var effectiveDatabase = isPreCreatedDatabase ? 'postgres' : database
 
 //////////////////////////////////////////
 // PostgreSQL flexible server
@@ -66,7 +75,7 @@ module postgresql 'br:mcr.microsoft.com/bicep/avm/res/db-for-postgre-sql/flexibl
     tier: size == 'S' ? 'Burstable' : 'GeneralPurpose'
     databases: isPreCreatedDatabase ? [] : [
       {
-        name: database
+        name: effectiveDatabase
       }
     ]
     version: '16'
@@ -104,6 +113,6 @@ output result object = {
     // server created with public network access always reports one.
     host: postgresql.outputs.?fqdn ?? ''
     port: port
-    database: database
+    database: effectiveDatabase
   }
 }

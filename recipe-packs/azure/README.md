@@ -30,7 +30,7 @@ Resources still using `2025-08-01-preview` are unconstrained and behave as befor
 | `Radius.Data/postgreSqlDatabases` | `database` | flexible server child database | 1-63; starts with a letter or underscore, then letters, digits, underscores |
 | `Radius.Data/postgreSqlDatabases` | `username` | `administratorLogin` | 1-63 letters and digits only |
 | `Radius.Data/mySqlDatabases` | `database` | flexible server child database | 1-63; starts with a letter, then letters, digits, underscores |
-| `Radius.Data/mySqlDatabases` | `username` | `administratorLogin` | 1-16; starts with a letter, then letters, digits, underscores (AWS RDS limit, stricter than Azure's 32) |
+| `Radius.Data/mySqlDatabases` | `username` | `administratorLogin` | 1-16 letters and digits, starting with a letter (AWS RDS limits, stricter than Azure on both length and characters) |
 | `Radius.Data/sqlServerDatabases` | `database` | SQL Server child database | 1-128; no `< > * % & : \ / ?` or control characters; no trailing period or space |
 | `Radius.Data/sqlServerDatabases` | `username` | `administratorLogin` | 1-128; starts with a letter, then letters, digits, underscores |
 | `Radius.Data/mongoDatabases` | `database` | Cosmos DB Mongo database | 1-63; no spaces, control characters or ``/ \ . " $ * < > : | ? #`` |
@@ -45,8 +45,8 @@ A schema constraint can describe a *format*, but it cannot exclude a specific va
 the `not` and `oneOf` keywords when a Resource Type is registered, and its pattern engine has no
 negative lookahead. Names such as `master` on SQL Server or `azure_superuser` on MySQL therefore
 still reach the provider and still fail there. They are documented per Resource Type, and
-[radius-project/radius](https://github.com/radius-project/radius) is asked to add a denylist
-mechanism so they can be caught at submission time too.
+[radius-project/radius#12784](https://github.com/radius-project/radius/issues/12784) tracks adding
+a denylist mechanism so they can be caught at submission time too.
 
 The one exception is `Radius.Data/postgreSqlDatabases` with `database: 'postgres'`, the case
 reported in issue #299. Azure pre-creates a `postgres` database on every flexible server, so the

@@ -151,7 +151,8 @@ When writing these constraints:
 - **There is no negative lookahead.** Patterns compile with RE2, so you cannot write "anything
   except `master`". Reserved names have to be excluded structurally where possible — restricting
   the character set to exclude a reserved prefix, for instance — and documented in the Resource
-  Type README otherwise.
+  Type README otherwise. [radius-project/radius#12784](https://github.com/radius-project/radius/issues/12784)
+  tracks adding a denylist mechanism.
 - **Check the default against its own pattern.** A `default` the schema rejects breaks every
   resource that omits the property.
 - **Add the constraints under a new API version.** Tightening a published version is a breaking

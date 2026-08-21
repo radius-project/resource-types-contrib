@@ -107,8 +107,8 @@ types:
               type: string
               minLength: 1
               maxLength: 16
-              pattern: '^[A-Za-z][A-Za-z0-9_]*$'
-              description: "(Required) The administrator username for the MySQL database. Provided directly on the resource and passed to the recipe as `{{context.resource.properties.username}}`. Must be 1-16 characters, starting with a letter, followed by letters, digits or underscores. The 16 character limit comes from AWS RDS, which is stricter than Azure's 32, and is applied here so the same value works on either platform."
+              pattern: '^[A-Za-z][A-Za-z0-9]*$'
+              description: "(Required) The administrator username for the MySQL database. Provided directly on the resource and passed to the recipe as `{{context.resource.properties.username}}`. Must be 1-16 letters and digits, starting with a letter. Both bounds come from AWS RDS, which is stricter than Azure on length (16 rather than 32) and on characters (no underscores); the AWS recipe in this repository passes the username through unmodified, so the schema uses the portable intersection."
             password:
               type: string
               x-radius-sensitive: true
@@ -119,7 +119,7 @@ types:
               maxLength: 63
               pattern: '^[A-Za-z][A-Za-z0-9_]*$'
               default: mysql_db
-              description: "(Optional) The name of the database. Defaults to `mysql_db` if not provided. Must be 1-63 characters, starting with a letter, followed by letters, digits or underscores. Azure caps the child database name at 63 characters even though MySQL itself allows 64."
+              description: "(Optional) The name of the database. Defaults to `mysql_db` if not provided. Must be 1-63 characters, starting with a letter, followed by letters, digits or underscores. Azure caps the child database name at 63 characters even though MySQL itself allows 64. Note that AWS RDS additionally rejects underscores in the initial database name; the underscore is kept here because the shipped default and the existing AWS recipe's own sanitizer both rely on it."
             version:
               type: string
               enum: ['5.7', '8.0', '8.4']
