@@ -57,6 +57,12 @@ which provisions the server with no child database in that case and binds the ap
 one Azure already created. The Recipe reproduces the pack's `pgsql-{{context.azure.resourceNameHash}}`
 server name exactly, so existing deployments are not renamed.
 
+That Recipe is the first published under the `azure-recipes` registry path.
+[`resolve-recipe-tags.sh`](../../.github/scripts/resolve-recipe-tags.sh) only pushes the `latest`
+tag for a stable `RELEASE_VERSION`, so **the Recipe must be published before this pack is
+released** or the `:latest` reference will not resolve. CI is unaffected, because the Azure
+validation workflow generates its own pack from source rather than consuming this file.
+
 ## Recipes in this pack
 
 | Resource Type | Kind | Source |

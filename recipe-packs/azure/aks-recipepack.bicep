@@ -186,6 +186,18 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
       // straight to AVM asks Azure to create a database it already made, which fails
       // the deployment after the server exists. See
       // Data/postgreSqlDatabases/recipes/azure/bicep/azure-postgresql.bicep.
+      //
+      // RELEASE NOTE: this is the first Recipe published under the azure-recipes
+      // registry path, and `.github/scripts/resolve-recipe-tags.sh` only pushes
+      // `latest` for a stable RELEASE_VERSION -- pushes to main produce a commit SHA
+      // and `edge`. The `:latest` tag below therefore does not resolve until the
+      // first stable release that includes this Recipe. Publish the Recipe before
+      // releasing this pack. The `:latest` convention is kept deliberately, to match
+      // every other authored Recipe reference in this pack and in the Kubernetes
+      // pack, and because `edge` is mutable and unsuitable for a released artifact.
+      // CI is unaffected either way: the Azure validation job does not consume this
+      // file, it generates its own pack from source via
+      // .github/scripts/generate-recipe-pack.sh.
       'Radius.Data/postgreSqlDatabases': {
         kind: 'bicep'
         source: 'ghcr.io/radius-project/azure-recipes/postgresqldatabases:latest'
