@@ -171,6 +171,13 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
               endIpAddress: '255.255.255.255'
             }
           ]
+          configurations: [
+            {
+              name: 'require_secure_transport'
+              source: 'user-override'
+              value: '{{context.resource.properties.tls == "optional" ? "OFF" : "ON"}}'
+            }
+          ]
           enableTelemetry: false
           lock: {
             kind: 'None'
