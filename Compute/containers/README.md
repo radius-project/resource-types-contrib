@@ -49,6 +49,16 @@ A list of available Recipes for this Resource Type, including links to the Bicep
 | context.resource.properties.extensions | Dapr extension for Radius |
 | context.resource.properties.platformOptions | Kubernetes Deployment and Pod override properties |
 
+### Connections and secrets
+
+For ordinary connections, the Kubernetes Recipes preserve the existing behavior of injecting scalar metadata from `context.resource.connections.<name>` and values from `context.resource.connections.<name>.properties` as `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` environment variables. When a producer Recipe returns secrets, Radius supplies reference metadata under `context.resource.connections.<name>.secrets`; the same connection injects each secret through a Kubernetes `secretKeyRef`. For example, Redis connection `redis` supplies its ordinary `host` and `port` values together with the secret-backed `CONNECTION_REDIS_URL`.
+
+Direct connections to user-authored `Radius.Security/secrets` resources remain supported and inject one secret-backed variable per data key. Both regular and init containers receive generated variables. Explicit container environment variables take precedence, managed secret references take precedence over ordinary properties with the same generated name, and `disableDefaultEnvVars: true` disables both ordinary and secret-backed variables for that connection.
+
+Connection names, property names, and secret names are uppercased when generating environment variable names. Secret names that collide after uppercasing are rejected. Direct Secret connections now fully uppercase the generated variable name, including the data key; this intentionally replaces the previous `envFrom` behavior, which preserved the Secret data key's casing after the uppercase connection prefix. The Kubernetes Secret name is derived from the final segment of each full Radius Secret resource ID. Secret values remain in Kubernetes references and are never copied into Recipe output or plaintext container configuration.
+
+The Azure ACI Recipe is unchanged and does not consume the Kubernetes secret reference metadata described above.
+
 Note: The Azure ACI recipe does not support `context.resource.properties.extensions.daprSidecar` and ignores Dapr sidecar configuration provided through `extensions`.
 Note: The Azure ACI recipe does not support `context.resource.properties.replicas` or `context.resource.properties.autoScaling.*`; scaling is controlled by recipe-specific parameters (`desiredCount` and `maintainDesiredCount`).
 Note: The Azure ACI recipe does not support `context.resource.properties.containers.args` or `context.resource.properties.containers.workingDir`; `args` are only used by merging into the ACI `command` array, and `workingDir` is ignored.
