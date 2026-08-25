@@ -22,24 +22,29 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/rtc-workspace-tests-XXXXXX")"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
-export RAD_CALLS="$TEST_ROOT/rad-calls"
+export COMMAND_CALLS="$TEST_ROOT/command-calls"
 mkdir -p "$TEST_ROOT/bin"
-: >"$RAD_CALLS"
+: >"$COMMAND_CALLS"
 cat >"$TEST_ROOT/bin/rad" <<'EOF'
 #!/bin/bash
-printf '%s\n' "$*" >>"$RAD_CALLS"
+printf 'rad %s\n' "$*" >>"$COMMAND_CALLS"
 EOF
-chmod +x "$TEST_ROOT/bin/rad"
+cat >"$TEST_ROOT/bin/kubectl" <<'EOF'
+#!/bin/bash
+printf 'kubectl %s\n' "$*" >>"$COMMAND_CALLS"
+EOF
+chmod +x "$TEST_ROOT/bin/rad" "$TEST_ROOT/bin/kubectl"
 
 PATH="$TEST_ROOT/bin:$PATH" "$REPO_ROOT/.github/scripts/create-workspace.sh" >/dev/null
 
 cat >"$TEST_ROOT/expected" <<'EOF'
-group create default
-workspace create kubernetes default --group default --force
-group switch default
-env create default --kubernetes-namespace radius-preview --preview
-env switch default --preview
+kubectl create namespace radius-preview
+rad group create default
+rad workspace create kubernetes default --group default --force
+rad group switch default
+rad env create default --kubernetes-namespace radius-preview --preview
+rad env switch default --preview
 EOF
 
-diff -u "$TEST_ROOT/expected" "$RAD_CALLS"
+diff -u "$TEST_ROOT/expected" "$COMMAND_CALLS"
 echo "Workspace bootstrap test passed"

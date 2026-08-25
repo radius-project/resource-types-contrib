@@ -22,6 +22,7 @@ set -e
 # This script creates the default group, workspace, and environment
 
 echo "Initializing Radius workspace and environment..."
+kubectl create namespace radius-preview
 rad group create default
 rad workspace create kubernetes default --group default --force
 rad group switch default
