@@ -349,9 +349,24 @@ resource env 'Radius.Core/environments@2025-08-01-preview' = {
 - Prefer standard, versioned modules (for example, Azure Verified Modules) where available, and pin the version with the `:<tag>` syntax so deployments are reproducible.
 - Recipes should be idempotent, meaning they can be run multiple times without causing issues.
 - Map developer-authored properties (such as `size`) onto concrete infrastructure settings using `{{context.*}}` parameter expressions rather than exposing platform-specific properties on the Resource Type.
-- Map every read-only property of the Resource Type from a module output via the `outputs` field so consumers can connect to the provisioned resource.
+- Map every read-only property of the Resource Type from a module output via the `outputs` field so consumers can connect to the provisioned resource. See [When a module has no output for a property](#when-a-module-has-no-output-for-a-property) for what to do when the module does not expose one.
 - Handle secrets securely: mark sensitive properties `x-radius-sensitive: true` on the Resource Type and never log or expose credentials.
 - The Kubernetes Recipe Pack should be self-contained (in-cluster, no cloud provider configuration) so it can serve as the zero-config `default-kubernetes/` pack.
+
+### When a module has no output for a property
+
+Each value in `outputs` is the **name of an output the module declares** — not a literal and not a `{{context.*}}` expression, which are resolved only for `parameters`. Two consequences are worth knowing before you add a mapping:
+
+- Naming an output the module does not declare fails validation before the deployment is submitted, so the Recipe cannot be used at all.
+- A non-string value such as `port: 3306` is dropped when the Recipe Pack is converted, leaving the property unset with no error at any point.
+
+So a property that a standard module never emits cannot be filled in from `outputs`. When that happens, pick one of these instead of leaving the Resource Type promising a value it will not get:
+
+1. **The value is the same for every Recipe you expect to exist.** Declare the property as an ordinary optional property with a schema `default` rather than `readOnly: true`, and say in its description that Recipes may overwrite it. Radius materializes the default when the application definition leaves the property unset, and a Recipe that does report the value still overwrites it after deployment. `port` on `Radius.Data/mySqlDatabases`, `Radius.Data/postgreSqlDatabases`, and `Radius.Data/sqlServerDatabases` works this way, because the Azure Verified Modules for those services expose no port output while the services themselves are fixed to the engine's standard port. Two caveats: a `default` on a `readOnly: true` property is ignored, so the property has to be a writable one; and nothing stops an application definition from setting a value the platform will not honor, so the description has to say the value is informational.
+2. **The value varies per deployment.** Replace the direct module reference with a Recipe authored in this repository that wraps the module and emits the output itself, under `<Category>/<resourceTypeName>/recipes/<platform>/`. Adding the file is not enough on its own: a Recipe Pack entry resolves its `source` from a registry, so the Recipe also needs to be published as an OCI artifact (see `.github/workflows/publish-bicep-recipes.yaml`) and the pack entry pointed at the published reference.
+3. **Neither fits.** Remove the property from the Resource Type. A property the platform cannot populate is worse than an absent one: consumers build connection strings from `CONNECTION_<NAME>_<PROPERTY>` and get a malformed one with no deploy-time error.
+
+Whichever you pick, a Recipe that provisions the resource on something other than the declared default **must** report it as an output. Radius does not detect the mismatch, so the resource would otherwise advertise a value the infrastructure does not use.
 
 ## Testing Your Contribution
 

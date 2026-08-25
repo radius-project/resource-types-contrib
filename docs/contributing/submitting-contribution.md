@@ -11,7 +11,7 @@ Before submitting your contribution. Make sure to check the following:
 - [ ] All properties in the Resource Type definition have clear descriptions
 - [ ] Enum properties have values defined in `enum: []`
 - [ ] Required properties are listed in `required: []` for every object property (not just the top-level properties)
-- [ ] Properties about the deployed resource, such as connection strings, are defined as read-only properties and are marked as `readOnly: true`
+- [ ] Properties about the deployed resource, such as connection strings, are defined as read-only properties and are marked as `readOnly: true` — unless no Recipe can supply the value, in which case see [When a module has no output for a property](contributing-resource-types-recipes.md#when-a-module-has-no-output-for-a-property)
 - [ ] Recipes include a results output variable with all read-only properties set
 - [ ] Environment-specific parameters, such as a vnet ID, are exposed for platform engineers to set in the Environment
 - [ ] Recipes use the [Recipe context object](https://docs.radapp.io/reference/context-schema/) when possible

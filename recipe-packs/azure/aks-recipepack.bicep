@@ -176,6 +176,12 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
           }
         }
         outputs: {
+          // The AVM flexible server module declares no port output, and every value in
+          // `outputs` must name an output the module actually declares -- naming one it
+          // does not fails validation before the deployment is even submitted, and
+          // `outputs` has no way to supply a literal. MySQL flexible server is fixed to
+          // 3306, so `Radius.Data/mySqlDatabases` carries 3306 as the schema default for
+          // `port` and consumers get CONNECTION_<NAME>_PORT without a mapping here.
           host: 'fqdn'
         }
       }
@@ -218,6 +224,9 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
           configurations: postgreSqlServerConfigurations
         }
         outputs: {
+          // As with MySQL above, the AVM flexible server module declares no port
+          // output. PostgreSQL flexible server is fixed to 5432, which
+          // `Radius.Data/postgreSqlDatabases` carries as the schema default for `port`.
           host: 'fqdn'
         }
       }
@@ -254,6 +263,9 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
           }
         }
         outputs: {
+          // As with MySQL and PostgreSQL above, the AVM sql/server module declares no
+          // port output. Azure SQL Database is fixed to 1433, which
+          // `Radius.Data/sqlServerDatabases` carries as the schema default for `port`.
           host: 'fullyQualifiedDomainName'
         }
       }
