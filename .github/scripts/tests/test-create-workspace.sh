@@ -24,6 +24,7 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 
 export RAD_CALLS="$TEST_ROOT/rad-calls"
 mkdir -p "$TEST_ROOT/bin"
+: >"$RAD_CALLS"
 cat >"$TEST_ROOT/bin/rad" <<'EOF'
 #!/bin/bash
 printf '%s\n' "$*" >>"$RAD_CALLS"
