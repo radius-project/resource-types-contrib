@@ -1,7 +1,7 @@
 // Default Radius recipe pack
 //
 // Deploy with:
-//   rad deploy recipe-packs/kubernetes/default-recipepack.bicep
+//   rad deploy recipe-packs/kubernetes/default.bicep
 //
 // This mirrors /planes/radius/local/resourceGroups/default/providers/Radius.Core/recipePacks/default
 
@@ -13,7 +13,7 @@ param environmentName string = 'default'
 @description('Kubernetes namespace the Radius environment deploys resources into.')
 param environmentNamespace string = 'default'
 
-resource defaultRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
+resource kubernetesRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
   name: 'default'
   properties: {
     recipes: {
@@ -62,7 +62,7 @@ resource env 'Radius.Core/environments@2025-08-01-preview' = {
       }
     }
     recipePacks: [
-      defaultRecipePack.id
+      kubernetesRecipePack.id
     ]
   }
 }

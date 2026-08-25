@@ -34,22 +34,21 @@ Registering the type also makes it available in Bicep through the generated exte
 
 ## Discovering and using Recipe Packs
 
-Recipe Packs live at the repository root under [`recipe-packs/`](../recipe-packs/). Each platform has its own folder containing a default Recipe Pack that can wire both Bicep and Terraform recipes:
+Recipe Packs live at the repository root under [`recipe-packs/`](../recipe-packs/). Each pack is a folder containing a Bicep file that wires recipes for the Resource Types it covers:
 
-- `azure/` — recipes for all types provisioned on Azure.
-- `aws/` — recipes for all types provisioned on AWS.
-- `kubernetes/` — recipes for all types provisioned in-cluster on Kubernetes.
-
-Each Recipe Pack bundles the Recipes for every Resource Type on that platform together with an Environment definition, so a platform engineer configures an Environment by deploying a single Recipe Pack instead of registering Recipes one type at a time. Cloud packs (under `azure/` and `aws/`) accept parameters for the provider configuration, such as the subscription or account the Environment provisions into.
+- `azure-aks/`: Azure services with application containers on AKS.
+- `azure-aci/`: application containers on Azure Container Instances, plus Azure Files volumes and Key Vault secrets. Container-focused; data, messaging, storage, and AI types are not included.
+- `kubernetes/`: all types provisioned in-cluster on Kubernetes (the zero-config default).
+- `aws-eks/` (planned): application containers on AWS EKS. An `aws-ecs/` pack for ECS is also planned.
 
 Deploy a Recipe Pack to create and configure the Environment:
 
 ```bash
-# Configure an Environment with the Azure recipe pack
-rad deploy recipe-packs/azure/aks-recipepack.bicep
+# Configure an Environment with the Azure AKS recipe pack
+rad deploy recipe-packs/azure-aks/azure-aks.bicep
 
 # Or start with the zero-config Kubernetes default
-rad deploy recipe-packs/default-kubernetes/aks-recipepack.bicep
+rad deploy recipe-packs/kubernetes/default.bicep
 ```
 
 After a Recipe Pack is deployed, every Resource Type it covers can be used in an application deployed to that Environment.

@@ -46,15 +46,18 @@ resource-types-contrib/
 │       └── test/
 │           └── app.bicep            # Developer-facing test application
 └── recipe-packs/                      # Recipe Packs cover recipes for all types in the repo
-    ├── azure/                        # Azure recipe pack (recipes for all types + environment)
-    │       ├── README.md                  # Documentation for the Azure recipe pack
-    │       └── aks-recipepack.bicep   # Recipe pack wiring Bicep and Terraform recipes
-    ├── aws/                          # AWS recipe pack
+    ├── azure-aks/                    # Azure AKS recipe pack (Azure services; containers on AKS)
+    │       ├── README.md                  # Documentation for the Azure AKS recipe pack
+    │       └── azure-aks.bicep            # Recipe pack wiring the Bicep recipes
+    ├── azure-aci/                    # Azure ACI recipe pack (containers on ACI; Azure Files + Key Vault)
+    │       ├── README.md                  # Documentation for the Azure ACI recipe pack
+    │       └── azure-aci.bicep            # Recipe pack wiring the Bicep recipes
+    ├── aws-eks/                      # AWS recipe pack (planned; containers on EKS, with aws-ecs for ECS to follow)
     │       ├── README.md
-    │       └──eks-recipepack.bicep
-    └── kubernetes/           # Default recipe pack (zero-config, in-cluster)
+    │       └── aws-eks.bicep
+    └── kubernetes/           # Kubernetes recipe pack (zero-config, in-cluster)
             ├── README.md
-            └── default-recipepack.bicep
+            └── default.bicep
 ```
 
 ### 4. Define Your Resource Type Definition
@@ -233,9 +236,9 @@ A list of the Recipes provided for this Resource Type, including the platform Re
 
 | Platform | Recipe Pack | Module Source |
 |---|---|---|
-| Azure | recipe-packs/azure/aks-recipepack.bicep | mcr.microsoft.com/bicep/avm/res/cache/redis-enterprise |
-| AWS | recipe-packs/aws/eks-recipepack.bicep | ... |
-| Kubernetes | recipe-packs/kubernetes/default-recipepack.bicep | ghcr.io/radius-project/kube-recipes/... |
+| Azure | recipe-packs/azure-aks/azure-aks.bicep | mcr.microsoft.com/bicep/avm/res/cache/redis-enterprise |
+| AWS (planned) | recipe-packs/aws-eks/aws-eks.bicep | ... |
+| Kubernetes | recipe-packs/kubernetes/default.bicep | ghcr.io/radius-project/kube-recipes/... |
 
 ## Recipe Input Properties
 
@@ -266,7 +269,7 @@ A brief description of what the Recipe does and how to use it.
 
 ## Recipes and Recipe Packs
 
-Recipes for a Resource Type are added to the platform Recipe Packs under `recipe-packs/` at the repository root. Each platform has its own folder (`azure/`, `aws/` ,  and `kubernetes/`) containing a single Recipe Pack (`default-recipepack.bicep`) that wires both Bicep and Terraform recipes. Each Recipe Pack declares a single `Radius.Core/recipePacks` resource whose `recipes` map contains an entry for every Resource Type, plus a `Radius.Core/environments` resource that references the pack.
+Recipes for a Resource Type are added to the platform Recipe Packs under `recipe-packs/` at the repository root. Each pack has its own folder (`azure-aks/`, `azure-aci/`, and `kubernetes/` today, with `aws-eks/` and `aws-ecs/` planned) containing a Bicep file named after the pack (for example `azure-aks.bicep`) that wires its recipes. A Recipe Pack declares a `Radius.Core/recipePacks` resource whose `recipes` map contains an entry for each Resource Type it covers.
 
 Today Radius supports Bicep and Terraform Recipe drivers, so a Recipe can be a Bicep template or a Terraform configuration. It can also point to well-maintained community modules like the [Azure Verified Modules](https://azure.github.io/Azure-Verified-Modules/) or the [AWS Terraform modules](https://registry.terraform.io/namespaces/terraform-aws-modules). When pointing at a standard module, Radius resolves any `{{context.*}}` expressions in the Recipe's `parameters` against the resource being deployed and maps the module's outputs onto the resource's read-only properties via the `outputs` field, so no Radius-specific wrapping is required.
 
@@ -278,7 +281,7 @@ For Azure resources whose names must be globally unique, `{{context.azure.resour
 
 ### Example Recipe Pack
 
-The example below shows an Azure Recipe Pack (`recipe-packs/azure/default-recipepack.bicep`) that registers a Recipe for `Radius.Data/redisCaches` pointing at a standard Azure Verified Module, and a Recipe for `Radius.Compute/containers` using a published Kubernetes container recipe. The developer-authored `size` property is mapped onto a concrete SKU, and the module's outputs are mapped back onto the resource's `host`, `port`, and `url` properties.
+The example below shows an Azure Recipe Pack (`recipe-packs/azure-aks/azure-aks.bicep`) that registers a Recipe for `Radius.Data/redisCaches` pointing at a standard Azure Verified Module, and a Recipe for `Radius.Compute/containers` using a published Kubernetes container recipe. The developer-authored `size` property is mapped onto a concrete SKU, and the module's outputs are mapped back onto the resource's `host`, `port`, and `url` properties.
 
 ```bicep
 extension radius
@@ -351,7 +354,7 @@ resource env 'Radius.Core/environments@2025-08-01-preview' = {
 - Map developer-authored properties (such as `size`) onto concrete infrastructure settings using `{{context.*}}` parameter expressions rather than exposing platform-specific properties on the Resource Type.
 - Map every read-only property of the Resource Type from a module output via the `outputs` field so consumers can connect to the provisioned resource.
 - Handle secrets securely: mark sensitive properties `x-radius-sensitive: true` on the Resource Type and never log or expose credentials.
-- The Kubernetes Recipe Pack should be self-contained (in-cluster, no cloud provider configuration) so it can serve as the zero-config `default-kubernetes/` pack.
+- The Kubernetes Recipe Pack should be self-contained (in-cluster, no cloud provider configuration) so it can serve as the zero-config `kubernetes/` pack.
 
 ## Testing Your Contribution
 
@@ -374,7 +377,7 @@ After creating your Resource Type and Recipes, test them locally using the provi
 
 3. **Deploy the Recipe Pack to configure your Environment**:
 
-   A Recipe Pack declares the `Radius.Core/recipePacks` and `Radius.Core/environments` resources, so deploying it registers the Recipes for every Resource Type it covers in the Environment. Add your Resource Type's Recipe to the pack for your target platform, then deploy that pack. For example, the Azure pack (`recipe-packs/azure/aks-recipepack.bicep`) holds the Recipe definitions for all Azure-provisioned types and is deployed with the `rad` CLI, supplying the pack's parameters:
+   A Recipe Pack declares a `Radius.Core/recipePacks` resource, so deploying it registers the Recipes for every Resource Type it covers. Add your Resource Type's Recipe to the pack for your target platform, then deploy that pack. For example, the Azure AKS pack (`recipe-packs/azure-aks/azure-aks.bicep`) holds the Recipe definitions for all Azure-provisioned types and is deployed with the `rad` CLI, supplying the pack's parameters:
 
    ```bash
    # Configure the Radius Azure provider credentials (requires AZURE_* env vars:
@@ -382,7 +385,7 @@ After creating your Resource Type and Recipes, test them locally using the provi
    make configure-azure-provider
 
    # Deploy the Recipe Pack, supplying its parameters
-   rad deploy recipe-packs/azure/aks-recipepack.bicep \
+   rad deploy recipe-packs/azure-aks/azure-aks.bicep \
      --parameters azureSubscriptionId=<subscription-id> \
      --parameters azureResourceGroup=<resource-group>
    ```
@@ -409,7 +412,7 @@ Automated test coverage in the repository's CI/CD pipeline is required for Resou
 
 ## Making a Resource Type a default in Radius
 
-Every Resource Type in this repository can be registered on demand via `rad resource-type create`. A subset are also registered as defaults in Radius, so they are available out of the box without any user action, paired with the zero-config `default-kubernetes/` Recipe Pack. The list of default Resource Types is managed in the [Radius repository](https://github.com/radius-project/radius) via [`deploy/manifest/defaults.yaml`](https://github.com/radius-project/radius/blob/main/deploy/manifest/defaults.yaml).
+Every Resource Type in this repository can be registered on demand via `rad resource-type create`. A subset are also registered as defaults in Radius, so they are available out of the box without any user action, paired with the zero-config `kubernetes/` Recipe Pack. The list of default Resource Types is managed in the [Radius repository](https://github.com/radius-project/radius) via [`deploy/manifest/defaults.yaml`](https://github.com/radius-project/radius/blob/main/deploy/manifest/defaults.yaml).
 
 To make a Resource Type available out of the box as a default:
 
