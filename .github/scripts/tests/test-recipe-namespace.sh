@@ -34,7 +34,7 @@ cat >"$TEST_ROOT/bin/rad" <<'EOF'
 printf 'rad %s\n' "$*" >>"$COMMAND_CALLS"
 if [[ "$1 $2" == "env show" ]]; then
     cat <<'JSON'
-{"id":"/planes/radius/local/resourcegroups/default/providers/Radius.Core/environments/default","properties":{"providers":{"kubernetes":{"namespace":"radius-preview"}}}}
+{"id":"/planes/radius/local/resourcegroups/default/providers/Radius.Core/environments/default","properties":{"providers":{"kubernetes":{"namespace":"radius-recipe-validation"}}}}
 JSON
 fi
 EOF
@@ -55,7 +55,7 @@ if grep -q '^rad env update ' "$COMMAND_CALLS"; then
 fi
 
 for resource in secrets deployments services; do
-    grep -qx "kubectl delete $resource --all -n radius-preview" "$COMMAND_CALLS"
+    grep -qx "kubectl delete $resource --all -n radius-recipe-validation" "$COMMAND_CALLS"
 done
 
 echo "Recipe namespace test passed"
