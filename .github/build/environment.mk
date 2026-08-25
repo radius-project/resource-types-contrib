@@ -36,6 +36,10 @@ create-radius-cluster: ## Create a local kind Kubernetes cluster with a default 
 	@echo -e "$(ARROW) Creating workspace and environment..."
 	@.github/scripts/create-workspace.sh
 
+.PHONY: test-workspace-bootstrap
+test-workspace-bootstrap: ## Run focused tests for workspace bootstrap.
+	@./.github/scripts/tests/test-create-workspace.sh
+
 .PHONY: clean
 clean: ## Delete the local kind cluster, Radius config, Bicep extensions (*.tgz), and bicepconfig.json files
 	@echo -e "$(ARROW) Deleting Radius config file at ~/.rad/config.yaml..."
