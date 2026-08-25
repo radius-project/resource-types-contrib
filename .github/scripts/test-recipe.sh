@@ -29,19 +29,7 @@ set -euo pipefail
 RECIPE_PATH="${1:-}"
 ENVIRONMENT_NAME_OVERRIDE="${2:-}"
 ENVIRONMENT_PATH=""
-
-ensure_namespace_ready() {
-    # Ensure the test namespace exists before deploying
-    if ! kubectl get namespace testapp >/dev/null 2>&1; then
-        kubectl create namespace testapp
-    fi
-
-    # Update the env with kubernetes provider
-    rad env update "$ENVIRONMENT_NAME" --kubernetes-namespace testapp --preview
-
-    echo "==> Environment Updated with Kubernetes provider:"
-    rad env show "$ENVIRONMENT_NAME" -o json --preview || true
-}
+KUBERNETES_NAMESPACE=""
 
 ensure_workspace_context() {
     # Ensure we are operating in the expected workspace context
@@ -61,7 +49,19 @@ resolve_environment_path() {
         echo "$ENVIRONMENT_JSON"
         exit 1
     fi
+    KUBERNETES_NAMESPACE=$(echo "$ENVIRONMENT_JSON" | jq -r 'if type=="object" then (.properties.providers.kubernetes.namespace // "") elif type=="array" and length>0 then (.[0].properties.providers.kubernetes.namespace // "") else "" end')
     echo "==> Environment path: $ENVIRONMENT_PATH"
+}
+
+cleanup_kubernetes_resources() {
+    if [[ -z "$KUBERNETES_NAMESPACE" ]]; then
+        return
+    fi
+
+    echo "==> Cleaning up leftover K8s resources in $KUBERNETES_NAMESPACE namespace"
+    kubectl delete secrets --all -n "$KUBERNETES_NAMESPACE" 2>/dev/null || true
+    kubectl delete deployments --all -n "$KUBERNETES_NAMESPACE" 2>/dev/null || true
+    kubectl delete services --all -n "$KUBERNETES_NAMESPACE" 2>/dev/null || true
 }
 
 if [[ -z "$RECIPE_PATH" ]]; then
@@ -165,9 +165,6 @@ fi
 echo "==> Deploying test application from $TEST_FILE"
 APP_NAME="testapp-$(date +%s)"
 
-# Ensure the target namespace exist before deploying
-ensure_namespace_ready
-
 # Build parameters if the test template requires them
 # Detect @secure() param password by scanning the Bicep file
 PARAMS=""
@@ -185,12 +182,9 @@ if rad deploy "$TEST_FILE" --application "$APP_NAME" -e "$ENVIRONMENT_PATH" $PAR
     echo "==> Cleaning up test application"
     rad app delete "$APP_NAME" --yes
 
-    # Clean up any leftover K8s resources in the test namespace to avoid conflicts
+    # Clean up any leftover K8s resources in the environment namespace to avoid conflicts
     # with subsequent tests (e.g., secrets created by Bicep recipes that persist after app deletion)
-    echo "==> Cleaning up leftover K8s resources in testapp namespace"
-    kubectl delete secrets --all -n testapp 2>/dev/null || true
-    kubectl delete deployments --all -n testapp 2>/dev/null || true
-    kubectl delete services --all -n testapp 2>/dev/null || true
+    cleanup_kubernetes_resources
 else
     echo "==> Test deployment failed"
     rad app delete "$APP_NAME" --yes 2>/dev/null || true
@@ -200,9 +194,7 @@ else
         --resource-type "$RESOURCE_TYPE"
 
     # Clean up leftover K8s resources even on failure
-    kubectl delete secrets --all -n testapp 2>/dev/null || true
-    kubectl delete deployments --all -n testapp 2>/dev/null || true
-    kubectl delete services --all -n testapp 2>/dev/null || true
+    cleanup_kubernetes_resources
     exit 1
 fi
 

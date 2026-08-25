@@ -46,6 +46,12 @@ jobs:
       - name: Run release automation tests
         run: make test-release-automation
 
+      - name: Run workspace bootstrap tests
+        run: make test-workspace-bootstrap
+
+      - name: Run recipe namespace tests
+        run: make test-recipe-namespace
+
   validate-resource-types:
     name: Validate Resource Types and Recipes
     runs-on: ubuntu-24.04
