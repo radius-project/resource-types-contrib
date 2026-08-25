@@ -34,7 +34,8 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
       }
     }
     connections: {
-      // Injects endpoint plus secret-backed CONNECTION_SEARCH_APIKEY.
+      // On compatible Kubernetes versions, injects endpoint plus secret-backed
+      // CONNECTION_SEARCH_APIKEY. Explicit env wiring remains supported.
       search: {
         source: searchService.id
       }

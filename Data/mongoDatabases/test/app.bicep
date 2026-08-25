@@ -37,7 +37,8 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
       }
     }
     connections: {
-      // Injects database/endpoint plus secret-backed CONNECTION_MONGODB_CONNECTIONSTRING.
+      // On compatible Kubernetes versions, injects database/endpoint plus
+      // secret-backed CONNECTION_MONGODB_CONNECTIONSTRING. Explicit env wiring remains supported.
       mongodb: {
         source: mongo.id
       }

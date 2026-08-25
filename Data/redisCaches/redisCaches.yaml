@@ -40,8 +40,8 @@ types:
       }
       ```
 
-      The connection automatically injects environment variables into the
-      container for all properties from the cache. The environment variables are
+      On compatible Kubernetes Container Recipes, the connection injects environment
+      variables into the container for the cache properties. The variables are
       named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>`. In this example the
       connection name is `redis` so the environment variables will be:
 
@@ -49,9 +49,10 @@ types:
       - CONNECTION_REDIS_PORT
 
       Recipe-generated secrets are materialized into a managed
-      `Radius.Security/secrets` resource. With compatible Radius control-plane and
-      Kubernetes Container Recipe versions, the same `redis` connection injects
-      each key returned in `result.secrets`: `CONNECTION_REDIS_URL`, and
+      `Radius.Security/secrets` resource. With Radius control-plane support from
+      `radius-project/radius#12709` and Kubernetes Container Recipe support from
+      `resource-types-contrib#300` or later, the same `redis` connection injects each
+      key returned in `result.secrets`: `CONNECTION_REDIS_URL`, and
       `CONNECTION_REDIS_ACCESSKEY` when the Recipe returns `accessKey`. `host` and
       `port` remain ordinary values.
 

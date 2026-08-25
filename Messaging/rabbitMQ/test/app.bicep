@@ -58,12 +58,12 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
       }
     }
     connections: {
-      // Injects host/port/username. A managed password would also be injected here
-      // as CONNECTION_RABBITMQ_PASSWORD when the queue's password input is omitted.
+      // On compatible Kubernetes versions, injects host/port/username. A managed
+      // password would also be injected as CONNECTION_RABBITMQ_PASSWORD when omitted.
       rabbitmq: {
         source: queue.id
       }
-      // User-authored input Secrets use a direct Secret connection. Because
+      // User-authored input Secrets retain direct Secret connections. Because
       // `password` was supplied above, the queue connection has no managed secret.
       credentials: {
         source: rabbitmqSecret.id

@@ -35,8 +35,8 @@ resource democtr 'Radius.Compute/containers@2025-08-01-preview' = {
       }
     }
     connections: {
-      // Injects ordinary storage values plus secret-backed
-      // CONNECTION_STORAGE_CONNECTIONSTRING and CONNECTION_STORAGE_ACCOUNTKEY.
+      // On compatible Kubernetes versions, injects ordinary storage values plus
+      // secret-backed CONNECTION_STORAGE_CONNECTIONSTRING and CONNECTION_STORAGE_ACCOUNTKEY.
       storage: {
         source: store.id
       }

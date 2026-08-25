@@ -35,7 +35,8 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
       }
     }
     connections: {
-      // Injects host plus secret-backed CONNECTION_KAFKA_CONNECTIONSTRING.
+      // On compatible Kubernetes versions, injects host plus secret-backed
+      // CONNECTION_KAFKA_CONNECTIONSTRING. Explicit env wiring remains supported.
       kafka: {
         source: kafkaBroker.id
       }

@@ -35,7 +35,8 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
       }
     }
     connections: {
-      // Injects model/endpoint plus secret-backed CONNECTION_LLM_APIKEY.
+      // On compatible Kubernetes versions, injects model/endpoint plus
+      // secret-backed CONNECTION_LLM_APIKEY. Explicit env wiring remains supported.
       llm: {
         source: model.id
       }
