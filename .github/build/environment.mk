@@ -40,6 +40,10 @@ create-radius-cluster: ## Create a local kind Kubernetes cluster with a default 
 test-workspace-bootstrap: ## Run focused tests for workspace bootstrap.
 	@./.github/scripts/tests/test-create-workspace.sh
 
+.PHONY: test-recipe-namespace
+test-recipe-namespace: ## Run focused tests for immutable recipe environment namespace handling.
+	@./.github/scripts/tests/test-recipe-namespace.sh
+
 .PHONY: clean
 clean: ## Delete the local kind cluster, Radius config, Bicep extensions (*.tgz), and bicepconfig.json files
 	@echo -e "$(ARROW) Deleting Radius config file at ~/.rad/config.yaml..."
