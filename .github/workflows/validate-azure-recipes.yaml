@@ -300,6 +300,23 @@ jobs:
       - name: Build Azure Recipes
         run: make build-azure-recipes
 
+      - name: Deploy checked-in Azure AKS Recipe Pack
+        if: matrix.recipe == 'bicep'
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          kubectl create namespace azure-aks-pack-validation --dry-run=client -o yaml | kubectl apply -f -
+          rad deploy recipe-packs/azure/aks-recipepack.bicep \
+            --group default \
+            --environment /planes/radius/local/resourcegroups/default/providers/Radius.Core/environments/default \
+            --parameters environmentName=azure-aks-pack-validation \
+            --parameters environmentNamespace=azure-aks-pack-validation \
+            --parameters azureSubscriptionId="$AZURE_SUBSCRIPTION_ID" \
+            --parameters azureResourceGroup="$AZURE_RESOURCE_GROUP" \
+            --parameters routesGatewayName=validation-gateway \
+            --parameters containerImagesRegistry=localhost:5000
+
       - name: Generate Azure Recipe Pack
         id: generate
         run: |
