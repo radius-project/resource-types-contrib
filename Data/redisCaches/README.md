@@ -15,7 +15,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `size` | string (`S`, `M`, `L`) | Optional | The size of the Redis cache. Defaults to `S`. The Recipe maps the size onto a concrete cloud SKU. |
 | `host` | string | Read only | The host name used to connect to the cache. Set from the Recipe module's output. |
 | `port` | integer | Read only | The TLS port number used to connect to the cache. Set from the Recipe module's output. |
-| `secrets` | object | Read only | Recipe secrets. `secrets.name` references the managed `Radius.Security/secrets` resource; `secrets.url` and `secrets.accessKey` are secret keys (delivered via that managed secret, never stored on the resource). |
+| `secrets` | object | Read only | Recipe secrets. `secrets.name` references the managed `Radius.Security/secrets` resource; `secrets.url` and `secrets.accessKey` are secret keys (delivered via that managed secret, never stored on the resource). Which of them a cache actually has depends on its Recipe — see [Secret keys](#secret-keys). |
 
 ### Secret keys
 
