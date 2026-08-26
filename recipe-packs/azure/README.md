@@ -34,6 +34,10 @@ This Recipe Pack requires a Radius runtime that supports the `context.azure.reso
 | `Radius.Compute/routes` | Bicep | `ghcr.io/radius-project/kube-recipes/routes` |
 | `Radius.Compute/containerImages` | Bicep | `ghcr.io/radius-project/kube-recipes/containerimages` |
 
+### MySQL versions
+
+The `Radius.Data/mySqlDatabases` Recipe preserves the requested MySQL major version. The Resource Type's `8.0` value maps to the Azure module's `8.0.21` version token; `5.7` and `8.4` map directly to the corresponding Azure versions.
+
 ## Parameters
 
 The Azure pack accepts the provider configuration it needs to provision into your subscription:
