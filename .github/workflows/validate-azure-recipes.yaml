@@ -305,7 +305,8 @@ jobs:
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
-          kubectl create namespace azure-aks-pack-validation
+          set -euo pipefail
+          kubectl create namespace azure-aks-pack-validation --dry-run=client -o yaml | kubectl apply -f -
           rad deploy recipe-packs/azure/aks-recipepack.bicep \
             --group default \
             --environment /planes/radius/local/resourcegroups/default/providers/Radius.Core/environments/default \
