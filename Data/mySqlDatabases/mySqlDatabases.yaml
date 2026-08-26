@@ -58,7 +58,7 @@ types:
       mysql.createPool({ host, user, password, database, ssl: { minVersion: 'TLSv1.2' } })
       ```
 
-      Set `tls: 'optional'` when the client cannot use TLS, which lets the server also accept connections that do not use TLS. The Kubernetes and AWS Recipes do not enforce this policy today, so on those platforms the value states the requested policy rather than observed server behavior.
+      Set `tls: 'optional'` when the client cannot use TLS, which lets the server also accept connections that do not use TLS.
 
     apiVersions:
       '2025-08-01-preview':
