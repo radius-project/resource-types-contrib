@@ -91,7 +91,7 @@ types:
               type: string
               enum: ['required', 'optional']
               default: 'required'
-              description: "(Optional) The requested transport policy for connections to the database server. Defaults to `required`. Where the Recipe enforces it, `required` means the server rejects connections that do not use TLS and `optional` means the server also accepts them. Enforced by the Azure Recipe; the Kubernetes and AWS Recipes do not enforce it today, so on those platforms the value states the requested policy rather than observed server behavior."
+              description: "(Optional) The requested transport policy for connections to the database server. Defaults to `required`. Where the Recipe enforces it, `required` means the server rejects connections that do not use TLS and `optional` means the server also accepts them."
             host:
               type: string
               description: "(Read Only) The host name used to connect to the database. Mapped from the recipe module's output."
