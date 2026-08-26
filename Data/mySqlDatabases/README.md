@@ -29,7 +29,6 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 | Azure | [`recipe-packs/azure/aks-recipepack.bicep`](../../recipe-packs/azure/aks-recipepack.bicep) | Direct module — Azure Verified Module `avm/res/db-for-my-sql/flexible-server` |
 | Kubernetes | [`recipe-packs/kubernetes/default-recipepack.bicep`](../../recipe-packs/kubernetes/default-recipepack.bicep) | `ghcr.io/radius-project/kube-recipes/mysqldatabases` |
 
-This repository also contains an AWS Terraform Recipe under [`recipes/aws/terraform`](recipes/aws/terraform), which is not yet part of a Recipe Pack.
 
 Only the Azure Recipe enforces the `tls` property, which it maps onto the flexible server's `require_secure_transport` parameter. The Kubernetes and AWS Recipes do not enforce it today, so on those platforms the value states the requested transport policy rather than observed server behavior.
 
