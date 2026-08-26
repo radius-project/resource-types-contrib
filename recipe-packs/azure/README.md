@@ -20,7 +20,13 @@ The AVM modules for MySQL flexible server, PostgreSQL flexible server, and Azure
 
 A Recipe Pack `outputs` entry maps a resource property to the **name of a module output**; it cannot supply a literal, and naming an output the module does not declare fails validation before the deployment is submitted. Because each of these Azure managed services is fixed to its engine's standard port, each Resource Type declares `port` as an optional property whose schema default is that port (`3306`, `5432`, `1433`). Radius materializes the default when the application definition leaves the property unset, so `CONNECTION_<NAME>_PORT` is populated on Azure without a mapping here. Please do not "fix" the missing mapping by adding a `port` entry to these recipes.
 
-Materializing schema defaults requires Radius v0.60.0 or later, and requires the `Radius.Data` namespace registered in the cluster to be new enough to declare the `port` default. This pack does not register Resource Types, so deploying it against an older registered namespace leaves `port` unset exactly as before. Defaults are also applied when a resource is written, not when a Resource Type is registered, so recovering on an existing Environment takes three steps: register a current `Radius.Data` namespace, redeploy the application so each database resource is written again and picks up the default, and redeploy or restart the connected containers so their environment variables are refreshed.
+Materializing schema defaults requires Radius v0.60.0 or later, and requires the `Radius.Data` namespace registered in the cluster to be new enough to declare the `port` default. This pack does not register Resource Types, so deploying it against an older registered namespace leaves `port` unset exactly as before.
+
+Defaults are applied when a resource is written, not when a Resource Type is registered, so recovering an existing Environment takes three steps:
+
+1. Register a current `Radius.Data` namespace.
+2. Redeploy the application, so each database resource is written again and picks up the default.
+3. Redeploy or restart the connected containers, so their environment variables are refreshed.
 
 ## Recipes in this pack
 
