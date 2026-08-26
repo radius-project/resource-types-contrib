@@ -176,9 +176,6 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
           }
         }
         outputs: {
-          // No port mapping: this module declares no port output, and an `outputs` value
-          // must name one the module declares. MySQL flexible server is fixed to 3306,
-          // which the Resource Type carries as the schema default for `port`.
           host: 'fqdn'
         }
       }
@@ -221,7 +218,6 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
           configurations: postgreSqlServerConfigurations
         }
         outputs: {
-          // No port mapping, as with MySQL above. 5432 is the Resource Type's default.
           host: 'fqdn'
         }
       }
@@ -258,7 +254,6 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
           }
         }
         outputs: {
-          // No port mapping, as with MySQL above. 1433 is the Resource Type's default.
           host: 'fullyQualifiedDomainName'
         }
       }
