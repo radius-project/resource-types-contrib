@@ -152,7 +152,7 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
           administratorLoginPassword: '{{context.resource.properties.password}}'
           skuName: 'Standard_B1ms'
           tier: 'Burstable'
-          version: '{{context.resource.properties.version == "5.7" ? "5.7" : "8.0.21"}}'
+          version: '{{context.resource.properties.version == "5.7" ? "5.7" : context.resource.properties.version == "8.0" ? "8.0.21" : "8.4"}}'
           databases: [
             {
               name: '{{context.resource.properties.database}}'
