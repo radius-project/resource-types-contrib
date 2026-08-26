@@ -17,8 +17,17 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `database` | string | Optional | The name of the database. Defaults to `postgres_db`. |
 | `size` | string (`S`, `M`, `L`) | Optional | The size of the PostgreSQL database. Defaults to `S`. The Recipe maps the size onto a concrete cloud SKU/tier. |
 | `initSql` | string | Optional | Optional SQL script executed on first initialization to create tables, indexes, and seed data. |
+| `tls` | string (`required`, `optional`) | Optional | The transport policy for connections to the database. Defaults to `required`, which rejects plaintext connections. Projected to connected containers as `CONNECTION_<CONNECTION-NAME>_TLS`. |
 | `host` | string | Read only | The host name used to connect to the database. Set from the Recipe module's output. |
 | `port` | integer | Optional | The TCP port used to connect to the database. Defaults to `5432`, the standard port every Recipe in this repository provisions. A Recipe that provisions the database on a different port overwrites this value from its own output. Setting it in an application definition changes only the value reported to connected containers, never the port the server listens on. |
+
+### Transport policy
+
+Managed PostgreSQL offerings commonly reject plaintext connections. Azure Database for PostgreSQL flexible server ships with `require_secure_transport = on`, so a client that does not negotiate TLS fails to connect at runtime even though the deployment succeeds. The `tls` property makes that policy part of the contract: it defaults to the secure value, is discoverable from the schema, and is readable by a connected container as `CONNECTION_<CONNECTION-NAME>_TLS`.
+
+Configure your client from that value — for example, pass `ssl: { rejectUnauthorized: true }` to the Node.js `pg` driver. Set `tls: 'optional'` only when the application cannot use a TLS-capable client.
+
+Only the Azure Recipe enforces the policy on the server today, by mapping `tls` onto the flexible server's `require_secure_transport` parameter. The Kubernetes Recipe runs a stock `postgres` image that serves plaintext regardless of the value, so on that platform the property records the requested policy rather than observed server behavior.
 
 ## Recipe Packs
 
@@ -27,6 +36,8 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 | Platform | Recipe Pack | Recipe source |
 | --- | --- | --- |
 | Azure | [`recipe-packs/azure/aks-recipepack.bicep`](../../recipe-packs/azure/aks-recipepack.bicep) | Direct module — Azure Verified Module `avm/res/db-for-postgre-sql/flexible-server` |
+
+A Kubernetes Recipe is also maintained in this folder ([`recipes/kubernetes/`](recipes/kubernetes/)), but it is not currently registered by [`recipe-packs/kubernetes/default-recipepack.bicep`](../../recipe-packs/kubernetes/default-recipepack.bicep).
 
 ## Using the resource type
 

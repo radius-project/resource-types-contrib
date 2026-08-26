@@ -52,6 +52,14 @@ Defaults are applied when a resource is written, not when a Resource Type is reg
 
 The `Radius.Data/mySqlDatabases` Recipe preserves the requested MySQL major version. The Resource Type's `8.0` value maps to the Azure module's `8.0.21` version token; `5.7` and `8.4` map directly to the corresponding Azure versions.
 
+### PostgreSQL TLS
+
+Azure Database for PostgreSQL flexible server ships with `require_secure_transport = on`, so it rejects plaintext connections. The `Radius.Data/postgreSqlDatabases` Recipe maps the Resource Type's `tls` property onto that server parameter — `required` (the schema default) sets it to `on`, `optional` sets it to `off` — so the transport policy is declared in the application definition and projected to connected containers as `CONNECTION_<CONNECTION-NAME>_TLS`. The secure default is preserved; an application that cannot use a TLS-capable client opts out explicitly at author time instead of discovering the requirement from a crash loop. `require_secure_transport` is a dynamic parameter, so changing it applies without a server restart.
+
+A platform engineer who sets `require_secure_transport` in `postgreSqlServerConfigurations` takes precedence: the Recipe omits its generated entry entirely rather than sending the server two conflicting values. In that case `CONNECTION_<CONNECTION-NAME>_TLS` reports the policy the application *requested*, not the one the server enforces, so use the parameter deliberately.
+
+**Deploy this pack only against a `Radius.Data` namespace registration that includes the `tls` property.** This is the same schema-default coupling described under [Database ports](#database-ports), with a harsher failure mode. `tls` was added without changing the `2025-08-01-preview` API version, so two schemas share one API-version identifier and nothing can negotiate between them. Where a stale namespace merely leaves `port` unset, an unresolved `tls` breaks the deployment: the Radius parameter resolver passes an expression whose context path is missing through unchanged, so the literal `{{context.resource.properties.tls == "optional" ? "off" : "on"}}` string reaches Azure as a server parameter value and is rejected. Recovery is the same three steps listed under [Database ports](#database-ports).
+
 ## Parameters
 
 The Azure pack accepts the provider configuration it needs to provision into your subscription:
@@ -66,7 +74,7 @@ The Azure pack accepts the provider configuration it needs to provision into you
 | `routesGatewayNamespace` | Namespace of the Gateway resource for `Radius.Compute/routes`. Defaults to `default`. |
 | `containerImagesRegistry` | Registry path (e.g. `ghcr.io/my-org`) that `Radius.Compute/containerImages` pushes built images to. |
 | `containerImagesRegistrySecretName` | Name of the Kubernetes Secret holding registry credentials for `Radius.Compute/containerImages`. Optional; leave empty for an unauthenticated registry. |
-| `postgreSqlServerConfigurations` | Server parameters forwarded verbatim to the AVM PostgreSQL flexible server `configurations` array for `Radius.Data/postgreSqlDatabases`, using the AVM item shape `{ name, source, value }`. Most commonly used to allow-list extensions via `azure.extensions` — for example `[{ name: 'azure.extensions', source: 'user-override', value: 'vector' }]` to enable pgvector. See [Extensions and modules by name in Azure Database for PostgreSQL flexible server](https://learn.microsoft.com/en-us/azure/postgresql/extensions/concepts-extensions-versions) for the supported extension names. Optional; defaults to an empty array (no extra server configuration). |
+| `postgreSqlServerConfigurations` | Server parameters forwarded verbatim to the AVM PostgreSQL flexible server `configurations` array for `Radius.Data/postgreSqlDatabases`, using the AVM item shape `{ name, source, value }`. Most commonly used to allow-list extensions via `azure.extensions` — for example `[{ name: 'azure.extensions', source: 'user-override', value: 'vector' }]` to enable pgvector. See [Extensions and modules by name in Azure Database for PostgreSQL flexible server](https://learn.microsoft.com/en-us/azure/postgresql/extensions/concepts-extensions-versions) for the supported extension names. An entry named `require_secure_transport` overrides the Resource Type's `tls` property — see [PostgreSQL TLS](#postgresql-tls). Optional; defaults to an empty array (no extra server configuration). |
 
 ## Deploying
 

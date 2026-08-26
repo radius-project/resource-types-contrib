@@ -43,6 +43,7 @@ resource postgresql 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
     database: 'appdb'
     username: 'radadmin'
     password: password
+    // `tls` is deliberately omitted so this test deploys the schema-default path (`required`).
   }
 }
 

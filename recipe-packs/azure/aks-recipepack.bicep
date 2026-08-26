@@ -24,8 +24,29 @@ param containerImagesRegistry string
 @description('Name of the Kubernetes Secret holding registry credentials for Radius.Compute/containerImages. Leave empty for an unauthenticated registry.')
 param containerImagesRegistrySecretName string = ''
 
-@description('Server parameters forwarded verbatim to the AVM PostgreSQL flexible server configurations array for Radius.Data/postgreSqlDatabases, using the AVM item shape with name, source, and value fields. Commonly used to allow-list extensions via the azure.extensions parameter (for example to enable pgvector). See recipe-packs/azure/README.md for an example and a link to the supported extensions. Defaults to an empty array (no extra server configuration).')
+@description('Server parameters forwarded verbatim to the AVM PostgreSQL flexible server configurations array for Radius.Data/postgreSqlDatabases, using the AVM item shape with name, source, and value fields. Commonly used to allow-list extensions via the azure.extensions parameter (for example to enable pgvector). An entry named require_secure_transport takes precedence over the tls property on the resource, which the Recipe otherwise maps onto that parameter. See recipe-packs/azure/README.md for an example and a link to the supported extensions. Defaults to an empty array (no extra server configuration).')
 param postgreSqlServerConfigurations array = []
+
+// The tls property on Radius.Data/postgreSqlDatabases maps onto the flexible server's
+// require_secure_transport parameter. A platform engineer who sets that parameter explicitly takes
+// precedence, so the generated entry is omitted rather than deployed alongside a conflicting value.
+var postgreSqlOperatorSetsSecureTransport = !empty(filter(
+  postgreSqlServerConfigurations,
+  configuration => toLower(string(configuration.?name ?? '')) == 'require_secure_transport'
+))
+
+var postgreSqlConfigurations = postgreSqlOperatorSetsSecureTransport
+  ? postgreSqlServerConfigurations
+  : concat(
+      [
+        {
+          name: 'require_secure_transport'
+          source: 'user-override'
+          value: '{{context.resource.properties.tls == "optional" ? "off" : "on"}}'
+        }
+      ],
+      postgreSqlServerConfigurations
+    )
 
 resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
   name: 'azure-avm'
@@ -216,7 +237,7 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
           lock: {
             kind: 'None'
           }
-          configurations: postgreSqlServerConfigurations
+          configurations: postgreSqlConfigurations
         }
         outputs: {
           host: 'fqdn'

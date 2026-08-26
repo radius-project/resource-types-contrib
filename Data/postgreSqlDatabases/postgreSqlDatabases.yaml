@@ -51,6 +51,24 @@ types:
       - CONNECTION_POSTGRESQL_DATABASE
       - CONNECTION_POSTGRESQL_HOST
       - CONNECTION_POSTGRESQL_PORT
+      - CONNECTION_POSTGRESQL_TLS
+
+      The `tls` property declares the transport policy for the database and defaults to `required`. Managed PostgreSQL offerings commonly reject plaintext connections, so a client that does not negotiate TLS fails to connect. Read `CONNECTION_POSTGRESQL_TLS` in your application and configure the client accordingly. For example, with the Node.js `pg` driver, pass `ssl: { rejectUnauthorized: true }`. Set `tls: 'optional'` on the resource only when the application cannot use a TLS-capable client.
+
+      ```bicep
+      resource postgresql 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
+          name: 'postgresql'
+          properties: {
+            environment: environment
+            application: myApplication.id
+            username: 'myadmin'
+            password: password
+            tls: 'optional'
+          }
+        }
+      ```
+
+      Only the Azure Recipe enforces this policy on the server today. On other platforms the property records the requested policy rather than observed server behavior.
 
     apiVersions:
       '2025-08-01-preview':
@@ -82,6 +100,11 @@ types:
             initSql:
               type: string
               description: "(Optional) SQL script mounted into the PostgreSQL container's `/docker-entrypoint-initdb.d/` directory and executed whenever PGDATA is empty. With the default ephemeral storage this runs on every pod restart. If a PersistentVolumeClaim is used, the script runs only on the very first startup and subsequent changes to initSql are ignored on existing volumes. Limited to ~1 MiB. Useful for creating tables, indexes, and inserting seed data."
+            tls:
+              type: string
+              enum: ['required', 'optional']
+              default: 'required'
+              description: "(Optional) The transport policy for connections to the database. `required` rejects plaintext connections, `optional` permits them. Defaults to `required`. Projected to connected containers as `CONNECTION_<CONNECTION-NAME>_TLS`. Enforced on the server only by the Azure Recipe, which maps it onto the flexible server `require_secure_transport` parameter; on other platforms it records the requested policy."
             host:
               type: string
               description: "(Read Only) The host name used to connect to the database. Mapped from the recipe module's output."
