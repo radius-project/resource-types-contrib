@@ -151,7 +151,8 @@ resource "kubernetes_service" "postgres" {
 }
 
 # The administrator credentials are user-supplied Recipe inputs. They configure
-# PostgreSQL through the Kubernetes Secret above but are not Recipe outputs.
+# PostgreSQL through the Kubernetes Secret above but are not returned through
+# `result.secrets`.
 output "result" {
   value = {
     resources = [
@@ -161,7 +162,7 @@ output "result" {
     ]
     values = {
       host     = "${kubernetes_service.postgres.metadata[0].name}.${kubernetes_service.postgres.metadata[0].namespace}.svc.cluster.local"
-      port     = tostring(local.port)
+      port     = local.port
       database = local.database
     }
   }
