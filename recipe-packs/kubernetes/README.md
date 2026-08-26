@@ -22,6 +22,14 @@ Kube-recipes tagged `:edge` are rebuilt on every push to `main`; `:latest` and t
 | `Radius.Data/redisCaches` | Bicep | `ghcr.io/radius-project/kube-recipes/rediscaches:latest` |
 | `Radius.Messaging/rabbitMQ` | Bicep | `ghcr.io/radius-project/kube-recipes/rabbitmq:latest` |
 
+### MySQL transport policy
+
+The `Radius.Data/mySqlDatabases` Recipe enforces the resource's `tls` property by passing `--require-secure-transport` to `mysqld`, so the server rejects unencrypted network connections unless the application sets `tls: 'optional'`. Connections over the local Unix socket stay exempt, so the container's first-run initialization still succeeds. This relies on the Radius runtime materializing schema defaults into the resource's properties; the Recipe falls back to `required` if the property is absent, so an older `Radius.Data` namespace registration without the `tls` property still yields the secure behavior.
+
+The MySQL server generates its own certificate in its data directory on first start, and the Recipe does not distribute the generated CA. Clients can therefore encrypt the connection but cannot authenticate the server, so connect with `--ssl-mode=REQUIRED` (mysql CLI) or `ssl: { rejectUnauthorized: false }` (Node.js `mysql2`) rather than a verifying mode. See [`Data/mySqlDatabases/README.md`](../../Data/mySqlDatabases/README.md#transport-policy) for the full comparison with the managed-database platforms.
+
+This pack pins the `:latest` tag, which tracks stable releases, so Environments using it pick up this enforcement at the next stable Recipe release. The `:edge` tag carries it as soon as the change merges to `main`.
+
 ## Deploying
 
 Deploy the pack with the `rad` CLI. Deploying the file creates the `Radius.Core/recipePacks` resource and configures the `default` Environment to use it:

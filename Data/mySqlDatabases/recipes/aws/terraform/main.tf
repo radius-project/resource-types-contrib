@@ -30,6 +30,12 @@ locals {
   password = var.context.resource.properties.password
   version  = try(var.context.resource.properties.version, "8.4")
 
+  # Transport policy. Maps onto the `require_secure_transport` DB parameter,
+  # which RDS exposes as a dynamic parameter (default `OFF`), so it applies
+  # without a reboot.
+  tls                      = try(var.context.resource.properties.tls, "required")
+  require_secure_transport = local.tls == "optional" ? "OFF" : "ON"
+
   unique_suffix = substr(md5(local.resource_name), 0, 13)
 
   # RDS identifier: lowercase alphanumeric and hyphens, max 63 chars
@@ -117,6 +123,11 @@ module "db" {
     {
       name  = "character_set_server"
       value = "utf8mb4"
+    },
+    {
+      name         = "require_secure_transport"
+      value        = local.require_secure_transport
+      apply_method = "immediate"
     }
   ]
 
