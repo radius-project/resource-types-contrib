@@ -46,14 +46,14 @@ types:
       }
       ```
 
-      The connection automatically injects environment variables into the container for all properties from the database. The environment variables are named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>`. In this example, the connection name is `mysqldb` so the environment variables will be:
+      The connection automatically injects environment variables into the container for all properties from the database. The environment variables are named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>`. In this example, the connection name is `mysqldb` so the environment variables include:
 
       - CONNECTION_MYSQLDB_DATABASE
       - CONNECTION_MYSQLDB_HOST
       - CONNECTION_MYSQLDB_PORT
       - CONNECTION_MYSQLDB_TLS
 
-      The `tls` property sets the transport policy for connections to the database server and defaults to `required`. Every Recipe enforces it on the server it provisions, so with the default the server rejects unencrypted network connections. Configure your client for TLS accordingly.
+      The `tls` property sets the transport policy for connections to the database server and defaults to `required`. Every Recipe enforces it on the server it provisions, so with the default the server rejects unencrypted network connections. Read `CONNECTION_MYSQLDB_TLS` and configure your client accordingly.
 
       How your client verifies the server's certificate depends on the platform, and TLS verification is never automatic — the client needs the right CA material. Managed databases on Azure and AWS present a certificate from a CA you can verify once you supply that CA to the client. The Kubernetes Recipe runs a MySQL server that generates its own certificate on first start and does not distribute the CA, so a client there can only encrypt the connection and cannot authenticate the server. With the Node.js `mysql2` driver:
       ```js

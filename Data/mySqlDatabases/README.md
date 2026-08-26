@@ -59,8 +59,10 @@ The three platforms differ in what the client can verify, so a client configurat
 Configure the client for the platform it runs against:
 
 ```js
-// Azure — supply the current Azure root certificates
-mysql.createPool({ host, user, password, database, ssl: { ca: readFileSync('DigiCertGlobalRootG2.crt.pem') } })
+import { readFileSync } from 'node:fs'
+
+// Azure — supply a bundle containing the current Azure root certificates
+mysql.createPool({ host, user, password, database, ssl: { ca: readFileSync('combined-ca-certificates.pem') } })
 
 // AWS — supply the RDS CA bundle
 mysql.createPool({ host, user, password, database, ssl: { ca: readFileSync('global-bundle.pem') } })
@@ -68,6 +70,8 @@ mysql.createPool({ host, user, password, database, ssl: { ca: readFileSync('glob
 // Kubernetes — encrypt without verifying the server
 mysql.createPool({ host, user, password, database, ssl: { rejectUnauthorized: false } })
 ```
+
+On Azure, use a bundle containing every root the server may chain to rather than a single certificate. The service rotates roots, and the current set spans both DigiCert Global Root G2 and Microsoft RSA Root CA 2017, so pinning one of them can start failing after a rotation.
 
 On Kubernetes the MySQL server generates its own CA and certificate inside its data directory, and the Recipe does not expose or distribute that CA, so clients cannot authenticate the server under the current contract. Use `--ssl-mode=REQUIRED` (mysql CLI) or `ssl: { rejectUnauthorized: false }`, which encrypts the connection **without authenticating the server**. Traffic is protected from passive observation, but an attacker able to intercept traffic inside the cluster could still impersonate the database. Treat the Kubernetes Recipe as a development and testing configuration, and use a Recipe that supplies a trusted certificate where server authentication matters.
 
