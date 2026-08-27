@@ -17,7 +17,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `database` | string | Optional | The name of the database. Defaults to `mysql_db`. |
 | `version` | string (`5.7`, `8.0`, `8.4`) | Optional | The major MySQL server version. Defaults to `8.4`. |
 | `host` | string | Read only | The host name used to connect to the database. Set from the Recipe module's output. |
-| `port` | integer | Read only | The port number used to connect to the database. Set from the Recipe module's output. |
+| `port` | integer | Optional | The TCP port used to connect to the database. Defaults to `3306`, the standard port every Recipe in this repository provisions. A Recipe that provisions the database on a different port overwrites this value from its own output. Setting it in an application definition changes only the value reported to connected containers, never the port the server listens on. |
 
 ## Recipe Packs
 

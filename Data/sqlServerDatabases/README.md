@@ -16,7 +16,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `username` | string | Required | The administrator username for the SQL database. Passed to the Recipe as `{{context.resource.properties.username}}`. |
 | `password` | string (`x-radius-sensitive`) | Required | The administrator password. Encrypted at rest, redacted on reads, and injected decrypted into the Recipe as `{{context.resource.properties.password}}`. |
 | `host` | string | Read only | The SQL Server fully qualified domain name. Set from the Recipe module's output. |
-| `port` | string | Read only | The SQL Server TCP port. Azure SQL Database listens on 1433. |
+| `port` | integer | Optional | The TCP port used to connect to the database. Defaults to `1433`, the standard port every Recipe in this repository provisions. A Recipe that provisions the database on a different port overwrites this value from its own output. Setting it in an application definition changes only the value reported to connected containers, never the port the server listens on. |
 
 ## Recipe Packs
 
