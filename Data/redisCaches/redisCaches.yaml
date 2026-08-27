@@ -4,8 +4,8 @@ types:
     description: |
       The Radius.Data/redisCaches Resource Type deploys a Redis cache. To deploy a
       Redis cache, add a redisCaches resource to the application definition Bicep
-      file. Unlike database types, no secret is required: Azure Managed Redis
-      generates its own access keys, so the platform-engineer recipe needs no
+      file. Unlike database types, no credential has to be supplied: the cache
+      generates its own access key, so the platform-engineer recipe needs no
       injected credentials.
       ```bicep
       resource cache 'Radius.Data/redisCaches@2025-08-01-preview' = {
@@ -48,10 +48,32 @@ types:
       - CONNECTION_REDIS_HOST
       - CONNECTION_REDIS_PORT
 
-      The `url` secret is NOT injected via the connection — it is materialized into
-      a managed `Radius.Security/secrets` resource. Bind it into a container env var
-      with a `secretKeyRef`, using `redis.properties.secrets.name` as the `secretName`
-      and key `url` (see the `secrets` property).
+      The secrets are NOT injected via the connection — they are materialized into
+      a managed `Radius.Security/secrets` resource. Bind one into a container env
+      var with a `secretKeyRef`, using `cache.properties.secrets.name` as the
+      `secretName` and the key you need (see the `secrets` property). Use `url`
+      for a client that parses a connection URL, or `accessKey` for a client
+      that takes host, port, and password separately — the access key is the
+      password such a client authenticates with:
+
+      ```bicep
+      env: {
+        REDIS_ADDR: {
+          value: '${cache.properties.host}:${cache.properties.port}'
+        }
+        REDIS_PASSWORD: {
+          valueFrom: {
+            secretKeyRef: {
+              secretName: cache.properties.secrets.name
+              key: 'accessKey'
+            }
+          }
+        }
+      }
+      ```
+
+      A recipe that provisions a cache requiring no credential does not map
+      `accessKey`; bind it only against a recipe that declares it.
 
     apiVersions:
       '2025-08-01-preview':
@@ -94,4 +116,8 @@ types:
                   type: string
                   readOnly: true
                   description: "(Read Only) The full TLS connection URL (`rediss://:<access-key>@<host>:<port>`) used to connect to the cache, including the access key. Mapped from the recipe module's `primaryConnectionString` output; delivered via the managed secret."
+                accessKey:
+                  type: string
+                  readOnly: true
+                  description: "(Read Only) The access key on its own, for clients that take host, port, and password separately instead of parsing a URL — it is the password such a client authenticates with. Mapped from the recipe module's `primaryAccessKey` output; delivered via the managed secret. Declared by recipes that provision an authenticated cache — a recipe provisioning a cache that needs no credential (such as the in-cluster Kubernetes recipe) does not map this key."
           required: [environment]
