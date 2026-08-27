@@ -64,6 +64,34 @@ cleanup_kubernetes_resources() {
     kubectl delete services --all -n "$KUBERNETES_NAMESPACE" 2>/dev/null || true
 }
 
+assert_recipe_result() {
+    if [[ "$RESOURCE_TYPE" != "Radius.Data/postgreSqlDatabases" ]]; then
+        return
+    fi
+
+    local resource_json
+    if ! resource_json=$(rad resource show "$RESOURCE_TYPE" postgresql \
+        --application "$APP_NAME" \
+        --workspace "$WORKSPACE_NAME" \
+        --output json); then
+        echo "Error: Could not read the deployed PostgreSQL resource."
+        return 1
+    fi
+
+    if ! jq -e '
+        (.properties.host | type == "string" and length > 0) and
+        (.properties.port | type == "number") and
+        (.properties.database == "appdb") and
+        (.properties | has("secrets") | not)
+    ' <<<"$resource_json" >/dev/null; then
+        echo "Error: PostgreSQL result must expose host, port, and database without secrets."
+        echo "$resource_json"
+        return 1
+    fi
+
+    echo "==> PostgreSQL result properties validated"
+}
+
 if [[ -z "$RECIPE_PATH" ]]; then
     echo "Error: Recipe path is required"
     echo "Usage: $0 <path-to-recipe-directory>"
@@ -177,7 +205,13 @@ fi
 # Deploy the test app
 if rad deploy "$TEST_FILE" --application "$APP_NAME" -e "$ENVIRONMENT_PATH" $PARAMS; then
     echo "==> Test deployment successful"
-    
+
+    if ! assert_recipe_result; then
+        rad app delete "$APP_NAME" --yes 2>/dev/null || true
+        cleanup_kubernetes_resources
+        exit 1
+    fi
+
     # Cleanup: delete the app
     echo "==> Cleaning up test application"
     rad app delete "$APP_NAME" --yes
