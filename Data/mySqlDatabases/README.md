@@ -29,4 +29,26 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 ## Using the resource type
 
-Add a `mySqlDatabases` resource to your application and connect a container to it. Radius injects the database's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_MYSQLDB_HOST`, `CONNECTION_MYSQLDB_PORT`, and `CONNECTION_MYSQLDB_DATABASE`). See [`test/app.bicep`](test/app.bicep) for a complete example.
+Add a `mySqlDatabases` resource to your application and connect a container to
+it. Unless `disableDefaultEnvVars` is enabled on the connection, Radius injects
+the database's connection properties into the container as environment
+variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>`. For example, a
+connection named `mysqldb` produces `CONNECTION_MYSQLDB_HOST`,
+`CONNECTION_MYSQLDB_PORT`, and `CONNECTION_MYSQLDB_DATABASE`.
+
+### Using developer-owned credentials
+
+The Kubernetes Recipe no longer includes its unused developer-provided
+`password` and derived `connectionString` entries in `result.secrets`. These
+entries were not declared by the resource schema, so applications could not
+consume them as managed outputs. Applications that need the password must
+author the value in a `Radius.Security/secrets` resource.
+
+With a Kubernetes Container Recipe that supports direct Secret connections,
+connect the container to that authored Secret to receive secret-backed
+`CONNECTION_<CONNECTION-NAME>_<KEY>` environment variables. For gradual
+adoption or environments using an earlier Container Recipe, bind the authored
+Secret explicitly with `env.valueFrom.secretKeyRef`, as shown in
+[`test/app.bicep`](test/app.bicep). In either case, pass the same
+developer-owned password to the database resource and the authored Secret; do
+not depend on the MySQL Recipe to copy it into a new managed Secret.

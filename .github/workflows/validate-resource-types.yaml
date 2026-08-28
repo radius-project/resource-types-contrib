@@ -83,6 +83,10 @@ jobs:
       - name: Install Radius CLI
         run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
 
+      - name: Validate MySQL Recipe result contract
+        if: matrix.recipe == 'bicep'
+        run: Data/mySqlDatabases/test/assert-recipe-result.sh
+
       # this setups a local k3d cluster for testing purposes, creates workspace, group and  env preview
       - name: Create Radius Cluster
         run: make create-radius-cluster
