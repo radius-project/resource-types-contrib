@@ -10,7 +10,7 @@ terraform {
 
 variable "context" {
   description = "This variable contains Radius Recipe context."
-  type = any
+  type        = any
 }
 
 variable "memory" {
@@ -32,17 +32,17 @@ variable "memory" {
 }
 
 locals {
-  resource_name      = var.context.resource.name
-  application_name   = var.context.application != null ? var.context.application.name : ""
-  environment_name   = var.context.environment != null ? var.context.environment.name : ""
-  resource_group     = element(split("/", var.context.resource.id), 5)
-  namespace          = var.context.runtime.kubernetes.namespace
-  port               = 5432
-  tag                = "16-alpine"
-  username           = var.context.resource.properties.username
-  password           = var.context.resource.properties.password
-  database           = try(var.context.resource.properties.database, "postgres_db")
-  size_value         = try(var.context.resource.properties.size, "S")
+  resource_name    = var.context.resource.name
+  application_name = var.context.application != null ? var.context.application.name : ""
+  environment_name = var.context.environment != null ? var.context.environment.name : ""
+  resource_group   = element(split("/", var.context.resource.id), 5)
+  namespace        = var.context.runtime.kubernetes.namespace
+  port             = 5432
+  tag              = "16-alpine"
+  username         = var.context.resource.properties.username
+  password         = var.context.resource.properties.password
+  database         = try(var.context.resource.properties.database, "postgres_db")
+  size_value       = try(var.context.resource.properties.size, "S")
 
   labels = {
     "radapp.io/resource"       = local.resource_name
@@ -150,6 +150,9 @@ resource "kubernetes_service" "postgres" {
   }
 }
 
+# The administrator credentials are user-supplied Recipe inputs. They configure
+# PostgreSQL through the Kubernetes Secret above but are not returned through
+# `result.secrets`.
 output "result" {
   value = {
     resources = [
@@ -162,10 +165,5 @@ output "result" {
       port     = local.port
       database = local.database
     }
-    secrets = {
-      password         = local.password
-      connectionString = "postgresql://${local.username}:${local.password}@${kubernetes_service.postgres.metadata[0].name}.${kubernetes_service.postgres.metadata[0].namespace}.svc.cluster.local:${local.port}/${local.database}"
-    }
   }
-  sensitive = true
 }
