@@ -3,7 +3,6 @@ extension kubernetes with {
   namespace: context.runtime.kubernetes.namespace
 } as kubernetes
 
-
 //////////////////////////////////////////
 // Common Radius variables
 //////////////////////////////////////////
@@ -150,6 +149,10 @@ resource svc 'core/Service@v1' = {
 
 //////////////////////////////////////////
 // Output Radius result
+//
+// The administrator credentials are developer-authored Recipe inputs, not
+// Recipe-generated outputs. A consuming application should author its own
+// Radius.Security/secrets resource for the password (see test/app.bicep).
 //////////////////////////////////////////
 
 output result object = {
@@ -162,9 +165,5 @@ output result object = {
     host: '${svc.metadata.name}.${svc.metadata.namespace}.svc.cluster.local'
     port: port
     database: database
-  }
-  secrets: {
-    password: password
-    connectionString: 'mysql://${username}:${password}@${svc.metadata.name}.${svc.metadata.namespace}.svc.cluster.local:${port}/${database}'
   }
 }
