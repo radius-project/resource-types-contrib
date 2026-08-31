@@ -27,6 +27,25 @@ resource democtr 'Radius.Compute/containers@2025-08-01-preview' = {
     containers: {
       demo: {
         image: 'ghcr.io/radius-project/samples/demo:latest'
+        // Portable explicit wiring remains valid on all supported Container Recipes.
+        env: {
+          STORAGE_CONNECTIONSTRING: {
+            valueFrom: {
+              secretKeyRef: {
+                secretName: store.properties.secrets.name
+                key: 'connectionString'
+              }
+            }
+          }
+          STORAGE_ACCOUNTKEY: {
+            valueFrom: {
+              secretKeyRef: {
+                secretName: store.properties.secrets.name
+                key: 'accountKey'
+              }
+            }
+          }
+        }
         ports: {
           web: {
             containerPort: 3000

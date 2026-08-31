@@ -100,7 +100,7 @@ types:
               description: >-
                 (Read Only) Recipe-generated secrets. The reserved `name` sub-property references
                 the managed Radius.Security/secrets resource Radius materializes from the Recipe's
-                `outputs.secrets`. Consumers bind a key into a container env var via `secretKeyRef`.
+                `result.secrets`. Consumers bind a key into a container env var via `secretKeyRef`.
               properties:
                 name:
                   type: string

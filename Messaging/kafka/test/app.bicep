@@ -27,6 +27,17 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
     containers: {
       demo: {
         image: 'ghcr.io/radius-project/samples/demo:latest'
+        // Portable explicit wiring remains valid on all supported Container Recipes.
+        env: {
+          KAFKA_CONNECTIONSTRING: {
+            valueFrom: {
+              secretKeyRef: {
+                secretName: kafkaBroker.properties.secrets.name
+                key: 'connectionString'
+              }
+            }
+          }
+        }
         ports: {
           web: {
             containerPort: 3000

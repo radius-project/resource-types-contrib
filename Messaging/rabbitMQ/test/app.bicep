@@ -50,6 +50,17 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
     containers: {
       demo: {
         image: 'ghcr.io/radius-project/samples/demo:latest'
+        // The developer-owned password remains explicitly wired for portability.
+        env: {
+          RABBITMQ_PASSWORD: {
+            valueFrom: {
+              secretKeyRef: {
+                secretName: rabbitmqSecret.name
+                key: 'password'
+              }
+            }
+          }
+        }
         ports: {
           web: {
             containerPort: 3000

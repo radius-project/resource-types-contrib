@@ -26,6 +26,17 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
     containers: {
       demo: {
         image: 'ghcr.io/radius-project/samples/demo:latest'
+        // Portable explicit wiring remains valid on all supported Container Recipes.
+        env: {
+          SEARCH_APIKEY: {
+            valueFrom: {
+              secretKeyRef: {
+                secretName: searchService.properties.secrets.name
+                key: 'apiKey'
+              }
+            }
+          }
+        }
         ports: {
           web: {
             containerPort: 3000
