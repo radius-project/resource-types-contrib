@@ -125,6 +125,21 @@ The following guidelines should be followed when contributing new Resource Types
 
 - Resource Types are made for developers and must be application-oriented. Avoid infrastructure-specific or platform-specific properties. Make sure the schema is simple and intuitive, avoiding unnecessary complexity.
 
+### 5. Add a Resource Type Icon
+
+Add a monochrome SVG icon named `<resourceTypeName>.svg` to the Resource Type directory, next to its YAML definition. The icon must support both light and dark mode. Add the `resource-type-icon` class to the root `svg` element and include this style block:
+
+```svg
+<svg class="resource-type-icon" ...>
+  <style>@media (prefers-color-scheme: dark) { .resource-type-icon { filter: invert(1); } }</style>
+  ...
+</svg>
+```
+
+Do not use `:root` for the selector. Resource Type icons can be inlined into a page, where `:root` would select and invert the host page instead of only the icon.
+
+The media query follows the operating system or browser preference rather than detecting the icon's background. Rendering surfaces must therefore use a background that matches the active preferred color scheme. Verify the icon on both a light background in light mode and a dark background in dark mode.
+
 ## Document Your Resource Type and Recipes
 
 Each Resource Type has two types of documentation written specifically for developers, and separately, for platform engineers.
