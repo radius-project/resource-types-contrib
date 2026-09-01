@@ -27,9 +27,7 @@ resource democtr 'Radius.Compute/containers@2025-08-01-preview' = {
     containers: {
       demo: {
         image: 'ghcr.io/radius-project/samples/demo:latest'
-        // The recipe's secret output(s) are materialized into a managed
-        // Radius.Security/secrets resource and consumed here BY REFERENCE via
-        // secretKeyRef — the value never lands on store state.
+        // Portable explicit wiring remains valid on all supported Container Recipes.
         env: {
           STORAGE_CONNECTIONSTRING: {
             valueFrom: {
@@ -56,6 +54,8 @@ resource democtr 'Radius.Compute/containers@2025-08-01-preview' = {
       }
     }
     connections: {
+      // On compatible Kubernetes versions, injects ordinary storage values plus
+      // secret-backed CONNECTION_STORAGE_CONNECTIONSTRING and CONNECTION_STORAGE_ACCOUNTKEY.
       storage: {
         source: store.id
       }

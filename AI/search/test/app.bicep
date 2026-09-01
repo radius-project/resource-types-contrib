@@ -26,9 +26,7 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
     containers: {
       demo: {
         image: 'ghcr.io/radius-project/samples/demo:latest'
-        // The recipe's secret output(s) are materialized into a managed
-        // Radius.Security/secrets resource and consumed here BY REFERENCE via
-        // secretKeyRef — the value never lands on searchService state.
+        // Portable explicit wiring remains valid on all supported Container Recipes.
         env: {
           SEARCH_APIKEY: {
             valueFrom: {
@@ -47,6 +45,8 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
       }
     }
     connections: {
+      // On compatible Kubernetes versions, injects endpoint plus secret-backed
+      // CONNECTION_SEARCH_APIKEY. Explicit env wiring remains supported.
       search: {
         source: searchService.id
       }

@@ -50,9 +50,7 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
     containers: {
       demo: {
         image: 'ghcr.io/radius-project/samples/demo:latest'
-        // host/port/username arrive via the connection below as CONNECTION_RABBITMQ_*.
-        // The password is read from the same Radius.Security/secrets resource that
-        // was passed to the broker via secretKeyRef.
+        // The developer-owned password remains explicitly wired for portability.
         env: {
           RABBITMQ_PASSWORD: {
             valueFrom: {
@@ -71,8 +69,15 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
       }
     }
     connections: {
+      // On compatible Kubernetes versions, injects host/port/username. A managed
+      // password would also be injected as CONNECTION_RABBITMQ_PASSWORD when omitted.
       rabbitmq: {
         source: queue.id
+      }
+      // User-authored input Secrets retain direct Secret connections. Because
+      // `password` was supplied above, the queue connection has no managed secret.
+      credentials: {
+        source: rabbitmqSecret.id
       }
     }
   }
