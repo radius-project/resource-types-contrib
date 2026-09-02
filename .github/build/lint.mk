@@ -29,7 +29,8 @@ spellcheck: ## Run cspell over Markdown and YAML docs (matches the Spellcheck CI
 	@cspell lint --config ./.github/linters/.cspell.yml --no-progress --dot "**/*.{md,yaml,yml}"
 
 .PHONY: validate-icons
-validate-icons: ## Validate resource type SVG icons against the rules Radius enforces at registration time.
+validate-icons: ## Run the lightweight SVG icon preflight and its regression tests.
 	@command -v node >/dev/null 2>&1 || { echo "Node.js is required to validate icons. Install Node.js $$(cat .node-version 2>/dev/null || echo 24), then retry."; exit 1; }
 	@echo -e "$(ARROW) Validating resource type icons..."
+	@node --test ./.github/scripts/tests/test-validate-icons.js
 	@node ./.github/scripts/validate-icons.js "$(RESOURCE_TYPE_ROOT)"

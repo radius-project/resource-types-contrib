@@ -15,13 +15,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Validates checked-in SVG icons against the contract Radius enforces in
-// pkg/ucp/datamodel/icon_validation.go. Icons that fail these rules are
-// rejected when Radius registers the resource type, which breaks the
-// downstream manifest refresh in radius-project/radius. Catching them here
-// keeps a bad icon from ever reaching that synchronization.
+// Runs a lightweight preflight for checked-in SVG icons before the full Radius
+// registration tests. This scanner catches the forbidden constructs that have
+// broken downstream synchronization without adding an XML parser dependency.
+// Radius remains authoritative for XML well-formedness and the complete icon
+// contract in pkg/ucp/datamodel/icon_validation.go.
 
 "use strict";
+
+// cspell:ignore SMIL
 
 const fs = require("fs");
 const path = require("path");
@@ -225,4 +227,8 @@ function main() {
   }
 }
 
-main();
+module.exports = { validateIcon };
+
+if (require.main === module) {
+  main();
+}

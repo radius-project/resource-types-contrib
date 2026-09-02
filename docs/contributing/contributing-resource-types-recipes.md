@@ -151,7 +151,7 @@ Two rules follow from this structure:
 - Give the mask an `id` derived from the icon file name. Icons are often inlined into the same page, and duplicate `id` values collide across documents.
 - Never fill a shape with an opaque `white` to knock out detail. Put it in the mask as `black` instead, so the hole is genuinely transparent rather than white.
 
-Verify the icon on a light background with dark surrounding text and on a dark background with light surrounding text. Run `make validate-icons` to check the icon against the rules Radius enforces.
+Verify the icon on a light background with dark surrounding text and on a dark background with light surrounding text. Run `make validate-icons` for a fast preflight; the full resource type build performs authoritative Radius validation.
 
 ## Document Your Resource Type and Recipes
 
