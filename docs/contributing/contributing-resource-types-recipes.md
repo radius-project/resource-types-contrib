@@ -127,18 +127,31 @@ The following guidelines should be followed when contributing new Resource Types
 
 ### 5. Add a Resource Type Icon
 
-Add a monochrome SVG icon named `<resourceTypeName>.svg` to the Resource Type directory, next to its YAML definition. The icon must support both light and dark mode. Add the `resource-type-icon` class to the root `svg` element and include this style block:
+Add a monochrome SVG icon named `<resourceTypeName>.svg` to the Resource Type directory, next to its YAML definition. The icon must support both light and dark mode.
+
+Radius treats icons as untrusted content and validates them against a small SVG allowlist. Icons **must not** contain a `<style>` element or a `style` attribute, because CSS can carry network-capable constructs such as `@import` and `url()`. An icon that violates this is rejected at registration time. Presentation attributes such as `fill` and `stroke` are the supported way to style an icon.
+
+Because CSS is unavailable, express the icon as a luminance `<mask>` and paint it with `currentColor`:
 
 ```svg
-<svg class="resource-type-icon" ...>
-  <style>@media (prefers-color-scheme: dark) { .resource-type-icon { filter: invert(1); } }</style>
-  ...
+<svg width="500" height="500" viewBox="0 0 500 500" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <mask id="<resourceTypeName>-icon" maskUnits="userSpaceOnUse" x="0" y="0" width="500" height="500">
+    <!-- Artwork. White is the visible ink, black is a transparent knockout. -->
+    <path d="..." fill="white"/>
+    <path d="..." fill="black"/>
+  </mask>
+  <rect x="0" y="0" width="500" height="500" fill="currentColor" mask="url(#<resourceTypeName>-icon)"/>
 </svg>
 ```
 
-Do not use `:root` for the selector. Resource Type icons can be inlined into a page, where `:root` would select and invert the host page instead of only the icon.
+Inside the mask, white areas become visible ink and black areas become transparent holes. The single `<rect>` paints that silhouette in `currentColor`, so the icon inherits the surrounding text color: dark ink on a light surface and light ink on a dark one. Nothing in the icon is painted an opaque white, so the host background always shows through the knockouts.
 
-The media query follows the operating system or browser preference rather than detecting the icon's background. Rendering surfaces must therefore use a background that matches the active preferred color scheme. Verify the icon on both a light background in light mode and a dark background in dark mode.
+Two rules follow from this structure:
+
+- Give the mask an `id` derived from the icon file name. Icons are often inlined into the same page, and duplicate `id` values collide across documents.
+- Never fill a shape with an opaque `white` to knock out detail. Put it in the mask as `black` instead, so the hole is genuinely transparent rather than white.
+
+Verify the icon on a light background with dark surrounding text and on a dark background with light surrounding text. Run `make validate-icons` to check the icon against the rules Radius enforces.
 
 ## Document Your Resource Type and Recipes
 

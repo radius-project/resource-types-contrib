@@ -9,6 +9,7 @@ on:
       - "**/kubernetes/**"
       - "**/test/app.bicep"
       - "**/*.yaml"
+      - "**/*.svg"
       - ".github/workflows/validate-resource-types.yaml"
       - ".github/scripts/**"
       - ".github/build/**"
@@ -51,6 +52,9 @@ jobs:
 
       - name: Run recipe namespace tests
         run: make test-recipe-namespace
+
+      - name: Validate resource type icons
+        run: make validate-icons
 
   validate-resource-types:
     name: Validate Resource Types and Recipes
