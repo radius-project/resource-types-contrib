@@ -27,3 +27,7 @@ spellcheck: ## Run cspell over Markdown and YAML docs (matches the Spellcheck CI
 	@command -v cspell >/dev/null 2>&1 || $(MAKE) install-cspell
 	@echo -e "$(ARROW) Running spellcheck..."
 	@cspell lint --config ./.github/linters/.cspell.yml --no-progress --dot "**/*.{md,yaml,yml}"
+
+.PHONY: test-svg-icons
+test-svg-icons: ## Reject SVG style elements and style attributes.
+	@./.github/scripts/tests/test-svg-icons.sh
