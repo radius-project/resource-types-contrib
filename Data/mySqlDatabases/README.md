@@ -44,7 +44,9 @@ Every Recipe enforces the `tls` property on the server it provisions, each by wa
 With `tls: 'required'` the server rejects unencrypted network connections, returning `MySQL Error 3159 (HY000)`. Connections over the local Unix socket are exempt, which is how the Kubernetes Recipe's container still initializes its database and user on first start. With `tls: 'optional'` the server continues to accept TLS connections but no longer requires them over the network.
 
 > [!NOTE]
-> `tls: 'optional'` is not the same as "plaintext works with no client changes". For accounts that use the `caching_sha2_password` authentication plugin — which is the default in MySQL 8.x, and therefore what the Kubernetes Recipe's generated user gets — the server still refuses to accept credentials over an unencrypted connection unless the client performs an RSA key exchange. Such a client also needs `--get-server-public-key` (mysql CLI) or the driver equivalent.
+> `tls: 'optional'` is not the same as "plaintext works with no client changes". Accounts using the `caching_sha2_password` authentication plugin — the default in MySQL 8.x, and therefore what the Kubernetes Recipe's generated user gets — cannot authenticate over an unencrypted connection on a cache miss, such as the first connection after a server restart. The client must perform an RSA key exchange instead; the mysql CLI reports `ERROR 2061 (HY000)` and needs `--get-server-public-key`, and drivers have an equivalent option. After a successful authentication the server caches the result and later plaintext connections take the fast path without it. Because that cache is in memory, a plaintext client that has been working can start failing after the server restarts.
+>
+> Note also that `--get-server-public-key` fetches the key from the server without verifying it, so it protects the password from passive observation but not from an active attacker who can intercept the connection. Prefer keeping TLS on, or pin the key with `--server-public-key-path`.
 
 ### How a client trusts the server certificate
 
@@ -79,6 +81,17 @@ On Kubernetes the MySQL server generates its own CA and certificate inside its d
 > The `mysql:5.7` image is published for `amd64` only. On `arm64` Kubernetes nodes, choose `version: '8.0'` or `version: '8.4'`.
 >
 > The Kubernetes Recipe Pack pins `ghcr.io/radius-project/kube-recipes/mysqldatabases:latest`, which tracks stable releases. Environments using the published pack pick up this enforcement at the next stable Recipe release; the `:edge` tag carries it as soon as the change merges.
+
+### Upgrading an existing database
+
+On Kubernetes and AWS these Recipes previously ignored `tls` and left the server accepting unencrypted connections. Enforcement is a behavior change for databases that already exist: it takes effect the next time the resource is deployed with the updated Recipe, not when the Recipe image is republished. At that point a client still connecting in plaintext starts failing with `MySQL Error 3159`.
+
+> [!WARNING]
+> On Kubernetes the flag is part of the Pod spec, so adopting it rolls the Deployment. That Deployment has no persistent volume — MySQL stores its data in the container's writable layer — so replacing the Pod **discards the database contents**, and the new Pod re-runs first-start initialization. This is a property of the Kubernetes Recipe generally rather than of this change, but upgrading is one of the moments it becomes visible. Back up any data you care about first, and treat this Recipe as development and testing infrastructure.
+
+Before upgrading, configure clients for TLS as shown above; both platforms already present a certificate, and most drivers negotiate it automatically. If a client genuinely cannot use TLS yet, set `tls: 'optional'` on the resource to keep the previous behavior, then remove it once the client is ready.
+
+An Environment registered against a `Radius.Data` namespace that predates the `tls` property cannot set that property at all. The Recipe falls back to `required`, so such an Environment gets enforcement with no way to opt out; re-register the namespace to regain the `optional` escape hatch.
 
 ## Using the resource type
 
