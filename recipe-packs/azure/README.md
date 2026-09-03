@@ -52,6 +52,12 @@ Defaults are applied when a resource is written, not when a Resource Type is reg
 
 The `Radius.Data/mySqlDatabases` Recipe preserves the requested MySQL major version. The Resource Type's `8.0` value maps to the Azure module's `8.0.21` version token; `5.7` and `8.4` map directly to the corresponding Azure versions.
 
+### MySQL transport policy
+
+The `Radius.Data/mySqlDatabases` Recipe maps the resource's `tls` property onto the flexible server's `require_secure_transport` parameter, so the server rejects connections that do not use TLS unless the application sets `tls: 'optional'`. This relies on the Radius runtime materializing schema defaults into the resource's properties, so applications that omit `tls` still resolve to `required`.
+
+This Recipe therefore requires a registered `Radius.Data` namespace whose `mySqlDatabases` definition includes the `tls` property. The property was added without changing the `2025-08-01-preview` API version, so an older definition cannot be detected by version negotiation. Register a `Radius.Data` namespace release that contains the property before deploying this pack.
+
 ## Parameters
 
 The Azure pack accepts the provider configuration it needs to provision into your subscription:

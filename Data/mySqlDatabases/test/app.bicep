@@ -44,6 +44,7 @@ resource mysql 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
     database: databaseName
     username: username
     password: password
+    // `tls` is omitted so this test exercises the schema default (`required`).
   }
 }
 
