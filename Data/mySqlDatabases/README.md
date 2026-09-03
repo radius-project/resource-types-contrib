@@ -44,7 +44,7 @@ Every Recipe enforces the `tls` property on the server it provisions, each by wa
 With `tls: 'required'` the server rejects unencrypted network connections, returning `MySQL Error 3159 (HY000)`. Connections over the local Unix socket are exempt, which is how the Kubernetes Recipe's container still initializes its database and user on first start. With `tls: 'optional'` the server continues to accept TLS connections but no longer requires them over the network.
 
 > [!NOTE]
-> `tls: 'optional'` is not the same as "plaintext works with no client changes". Accounts using the `caching_sha2_password` authentication plugin — the default in MySQL 8.x, and therefore what the Kubernetes Recipe's generated user gets — cannot authenticate over an unencrypted connection on a cache miss, such as the first connection after a server restart. The client must perform an RSA key exchange instead; the mysql CLI reports `ERROR 2061 (HY000)` and needs `--get-server-public-key`, and drivers have an equivalent option. After a successful authentication the server caches the result and later plaintext connections take the fast path without it. Because that cache is in memory, a plaintext client that has been working can start failing after the server restarts.
+> `tls: 'optional'` is not the same as "plaintext works with no client changes". Accounts using the `caching_sha2_password` authentication plugin — the default on MySQL `8.0` and `8.4`, and therefore what the Kubernetes Recipe's generated user gets on those versions — cannot authenticate over an unencrypted connection on a cache miss, such as the first connection after a server restart. The client must perform an RSA key exchange instead; the mysql CLI reports `ERROR 2061 (HY000)` and needs `--get-server-public-key`, and drivers have an equivalent option. After a successful authentication the server caches the result and later plaintext connections take the fast path without it. Because that cache is in memory, a plaintext client that has been working can start failing after the server restarts. On `5.7` the default is `mysql_native_password`, so this does not apply.
 >
 > Note also that `--get-server-public-key` fetches the key from the server without verifying it, so it protects the password from passive observation but not from an active attacker who can intercept the connection. Prefer keeping TLS on, or pin the key with `--server-public-key-path`.
 
@@ -62,6 +62,7 @@ Configure the client for the platform it runs against:
 
 ```js
 import { readFileSync } from 'node:fs'
+import mysql from 'mysql2/promise'
 
 // Azure — supply a bundle containing the current Azure root certificates
 mysql.createPool({ host, user, password, database, ssl: { ca: readFileSync('combined-ca-certificates.pem') } })
@@ -84,14 +85,19 @@ On Kubernetes the MySQL server generates its own CA and certificate inside its d
 
 ### Upgrading an existing database
 
-On Kubernetes and AWS these Recipes previously ignored `tls` and left the server accepting unencrypted connections. Enforcement is a behavior change for databases that already exist: it takes effect the next time the resource is deployed with the updated Recipe, not when the Recipe image is republished. At that point a client still connecting in plaintext starts failing with `MySQL Error 3159`.
+On Kubernetes and AWS these Recipes previously ignored `tls` and left the server accepting unencrypted connections. Enforcement is a behavior change for databases that already exist: it takes effect the next time the resource is deployed with the updated Recipe, not when the Recipe image is republished. At that point, if the resolved policy is `required`, a client still connecting in plaintext starts failing with `MySQL Error 3159`. A resource that sets `tls: 'optional'` keeps accepting plaintext.
 
 > [!WARNING]
 > On Kubernetes the flag is part of the Pod spec, so adopting it rolls the Deployment. That Deployment has no persistent volume — MySQL stores its data in the container's writable layer — so replacing the Pod **discards the database contents**, and the new Pod re-runs first-start initialization. This is a property of the Kubernetes Recipe generally rather than of this change, but upgrading is one of the moments it becomes visible. Back up any data you care about first, and treat this Recipe as development and testing infrastructure.
 
 Before upgrading, configure clients for TLS as shown above; both platforms already present a certificate, and most drivers negotiate it automatically. If a client genuinely cannot use TLS yet, set `tls: 'optional'` on the resource to keep the previous behavior, then remove it once the client is ready.
 
-An Environment registered against a `Radius.Data` namespace that predates the `tls` property cannot set that property at all. The Recipe falls back to `required`, so such an Environment gets enforcement with no way to opt out; re-register the namespace to regain the `optional` escape hatch.
+Whether an Environment can opt out at all depends on the platform, because the Recipes read the property differently:
+
+- **Kubernetes and AWS** fall back to `required` when the property is absent, so an Environment registered against a `Radius.Data` namespace that predates `tls` still gets enforcement — with no way to select `optional`. Re-register the namespace to regain that escape hatch.
+- **Azure** reads the property directly and has no fallback, so its Recipe Pack needs a namespace that already defines `tls`. Register the updated namespace before deploying that pack; see [`recipe-packs/azure/README.md`](../../recipe-packs/azure/README.md).
+
+That asymmetry also sets the safe rollout order. On Azure, register the namespace first, then deploy the Recipe Pack. On Kubernetes and AWS the order is not critical: an updated Recipe arriving first is fail-secure, and an updated namespace arriving first simply exposes `tls` while the old Recipe continues to ignore it.
 
 ## Using the resource type
 
