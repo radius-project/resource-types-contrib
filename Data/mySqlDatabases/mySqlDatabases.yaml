@@ -46,19 +46,25 @@ types:
       }
       ```
 
-      The connection automatically injects environment variables into the container for all properties from the database. The environment variables are named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>`. In this example, the connection name is `mysqldb` so the environment variables will be:
+      The connection automatically injects environment variables into the container for all properties from the database. The environment variables are named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>`. In this example, the connection name is `mysqldb` so the environment variables include:
 
       - CONNECTION_MYSQLDB_DATABASE
       - CONNECTION_MYSQLDB_HOST
       - CONNECTION_MYSQLDB_PORT
       - CONNECTION_MYSQLDB_TLS
 
-      The `tls` property states the requested transport policy for connections to the database server and defaults to `required`. The Azure Recipe enforces it on the server, which then rejects connections that do not use TLS, so configure your client for TLS accordingly. For example, with the Node.js `mysql2` driver:
+      The `tls` property sets the transport policy for connections to the database server and defaults to `required`. Every Recipe enforces it on the server it provisions, so with the default the server rejects unencrypted network connections. Read `CONNECTION_MYSQLDB_TLS` and configure your client accordingly.
+
+      How your client verifies the server's certificate depends on the platform, and TLS verification is never automatic — the client needs the right CA material. Managed databases on Azure and AWS present a certificate from a CA you can verify once you supply that CA to the client. The Kubernetes Recipe runs a MySQL server that generates its own certificate on first start and does not distribute the CA, so a client there can only encrypt the connection and cannot authenticate the server. With the Node.js `mysql2` driver:
       ```js
-      mysql.createPool({ host, user, password, database, ssl: { minVersion: 'TLSv1.2' } })
+      // Azure or AWS: supply the platform's CA bundle
+      mysql.createPool({ host, user, password, database, ssl: { ca: caBundle } })
+
+      // Kubernetes: encrypt without verifying the server
+      mysql.createPool({ host, user, password, database, ssl: { rejectUnauthorized: false } })
       ```
 
-      Set `tls: 'optional'` when the client cannot use TLS, which lets the server also accept connections that do not use TLS.
+      Set `tls: 'optional'` when the client cannot use TLS, which lets the server also accept unencrypted network connections. Consult the Recipe documentation for your platform for the details.
 
     apiVersions:
       '2025-08-01-preview':
@@ -91,7 +97,7 @@ types:
               type: string
               enum: ['required', 'optional']
               default: 'required'
-              description: "(Optional) The requested transport policy for connections to the database server. Defaults to `required`. Where the Recipe enforces it, `required` means the server rejects connections that do not use TLS and `optional` means the server also accepts them."
+              description: "(Optional) The transport policy for connections to the database server. Defaults to `required`. Every Recipe enforces this on the server it provisions, mapping it onto the MySQL `require_secure_transport` system variable, so `required` means the server rejects unencrypted network connections and `optional` means the server also accepts them."
             host:
               type: string
               description: "(Read Only) The host name used to connect to the database. Mapped from the recipe module's output."

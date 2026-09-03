@@ -16,7 +16,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `password` | string (`x-radius-sensitive`) | Required | The administrator password. Encrypted at rest, redacted on reads, and injected decrypted into the Recipe as `{{context.resource.properties.password}}`. |
 | `database` | string | Optional | The name of the database. Defaults to `mysql_db`. |
 | `version` | string (`5.7`, `8.0`, `8.4`) | Optional | The major MySQL server version. Defaults to `8.4`. |
-| `tls` | string (`required`, `optional`) | Optional | The requested transport policy for connections to the database server. Defaults to `required`. The Azure Recipe enforces it on the server, which then rejects connections that do not use TLS; set `optional` to have the server also accept connections that do not use TLS. |
+| `tls` | string (`required`, `optional`) | Optional | The transport policy for connections to the database server. Defaults to `required`, which makes the server reject unencrypted network connections; set `optional` to have the server also accept them. Enforced by every Recipe — see [Transport policy](#transport-policy). |
 | `host` | string | Read only | The host name used to connect to the database. Set from the Recipe module's output. |
 | `port` | integer | Optional | The TCP port used to connect to the database. Defaults to `3306`, the standard port every Recipe in this repository provisions. A Recipe that provisions the database on a different port overwrites this value from its own output. Setting it in an application definition changes only the value reported to connected containers, never the port the server listens on. |
 
@@ -29,6 +29,76 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 | Azure | [`recipe-packs/azure/aks-recipepack.bicep`](../../recipe-packs/azure/aks-recipepack.bicep) | Direct module — Azure Verified Module `avm/res/db-for-my-sql/flexible-server` |
 | Kubernetes | [`recipe-packs/kubernetes/default-recipepack.bicep`](../../recipe-packs/kubernetes/default-recipepack.bicep) | `ghcr.io/radius-project/kube-recipes/mysqldatabases` |
 
+This repository also contains an AWS Terraform Recipe under [`recipes/aws/terraform`](recipes/aws/terraform), which is not yet part of a Recipe Pack.
+
+## Transport policy
+
+Every Recipe enforces the `tls` property on the server it provisions, each by way of the MySQL `require_secure_transport` system variable, so the property describes observed server behavior rather than intent:
+
+| Platform | How the Recipe enforces it |
+| --- | --- |
+| Azure | Sets the flexible server's `require_secure_transport` configuration. |
+| AWS | Sets `require_secure_transport` in the RDS DB parameter group. The parameter is dynamic, so it applies without a reboot. |
+| Kubernetes | Passes `--require-secure-transport` to `mysqld` as a container argument. |
+
+With `tls: 'required'` the server rejects unencrypted network connections, returning `MySQL Error 3159 (HY000)`. Connections over the local Unix socket are exempt, which is how the Kubernetes Recipe's container still initializes its database and user on first start. With `tls: 'optional'` the server continues to accept TLS connections but no longer requires them over the network.
+
+> [!NOTE]
+> `tls: 'optional'` is not the same as "plaintext works with no client changes". Accounts using the `caching_sha2_password` authentication plugin — the default on MySQL `8.0` and `8.4`, and therefore what the Kubernetes Recipe's generated user gets on those versions — cannot authenticate over an unencrypted connection on a cache miss, such as the first connection after a server restart. The client must perform an RSA key exchange instead; the mysql CLI reports `ERROR 2061 (HY000)` and needs `--get-server-public-key`, and drivers have an equivalent option. After a successful authentication the server caches the result and later plaintext connections take the fast path without it. Because that cache is in memory, a plaintext client that has been working can start failing after the server restarts. On `5.7` the default is `mysql_native_password`, so this does not apply.
+>
+> Note also that `--get-server-public-key` fetches the key from the server without verifying it, so it protects the password from passive observation but not from an active attacker who can intercept the connection. Prefer keeping TLS on, or pin the key with `--server-public-key-path`.
+
+### How a client trusts the server certificate
+
+The three platforms differ in what the client can verify, so a client configuration that is safe on one platform is not automatically as safe on another. In every case the client needs the right CA material; TLS verification is not automatic:
+
+| Platform | Certificate | What the client can verify |
+| --- | --- | --- |
+| Azure | Issued by an Azure-managed CA chain (see [Azure Database for MySQL root certificates](https://learn.microsoft.com/azure/mysql/flexible-server/concepts-networking-ssl-tls)) | Encryption, CA verification, and hostname verification, given the current root certificates |
+| AWS | Issued by an Amazon RDS CA | Encryption, CA verification, and hostname verification, once the client installs the [RDS CA bundle](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.SSL.html) (`--ssl-ca=global-bundle.pem`) |
+| Kubernetes | Self-signed, generated by the server on first start | **Encryption only** |
+
+Configure the client for the platform it runs against:
+
+```js
+import { readFileSync } from 'node:fs'
+import mysql from 'mysql2/promise'
+
+// Azure — supply a bundle containing the current Azure root certificates
+mysql.createPool({ host, user, password, database, ssl: { ca: readFileSync('combined-ca-certificates.pem') } })
+
+// AWS — supply the RDS CA bundle
+mysql.createPool({ host, user, password, database, ssl: { ca: readFileSync('global-bundle.pem') } })
+
+// Kubernetes — encrypt without verifying the server
+mysql.createPool({ host, user, password, database, ssl: { rejectUnauthorized: false } })
+```
+
+On Azure, use a bundle containing every root the server may chain to rather than a single certificate. The service rotates roots, and the current set spans both DigiCert Global Root G2 and Microsoft RSA Root CA 2017, so pinning one of them can start failing after a rotation.
+
+On Kubernetes the MySQL server generates its own CA and certificate inside its data directory, and the Recipe does not expose or distribute that CA, so clients cannot authenticate the server under the current contract. Use `--ssl-mode=REQUIRED` (mysql CLI) or `ssl: { rejectUnauthorized: false }`, which encrypts the connection **without authenticating the server**. Traffic is protected from passive observation, but an attacker able to intercept traffic inside the cluster could still impersonate the database. Treat the Kubernetes Recipe as a development and testing configuration, and use a Recipe that supplies a trusted certificate where server authentication matters.
+
+> [!NOTE]
+> The `mysql:5.7` image is published for `amd64` only. On `arm64` Kubernetes nodes, choose `version: '8.0'` or `version: '8.4'`.
+>
+> The Kubernetes Recipe Pack pins `ghcr.io/radius-project/kube-recipes/mysqldatabases:latest`, which tracks stable releases. Environments using the published pack pick up this enforcement at the next stable Recipe release; the `:edge` tag carries it as soon as the change merges.
+
+### Upgrading an existing database
+
+On Kubernetes and AWS these Recipes previously ignored `tls` and left the server accepting unencrypted connections. Enforcement is a behavior change for databases that already exist: it takes effect the next time the resource is deployed with the updated Recipe, not when the Recipe image is republished. At that point, if the resolved policy is `required`, a client still connecting in plaintext starts failing with `MySQL Error 3159`. A resource that sets `tls: 'optional'` keeps accepting plaintext.
+
+> [!WARNING]
+> On Kubernetes the flag is part of the Pod spec, so adopting it rolls the Deployment. That Deployment has no persistent volume — MySQL stores its data in the container's writable layer — so replacing the Pod **discards the database contents**, and the new Pod re-runs first-start initialization. This is a property of the Kubernetes Recipe generally rather than of this change, but upgrading is one of the moments it becomes visible. Back up any data you care about first, and treat this Recipe as development and testing infrastructure.
+
+Before upgrading, configure clients for TLS as shown above; both platforms already present a certificate, and most drivers negotiate it automatically. If a client genuinely cannot use TLS yet, set `tls: 'optional'` on the resource to keep the previous behavior, then remove it once the client is ready.
+
+Whether an Environment can opt out at all depends on the platform, because the Recipes read the property differently:
+
+- **Kubernetes and AWS** fall back to `required` when the property is absent, so an Environment registered against a `Radius.Data` namespace that predates `tls` still gets enforcement — with no way to select `optional`. Re-register the namespace to regain that escape hatch.
+- **Azure** reads the property directly and has no fallback, so its Recipe Pack needs a namespace that already defines `tls`. Register the updated namespace before deploying that pack; see [`recipe-packs/azure/README.md`](../../recipe-packs/azure/README.md).
+
+That asymmetry also sets the safe rollout order. On Azure, register the namespace first, then deploy the Recipe Pack. On Kubernetes and AWS the order is not critical: an updated Recipe arriving first is fail-secure, and an updated namespace arriving first simply exposes `tls` while the old Recipe continues to ignore it.
+
 ## Using the resource type
 
 Add a `mySqlDatabases` resource to your application and connect a container to
@@ -38,8 +108,9 @@ variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>`. For example, a
 connection named `mysqldb` produces `CONNECTION_MYSQLDB_HOST`,
 `CONNECTION_MYSQLDB_PORT`, `CONNECTION_MYSQLDB_DATABASE`, and
 `CONNECTION_MYSQLDB_TLS`. Because `tls` defaults to `required`, configure your
-MySQL client for TLS — for example, by passing
-`ssl: { minVersion: 'TLSv1.2' }` to the Node.js `mysql2` driver.
+MySQL client for TLS as shown in [Transport policy](#transport-policy). See
+[`test/app.bicep`](test/app.bicep) for an example of declaring the resource and
+wiring a connection to it.
 
 ### Using developer-owned credentials
 

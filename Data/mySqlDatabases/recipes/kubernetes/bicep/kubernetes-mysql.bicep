@@ -32,6 +32,25 @@ var database = context.resource.properties.?database ?? 'mysql_db'
 param version string = context.resource.properties.?version ?? '8.4'
 
 var port = 3306
+
+//////////////////////////////////////////
+// MySQL transport policy
+//
+// `tls` states the transport policy for connections to the server. It maps onto
+// the `require_secure_transport` system variable, which is passed as a `mysqld`
+// startup flag: the official image's entrypoint prepends `mysqld` to arguments
+// that begin with `--`.
+//
+// The variable exempts Unix socket connections, so the entrypoint's first-run
+// initialization (creating the database and user over the local socket) still
+// succeeds when the policy is `required`. The server also generates a
+// self-signed CA and certificate into its data directory during initialization,
+// so it can serve TLS without any certificate being supplied to the Recipe.
+//////////////////////////////////////////
+
+var tls = context.resource.properties.?tls ?? 'required'
+var requireSecureTransport = tls == 'optional' ? 'OFF' : 'ON'
+
 var labels = {
   'radapp.io/resource': resourceName
   'radapp.io/application': applicationName
@@ -88,6 +107,9 @@ resource mySql 'apps/Deployment@v1' = {
             // This container is the running mysql instance.
             name: 'mysql'
             image: 'mysql:${version}'
+            args: [
+              '--require-secure-transport=${requireSecureTransport}'
+            ]
             ports: [
               {
                 containerPort: port
