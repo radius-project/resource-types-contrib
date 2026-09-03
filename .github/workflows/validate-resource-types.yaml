@@ -9,6 +9,7 @@ on:
       - "**/kubernetes/**"
       - "**/test/app.bicep"
       - "**/*.yaml"
+      - "**/*.svg"
       - ".github/workflows/validate-resource-types.yaml"
       - ".github/scripts/**"
       - ".github/build/**"
@@ -43,6 +44,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+
       - name: Run release automation tests
         run: make test-release-automation
 
@@ -51,6 +57,9 @@ jobs:
 
       - name: Run recipe namespace tests
         run: make test-recipe-namespace
+
+      - name: Validate resource type icons
+        run: make validate-icons
 
   validate-resource-types:
     name: Validate Resource Types and Recipes
