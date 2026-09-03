@@ -68,7 +68,7 @@ types:
         }
       ```
 
-      Only the Azure Recipe enforces this policy on the server today. On other platforms the property records the requested policy rather than observed server behavior.
+      Only the Azure Recipe enforces this policy on the server today. On other platforms `tls` records the requested policy rather than observed server behavior — the Kubernetes Recipe runs a stock `postgres` image with `ssl = off`, so a client that hard-requires TLS there fails to connect even though `CONNECTION_POSTGRESQL_TLS` reports `required`. Treat the value as declared intent, not as a guarantee that the server enforces it.
 
     apiVersions:
       '2025-08-01-preview':
@@ -104,7 +104,7 @@ types:
               type: string
               enum: ['required', 'optional']
               default: 'required'
-              description: "(Optional) The transport policy for connections to the database. `required` rejects plaintext connections, `optional` permits them. Defaults to `required`. Projected to connected containers as `CONNECTION_<CONNECTION-NAME>_TLS`. Enforced on the server only by the Azure Recipe, which maps it onto the flexible server `require_secure_transport` parameter; on other platforms it records the requested policy."
+              description: "(Optional) The transport policy for connections to the database. `required` rejects plaintext connections, `optional` permits them. Defaults to `required`. Projected to connected containers as `CONNECTION_<CONNECTION-NAME>_TLS`. Enforced on the server only by the Azure Recipe, which maps it onto the flexible server `require_secure_transport` parameter; on other platforms it records declared intent rather than a guarantee that the server enforces it."
             host:
               type: string
               description: "(Read Only) The host name used to connect to the database. Mapped from the recipe module's output."

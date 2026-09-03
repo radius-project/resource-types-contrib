@@ -27,7 +27,7 @@ Managed PostgreSQL offerings commonly reject plaintext connections. Azure Databa
 
 Configure your client from that value — for example, pass `ssl: { rejectUnauthorized: true }` to the Node.js `pg` driver. Set `tls: 'optional'` only when the application cannot use a TLS-capable client.
 
-Only the Azure Recipe enforces the policy on the server today, by mapping `tls` onto the flexible server's `require_secure_transport` parameter. The Kubernetes Recipe runs a stock `postgres` image that serves plaintext regardless of the value, so on that platform the property records the requested policy rather than observed server behavior.
+Only the Azure Recipe enforces the policy on the server today, by mapping `tls` onto the flexible server's `require_secure_transport` parameter. The Kubernetes Recipe runs a stock `postgres` image with `ssl = off`, so that server offers no TLS at all and `tls` records the *requested* policy rather than observed server behavior. Treat the value as intent, not as a guarantee: on Kubernetes a client that hard-requires TLS (for example `libpq` `sslmode=require`, or `pg` with `ssl` set) fails to connect even though `CONNECTION_<CONNECTION-NAME>_TLS` reports `required`. A client using the `libpq` default `sslmode=prefer` negotiates plaintext and connects.
 
 ## Recipe Packs
 
