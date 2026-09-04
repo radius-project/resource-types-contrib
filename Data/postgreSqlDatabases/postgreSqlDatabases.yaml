@@ -51,6 +51,14 @@ types:
       - CONNECTION_POSTGRESQL_DATABASE
       - CONNECTION_POSTGRESQL_HOST
       - CONNECTION_POSTGRESQL_PORT
+      - CONNECTION_POSTGRESQL_TLS
+
+      The `tls` property states the requested transport policy for connections to the database server and defaults to `required`. It is a request that each Recipe honors where it can: the Azure Recipe enforces it on the server, which then rejects connections that do not use TLS, while the Kubernetes Recipe runs a PostgreSQL container that serves plaintext and does not enforce it. Configure your client for TLS accordingly. For example, with the Node.js `pg` driver:
+      ```js
+      new pg.Pool({ host, port, user, password, database, ssl: { rejectUnauthorized: true } })
+      ```
+
+      Set `tls: 'optional'` when the client cannot use TLS, which lets the server also accept connections that do not use TLS.
 
     apiVersions:
       '2025-08-01-preview':
@@ -82,6 +90,11 @@ types:
             initSql:
               type: string
               description: "(Optional) SQL script mounted into the PostgreSQL container's `/docker-entrypoint-initdb.d/` directory and executed whenever PGDATA is empty. With the default ephemeral storage this runs on every pod restart. If a PersistentVolumeClaim is used, the script runs only on the very first startup and subsequent changes to initSql are ignored on existing volumes. Limited to ~1 MiB. Useful for creating tables, indexes, and inserting seed data."
+            tls:
+              type: string
+              enum: ['required', 'optional']
+              default: 'required'
+              description: "(Optional) The requested transport policy for connections to the database server. Defaults to `required`. Where the Recipe enforces it, `required` means the server rejects connections that do not use TLS and `optional` means the server also accepts them."
             host:
               type: string
               description: "(Read Only) The host name used to connect to the database. Mapped from the recipe module's output."

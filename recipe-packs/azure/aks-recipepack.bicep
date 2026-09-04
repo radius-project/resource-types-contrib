@@ -24,8 +24,14 @@ param containerImagesRegistry string
 @description('Name of the Kubernetes Secret holding registry credentials for Radius.Compute/containerImages. Leave empty for an unauthenticated registry.')
 param containerImagesRegistrySecretName string = ''
 
-@description('Server parameters forwarded verbatim to the AVM PostgreSQL flexible server configurations array for Radius.Data/postgreSqlDatabases, using the AVM item shape with name, source, and value fields. Commonly used to allow-list extensions via the azure.extensions parameter (for example to enable pgvector). See recipe-packs/azure/README.md for an example and a link to the supported extensions. Defaults to an empty array (no extra server configuration).')
+@description('Server parameters forwarded to the AVM PostgreSQL flexible server configurations array for Radius.Data/postgreSqlDatabases, using the AVM item shape with name, source, and value fields. Commonly used to allow-list extensions via the azure.extensions parameter (for example to enable pgvector). Setting require_secure_transport here overrides the transport policy the resource requests through its tls property. See recipe-packs/azure/README.md for an example and a link to the supported extensions. Defaults to an empty array (no extra server configuration).')
 param postgreSqlServerConfigurations array = []
+
+// The Recipe derives a require_secure_transport configuration from the resource's `tls`
+// property, but only when the platform engineer has not already pinned that server
+// parameter. Two configuration children with the same name collide at deploy time, and an
+// operator-set value is environment-wide policy that an application must not downgrade.
+var postgreSqlOperatorSetsSecureTransport = !empty(filter(postgreSqlServerConfigurations, config => config.name == 'require_secure_transport'))
 
 resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
   name: 'azure-avm'
@@ -223,7 +229,13 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
           lock: {
             kind: 'None'
           }
-          configurations: postgreSqlServerConfigurations
+          configurations: concat(postgreSqlServerConfigurations, postgreSqlOperatorSetsSecureTransport ? [] : [
+            {
+              name: 'require_secure_transport'
+              source: 'user-override'
+              value: '{{context.resource.properties.tls == "optional" ? "OFF" : "ON"}}'
+            }
+          ])
         }
         outputs: {
           host: 'fqdn'
