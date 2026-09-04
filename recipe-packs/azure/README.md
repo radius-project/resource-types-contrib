@@ -58,6 +58,14 @@ The `Radius.Data/mySqlDatabases` Recipe maps the resource's `tls` property onto 
 
 This Recipe therefore requires a registered `Radius.Data` namespace whose `mySqlDatabases` definition includes the `tls` property. The property was added without changing the `2025-08-01-preview` API version, so an older definition cannot be detected by version negotiation. Register a `Radius.Data` namespace release that contains the property before deploying this pack.
 
+### PostgreSQL transport policy
+
+The `Radius.Data/postgreSqlDatabases` Recipe maps the resource's `tls` property onto the flexible server's `require_secure_transport` parameter, so the server rejects connections that do not use TLS unless the application sets `tls: 'optional'`. This relies on the Radius runtime materializing schema defaults into the resource's properties, so applications that omit `tls` still resolve to `required`.
+
+The derived entry is appended to the `postgreSqlServerConfigurations` array rather than replacing it, so operator-supplied parameters such as `azure.extensions` are preserved. **The platform engineer wins:** if `postgreSqlServerConfigurations` already contains a `require_secure_transport` entry, the Recipe forwards that value and does not derive one from `tls`. Setting it there pins the server's transport policy environment-wide, and an application's `tls` property cannot override it. Leave it unset to let each application request its own policy.
+
+This Recipe therefore requires a registered `Radius.Data` namespace whose `postgreSqlDatabases` definition includes the `tls` property. The property was added without changing the `2025-08-01-preview` API version, so an older definition cannot be detected by version negotiation. Register a `Radius.Data` namespace release that contains the property before deploying this pack.
+
 ## Parameters
 
 The Azure pack accepts the provider configuration it needs to provision into your subscription:
@@ -72,7 +80,7 @@ The Azure pack accepts the provider configuration it needs to provision into you
 | `routesGatewayNamespace` | Namespace of the Gateway resource for `Radius.Compute/routes`. Defaults to `default`. |
 | `containerImagesRegistry` | Registry path (e.g. `ghcr.io/my-org`) that `Radius.Compute/containerImages` pushes built images to. |
 | `containerImagesRegistrySecretName` | Name of the Kubernetes Secret holding registry credentials for `Radius.Compute/containerImages`. Optional; leave empty for an unauthenticated registry. |
-| `postgreSqlServerConfigurations` | Server parameters forwarded verbatim to the AVM PostgreSQL flexible server `configurations` array for `Radius.Data/postgreSqlDatabases`, using the AVM item shape `{ name, source, value }`. Most commonly used to allow-list extensions via `azure.extensions` — for example `[{ name: 'azure.extensions', source: 'user-override', value: 'vector' }]` to enable pgvector. See [Extensions and modules by name in Azure Database for PostgreSQL flexible server](https://learn.microsoft.com/en-us/azure/postgresql/extensions/concepts-extensions-versions) for the supported extension names. Optional; defaults to an empty array (no extra server configuration). |
+| `postgreSqlServerConfigurations` | Server parameters forwarded to the AVM PostgreSQL flexible server `configurations` array for `Radius.Data/postgreSqlDatabases`, using the AVM item shape `{ name, source, value }`. Most commonly used to allow-list extensions via `azure.extensions` — for example `[{ name: 'azure.extensions', source: 'user-override', value: 'vector' }]` to enable pgvector. See [Extensions and modules by name in Azure Database for PostgreSQL flexible server](https://learn.microsoft.com/en-us/azure/postgresql/extensions/concepts-extensions-versions) for the supported extension names. A `require_secure_transport` entry pins the transport policy for every database in the Environment and overrides the resource's `tls` property, as described in [PostgreSQL transport policy](#postgresql-transport-policy). Optional; defaults to an empty array (no extra server configuration). |
 
 ## Deploying
 
