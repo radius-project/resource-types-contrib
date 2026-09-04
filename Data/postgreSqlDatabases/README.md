@@ -17,6 +17,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `database` | string | Optional | The name of the database. Defaults to `postgres_db`. |
 | `size` | string (`S`, `M`, `L`) | Optional | The size of the PostgreSQL database. Defaults to `S`. The Recipe maps the size onto a concrete cloud SKU/tier. |
 | `initSql` | string | Optional | Optional SQL script executed on first initialization to create tables, indexes, and seed data. |
+| `tls` | string (`required`, `optional`) | Optional | The requested transport policy for connections to the database server. Defaults to `required`. The Azure Recipe enforces it on the server, which then rejects connections that do not use TLS; set `optional` to have the server also accept connections that do not use TLS. The Kubernetes Recipe runs a PostgreSQL container that serves plaintext and does not enforce it. |
 | `host` | string | Read only | The host name used to connect to the database. Set from the Recipe module's output. |
 | `port` | integer | Optional | The TCP port used to connect to the database. Defaults to `5432`, the standard port every Recipe in this repository provisions. A Recipe that provisions the database on a different port overwrites this value from its own output. Setting it in an application definition changes only the value reported to connected containers, never the port the server listens on. |
 
@@ -30,7 +31,9 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 ## Using the resource type
 
-Add a `postgreSqlDatabases` resource to your application and connect a container to it. Radius injects the database's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_POSTGRESQL_HOST`, `CONNECTION_POSTGRESQL_PORT`, and `CONNECTION_POSTGRESQL_DATABASE`). See [`test/app.bicep`](test/app.bicep) for a complete example.
+Add a `postgreSqlDatabases` resource to your application and connect a container to it. Radius injects the database's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_POSTGRESQL_HOST`, `CONNECTION_POSTGRESQL_PORT`, `CONNECTION_POSTGRESQL_DATABASE`, and `CONNECTION_POSTGRESQL_TLS`). See [`test/app.bicep`](test/app.bicep) for a complete example.
+
+Because `tls` defaults to `required`, configure your PostgreSQL client for TLS — for example, by passing `ssl: { rejectUnauthorized: true }` to the Node.js `pg` driver. `tls` states the policy the application requests, and each Recipe honors it where the platform allows: the Azure Recipe enforces it on the flexible server, while the Kubernetes Recipe runs a PostgreSQL container that serves plaintext and does not enforce it. A platform engineer can also pin the transport policy environment-wide, in which case the pinned value applies instead — see [PostgreSQL transport policy](../../recipe-packs/azure/README.md#postgresql-transport-policy).
 
 ## Migrating Kubernetes consumers
 
