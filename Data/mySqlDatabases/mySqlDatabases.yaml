@@ -51,6 +51,14 @@ types:
       - CONNECTION_MYSQLDB_DATABASE
       - CONNECTION_MYSQLDB_HOST
       - CONNECTION_MYSQLDB_PORT
+      - CONNECTION_MYSQLDB_TLS
+
+      The `tls` property states the requested transport policy for connections to the database server and defaults to `required`. The Azure Recipe enforces it on the server, which then rejects connections that do not use TLS, so configure your client for TLS accordingly. For example, with the Node.js `mysql2` driver:
+      ```js
+      mysql.createPool({ host, user, password, database, ssl: { minVersion: 'TLSv1.2' } })
+      ```
+
+      Set `tls: 'optional'` when the client cannot use TLS, which lets the server also accept connections that do not use TLS.
 
     apiVersions:
       '2025-08-01-preview':
@@ -79,6 +87,11 @@ types:
               enum: ['5.7', '8.0', '8.4']
               default: '8.4'
               description: "(Optional) The major MySQL server version in the X.Y format. Defaults to `8.4` if not provided."
+            tls:
+              type: string
+              enum: ['required', 'optional']
+              default: 'required'
+              description: "(Optional) The requested transport policy for connections to the database server. Defaults to `required`. Where the Recipe enforces it, `required` means the server rejects connections that do not use TLS and `optional` means the server also accepts them."
             host:
               type: string
               description: "(Read Only) The host name used to connect to the database. Mapped from the recipe module's output."

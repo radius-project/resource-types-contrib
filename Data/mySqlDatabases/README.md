@@ -16,6 +16,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `password` | string (`x-radius-sensitive`) | Required | The administrator password. Encrypted at rest, redacted on reads, and injected decrypted into the Recipe as `{{context.resource.properties.password}}`. |
 | `database` | string | Optional | The name of the database. Defaults to `mysql_db`. |
 | `version` | string (`5.7`, `8.0`, `8.4`) | Optional | The major MySQL server version. Defaults to `8.4`. |
+| `tls` | string (`required`, `optional`) | Optional | The requested transport policy for connections to the database server. Defaults to `required`. The Azure Recipe enforces it on the server, which then rejects connections that do not use TLS; set `optional` to have the server also accept connections that do not use TLS. |
 | `host` | string | Read only | The host name used to connect to the database. Set from the Recipe module's output. |
 | `port` | integer | Optional | The TCP port used to connect to the database. Defaults to `3306`, the standard port every Recipe in this repository provisions. A Recipe that provisions the database on a different port overwrites this value from its own output. Setting it in an application definition changes only the value reported to connected containers, never the port the server listens on. |
 
@@ -25,7 +26,8 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 | Platform | Recipe Pack | Recipe source |
 | --- | --- | --- |
-| Azure | [`recipe-packs/azure/bicep-recipepack.bicep`](../../recipe-packs/azure/bicep-recipepack.bicep) | Direct module — Azure Verified Module `avm/res/db-for-my-sql/flexible-server` |
+| Azure | [`recipe-packs/azure/aks-recipepack.bicep`](../../recipe-packs/azure/aks-recipepack.bicep) | Direct module — Azure Verified Module `avm/res/db-for-my-sql/flexible-server` |
+| Kubernetes | [`recipe-packs/kubernetes/default-recipepack.bicep`](../../recipe-packs/kubernetes/default-recipepack.bicep) | `ghcr.io/radius-project/kube-recipes/mysqldatabases` |
 
 ## Using the resource type
 
@@ -34,7 +36,10 @@ it. Unless `disableDefaultEnvVars` is enabled on the connection, Radius injects
 the database's connection properties into the container as environment
 variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>`. For example, a
 connection named `mysqldb` produces `CONNECTION_MYSQLDB_HOST`,
-`CONNECTION_MYSQLDB_PORT`, and `CONNECTION_MYSQLDB_DATABASE`.
+`CONNECTION_MYSQLDB_PORT`, `CONNECTION_MYSQLDB_DATABASE`, and
+`CONNECTION_MYSQLDB_TLS`. Because `tls` defaults to `required`, configure your
+MySQL client for TLS — for example, by passing
+`ssl: { minVersion: 'TLSv1.2' }` to the Node.js `mysql2` driver.
 
 ### Using developer-owned credentials
 
