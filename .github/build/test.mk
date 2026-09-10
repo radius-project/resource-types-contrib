@@ -60,11 +60,15 @@ generate-recipe-pack: ## Generate a recipe pack Bicep template from available re
 	@./.github/scripts/generate-recipe-pack.sh "$(RESOURCE_TYPE_ROOT)" "$(PACK_NAME)" "$(OUTPUT_FILE)"
 
 .PHONY: deploy-recipe-pack
-deploy-recipe-pack: ## Deploy a recipe pack using Bicep template and update environment (requires BICEP_FILE parameter)
+deploy-recipe-pack: ## Deploy a recipe pack using a Bicep template (requires BICEP_FILE parameter)
 ifndef BICEP_FILE
 	$(error BICEP_FILE parameter is required. Usage: make deploy-recipe-pack BICEP_FILE=<path-to-bicep-file>)
 endif
 	@./.github/scripts/deploy-recipe-pack.sh "$(BICEP_FILE)" "$(RESOURCE_GROUP)"
+
+.PHONY: validate-recipe-packs
+validate-recipe-packs: ## Verify checked-in recipe packs contain only Recipe Pack resources
+	@./.github/scripts/validate-recipe-packs.sh
 
 .PHONY: update-env-recipe-pack
 update-env-recipe-pack: ## Update environment with recipe pack ID (requires RECIPE_PACK_NAME and optionally RESOURCE_GROUP and ENVIRONMENT)

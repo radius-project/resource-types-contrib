@@ -92,6 +92,9 @@ jobs:
       - name: Install Radius CLI
         run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
 
+      - name: Validate checked-in Recipe Packs
+        run: make validate-recipe-packs
+
       - name: Validate MySQL Recipe result contract
         if: matrix.recipe == 'bicep'
         run: Data/mySqlDatabases/test/assert-recipe-result.sh
