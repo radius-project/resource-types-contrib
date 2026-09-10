@@ -1,21 +1,5 @@
 extension radius
 
-@description('Deprecated. Radius Environment creation is managed separately from this Recipe Pack.')
-#disable-next-line no-unused-params
-param environmentName string = ''
-
-@description('Deprecated. Radius Environment creation is managed separately from this Recipe Pack.')
-#disable-next-line no-unused-params
-param environmentNamespace string = ''
-
-@description('Deprecated. Azure provider configuration is managed on the Radius Environment.')
-#disable-next-line no-unused-params
-param azureSubscriptionId string = ''
-
-@description('Deprecated. Azure provider configuration is managed on the Radius Environment.')
-#disable-next-line no-unused-params
-param azureResourceGroup string = ''
-
 @description('Name of the Kubernetes Gateway resource that Radius.Compute/routes attach to. Must already exist in the cluster.')
 param routesGatewayName string
 
