@@ -8,14 +8,6 @@
 
 extension radius
 
-@description('Deprecated. Radius Environment creation is managed separately from this Recipe Pack.')
-#disable-next-line no-unused-params
-param environmentName string = ''
-
-@description('Deprecated. Radius Environment creation is managed separately from this Recipe Pack.')
-#disable-next-line no-unused-params
-param environmentNamespace string = ''
-
 resource defaultRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
   name: 'default'
   properties: {
