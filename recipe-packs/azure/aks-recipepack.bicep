@@ -1,17 +1,5 @@
 extension radius
 
-@description('Name of the Radius environment to create.')
-param environmentName string = 'default'
-
-@description('Kubernetes namespace the Radius environment deploys resources into.')
-param environmentNamespace string = 'default'
-
-@description('Azure subscription ID the environment provisions resources into.')
-param azureSubscriptionId string
-
-@description('Azure resource group the environment provisions resources into. Must already exist.')
-param azureResourceGroup string
-
 @description('Name of the Kubernetes Gateway resource that Radius.Compute/routes attach to. Must already exist in the cluster.')
 param routesGatewayName string
 
@@ -378,23 +366,5 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
         }
       }
     }
-  }
-}
-
-resource env 'Radius.Core/environments@2025-08-01-preview' = {
-  name: environmentName
-  properties: {
-    providers: {
-      azure: {
-        subscriptionId: azureSubscriptionId
-        resourceGroupName: azureResourceGroup
-      }
-      kubernetes: {
-        namespace: environmentNamespace
-      }
-    }
-    recipePacks: [
-      recipes.id
-    ]
   }
 }
