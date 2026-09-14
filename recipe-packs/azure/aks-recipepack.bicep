@@ -27,10 +27,10 @@ param containerImagesRegistrySecretName string = ''
 @description('Server parameters forwarded to the AVM PostgreSQL flexible server configurations array for Radius.Data/postgreSqlDatabases, using the AVM item shape with name, source, and value fields. Commonly used to allow-list extensions via the azure.extensions parameter (for example to enable pgvector). Setting require_secure_transport here overrides the transport policy the resource requests through its tls property. See recipe-packs/azure/README.md for an example and a link to the supported extensions. Defaults to an empty array (no extra server configuration).')
 param postgreSqlServerConfigurations array = []
 
-// The Recipe derives a require_secure_transport configuration from the resource's `tls`
-// property, but only when the platform engineer has not already pinned that server
-// parameter. Two configuration children with the same name collide at deploy time, and an
-// operator-set value is environment-wide policy that an application must not downgrade.
+// An operator-set require_secure_transport value takes precedence over the resource's tls.
+// Names are compared exactly: Require_Secure_Transport is not recognized as an override,
+// so the derived entry is still added. Use canonical lowercase Azure parameter names.
+// Safe navigation does not validate entries; they are forwarded for downstream validation.
 var postgreSqlOperatorSetsSecureTransport = !empty(filter(postgreSqlServerConfigurations, config => config.?name == 'require_secure_transport'))
 
 resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {

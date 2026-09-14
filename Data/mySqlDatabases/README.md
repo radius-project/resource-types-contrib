@@ -16,7 +16,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `password` | string (`x-radius-sensitive`) | Required | The administrator password. Encrypted at rest, redacted on reads, and injected decrypted into the Recipe as `{{context.resource.properties.password}}`. |
 | `database` | string | Optional | The name of the database. Defaults to `mysql_db`. |
 | `version` | string (`5.7`, `8.0`, `8.4`) | Optional | The major MySQL server version. Defaults to `8.4`. |
-| `tls` | string (`required`, `optional`) | Optional | The requested transport policy for connections to the database server. Defaults to `required`. The Azure Recipe enforces it on the server, which then rejects connections that do not use TLS; set `optional` to have the server also accept connections that do not use TLS. |
+| `tls` | string (`required`, `optional`) | Optional | The requested transport policy for connections to the database server. Defaults to `required`. Use `optional`, which permits non-TLS connections, only when the server is not publicly reachable. See below for platform behavior. |
 | `host` | string | Read only | The host name used to connect to the database. Set from the Recipe module's output. |
 | `port` | integer | Optional | The TCP port used to connect to the database. Defaults to `3306`, the standard port every Recipe in this repository provisions. A Recipe that provisions the database on a different port overwrites this value from its own output. Setting it in an application definition changes only the value reported to connected containers, never the port the server listens on. |
 
@@ -40,6 +40,17 @@ connection named `mysqldb` produces `CONNECTION_MYSQLDB_HOST`,
 `CONNECTION_MYSQLDB_TLS`. Because `tls` defaults to `required`, configure your
 MySQL client for TLS — for example, by passing
 `ssl: { minVersion: 'TLSv1.2' }` to the Node.js `mysql2` driver.
+
+The Azure Recipe enforces the requested policy on the server. The Kubernetes
+Recipe does not configure or enforce `tls`; its TLS behavior depends on the
+MySQL image and deployment configuration.
+
+Use `optional` only when the server is not publicly reachable. Non-TLS
+connections can expose administrator credentials and query traffic in transit.
+Private reachability does not encrypt traffic, so TLS remains preferred.
+Keep it required with the Azure pack as written; see
+[MySQL transport policy](../../recipe-packs/azure/README.md#mysql-transport-policy)
+for public-network restrictions.
 
 ### Using developer-owned credentials
 
