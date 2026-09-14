@@ -31,7 +31,7 @@ param postgreSqlServerConfigurations array = []
 // property, but only when the platform engineer has not already pinned that server
 // parameter. Two configuration children with the same name collide at deploy time, and an
 // operator-set value is environment-wide policy that an application must not downgrade.
-var postgreSqlOperatorSetsSecureTransport = !empty(filter(postgreSqlServerConfigurations, config => config.name == 'require_secure_transport'))
+var postgreSqlOperatorSetsSecureTransport = !empty(filter(postgreSqlServerConfigurations, config => config.?name == 'require_secure_transport'))
 
 resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
   name: 'azure-avm'
