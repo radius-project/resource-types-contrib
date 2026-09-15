@@ -65,6 +65,28 @@ cleanup_kubernetes_resources() {
 }
 
 assert_recipe_result() {
+    if [[ "$RESOURCE_TYPE" == "Radius.Data/mySqlDatabases" ]]; then
+        local resource_json expected_tls
+        expected_tls="${TLS_POLICY:-required}"
+        [[ "$expected_tls" != "omitted" ]] || expected_tls="required"
+        if ! resource_json=$(rad resource show "$RESOURCE_TYPE" mysql \
+            --application "$APP_NAME" --workspace "$WORKSPACE_NAME" --output json); then
+            echo "Error: Could not read the deployed MySQL resource."
+            return 1
+        fi
+        if ! jq -e --arg tls "$expected_tls" '
+            (.properties.host | type == "string" and length > 0) and
+            (.properties.port | type == "number") and
+            (.properties.database == "appdb") and
+            (.properties.tls == $tls) and
+            (.properties | has("secrets") | not)
+        ' <<<"$resource_json" >/dev/null; then
+            echo "Error: MySQL result must expose host, port, database, and tls=$expected_tls without secrets."
+            return 1
+        fi
+        echo "==> MySQL result properties validated (tls=$expected_tls)"
+        return
+    fi
     if [[ "$RESOURCE_TYPE" != "Radius.Data/postgreSqlDatabases" ]]; then
         return
     fi
@@ -191,45 +213,58 @@ if [[ ! -f "$TEST_FILE" ]]; then
 fi
 
 echo "==> Deploying test application from $TEST_FILE"
-APP_NAME="testapp-$(date +%s)"
+APP_PREFIX="testapp-$(date +%s)-$$"
 
 # Build parameters if the test template requires them
 # Detect @secure() param password by scanning the Bicep file
-PARAMS=""
+PARAMS=()
 if grep -q 'param password' "$TEST_FILE" 2>/dev/null; then
     GENERATED_PASSWORD=$(openssl rand -hex 16 2>/dev/null || echo "testpassword$(date +%s)")
-    PARAMS="--parameters password=${GENERATED_PASSWORD}"
+    PARAMS+=(--parameters "password=${GENERATED_PASSWORD}")
     echo "==> Detected 'password' parameter in test template, auto-generating value"
 fi
 
-# Deploy the test app
-if rad deploy "$TEST_FILE" --application "$APP_NAME" -e "$ENVIRONMENT_PATH" $PARAMS; then
-    echo "==> Test deployment successful"
+POLICIES=("")
+if [[ "$RESOURCE_TYPE" == "Radius.Data/mySqlDatabases" && "$PLATFORM" == "kubernetes" ]]; then
+    POLICIES=(omitted required optional)
+fi
 
-    if ! assert_recipe_result; then
+for TLS_POLICY in "${POLICIES[@]}"; do
+    APP_NAME="$APP_PREFIX${TLS_POLICY:+-$TLS_POLICY}"
+    CASE_PARAMS=("${PARAMS[@]}")
+    if [[ -n "$TLS_POLICY" ]]; then
+        CASE_PARAMS+=(--parameters "tlsPolicy=$TLS_POLICY" --parameters "applicationName=$APP_NAME")
+    fi
+
+    # Deploy the test app
+    if rad deploy "$TEST_FILE" --application "$APP_NAME" -e "$ENVIRONMENT_PATH" "${CASE_PARAMS[@]}"; then
+        echo "==> Test deployment successful"
+
+        if ! assert_recipe_result; then
+            rad app delete "$APP_NAME" --yes 2>/dev/null || true
+            cleanup_kubernetes_resources
+            exit 1
+        fi
+
+        # Cleanup: delete the app
+        echo "==> Cleaning up test application"
+        rad app delete "$APP_NAME" --yes
+
+        # Clean up any leftover K8s resources in the environment namespace to avoid conflicts
+        # with subsequent tests (e.g., secrets created by Bicep recipes that persist after app deletion)
+        cleanup_kubernetes_resources
+    else
+        echo "==> Test deployment failed"
         rad app delete "$APP_NAME" --yes 2>/dev/null || true
+        rad recipe unregister default \
+            --workspace "$WORKSPACE_NAME" \
+            --environment "$ENVIRONMENT_PATH" \
+            --resource-type "$RESOURCE_TYPE"
+
+        # Clean up leftover K8s resources even on failure
         cleanup_kubernetes_resources
         exit 1
     fi
-
-    # Cleanup: delete the app
-    echo "==> Cleaning up test application"
-    rad app delete "$APP_NAME" --yes
-
-    # Clean up any leftover K8s resources in the environment namespace to avoid conflicts
-    # with subsequent tests (e.g., secrets created by Bicep recipes that persist after app deletion)
-    cleanup_kubernetes_resources
-else
-    echo "==> Test deployment failed"
-    rad app delete "$APP_NAME" --yes 2>/dev/null || true
-    rad recipe unregister default \
-        --workspace "$WORKSPACE_NAME" \
-        --environment "$ENVIRONMENT_PATH" \
-        --resource-type "$RESOURCE_TYPE"
-
-    # Clean up leftover K8s resources even on failure
-    cleanup_kubernetes_resources
-    exit 1
-fi
+done
 
 echo "==> Test completed successfully"

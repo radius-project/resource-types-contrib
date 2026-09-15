@@ -44,6 +44,10 @@ test-workspace-bootstrap: ## Run focused tests for workspace bootstrap.
 test-recipe-namespace: ## Run focused tests for immutable recipe environment namespace handling.
 	@./.github/scripts/tests/test-recipe-namespace.sh
 
+.PHONY: test-mysql-tls
+test-mysql-tls: ## Run focused MySQL transport test-runner checks without deploying resources.
+	@bash ./.github/scripts/tests/test-mysql-tls.sh
+
 .PHONY: clean
 clean: ## Delete the local kind cluster, Radius config, Bicep extensions (*.tgz), and bicepconfig.json files
 	@echo -e "$(ARROW) Deleting Radius config file at ~/.rad/config.yaml..."

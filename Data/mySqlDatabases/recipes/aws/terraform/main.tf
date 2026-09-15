@@ -29,6 +29,7 @@ locals {
   username = var.context.resource.properties.username
   password = var.context.resource.properties.password
   version  = try(var.context.resource.properties.version, "8.4")
+  tls      = try(coalesce(var.context.resource.properties.tls, "required"), "required")
 
   unique_suffix = substr(md5(local.resource_name), 0, 13)
 
@@ -117,6 +118,11 @@ module "db" {
     {
       name  = "character_set_server"
       value = "utf8mb4"
+    },
+    {
+      name         = "require_secure_transport"
+      value        = local.tls == "optional" ? "0" : "1"
+      apply_method = "immediate"
     }
   ]
 

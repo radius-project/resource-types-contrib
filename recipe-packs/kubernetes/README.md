@@ -22,6 +22,22 @@ Kube-recipes tagged `:edge` are rebuilt on every push to `main`; `:latest` and t
 | `Radius.Data/redisCaches` | Bicep | `ghcr.io/radius-project/kube-recipes/rediscaches:latest` |
 | `Radius.Messaging/rabbitMQ` | Bicep | `ghcr.io/radius-project/kube-recipes/rabbitmq:latest` |
 
+## MySQL transport policy
+
+The MySQL Recipe enforces `tls: 'required'` (the default) by rejecting
+plaintext TCP connections. `tls: 'optional'` permits plaintext without
+disabling TLS. It uses the MySQL image's generated certificates, which do
+not provide verified server identity for the Kubernetes Service hostname.
+See [MySQL transport enforcement and certificate trust](../../Data/mySqlDatabases/README.md#transport-enforcement-and-certificate-trust)
+for client configuration and the limits of these development certificates.
+
+Recipes published before this change ignore `tls`. Use an artifact containing
+the fix and redeploy the database; merging source does not update existing
+servers or stable recipe tags. The new server arguments cause a pod rollout,
+and this Recipe has no explicit persistent data volume. Protect existing
+data and configure clients for TLS before upgrading. See
+[upgrading existing deployments](../../Data/mySqlDatabases/README.md#upgrading-existing-deployments).
+
 ## Deploying
 
 Deploy the pack with the `rad` CLI. Deploying the file creates the `Radius.Core/recipePacks` resource and configures the `default` Environment to use it:

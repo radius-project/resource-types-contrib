@@ -8,6 +8,8 @@ on:
     paths:
       - "**/kubernetes/**"
       - "**/test/app.bicep"
+      - "Data/mySqlDatabases/test/**"
+      - "Data/mySqlDatabases/recipes/aws/terraform/**"
       - "**/*.yaml"
       - "**/*.svg"
       - ".github/workflows/validate-resource-types.yaml"
@@ -58,8 +60,58 @@ jobs:
       - name: Run recipe namespace tests
         run: make test-recipe-namespace
 
+      - name: Run MySQL transport test-runner checks
+        run: make test-mysql-tls
+
       - name: Validate resource type icons
         run: make validate-icons
+
+  validate-mysql-images:
+    name: Validate MySQL Image Transport
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Radius CLI
+        run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
+
+      - name: Check MySQL transport on supported amd64 images
+        run: bash Data/mySqlDatabases/test/test-image-matrix.sh
+
+  validate-mysql-aws-plan:
+    name: Validate MySQL AWS Transport Plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: Data/mySqlDatabases/recipes/aws/terraform
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.11.4
+          terraform_wrapper: false
+
+      - name: Check mocked RDS parameter group plans
+        run: |
+          set -euo pipefail
+          terraform init -backend=false -input=false
+          terraform fmt -check -recursive
+          terraform validate -no-color
+          terraform test -json -verbose | python3 tests/assert-tls-plan.py
 
   validate-resource-types:
     name: Validate Resource Types and Recipes

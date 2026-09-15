@@ -7,11 +7,23 @@ param environment string
 @secure()
 param password string
 
+@description('Test-only selector; omitted leaves the tls resource property absent.')
+@allowed([
+  'omitted'
+  'required'
+  'optional'
+])
+param tlsPolicy string = 'omitted'
+
+@description('Distinct application name for each policy deployment.')
+param applicationName string = 'mysql-test'
+
 var databaseName = 'appdb'
 var username = 'radadmin'
+var tlsAssertions = replace(loadTextContent('assert-tls.sh'), '\r', '')
 
 resource app 'Radius.Core/applications@2025-08-01-preview' = {
-  name: 'mysql-test'
+  name: applicationName
   properties: {
     environment: environment
   }
@@ -37,15 +49,16 @@ resource clientCredentials 'Radius.Security/secrets@2025-08-01-preview' = {
 
 resource mysql 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
   name: 'mysql'
-  properties: {
+  properties: union({
     environment: environment
     application: app.id
     version: '8.0'
     database: databaseName
     username: username
     password: password
-    // `tls` is omitted so this test exercises the schema default (`required`).
-  }
+  }, tlsPolicy == 'omitted' ? {} : {
+    tls: tlsPolicy == 'optional' ? 'optional' : 'required'
+  })
 }
 
 resource mysqlclient 'Radius.Compute/containers@2025-08-01-preview' = {
@@ -61,17 +74,17 @@ resource mysqlclient 'Radius.Compute/containers@2025-08-01-preview' = {
           '-c'
         ]
         args: [
-          '''
-until MYSQL_PWD="$MYSQL_PASSWORD" mysql --host="$MYSQL_HOST" --port="$MYSQL_PORT" --user="$MYSQL_USER" --database="$MYSQL_DB" --execute='SELECT 1'; do
-  sleep 2
-done
+          '${tlsAssertions}\n${'''
 touch /tmp/mysql-ready
 while true; do
   sleep 3600
 done
-'''
+'''}'
         ]
         env: {
+          MYSQL_TLS_POLICY: {
+            value: tlsPolicy
+          }
           // MYSQL_HOST selects the real MySQL endpoint. The host reference and
           // connection below both preserve database-before-client ordering.
           MYSQL_HOST: {
