@@ -1,17 +1,12 @@
 // Default Radius recipe pack
 //
-// Deploy with:
-//   rad deploy recipe-packs/kubernetes/default-recipepack.bicep
+// Deploy into an existing Environment, then associate the pack:
+//   rad deploy recipe-packs/kubernetes/default-recipepack.bicep --environment default
+//   rad env update default --recipe-packs default --preview
 //
 // This mirrors /planes/radius/local/resourceGroups/default/providers/Radius.Core/recipePacks/default
 
 extension radius
-
-@description('Name of the Radius environment to create.')
-param environmentName string = 'default'
-
-@description('Kubernetes namespace the Radius environment deploys resources into.')
-param environmentNamespace string = 'default'
 
 resource defaultRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
   name: 'default'
@@ -50,19 +45,5 @@ resource defaultRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
         source: 'ghcr.io/radius-project/kube-recipes/rabbitmq:latest'
       }
     }
-  }
-}
-
-resource env 'Radius.Core/environments@2025-08-01-preview' = {
-  name: environmentName
-  properties: {
-    providers: {
-      kubernetes: {
-        namespace: environmentNamespace
-      }
-    }
-    recipePacks: [
-      defaultRecipePack.id
-    ]
   }
 }
