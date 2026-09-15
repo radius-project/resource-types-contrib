@@ -76,10 +76,17 @@ locals {
 
   is_valid_dockerfile = !startswith(local.dockerfile, "/") && !strcontains(local.dockerfile, "..") && can(regex("^[A-Za-z0-9._/-]+$", local.dockerfile))
   is_valid_git_source = can(regex("^git::https://[A-Za-z0-9._:/@?=&%~+#-]+$", local.build_source))
-  is_local_source_candidate = !local.is_git_source && startswith(local.build_source, "${local.local_context_root}/") && (
-    !strcontains(local.build_source, "..") &&
-    can(regex("^[A-Za-z0-9._/+~-]+$", local.build_source))
-  )
+  # Canonicalize the lexical path: drop empty and "." segments so
+  # "<root>/app/", "<root>//app" and "<root>/app/./sub" behave like the
+  # realpath-normalized forms the Bicep script accepts. ".." is rejected
+  # below, so the result names the same directory as the input.
+  normalized_build_source = local.is_git_source ? local.build_source : "/${join("/", [for segment in split("/", local.build_source) : segment if segment != "" && segment != "."])}"
+  # Only absolute inputs qualify: normalization would otherwise turn a relative
+  # "var/radius/build-contexts/app" into an in-root path. After normalization
+  # every segment beneath the root is non-empty and not ".", so aliases of the
+  # root itself (a bare trailing slash, "/./", or "/app/..") never reach the
+  # plan-time hash below.
+  is_local_source_candidate   = !local.is_git_source && startswith(local.build_source, "/") && !strcontains(local.build_source, "..") && can(regex("^${local.local_context_root}(/[A-Za-z0-9._+~-]+)+$", local.normalized_build_source))
   should_resolve_local_source = local.is_local_source_candidate && local.is_valid_dockerfile
 
   # Hash inputs that uniquely identify the build, so the image tag is
@@ -97,7 +104,7 @@ locals {
   # path handed to fileset, not on the call. Otherwise a rejected source such
   # as "/" is still walked and hashed at plan time before the precondition
   # fails. The placeholder never exists, so fileset returns an empty set.
-  hash_source_dir = local.should_resolve_local_source ? local.build_source : "${local.local_context_root}/.radius-unresolved-source"
+  hash_source_dir = local.should_resolve_local_source ? local.normalized_build_source : "${local.local_context_root}/.radius-unresolved-source"
   resolved_local_context_hash = local.should_resolve_local_source ? sha256(join("", concat(
     [for f in fileset(local.hash_source_dir, "**") : "${f}:${filesha1("${local.hash_source_dir}/${f}")}"],
     [local.dockerfile],
@@ -131,7 +138,7 @@ locals {
     LOCAL_BUILD_SOURCE=$(
       sh "${path.module}/resolve-local-context.sh" \
         "${local.local_context_root}" \
-        "${local.build_source}" \
+        "${local.normalized_build_source}" \
         "${local.dockerfile}"
     )
   EOT
