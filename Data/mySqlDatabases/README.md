@@ -106,7 +106,7 @@ Kubernetes `:edge` follows main; `:latest` and version tags change with stable
 releases. Older pinned artifacts retain the previous behavior.
 
 This enforcement change covers MySQL only. PostgreSQL on Kubernetes still
-needs separate TLS enforcement work, as tracked in [#310](https://github.com/radius-project/resource-types-contrib/issues/310).
+needs separate TLS enforcement work.
 
 ### Checking transport enforcement
 
