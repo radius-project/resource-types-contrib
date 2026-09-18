@@ -356,8 +356,9 @@ jobs:
           if [[ "${{ matrix.recipe }}" == "bicep" ]]; then
             recipe_packs=(azure-avm "${recipe_packs[@]}")
           fi
+          recipe_pack_list="$(IFS=,; echo "${recipe_packs[*]}")"
           rad env update "$AZURE_ENVIRONMENT_NAME" \
-            --recipe-packs "${recipe_packs[@]}" \
+            --recipe-packs "$recipe_pack_list" \
             --preview
 
       - name: Test Azure ${{ matrix.recipe }} Recipes
