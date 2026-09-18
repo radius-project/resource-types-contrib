@@ -42,10 +42,11 @@ locals {
 
   image_name = local.resource_name
 
-  build_source  = local.properties.build.source
-  dockerfile    = try(local.properties.build.dockerfile, "Dockerfile")
-  platforms     = try(local.properties.build.platforms, ["linux/amd64", "linux/arm64"])
-  is_git_source = can(regex("^git::", local.build_source))
+  local_context_root = "/var/radius/build-contexts"
+  build_source       = local.properties.build.source
+  dockerfile         = try(local.properties.build.dockerfile, "Dockerfile")
+  platforms          = try(local.properties.build.platforms, ["linux/amd64", "linux/arm64"])
+  is_git_source      = can(regex("^git::", local.build_source))
 
   go_getter_stripped = local.is_git_source ? replace(local.build_source, "git::", "") : ""
   url_no_query       = local.is_git_source ? split("?", local.go_getter_stripped)[0] : ""
@@ -73,22 +74,44 @@ locals {
 
   build_args = try(local.properties.build.args, {})
 
+  is_valid_dockerfile = !startswith(local.dockerfile, "/") && !strcontains(local.dockerfile, "..") && can(regex("^[A-Za-z0-9._/-]+$", local.dockerfile))
+  is_valid_git_source = can(regex("^git::https://[A-Za-z0-9._:/@?=&%~+#-]+$", local.build_source))
+  # Canonicalize the lexical path: drop empty and "." segments so
+  # "<root>/app/", "<root>//app" and "<root>/app/./sub" behave like the
+  # realpath-normalized forms the Bicep script accepts. ".." is rejected
+  # below, so the result names the same directory as the input.
+  normalized_build_source = local.is_git_source ? local.build_source : "/${join("/", [for segment in split("/", local.build_source) : segment if segment != "" && segment != "."])}"
+  # Only absolute inputs qualify: normalization would otherwise turn a relative
+  # "var/radius/build-contexts/app" into an in-root path. After normalization
+  # every segment beneath the root is non-empty and not ".", so aliases of the
+  # root itself (a bare trailing slash, "/./", or "/app/..") never reach the
+  # plan-time hash below.
+  is_local_source_candidate   = !local.is_git_source && startswith(local.build_source, "/") && !strcontains(local.build_source, "..") && can(regex("^${local.local_context_root}(/[A-Za-z0-9._+~-]+)+$", local.normalized_build_source))
+  should_resolve_local_source = local.is_local_source_candidate && local.is_valid_dockerfile
+
   # Hash inputs that uniquely identify the build, so the image tag is
   # content-addressable. For local sources, hash the file tree. For git
   # sources, hash the resolved URL (incl. ref and subdir), so a changed
   # ref produces a new tag. Both include the dockerfile path, platforms,
   # and build args.
-  local_context_hash = local.is_git_source ? sha256(jsonencode({
+  git_context_hash = sha256(jsonencode({
     url        = local.buildctl_git_url
     dockerfile = local.dockerfile
     platforms  = local.platforms
     args       = local.build_args
-    })) : sha256(join("", concat(
-    [for f in fileset(local.build_source, "**") : "${f}:${filesha1("${local.build_source}/${f}")}"],
+  }))
+  # HCL evaluates both branches of a conditional, so the guard must be on the
+  # path handed to fileset, not on the call. Otherwise a rejected source such
+  # as "/" is still walked and hashed at plan time before the precondition
+  # fails. The placeholder never exists, so fileset returns an empty set.
+  hash_source_dir = local.should_resolve_local_source ? local.normalized_build_source : "${local.local_context_root}/.radius-unresolved-source"
+  resolved_local_context_hash = local.should_resolve_local_source ? sha256(join("", concat(
+    [for f in fileset(local.hash_source_dir, "**") : "${f}:${filesha1("${local.hash_source_dir}/${f}")}"],
     [local.dockerfile],
     local.platforms,
     [jsonencode(local.build_args)],
-  )))
+  ))) : ""
+  local_context_hash = local.is_git_source ? local.git_context_hash : local.resolved_local_context_hash
 
   computed_tag = "sha256-${substr(local.local_context_hash, 0, 16)}"
   resolved_tag = coalesce(local.user_tag, local.computed_tag)
@@ -104,11 +127,21 @@ locals {
     "--opt filename=${local.dockerfile}",
     local.build_arg_flags,
     ])) : join(" ", compact([
-    "--local context=${local.build_source}",
-    "--local dockerfile=${local.build_source}",
+    "--local context=\"$LOCAL_BUILD_SOURCE\"",
+    "--local dockerfile=\"$LOCAL_BUILD_SOURCE\"",
     "--opt filename=${local.dockerfile}",
     local.build_arg_flags,
   ]))
+
+  local_context_validation_command = local.is_git_source ? ":" : <<-EOT
+    set -eu
+    LOCAL_BUILD_SOURCE=$(
+      sh "${path.module}/resolve-local-context.sh" \
+        "${local.local_context_root}" \
+        "${local.normalized_build_source}" \
+        "${local.dockerfile}"
+    )
+  EOT
 
   # When registrySecretName is set, load the same-named K8s Secret and
   # use it as DOCKER_CONFIG. Unset => unauthenticated registry.
@@ -166,12 +199,12 @@ resource "terraform_data" "validate_inputs" {
       error_message = "containerImages: properties.tag must match Docker tag spec [A-Za-z0-9_][A-Za-z0-9._-]{0,127} (got ${jsonencode(local.user_tag)})."
     }
     precondition {
-      condition     = !startswith(local.dockerfile, "/") && !strcontains(local.dockerfile, "..") && can(regex("^[A-Za-z0-9._/-]+$", local.dockerfile))
+      condition     = local.is_valid_dockerfile
       error_message = "containerImages: properties.build.dockerfile must be a relative path (no leading '/' and no '..' segments) matching [A-Za-z0-9._/-]+ (got ${local.dockerfile})."
     }
     precondition {
-      condition     = can(regex("^git::https://[A-Za-z0-9._:/@?=&%~+#-]+$", local.build_source)) || (!strcontains(local.build_source, "..") && can(regex("^[A-Za-z0-9._/+~-]+$", local.build_source)))
-      error_message = "containerImages: properties.build.source must be a git::https URL or a filesystem path (no '..' segments) (got ${local.build_source})."
+      condition     = local.is_valid_git_source || local.is_local_source_candidate
+      error_message = "containerImages: properties.build.source must be a git::https URL or a filesystem path beneath ${local.local_context_root} (no '..' segments) (got ${local.build_source})."
     }
     precondition {
       condition     = length(local.platforms) > 0
@@ -228,6 +261,7 @@ resource "terraform_data" "build_push" {
     }
     command = <<-EOT
       set -eu
+      ${local.local_context_validation_command}
       buildctl build \
         --frontend dockerfile.v0 \
         ${local.context_flags} \

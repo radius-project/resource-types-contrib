@@ -96,6 +96,10 @@ jobs:
         if: matrix.recipe == 'bicep'
         run: Data/mySqlDatabases/test/assert-recipe-result.sh
 
+      - name: Validate containerImages local context resolver
+        if: matrix.recipe == 'terraform'
+        run: Compute/containerImages/test/resolve-local-context-test.sh
+
       # this setups a local k3d cluster for testing purposes, creates workspace, group and  env preview
       - name: Create Radius Cluster
         run: make create-radius-cluster
