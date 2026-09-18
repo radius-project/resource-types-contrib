@@ -351,7 +351,14 @@ jobs:
 
       - name: Update Azure Environment with Recipe Pack
         if: steps.generate.outputs.has_recipes == 'true'
-        run: make update-env-recipe-pack RECIPE_PACK_NAME=azure${{ matrix.recipe }}recipepack ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+        run: |
+          recipe_packs=(azure${{ matrix.recipe }}recipepack)
+          if [[ "${{ matrix.recipe }}" == "bicep" ]]; then
+            recipe_packs=(azure-avm "${recipe_packs[@]}")
+          fi
+          rad env update "$AZURE_ENVIRONMENT_NAME" \
+            --recipe-packs "${recipe_packs[@]}" \
+            --preview
 
       - name: Test Azure ${{ matrix.recipe }} Recipes
         if: steps.generate.outputs.has_recipes == 'true'

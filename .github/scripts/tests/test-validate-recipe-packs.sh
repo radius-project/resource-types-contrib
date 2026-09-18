@@ -28,25 +28,35 @@ run_validator() {
 
 write_pack() {
     mkdir -p "$TEST_ROOT/recipe-packs/test"
-    printf '%s\n' "$1" >"$TEST_ROOT/recipe-packs/test/test-recipepack.bicep"
+    cat >"$TEST_ROOT/recipe-packs/test/test-recipepack.bicep"
 }
 
-write_pack "  resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {}"
+write_pack <<'EOF'
+  resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {}
+EOF
 run_validator
 
-write_pack "// resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {}"
+write_pack <<'EOF'
+// resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {}
+EOF
 if run_validator; then
     echo "Comment-only Recipe Pack declaration unexpectedly passed validation" >&2
     exit 1
 fi
 
-write_pack $'resource recipes \\'Radius.Core/recipePacks@2025-08-01-preview\\' = {}\nmodule environment \\'./environment.bicep\\' = {}'
+write_pack <<'EOF'
+resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {}
+module environment './environment.bicep' = {}
+EOF
 if run_validator; then
     echo "Recipe Pack containing a module unexpectedly passed validation" >&2
     exit 1
 fi
 
-write_pack $'resource recipes \\'Radius.Core/recipePacks@2025-08-01-preview\\' = {}\nresource environment \\'Radius.Core/environments@2025-08-01-preview\\' = {}'
+write_pack <<'EOF'
+resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {}
+resource environment 'Radius.Core/environments@2025-08-01-preview' = {}
+EOF
 if run_validator; then
     echo "Recipe Pack containing an Environment unexpectedly passed validation" >&2
     exit 1

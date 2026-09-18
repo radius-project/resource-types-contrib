@@ -61,6 +61,9 @@ jobs:
       - name: Validate resource type icons
         run: make validate-icons
 
+      - name: Validate checked-in Recipe Packs
+        run: make validate-recipe-packs
+
   validate-resource-types:
     name: Validate Resource Types and Recipes
     runs-on: ubuntu-24.04
@@ -91,9 +94,6 @@ jobs:
 
       - name: Install Radius CLI
         run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
-
-      - name: Validate checked-in Recipe Packs
-        run: make validate-recipe-packs
 
       - name: Validate MySQL Recipe result contract
         if: matrix.recipe == 'bicep'
