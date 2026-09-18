@@ -22,6 +22,7 @@ var namespace = context.runtime.kubernetes.namespace
 var username = context.resource.properties.username
 var password = context.resource.properties.password
 var database = context.resource.properties.?database ?? 'mysql_db'
+var tls = context.resource.properties.?tls ?? 'required'
 
 @description('The major MySQL server version in the X.Y format. Defaults to the version 8.4 if not provided.')
 @allowed([
@@ -88,6 +89,9 @@ resource mySql 'apps/Deployment@v1' = {
             // This container is the running mysql instance.
             name: 'mysql'
             image: 'mysql:${version}'
+            args: [
+              tls == 'optional' ? '--require-secure-transport=OFF' : '--require-secure-transport=ON'
+            ]
             ports: [
               {
                 containerPort: port
