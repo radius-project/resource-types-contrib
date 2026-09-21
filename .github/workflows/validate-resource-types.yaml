@@ -61,6 +61,9 @@ jobs:
       - name: Validate resource type icons
         run: make validate-icons
 
+      - name: Validate checked-in Recipe Packs
+        run: make validate-recipe-packs
+
   validate-resource-types:
     name: Validate Resource Types and Recipes
     runs-on: ubuntu-24.04
