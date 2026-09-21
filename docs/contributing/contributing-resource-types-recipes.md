@@ -402,16 +402,16 @@ After creating your Resource Type and Recipes, test them locally using the provi
    ```bash
    # Configure the Radius Azure provider credentials (requires AZURE_* env vars:
    # AZURE_SUBSCRIPTION_ID, AZURE_RESOURCE_GROUP, AZURE_LOCATION, AZURE_TENANT_ID, AZURE_CLIENT_ID)
-   make configure-azure-provider
+   AZURE_ENVIRONMENT_NAME=default make configure-azure-provider
 
    # Deploy the Recipe Pack, supplying only Recipe parameters
    rad deploy recipe-packs/azure/aks-recipepack.bicep \
-     --environment azure \
+     --environment default \
      --parameters routesGatewayName=<gateway-name> \
      --parameters containerImagesRegistry=<registry-path>
 
    # Associate the deployed pack with the existing Environment
-   rad env update azure \
+   rad env update default \
      --recipe-packs azure-avm \
      --preview
    ```
@@ -421,13 +421,13 @@ After creating your Resource Type and Recipes, test them locally using the provi
    Deploy your Resource Type's test application against the configured Environment:
 
    ```bash
-   rad deploy Data/redisCaches/test/app.bicep
+   rad deploy Data/redisCaches/test/app.bicep --environment default
    ```
 
 5. **Run the automated tests**:
 
   ```bash
-  make test
+  make test ENVIRONMENT=default
   ```
 
 For detailed testing instructions, see [Testing Resource Types and Recipes](testing-resource-types-recipes.md).

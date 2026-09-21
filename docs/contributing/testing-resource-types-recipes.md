@@ -405,8 +405,8 @@ make install-radius-cli
 # AZURE_TENANT_ID triggers OIDC/Workload Identity setup
 make create-radius-cluster
 
-# Configure the Azure cloud provider in Radius
-make configure-azure-provider
+# Configure the Azure cloud provider on the Environment created by cluster setup
+AZURE_ENVIRONMENT_NAME=default make configure-azure-provider
 ```
 
 #### 5. Build and Test Azure Recipes

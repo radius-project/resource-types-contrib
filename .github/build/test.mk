@@ -70,6 +70,7 @@ endif
 validate-recipe-packs: ## Verify checked-in recipe packs contain only Recipe Pack resources
 	@./.github/scripts/validate-recipe-packs.sh
 	@./.github/scripts/tests/test-validate-recipe-packs.sh
+	@./.github/scripts/tests/test-deploy-checked-in-azure-recipe-pack.sh
 
 .PHONY: update-env-recipe-pack
 update-env-recipe-pack: ## Update environment with recipe pack ID (requires RECIPE_PACK_NAME and optionally RESOURCE_GROUP and ENVIRONMENT)

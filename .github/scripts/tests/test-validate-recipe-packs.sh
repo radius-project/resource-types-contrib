@@ -18,12 +18,12 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+SOURCE_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/rtc-recipe-pack-validation-XXXXXX")"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
 run_validator() {
-    REPO_ROOT="$TEST_ROOT" "$REPO_ROOT/.github/scripts/validate-recipe-packs.sh" >/dev/null 2>&1
+    REPO_ROOT="$TEST_ROOT" "$SOURCE_REPO_ROOT/.github/scripts/validate-recipe-packs.sh" >/dev/null 2>&1
 }
 
 write_pack() {
