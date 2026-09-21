@@ -1,12 +1,12 @@
 # Kubernetes Recipe Pack
 
-This folder contains the **Kubernetes Recipe Pack** — a collection of Recipes that provision Radius Resource Types on Kubernetes, bundled with an Environment definition. Deploying the pack configures a Radius Environment to use the Kubernetes provider and registers the Recipes for every Resource Type it covers.
+This folder contains the **Kubernetes Recipe Pack** — a collection of Recipes that provision Radius Resource Types on Kubernetes. Deploying the pack creates only a reusable `Radius.Core/recipePacks` resource. Create the target Radius Environment separately, then associate the pack with it.
 
 | File | Description |
 | --- | --- |
-| `default-recipepack.bicep` | Recipe Pack wiring the Bicep recipes for all Kubernetes-provisioned types, plus the Environment definition. |
+| `default-recipepack.bicep` | Recipe Pack wiring the Bicep recipes for all Kubernetes-provisioned types. |
 
-Each pack declares a `Radius.Core/recipePacks` resource whose `recipes` map contains an entry for every Resource Type, and a `Radius.Core/environments` resource that references the pack.
+The pack declares one `Radius.Core/recipePacks` resource whose `recipes` map contains an entry for every Resource Type. It does not create or modify a `Radius.Core/environments` resource.
 
 ## Recipes in this pack
 
@@ -24,13 +24,26 @@ Kube-recipes tagged `:edge` are rebuilt on every push to `main`; `:latest` and t
 
 ## Deploying
 
-Deploy the pack with the `rad` CLI. Deploying the file creates the `Radius.Core/recipePacks` resource and configures the `default` Environment to use it:
+Create the Environment first:
 
 ```bash
-rad deploy recipe-packs/kubernetes/default-recipepack.bicep
+rad env create default \
+  --kubernetes-namespace default \
+  --preview
 ```
 
-After the pack is deployed, every Resource Type it covers can be used in an application deployed to that Environment.
+Deploy the Recipe Pack into that existing Environment, then associate it:
+
+```bash
+rad deploy recipe-packs/kubernetes/default-recipepack.bicep \
+  --environment default
+
+rad env update default \
+  --recipe-packs default \
+  --preview
+```
+
+After the association is updated, every Resource Type the pack covers can be used in an application deployed to that Environment.
 
 ## Contributing a Recipe
 

@@ -40,19 +40,35 @@ Recipe Packs live at the repository root under [`recipe-packs/`](../recipe-packs
 - `aws/` — recipes for all types provisioned on AWS.
 - `kubernetes/` — recipes for all types provisioned in-cluster on Kubernetes.
 
-Each Recipe Pack bundles the Recipes for every Resource Type on that platform together with an Environment definition, so a platform engineer configures an Environment by deploying a single Recipe Pack instead of registering Recipes one type at a time. Cloud packs (under `azure/` and `aws/`) accept parameters for the provider configuration, such as the subscription or account the Environment provisions into.
+Each Recipe Pack bundles the Recipes for every Resource Type on that platform into a reusable `Radius.Core/recipePacks` resource. Recipe Pack files do not create or modify Environments. A platform engineer creates and configures an Environment separately, deploys the pack, and then associates the pack with the Environment instead of registering Recipes one type at a time.
 
-Deploy a Recipe Pack to create and configure the Environment:
+For example, create an Azure-backed Environment:
 
 ```bash
-# Configure an Environment with the Azure recipe pack
-rad deploy recipe-packs/azure/aks-recipepack.bicep
+rad env create default \
+  --kubernetes-namespace default \
+  --preview
 
-# Or start with the zero-config Kubernetes default
-rad deploy recipe-packs/default-kubernetes/aks-recipepack.bicep
+rad env update default \
+  --azure-subscription-id <subscription-id> \
+  --azure-resource-group <resource-group> \
+  --preview
 ```
 
-After a Recipe Pack is deployed, every Resource Type it covers can be used in an application deployed to that Environment.
+Then deploy and associate the Azure Recipe Pack:
+
+```bash
+rad deploy recipe-packs/azure/aks-recipepack.bicep \
+  --environment default \
+  --parameters routesGatewayName=<gateway-name> \
+  --parameters containerImagesRegistry=<registry-path>
+
+rad env update default \
+  --recipe-packs azure-avm \
+  --preview
+```
+
+For the zero-config Kubernetes default, create the Environment with `rad env create`, deploy `recipe-packs/kubernetes/default-recipepack.bicep`, and associate the `default` pack in the same way. After association, every Resource Type the pack covers can be used in an application deployed to that Environment.
 
 ## Using a Resource Type in a Radius application
 

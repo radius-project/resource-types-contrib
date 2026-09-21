@@ -1,12 +1,12 @@
 # Azure Recipe Pack
 
-This folder contains the **Azure Recipe Pack** — a collection of Recipes that provision Radius Resource Types on Azure, bundled with an Environment definition. Deploying the pack configures a Radius Environment to use the Azure provider and registers the Recipes for every Resource Type it covers.
+This folder contains the **Azure Recipe Pack** — a collection of Recipes that provision Radius Resource Types on Azure. Deploying the pack creates only a reusable `Radius.Core/recipePacks` resource. Create and configure the target Radius Environment separately, then associate the pack with it.
 
 | File | Description |
 | --- | --- |
-| `aks-recipepack.bicep` | Recipe Pack wiring the Bicep recipes for all Azure-provisioned types, plus the Environment definition. |
+| `aks-recipepack.bicep` | Recipe Pack wiring the Bicep recipes for all Azure-provisioned types. |
 
-Each pack declares a `Radius.Core/recipePacks` resource whose `recipes` map contains an entry for every Resource Type, and a `Radius.Core/environments` resource that references the pack and configures the Azure provider.
+The pack declares one `Radius.Core/recipePacks` resource whose `recipes` map contains an entry for every Resource Type. It does not create or modify a `Radius.Core/environments` resource.
 
 ## Azure resource naming
 
@@ -76,14 +76,10 @@ This Recipe therefore requires a registered `Radius.Data` namespace whose `postg
 
 ## Parameters
 
-The Azure pack accepts the provider configuration it needs to provision into your subscription:
+The Azure pack accepts only parameters consumed by its Recipes. Azure and Kubernetes provider settings belong to the target Environment and are configured separately.
 
 | Parameter | Description |
 | --- | --- |
-| `environmentName` | Name of the Radius Environment to create. Defaults to `default`. |
-| `environmentNamespace` | Kubernetes namespace the Radius Environment deploys resources into. Defaults to `default`. |
-| `azureSubscriptionId` | Azure subscription ID the Environment provisions resources into. |
-| `azureResourceGroup` | Existing Azure resource group the Environment provisions resources into. |
 | `routesGatewayName` | Name of the existing Kubernetes Gateway resource that `Radius.Compute/routes` attach to. |
 | `routesGatewayNamespace` | Namespace of the Gateway resource for `Radius.Compute/routes`. Defaults to `default`. |
 | `containerImagesRegistry` | Registry path (e.g. `ghcr.io/my-org`) that `Radius.Compute/containerImages` pushes built images to. |
@@ -92,17 +88,37 @@ The Azure pack accepts the provider configuration it needs to provision into you
 
 ## Deploying
 
-Deploy the pack with the `rad` CLI, supplying the parameters it requires. Deploying the file creates the `Radius.Core/recipePacks` resource and configures the `default` Environment to use it:
+Create and configure the Environment first:
+
+```bash
+rad env create default \
+  --kubernetes-namespace default \
+  --preview
+
+rad env update default \
+  --azure-subscription-id <subscription-id> \
+  --azure-resource-group <resource-group> \
+  --preview
+```
+
+Deploy the Recipe Pack into that existing Environment, supplying only Recipe parameters:
 
 ```bash
 rad deploy recipe-packs/azure/aks-recipepack.bicep \
-  --parameters azureSubscriptionId=<subscription-id> \
-  --parameters azureResourceGroup=<resource-group> \
+  --environment default \
   --parameters routesGatewayName=<gateway-name> \
   --parameters containerImagesRegistry=<registry-path>
 ```
 
-After the pack is deployed, every Resource Type it covers can be used in an application deployed to that Environment.
+Finally, associate the pack with the Environment:
+
+```bash
+rad env update default \
+  --recipe-packs azure-avm \
+  --preview
+```
+
+After the association is updated, every Resource Type the pack covers can be used in an application deployed to that Environment.
 
 ## Contributing a Recipe
 

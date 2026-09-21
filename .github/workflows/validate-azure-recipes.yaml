@@ -304,36 +304,7 @@ jobs:
         if: matrix.recipe == 'bicep'
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-        run: |
-          set -euo pipefail
-          template=recipe-packs/azure/aks-recipepack.bicep
-          legacy_namespace=azure-aks-pack-validation
-          deploy_args=(
-            "$template"
-            --group default
-            --environment /planes/radius/local/resourcegroups/default/providers/Radius.Core/environments/default
-            --parameters routesGatewayName=validation-gateway
-            --parameters containerImagesRegistry=localhost:5000
-          )
-
-          if grep -Eq '^[[:space:]]*param[[:space:]]+environmentName([[:space:]]|$)' "$template"; then
-            deploy_args+=(--parameters "environmentName=$legacy_namespace")
-          fi
-          if grep -Eq '^[[:space:]]*param[[:space:]]+environmentNamespace([[:space:]]|$)' "$template"; then
-            kubectl create namespace "$legacy_namespace" --dry-run=client -o yaml | kubectl apply -f -
-            deploy_args+=(--parameters "environmentNamespace=$legacy_namespace")
-          fi
-          if grep -Eq '^[[:space:]]*param[[:space:]]+azureSubscriptionId([[:space:]]|$)' "$template"; then
-            deploy_args+=(--parameters "azureSubscriptionId=$AZURE_SUBSCRIPTION_ID")
-          fi
-          if grep -Eq '^[[:space:]]*param[[:space:]]+azureResourceGroup([[:space:]]|$)' "$template"; then
-            deploy_args+=(--parameters "azureResourceGroup=$AZURE_RESOURCE_GROUP")
-          fi
-
-          rad deploy "${deploy_args[@]}"
-          rad env update "$AZURE_ENVIRONMENT_NAME" \
-            --recipe-packs azure-avm \
-            --preview
+        run: .github/scripts/deploy-checked-in-azure-recipe-pack.sh
 
       - name: Generate Azure Recipe Pack
         id: generate
