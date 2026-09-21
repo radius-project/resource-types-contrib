@@ -19,44 +19,17 @@
 set -euo pipefail
 
 template="${1:-recipe-packs/azure/aks-recipepack.bicep}"
-namespace=azure-aks-pack-validation
-environment=azure-aks-pack-validation
-
-: "${AZURE_SUBSCRIPTION_ID:?AZURE_SUBSCRIPTION_ID must be set}"
-: "${AZURE_RESOURCE_GROUP:?AZURE_RESOURCE_GROUP must be set}"
+environment=default
 
 if [[ ! -f "$template" ]]; then
     echo "Error: Azure Recipe Pack not found: $template" >&2
     exit 1
 fi
 
-kubectl create namespace "$namespace" --dry-run=client -o yaml | kubectl apply -f -
-rad env create "$environment" \
-    --azure-subscription-id "$AZURE_SUBSCRIPTION_ID" \
-    --azure-resource-group "$AZURE_RESOURCE_GROUP" \
-    --kubernetes-namespace "$namespace" \
-    --preview
-
-deploy_args=(
-    "$template"
-    --group default
-    --environment "$environment"
-    --parameters routesGatewayName=validation-gateway
+rad deploy "$template" \
+    --group default \
+    --environment "$environment" \
+    --parameters routesGatewayName=validation-gateway \
     --parameters containerImagesRegistry=localhost:5000
-)
 
-if grep -Eq '^[[:space:]]*param[[:space:]]+environmentName([[:space:]]|$)' "$template"; then
-    deploy_args+=(--parameters "environmentName=$environment")
-fi
-if grep -Eq '^[[:space:]]*param[[:space:]]+environmentNamespace([[:space:]]|$)' "$template"; then
-    deploy_args+=(--parameters "environmentNamespace=$namespace")
-fi
-if grep -Eq '^[[:space:]]*param[[:space:]]+azureSubscriptionId([[:space:]]|$)' "$template"; then
-    deploy_args+=(--parameters "azureSubscriptionId=$AZURE_SUBSCRIPTION_ID")
-fi
-if grep -Eq '^[[:space:]]*param[[:space:]]+azureResourceGroup([[:space:]]|$)' "$template"; then
-    deploy_args+=(--parameters "azureResourceGroup=$AZURE_RESOURCE_GROUP")
-fi
-
-rad deploy "${deploy_args[@]}"
 rad env update "$environment" --recipe-packs azure-avm --preview

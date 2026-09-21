@@ -24,25 +24,13 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 
 mkdir -p "$TEST_ROOT/bin"
 
-cat >"$TEST_ROOT/bin/kubectl" <<'EOF'
-#!/bin/bash
-set -euo pipefail
-if [[ "$1" == "create" ]]; then
-    echo "kubectl $*" >>"$CALL_LOG"
-    echo "apiVersion: v1"
-else
-    cat >/dev/null
-    echo "kubectl $*" >>"$CALL_LOG"
-fi
-EOF
-
 cat >"$TEST_ROOT/bin/rad" <<'EOF'
 #!/bin/bash
 set -euo pipefail
 echo "rad $*" >>"$CALL_LOG"
 EOF
 
-chmod +x "$TEST_ROOT/bin/kubectl" "$TEST_ROOT/bin/rad"
+chmod +x "$TEST_ROOT/bin/rad"
 
 run_case() {
     local name="$1"
@@ -54,8 +42,6 @@ run_case() {
 
     PATH="$TEST_ROOT/bin:$PATH" \
         CALL_LOG="$actual" \
-        AZURE_SUBSCRIPTION_ID=subscription \
-        AZURE_RESOURCE_GROUP=resource-group \
         "$REPO_ROOT/.github/scripts/deploy-checked-in-azure-recipe-pack.sh" "$template"
 }
 
@@ -65,28 +51,9 @@ param containerImagesRegistry string
 resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {}
 EOF
 cat >"$TEST_ROOT/pack-only.expected" <<EOF
-kubectl create namespace azure-aks-pack-validation --dry-run=client -o yaml
-kubectl apply -f -
-rad env create azure-aks-pack-validation --azure-subscription-id subscription --azure-resource-group resource-group --kubernetes-namespace azure-aks-pack-validation --preview
-rad deploy $TEST_ROOT/pack-only.bicep --group default --environment azure-aks-pack-validation --parameters routesGatewayName=validation-gateway --parameters containerImagesRegistry=localhost:5000
-rad env update azure-aks-pack-validation --recipe-packs azure-avm --preview
+rad deploy $TEST_ROOT/pack-only.bicep --group default --environment default --parameters routesGatewayName=validation-gateway --parameters containerImagesRegistry=localhost:5000
+rad env update default --recipe-packs azure-avm --preview
 EOF
 diff -u "$TEST_ROOT/pack-only.expected" "$TEST_ROOT/pack-only.calls"
-
-run_case legacy <<'EOF'
-param environmentName string
-param environmentNamespace string
-param azureSubscriptionId string
-param azureResourceGroup string
-resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {}
-EOF
-cat >"$TEST_ROOT/legacy.expected" <<EOF
-kubectl create namespace azure-aks-pack-validation --dry-run=client -o yaml
-kubectl apply -f -
-rad env create azure-aks-pack-validation --azure-subscription-id subscription --azure-resource-group resource-group --kubernetes-namespace azure-aks-pack-validation --preview
-rad deploy $TEST_ROOT/legacy.bicep --group default --environment azure-aks-pack-validation --parameters routesGatewayName=validation-gateway --parameters containerImagesRegistry=localhost:5000 --parameters environmentName=azure-aks-pack-validation --parameters environmentNamespace=azure-aks-pack-validation --parameters azureSubscriptionId=subscription --parameters azureResourceGroup=resource-group
-rad env update azure-aks-pack-validation --recipe-packs azure-avm --preview
-EOF
-diff -u "$TEST_ROOT/legacy.expected" "$TEST_ROOT/legacy.calls"
 
 echo "Checked-in Azure Recipe Pack lifecycle tests passed"
