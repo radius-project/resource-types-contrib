@@ -302,8 +302,6 @@ jobs:
 
       - name: Deploy checked-in Azure AKS Recipe Pack
         if: matrix.recipe == 'bicep'
-        env:
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: .github/scripts/deploy-checked-in-azure-recipe-pack.sh
 
       - name: Generate Azure Recipe Pack
