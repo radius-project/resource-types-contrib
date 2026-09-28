@@ -34,6 +34,7 @@ chmod +x "$TEST_ROOT/bin/rad"
 
 run_case() {
     local name="$1"
+    shift
     local template="$TEST_ROOT/$name.bicep"
     local actual="$TEST_ROOT/$name.calls"
 
@@ -42,7 +43,7 @@ run_case() {
 
     PATH="$TEST_ROOT/bin:$PATH" \
         CALL_LOG="$actual" \
-        "$REPO_ROOT/.github/scripts/deploy-checked-in-azure-recipe-pack.sh" "$template"
+        "$REPO_ROOT/.github/scripts/deploy-checked-in-azure-recipe-pack.sh" "$template" "$@"
 }
 
 run_case pack-only <<'EOF'
@@ -52,8 +53,17 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {}
 EOF
 cat >"$TEST_ROOT/pack-only.expected" <<EOF
 rad deploy $TEST_ROOT/pack-only.bicep --group default --environment default --parameters routesGatewayName=validation-gateway --parameters containerImagesRegistry=localhost:5000
-rad env update default --recipe-packs azure-avm --preview
+rad env update default --recipe-packs azure-aks --preview
 EOF
 diff -u "$TEST_ROOT/pack-only.expected" "$TEST_ROOT/pack-only.calls"
+
+run_case no-parameters azure-aci <<'EOF'
+resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {}
+EOF
+cat >"$TEST_ROOT/no-parameters.expected" <<EOF
+rad deploy $TEST_ROOT/no-parameters.bicep --group default --environment default
+rad env update default --recipe-packs azure-aci --preview
+EOF
+diff -u "$TEST_ROOT/no-parameters.expected" "$TEST_ROOT/no-parameters.calls"
 
 echo "Checked-in Azure Recipe Pack lifecycle tests passed"

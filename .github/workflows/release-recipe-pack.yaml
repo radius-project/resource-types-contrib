@@ -51,7 +51,8 @@ on:
         type: choice
         required: true
         options:
-          - azure
+          - azure-aks
+          - azure-aci
           - kubernetes
       bump:
         description: Semantic version bump

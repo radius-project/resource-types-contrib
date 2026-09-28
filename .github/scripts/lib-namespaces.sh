@@ -31,7 +31,7 @@
 # with a top-level `namespace: Radius.*` and a `types:` block -- so unrelated
 # top-level folders are never mistaken for namespaces.
 #
-# A recipe pack is a directory under recipe-packs/ (e.g. recipe-packs/azure)
+# A recipe pack is a directory under recipe-packs/ (e.g. recipe-packs/azure-aks)
 # that holds at least one Bicep template.
 #
 # Usage:
