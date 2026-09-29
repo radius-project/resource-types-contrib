@@ -37,7 +37,7 @@ Registering the type also makes it available in Bicep through the generated exte
 Recipe Packs live at the repository root under [`recipe-packs/`](../recipe-packs/). Each pack is a folder containing a Bicep file that wires recipes for the Resource Types it covers:
 
 - `azure-aks/` — Azure services, with application containers on AKS.
-- `azure-aci/` — application containers on Azure Container Instances, plus Azure Files volumes and Key Vault secrets. Data, messaging, storage, and AI types are not included; combine it with another pack for those.
+- `azure-aci/` — application containers on Azure Container Instances, plus Azure Files volumes and Key Vault secrets. Data, messaging, storage, and AI types are not included. `azure-aks` and `kubernetes` also provide recipes for containers, persistent volumes, and secrets, so they cannot be associated alongside `azure-aci`; use a pack that covers only the additional types you need.
 - `kubernetes/` — recipes for all types provisioned in-cluster on Kubernetes (the zero-config default).
 - `aws-eks/` (planned) — application containers on AWS EKS. An `aws-ecs/` pack for ECS is also planned.
 
