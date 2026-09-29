@@ -18,7 +18,15 @@
 
 set -euo pipefail
 
-template="${1:-recipe-packs/azure/aks-recipepack.bicep}"
+# Deploys a checked-in Azure Recipe Pack and associates it with the default
+# Environment. `--recipe-packs` replaces the Environment's pack list, so packs
+# that cover the same Resource Types (azure-aks and azure-aci) can be validated
+# one after the other.
+#
+# Usage: deploy-checked-in-azure-recipe-pack.sh [template] [pack-name]
+
+template="${1:-recipe-packs/azure-aks/azure-aks.bicep}"
+pack_name="${2:-azure-aks}"
 environment=default
 
 if [[ ! -f "$template" ]]; then
@@ -26,10 +34,19 @@ if [[ ! -f "$template" ]]; then
     exit 1
 fi
 
+# Only the AKS pack declares these parameters; passing an undeclared parameter
+# fails the deployment.
+parameters=()
+if grep -Eq '^param[[:space:]]+routesGatewayName[[:space:]]' "$template"; then
+    parameters+=(--parameters routesGatewayName=validation-gateway)
+fi
+if grep -Eq '^param[[:space:]]+containerImagesRegistry[[:space:]]' "$template"; then
+    parameters+=(--parameters containerImagesRegistry=localhost:5000)
+fi
+
 rad deploy "$template" \
     --group default \
     --environment "$environment" \
-    --parameters routesGatewayName=validation-gateway \
-    --parameters containerImagesRegistry=localhost:5000
+    ${parameters[@]+"${parameters[@]}"}
 
-rad env update "$environment" --recipe-packs azure-avm --preview
+rad env update "$environment" --recipe-packs "$pack_name" --preview

@@ -1,10 +1,10 @@
-# Azure Recipe Pack
+# Azure AKS Recipe Pack
 
-This folder contains the **Azure Recipe Pack** — a collection of Recipes that provision Radius Resource Types on Azure. Deploying the pack creates only a reusable `Radius.Core/recipePacks` resource. Create and configure the target Radius Environment separately, then associate the pack with it.
+This folder contains the **Azure AKS Recipe Pack** — a collection of Recipes that provision Radius Resource Types on Azure, running containers on Azure Kubernetes Service (AKS). Deploying the pack creates only a reusable `Radius.Core/recipePacks` resource. Create and configure the target Radius Environment separately, then associate the pack with it.
 
 | File | Description |
 | --- | --- |
-| `aks-recipepack.bicep` | Recipe Pack wiring the Bicep recipes for all Azure-provisioned types. |
+| `azure-aks.bicep` | Recipe Pack wiring the Bicep recipes for all Azure-provisioned types. |
 
 The pack declares one `Radius.Core/recipePacks` resource whose `recipes` map contains an entry for every Resource Type. It does not create or modify a `Radius.Core/environments` resource.
 
@@ -104,7 +104,7 @@ rad env update default \
 Deploy the Recipe Pack into that existing Environment, supplying only Recipe parameters:
 
 ```bash
-rad deploy recipe-packs/azure/aks-recipepack.bicep \
+rad deploy recipe-packs/azure-aks/azure-aks.bicep \
   --environment default \
   --parameters routesGatewayName=<gateway-name> \
   --parameters containerImagesRegistry=<registry-path>
@@ -114,7 +114,7 @@ Finally, associate the pack with the Environment:
 
 ```bash
 rad env update default \
-  --recipe-packs azure-avm \
+  --recipe-packs azure-aks \
   --preview
 ```
 

@@ -31,15 +31,18 @@ resource-types-contrib/
 │       └── test/
 │               └── app.bicep           # Developer-facing test application
 └── recipe-packs/                       # Recipe packs cover recipe definitions for all types in the repo
-    ├── azure/                          # Azure recipe pack
-    │       ├── README.md               # Documentation for the Azure recipe pack
-    │       └── aks-recipepack.bicep    # Recipe pack wiring Bicep and Terraform recipes
-    ├── aws/                            # AWS recipe pack
+    ├── azure-aks/                      # Azure AKS recipe pack (Azure services; containers on AKS)
+    │       ├── README.md               # Documentation for the Azure AKS recipe pack
+    │       └── azure-aks.bicep         # Recipe pack wiring the Bicep recipes
+    ├── azure-aci/                      # Azure ACI recipe pack (containers on ACI; Azure Files + Key Vault)
+    │       ├── README.md               # Documentation for the Azure ACI recipe pack
+    │       └── azure-aci.bicep         # Recipe pack wiring the Bicep recipes
+    ├── aws-eks/                        # AWS recipe pack (planned; containers on EKS, with aws-ecs for ECS to follow)
     │       ├── README.md
-    │       └── eks-recipepack.bicep
-    ├── kubernetes/                     # Default recipe pack (zero-config, in-cluster)
+    │       └── aws-eks.bicep
+    ├── kubernetes/                     # Kubernetes recipe pack (zero-config, in-cluster)
             ├── README.md
-            └── default-recipepack.bicep
+            └── default.bicep
 
 ```
 

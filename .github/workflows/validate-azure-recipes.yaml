@@ -302,7 +302,11 @@ jobs:
 
       - name: Deploy checked-in Azure AKS Recipe Pack
         if: matrix.recipe == 'bicep'
-        run: .github/scripts/deploy-checked-in-azure-recipe-pack.sh
+        run: .github/scripts/deploy-checked-in-azure-recipe-pack.sh recipe-packs/azure-aks/azure-aks.bicep azure-aks
+
+      - name: Deploy checked-in Azure ACI Recipe Pack
+        if: matrix.recipe == 'bicep'
+        run: .github/scripts/deploy-checked-in-azure-recipe-pack.sh recipe-packs/azure-aci/azure-aci.bicep azure-aci
 
       - name: Generate Azure Recipe Pack
         id: generate

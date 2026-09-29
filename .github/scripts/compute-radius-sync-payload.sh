@@ -44,7 +44,7 @@
 #                a stable release, pushes can no longer advance it.
 #   * release -> a stable release tag. A scope-prefixed tag affects just that
 #                unit -- `Radius.Data/v0.2.0` a namespace or
-#                `recipe-pack/azure/v0.2.0` a recipe pack -- while a plain
+#                `recipe-pack/azure-aks/v0.2.0` a recipe pack -- while a plain
 #                `vX.Y.Z` tag affects every unit.
 #
 # Payload shape (consumed by the Radius contrib-update-resource-types.yaml
@@ -81,7 +81,7 @@
 # Usage:
 #   EVENT_NAME=push BEFORE_SHA=<sha> AFTER_SHA=<sha> ./compute-radius-sync-payload.sh
 #   EVENT_NAME=release RELEASE_TAG=Radius.Compute/v0.1.0 ./compute-radius-sync-payload.sh
-#   EVENT_NAME=release RELEASE_TAG=recipe-pack/azure/v0.1.0 ./compute-radius-sync-payload.sh
+#   EVENT_NAME=release RELEASE_TAG=recipe-pack/azure-aks/v0.1.0 ./compute-radius-sync-payload.sh
 # =============================================================================
 
 set -euo pipefail

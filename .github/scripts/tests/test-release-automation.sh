@@ -23,6 +23,7 @@ SYNC_SCRIPT="${REPO_ROOT}/.github/scripts/compute-radius-sync-payload.sh"
 VERSION_SCRIPT="${REPO_ROOT}/.github/scripts/release/next-version.sh"
 CHANGES_SCRIPT="${REPO_ROOT}/.github/scripts/release/detect-changes.sh"
 BUNDLE_SCRIPT="${REPO_ROOT}/.github/scripts/release/build-recipe-pack-bundle.sh"
+SOURCES_SCRIPT="${REPO_ROOT}/.github/scripts/release/verify-recipe-pack-sources.sh"
 TAGS_SCRIPT="${REPO_ROOT}/.github/scripts/resolve-recipe-tags.sh"
 LIST_NAMESPACES_SCRIPT="${REPO_ROOT}/.github/scripts/release/list-namespaces.sh"
 NOTIFY_WORKFLOW="${REPO_ROOT}/.github/workflows/notify-radius.yaml"
@@ -380,6 +381,56 @@ test_recipe_pack_bundle() {
         fail "recipe pack bundle is missing the pack README"
 }
 
+test_recipe_pack_sources_must_resolve() {
+    local repo="$TEST_ROOT/recipe-pack-sources" checker="$TEST_ROOT/check-source.sh" checked="$TEST_ROOT/checked-sources"
+    create_recipe_pack_repo "$repo" "widgets"
+    cat >"$repo/recipe-packs/widgets/widgets.bicep" <<'EOF'
+extension radius
+resource pack 'Radius.Core/recipePacks@2025-08-01-preview' = {
+  name: 'widgets'
+  properties: {
+    recipes: {
+      'Radius.Compute/containers': {
+        kind: 'bicep'
+        source: 'ghcr.io/example/recipes/containers:latest'
+      }
+      'Radius.Data/postgreSqlDatabases': {
+        kind: 'bicep'
+        source: 'mcr.microsoft.com/bicep/avm/res/db/server:0.1.0'
+        parameters: {
+          configurations: [{ name: 'azure.extensions', source: 'user-override', value: 'vector' }]
+        }
+      }
+      'Radius.Data/redisCaches': {
+        kind: 'bicep'
+        source: 'ghcr.io/example/recipes/missing:latest'
+      }
+    }
+  }
+}
+EOF
+    cat >"$checker" <<EOF
+#!/bin/bash
+echo "\$1" >>"$checked"
+[[ "\$1" != *missing* ]]
+EOF
+    chmod +x "$checker"
+
+    : >"$checked"
+    if REPO_ROOT="$repo" RECIPE_PACK=widgets CHECK_SOURCE_CMD="$checker" \
+        bash "$SOURCES_SCRIPT" >/dev/null 2>&1; then
+        fail "recipe pack release accepted a Recipe source that does not resolve"
+    fi
+    assert_eq "3" "$(wc -l <"$checked" | tr -d ' ')" "checked OCI Recipe source count"
+    grep -q 'user-override' "$checked" && fail "non-OCI source value was checked"
+
+    sed -i.bak '/missing:latest/d' "$repo/recipe-packs/widgets/widgets.bicep"
+    rm -f "$repo/recipe-packs/widgets/widgets.bicep.bak"
+    REPO_ROOT="$repo" RECIPE_PACK=widgets CHECK_SOURCE_CMD="$checker" \
+        bash "$SOURCES_SCRIPT" >/dev/null 2>&1 ||
+        fail "recipe pack release rejected Recipe sources that resolve"
+}
+
 test_recipe_pack_release_is_synced() {
     local repo="$TEST_ROOT/recipe-pack-sync" output="$TEST_ROOT/recipe-pack-sync.out" payload
     create_recipe_pack_repo "$repo" "kubernetes"
@@ -537,6 +588,7 @@ test_namespace_release_choices
 test_prerelease_labels
 test_recipe_pack_versioning
 test_recipe_pack_bundle
+test_recipe_pack_sources_must_resolve
 test_recipe_pack_release_is_synced
 test_repo_wide_release_covers_all_units
 test_release_change_detection

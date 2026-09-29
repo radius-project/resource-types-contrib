@@ -2,7 +2,7 @@
 ---
 name: Publish Bicep Recipes
 
-# Publishes the Kubernetes Bicep recipes to GHCR as OCI artifacts.
+# Publishes the repository's Bicep recipes to GHCR as OCI artifacts.
 #
 # Every publish is tagged with the commit SHA it was built from, and that SHA
 # tag is what makes the recipes addressable from Radius. A released `rad`
@@ -134,11 +134,19 @@ jobs:
             run: ./.github/scripts/publish-bicep-recipe.sh rediscaches Data/redisCaches/recipes/kubernetes/bicep/kubernetes-redis.bicep
           - name: Publish rabbitmq
             run: ./.github/scripts/publish-bicep-recipe.sh rabbitmq Messaging/rabbitMQ/recipes/kubernetes/bicep/kubernetes-rabbitmq.bicep
+          # Azure ACI recipes wired by the azure-aci recipe pack. These are not
+          # Kubernetes recipes, so they publish to their own GHCR namespace.
+          - name: Publish azure-aci containers
+            run: REGISTRY=ghcr.io/radius-project/azure-aci-recipes ./.github/scripts/publish-bicep-recipe.sh containers Compute/containers/recipes/azure/bicep/azure-aci-containers.bicep
+          - name: Publish azure-aci persistentvolumes
+            run: REGISTRY=ghcr.io/radius-project/azure-aci-recipes ./.github/scripts/publish-bicep-recipe.sh persistentvolumes Compute/persistentVolumes/recipes/azure/bicep/azure-file-volumes.bicep
+          - name: Publish azure-aci secrets
+            run: REGISTRY=ghcr.io/radius-project/azure-aci-recipes ./.github/scripts/publish-bicep-recipe.sh secrets Security/secrets/recipes/azure/bicep/azure-keyvault-secrets.bicep
 
       - name: Summarize
         run: |
           {
-            echo "Published the Kubernetes Bicep recipes to \`$REGISTRY\` with tags \`$TAGS\`."
+            echo "Published the Bicep recipes to GHCR with tags \`$TAGS\`."
             echo ""
             echo "Radius pins these recipes by commit SHA, so \`$GITHUB_SHA\` is now a resolvable tag for every recipe above."
           } >>"$GITHUB_STEP_SUMMARY"

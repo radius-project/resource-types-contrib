@@ -26,8 +26,8 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 | Platform | Recipe Pack | Recipe source |
 | --- | --- | --- |
-| Azure | [`recipe-packs/azure/aks-recipepack.bicep`](../../recipe-packs/azure/aks-recipepack.bicep) | Direct module — Azure Verified Module `avm/res/db-for-my-sql/flexible-server` |
-| Kubernetes | [`recipe-packs/kubernetes/default-recipepack.bicep`](../../recipe-packs/kubernetes/default-recipepack.bicep) | `ghcr.io/radius-project/kube-recipes/mysqldatabases` |
+| Azure | [`recipe-packs/azure-aks/azure-aks.bicep`](../../recipe-packs/azure-aks/azure-aks.bicep) | Direct module — Azure Verified Module `avm/res/db-for-my-sql/flexible-server` |
+| Kubernetes | [`recipe-packs/kubernetes/default.bicep`](../../recipe-packs/kubernetes/default.bicep) | `ghcr.io/radius-project/kube-recipes/mysqldatabases` |
 
 ## Using the resource type
 
@@ -49,7 +49,7 @@ Use `optional` only when the server is not publicly reachable. Non-TLS
 connections can expose administrator credentials and query traffic in transit.
 Private reachability does not encrypt traffic, so TLS remains preferred.
 Keep it required with the Azure pack as written; see
-[MySQL transport policy](../../recipe-packs/azure/README.md#mysql-transport-policy)
+[MySQL transport policy](../../recipe-packs/azure-aks/README.md#mysql-transport-policy)
 for public-network restrictions.
 
 ### Using developer-owned credentials

@@ -4,7 +4,7 @@ This folder contains the **Kubernetes Recipe Pack** — a collection of Recipes 
 
 | File | Description |
 | --- | --- |
-| `default-recipepack.bicep` | Recipe Pack wiring the Bicep recipes for all Kubernetes-provisioned types. |
+| `default.bicep` | Recipe Pack wiring the Bicep recipes for all Kubernetes-provisioned types. |
 
 The pack declares one `Radius.Core/recipePacks` resource whose `recipes` map contains an entry for every Resource Type. It does not create or modify a `Radius.Core/environments` resource.
 
@@ -35,7 +35,7 @@ rad env create default \
 Deploy the Recipe Pack into that existing Environment, then associate it:
 
 ```bash
-rad deploy recipe-packs/kubernetes/default-recipepack.bicep \
+rad deploy recipe-packs/kubernetes/default.bicep \
   --environment default
 
 rad env update default \
