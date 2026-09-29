@@ -64,7 +64,33 @@ cleanup_kubernetes_resources() {
     kubectl delete services --all -n "$KUBERNETES_NAMESPACE" 2>/dev/null || true
 }
 
+assert_containers_result() {
+    local app_host peer_host
+    app_host=$(rad resource show "$RESOURCE_TYPE" myApp \
+        --application "$APP_NAME" \
+        --workspace "$WORKSPACE_NAME" \
+        --output json | jq -r '.properties.hosts.orderProcessor // ""') || return 1
+    peer_host=$(rad resource show "$RESOURCE_TYPE" no-connections-app \
+        --application "$APP_NAME" \
+        --workspace "$WORKSPACE_NAME" \
+        --output json | jq -r '.properties.hosts.simple // ""') || return 1
+
+    # Each containers resource must publish its own host; equal hosts mean the
+    # two resources share infrastructure.
+    if [[ -z "$app_host" || -z "$peer_host" || "$app_host" == "$peer_host" ]]; then
+        echo "Error: Each containers resource must publish a distinct host (myApp: '$app_host', no-connections-app: '$peer_host')."
+        return 1
+    fi
+
+    echo "==> Containers hosts validated"
+}
+
 assert_recipe_result() {
+    if [[ "$RESOURCE_TYPE" == "Radius.Compute/containers" ]]; then
+        assert_containers_result
+        return
+    fi
+
     if [[ "$RESOURCE_TYPE" != "Radius.Data/postgreSqlDatabases" ]]; then
         return
     fi

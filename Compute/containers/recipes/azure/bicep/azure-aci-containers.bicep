@@ -1,14 +1,17 @@
+// Default names include context.resource.id so containers resources that share a
+// resource group get separate Azure infrastructure.
+
 @description('NGroups parameter name')
 @maxLength(64)
-param nGroupsParamName string = 'ngroups-${uniqueString(resourceGroup().id)}'
+param nGroupsParamName string = 'ngroups-${uniqueString(resourceGroup().id, context.resource.id)}'
 
 @description('Container Group Profile name')
 @maxLength(64)
-param containerGroupProfileName string = 'cgp-${uniqueString(resourceGroup().id)}'
+param containerGroupProfileName string = 'cgp-${uniqueString(resourceGroup().id, context.resource.id)}'
 
 @description('Load Balancer name')
 @maxLength(64)
-param loadBalancerName string = 'slb-${uniqueString(resourceGroup().id)}'
+param loadBalancerName string = 'slb-${uniqueString(resourceGroup().id, context.resource.id)}'
 
 @description('Backend Address Pool name')
 @maxLength(64)
@@ -16,7 +19,7 @@ param backendAddressPoolName string = 'bepool_1'
 
 @description('Virtual Network name')
 @maxLength(64)
-param vnetName string = 'vnet-${uniqueString(resourceGroup().id)}'
+param vnetName string = 'vnet-${uniqueString(resourceGroup().id, context.resource.id)}'
 
 @description('Subnet name')
 @maxLength(64)
@@ -24,18 +27,18 @@ param subnetName string = 'subnet_1'
 
 @description('Network Security Group name')
 @maxLength(64)
-param networkSecurityGroupName string = 'nsg-${uniqueString(resourceGroup().id)}'
+param networkSecurityGroupName string = 'nsg-${uniqueString(resourceGroup().id, context.resource.id)}'
 
 @description('Inbound Public IP name')
 @maxLength(64)
-param inboundPublicIPName string = 'inboundPIP-${uniqueString(resourceGroup().id)}'
+param inboundPublicIPName string = 'inboundPIP-${uniqueString(resourceGroup().id, context.resource.id)}'
 
 @description('Outbound Public IP name')
 @maxLength(64)
-param outboundPublicIPName string = 'outboundPIP-${uniqueString(resourceGroup().id)}'
+param outboundPublicIPName string = 'outboundPIP-${uniqueString(resourceGroup().id, context.resource.id)}'
 
 @description('NAT Gateway name')
-param natGatewayName string = 'natgw-${uniqueString(resourceGroup().id)}'
+param natGatewayName string = 'natgw-${uniqueString(resourceGroup().id, context.resource.id)}'
 
 @description('Frontend IP name')
 @maxLength(64)
@@ -624,21 +627,24 @@ resource nGroups 'Microsoft.ContainerInstance/NGroups@2024-11-01-preview' = {
   ]
 }
 
-// Outputs
+// The load balancer forwards only the first port of the first regular container,
+// so that container is the only one reachable through the inbound public IP.
+var exposedContainerName = length(regularContainerItems) > 0 && length(firstContainerPorts) > 0 ? regularContainerItems[0].key : ''
+
 output result object = {
-  virtualNetworkId: virtualNetwork.id
-  subnetId: virtualNetwork.properties.subnets[0].id
-  loadBalancerId: loadBalancer.id
-  frontendIPConfigurationId: loadBalancer.properties.frontendIPConfigurations[0].id
-  backendAddressPoolId: loadBalancer.properties.backendAddressPools[0].id
-  inboundPublicIPId: inboundPublicIP.id
-  outboundPublicIPId: outboundPublicIP.id
-  inboundPublicIPFQDN: inboundPublicIP.properties.dnsSettings.fqdn
-  natGatewayId: natGateway.id
-  networkSecurityGroupId: networkSecurityGroup.id
-  ddosProtectionPlanId: enableDdosProtection ? ddosProtectionPlan.id : ''
-  containerGroupProfileId: containerGroupProfile.id
-  nGroupsId: nGroups.id
-  readinessProbeId: firstContainerWithReadinessProbe != null ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, '${firstContainerWithReadinessProbe.key}-readinessProbe') : ''
-  livenessProbeId: length(filter(regularContainerItems, item => contains(item.value, 'livenessProbe') && item.value.livenessProbe != null)) > 0 ? resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, '${filter(regularContainerItems, item => contains(item.value, 'livenessProbe') && item.value.livenessProbe != null)[0].key}-livenessProbe') : ''
+  resources: [
+    networkSecurityGroup.id
+    inboundPublicIP.id
+    outboundPublicIP.id
+    natGateway.id
+    virtualNetwork.id
+    loadBalancer.id
+    containerGroupProfile.id
+    nGroups.id
+  ]
+  values: empty(exposedContainerName) ? {} : {
+    hosts: {
+      '${exposedContainerName}': inboundPublicIP.properties.ipAddress
+    }
+  }
 }
