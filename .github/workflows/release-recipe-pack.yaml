@@ -195,6 +195,16 @@ jobs:
           PRERELEASE_LABEL: ${{ inputs.prerelease_label }}
         run: ./.github/scripts/release/next-version.sh
 
+      - name: Verify Recipe sources resolve
+        # Registering a pack only records its Recipe source strings; Radius
+        # pulls them when a resource is deployed. Fail before tagging if any
+        # referenced OCI artifact (for example a new registry's `latest`, which
+        # only a stable `release_version` run of publish-bicep-recipes.yaml
+        # creates) is missing or not publicly pullable.
+        env:
+          RECIPE_PACK: ${{ inputs.recipe_pack }}
+        run: ./.github/scripts/release/verify-recipe-pack-sources.sh
+
       - name: Build recipe pack bundle
         id: bundle
         env:
