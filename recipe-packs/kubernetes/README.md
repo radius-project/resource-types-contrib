@@ -21,6 +21,7 @@ Kube-recipes tagged `:edge` are rebuilt on every push to `main`; `:latest` and t
 | `Radius.Data/mySqlDatabases` | Bicep | `ghcr.io/radius-project/kube-recipes/mysqldatabases:latest` |
 | `Radius.Data/redisCaches` | Bicep | `ghcr.io/radius-project/kube-recipes/rediscaches:latest` |
 | `Radius.Messaging/rabbitMQ` | Bicep | `ghcr.io/radius-project/kube-recipes/rabbitmq:latest` |
+| `Radius.Storage/objectStorage` | Bicep | `ghcr.io/radius-project/kube-recipes/objectstorage:latest` |
 
 ## Deploying
 
