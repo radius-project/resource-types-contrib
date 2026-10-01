@@ -44,6 +44,10 @@ resource kubernetesRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
         kind: 'bicep'
         source: 'ghcr.io/radius-project/kube-recipes/rabbitmq:latest'
       }
+      'Radius.AI/models': {
+        kind: 'bicep'
+        source: 'ghcr.io/radius-project/kube-recipes/models:latest'
+      }
     }
   }
 }
