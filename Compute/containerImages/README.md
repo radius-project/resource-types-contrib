@@ -10,17 +10,24 @@ Developer documentation is embedded in the Resource Type definition YAML file. D
 
 ## Prerequisites
 
-Using the containerImages resource requires platform engineers to configure the containerImages Recipe with the target OCI registry. Developers cannot use containerImages without these steps complete.
+With a Radius release that includes the matching Helm chart changes, the containerImages resource works out of the box on the default Kubernetes Recipe Pack:
 
-1. The BuildKit sidecar must be enabled during installation with `--set dynamicrp.buildkit.enabled=true`.
+- The BuildKit sidecar (`dynamicrp.buildkit.enabled`) and an in-cluster OCI registry, `radius-registry` (`dynamicrp.buildkit.registry.enabled`), are enabled by default. The registry is exposed on NodePort `31500`; BuildKit pushes to `localhost:31500/<name>:<tag>` and the node's container runtime pulls the same reference through the NodePort.
+- The default Kubernetes Recipe Pack ([`recipe-packs/kubernetes/default.bicep`](../../recipe-packs/kubernetes/default.bicep)) wires this Recipe with `registry: 'localhost:31500'`.
 
-2. The Radius Environment or Recipe Pack must define a Recipe parameter `registry` with the target registry prefix images are pushed under. This is a registry hostname optionally followed by a path (e.g. `ghcr.io` or `ghcr.io/my-org`); the recipe appends `/<resource-name>:<tag>` to form the full image reference.
+The in-cluster registry is intended for development. It is unauthenticated, stores images in an `emptyDir` volume unless `dynamicrp.buildkit.registry.persistence.existingClaim` is set, relies on kube-proxy in `iptables` mode for `localhost` NodePort pulls (it may fail with `nftables`, `ipvs`, or kube-proxy replacements such as Cilium), and cannot be used when deploying to a different target cluster. If `dynamicrp.buildkit.registry.nodePort` is changed, update the Recipe's `registry` parameter to match. See the [Kubernetes Recipe Pack README](../../recipe-packs/kubernetes/README.md#container-images-and-the-in-cluster-registry) for details.
 
-3. If the registry requires authentication, a Radius secret resource must be created, then the `registrySecretName` Recipe parameter set on the Environment or Recipe Pack.
+BuildKit requires the Pod Security Admission `privileged` level on the Radius namespace. If using Kubernetes < 1.30, Radius must be installed with `--set dynamicrp.buildkit.psaMode=baseline`.
 
-4. If using Kubernetes < 1.30, Radius must be installed with `--set dynamicrp.buildkit.psaMode=baseline`.
+To use an external registry instead:
 
-For example:
+1. Optionally disable the in-cluster registry during installation with `--set dynamicrp.buildkit.registry.enabled=false`. To disable image builds entirely, set `--set dynamicrp.buildkit.enabled=false`; containerImages resources then cannot be deployed.
+
+2. Set the Recipe parameter `registry` on the Environment or Recipe Pack to the target registry prefix images are pushed under. This is a registry hostname optionally followed by a path (e.g. `ghcr.io` or `ghcr.io/my-org`); the recipe appends `/<resource-name>:<tag>` to form the full image reference. With the default Kubernetes Recipe Pack, set the `containerImagesRegistry` pack parameter.
+
+3. If the registry requires authentication, create a Radius secret resource, then set the `registrySecretName` Recipe parameter on the Environment or Recipe Pack (the `containerImagesRegistrySecretName` pack parameter for the default Kubernetes Recipe Pack).
+
+For example, to use an external registry with a custom Recipe Pack:
 
 ```bicep
 extension radius
@@ -81,7 +88,7 @@ A list of available Recipes for this Resource Type, including links to the Bicep
 | Kubernetes | Bicep | recipes/kubernetes/bicep/kubernetes-containerimages.bicep | Alpha |
 | Kubernetes | Terraform | recipes/kubernetes/terraform/main.tf | Alpha |
 
-The Bicep Recipe requires a Radius control plane that supports the private `imageBuild` hook. The default AKS Recipe Pack remains on Terraform until a compatible Radius version is available.
+The Bicep Recipe requires a Radius control plane that supports the private `imageBuild` hook. The default Kubernetes and Azure AKS Recipe Packs use the Bicep Recipe.
 
 ## Recipe Input Properties
 
