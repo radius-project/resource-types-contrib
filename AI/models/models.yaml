@@ -6,6 +6,8 @@ types:
       To deploy a model, add a models resource to the application definition Bicep
       file. The platform-engineer recipe binds this developer-facing contract to a
       managed cloud model service without exposing any module details to the app.
+      On Kubernetes, the Kubernetes recipe runs an in-cluster Ollama server that
+      serves an open-weight model through an OpenAI-compatible API.
       ```bicep
       resource model 'Radius.AI/models@2025-08-01-preview' = {
         name: 'model'
@@ -69,7 +71,7 @@ types:
             model:
               type: string
               default: gpt-5-mini
-              description: "(Optional) The model deployment to provision. Defaults to `gpt-5-mini` if not provided."
+              description: "(Optional) The model deployment to provision. The Kubernetes recipe serves a small open-weight model under hosted OpenAI model names such as `gpt-5-mini` and pulls other names from the Ollama library. Defaults to `gpt-5-mini` if not provided."
             endpoint:
               type: string
               description: "(Read Only) The base URL used to call the model inference endpoint. Mapped from the recipe module's output."
@@ -90,5 +92,5 @@ types:
                 apiKey:
                   type: string
                   readOnly: true
-                  description: "(Read Only) The API key used to call the model inference endpoint. Mapped from the recipe module's `primaryKey` output; delivered via the managed secret."
+                  description: "(Read Only) The API key used to call the model inference endpoint. On Azure it is mapped from the recipe module's `primaryKey` output. The Kubernetes recipe returns the placeholder `ollama` because the in-cluster server does not authenticate requests. Delivered via the managed secret."
           required: [environment]
