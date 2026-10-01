@@ -55,6 +55,9 @@ jobs:
       - name: Run workspace bootstrap tests
         run: make test-workspace-bootstrap
 
+      - name: Run Bicep configuration tests
+        run: make test-bicepconfig
+
       - name: Run recipe namespace tests
         run: make test-recipe-namespace
 

@@ -31,8 +31,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "Creating bicepconfig.json with published extensions..."
 # Ensure bicepconfig.json has the base extensions and all published resource-type extensions.
-# update-bicepconfig.sh creates the base config only if it doesn't already exist, then merges
-# in any *-extension.tgz files that were published during the build step.
+# update-bicepconfig.sh migrates legacy base references, enables OCI support, and merges
+# in any *-extension.tgz files while preserving other configuration.
 "$SCRIPT_DIR/update-bicepconfig.sh"
 
 if [[ -z "$BICEP_FILE" ]]; then
@@ -62,7 +62,6 @@ echo "==> Running: rad ${DEPLOY_ARGS[*]}"
 rad "${DEPLOY_ARGS[@]}"
 
 echo "==> Recipe pack deployed successfully"
-
 
 
 
