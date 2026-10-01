@@ -2,7 +2,7 @@
 
 ## Overview
 
-The **Radius.Storage/objectStorage** resource type represents an object storage container (an S3-style bucket / Azure Blob container / GCS bucket). It allows developers to create and easily connect to object storage as part of their Radius applications. Unlike database types, no secret is required from the developer — Azure Storage generates its own account keys, so the platform's Recipe provisions the account without any injected credentials.
+The **Radius.Storage/objectStorage** resource type represents an object storage container (an S3-style bucket / Azure Blob container / GCS bucket). It allows developers to create and easily connect to object storage as part of their Radius applications. Unlike database types, no secret is required from the developer — Azure Storage generates its own account keys, so the platform's Recipe provisions the account without any injected credentials. The Kubernetes Recipe likewise generates its own secret key.
 
 Developer documentation is embedded in the resource type definition YAML file and is accessible via the `rad resource-type show Radius.Storage/objectStorage` command.
 
@@ -13,9 +13,9 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `environment` | string | Required | The Radius Environment ID. Typically set by the `rad` CLI. |
 | `application` | string | Optional | The Radius Application ID. |
 | `containerName` | string | Optional | The object container (blob container / S3 bucket) name to create inside the storage account. Defaults to `data`. |
-| `endpoint` | string | Read only | The object storage endpoint. Set from the Recipe module's `primaryBlobEndpoint` output. |
+| `endpoint` | string | Read only | The object storage endpoint. On Azure, set from the Recipe module's `primaryBlobEndpoint` output. On Kubernetes, the in-cluster S3 endpoint. |
 | `secrets` | object | Read only | Recipe secrets. `secrets.name` references the managed `Radius.Security/secrets` resource; `secrets.connectionString`, `secrets.accountKey` are the secret keys (delivered via that managed secret, never stored on the resource). |
-| `accountName` | string | Read only | The Azure Storage account name. Set from the Recipe module's `name` output. |
+| `accountName` | string | Read only | The storage account name. On Azure, the Azure Storage account name, set from the Recipe module's `name` output. On Kubernetes, the S3 access key ID. |
 
 The schema is platform-neutral: the same developer-facing properties can be backed by Azure Blob Storage, AWS S3, or a Kubernetes object-store recipe by changing only the platform recipe's module source, parameters, and outputs.
 
@@ -26,6 +26,24 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 | Platform | Recipe Pack | Recipe source |
 | --- | --- | --- |
 | Azure | [`recipe-packs/azure-aks/azure-aks.bicep`](../../recipe-packs/azure-aks/azure-aks.bicep) | Direct module — Azure Verified Module `mcr.microsoft.com/bicep/avm/res/storage/storage-account:0.32.1` |
+| Kubernetes | [`recipe-packs/kubernetes/default.bicep`](../../recipe-packs/kubernetes/default.bicep) | In-cluster RustFS `Deployment` + `Service` + `PersistentVolumeClaim` [`recipes/kubernetes`](recipes/kubernetes) |
+
+### Kubernetes Recipe
+
+The Kubernetes Recipe ([`recipes/kubernetes/bicep/kubernetes-objectstorage.bicep`](recipes/kubernetes/bicep/kubernetes-objectstorage.bicep)) runs a single-node [RustFS](https://github.com/rustfs/rustfs) server, an S3-compatible object store, from the `rustfs/rustfs` image in the Environment's namespace. It is meant for development and testing:
+
+- The Deployment, Service, Secret and `PersistentVolumeClaim` are named `<resource-name>-<suffix>`, where the suffix is derived from the resource ID, so two resources with the same name never share objects or data.
+- Objects are stored on a 1 GiB `ReadWriteOnce` `PersistentVolumeClaim` from the cluster's default StorageClass, so they survive Pod restarts. The claim is deleted with the resource.
+- Clients connect over plain HTTP on port `9000`. There is no TLS. Use path-style requests (`<endpoint>/<bucket>`); any region name works, for example `us-east-1`.
+- When the server starts, the Recipe creates the bucket named by `containerName`. The Pod reports ready only after the bucket exists. The name must follow the S3 bucket naming rules: 3 to 63 lowercase letters, digits, dots and hyphens, starting and ending with a letter or digit.
+- The credentials are the server's root credentials. The Recipe generates a new secret key on each deployment and restarts the server with it, like the generated password of the RabbitMQ Recipe. A container that reads the key from the managed secret picks up the new value when it restarts.
+
+| Output | Value |
+| --- | --- |
+| `endpoint` | The S3 endpoint, `http://<resource-name>-<suffix>.<namespace>.svc.cluster.local:9000`. |
+| `accountName` | The S3 access key ID, `radius`. |
+| `secrets.accountKey` | The S3 secret access key, generated by the Recipe. Delivered through the managed secret. |
+| `secrets.connectionString` | The endpoint with the credentials embedded, `http://<accountName>:<accountKey>@<resource-name>-<suffix>.<namespace>.svc.cluster.local:9000`. Delivered through the managed secret. |
 
 ## Using the resource type
 
