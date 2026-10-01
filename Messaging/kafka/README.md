@@ -23,6 +23,20 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 | Platform | Recipe Pack | Recipe source |
 | --- | --- | --- |
 | Azure | [`recipe-packs/azure-aks/azure-aks.bicep`](../../recipe-packs/azure-aks/azure-aks.bicep) | Direct module — Azure Verified Module `avm/res/event-hub/namespace` |
+| Kubernetes | [`recipe-packs/kubernetes/default.bicep`](../../recipe-packs/kubernetes/default.bicep) | In-cluster Apache Kafka `Deployment` + `Service` [`recipes/kubernetes`](recipes/kubernetes) |
+
+### Kubernetes Recipe
+
+The Kubernetes Recipe ([`recipes/kubernetes/bicep/kubernetes-kafka.bicep`](recipes/kubernetes/bicep/kubernetes-kafka.bicep)) runs a single Apache Kafka node from the official `apache/kafka` image in the Environment's namespace. The node runs in KRaft mode as both broker and controller, so no ZooKeeper or operator is needed. It is meant for development and testing:
+
+- Clients connect over plaintext on port `9092`. There is no TLS and no authentication.
+- Storage is an `emptyDir` volume, so topics and messages are lost when the Pod is replaced.
+- When the broker starts, the Recipe creates the topic named by `topic` with one partition and a replication factor of one. The Pod reports ready only after the topic exists.
+
+| Output | Value |
+| --- | --- |
+| `host` | The DNS name of the broker `Service`, `<resource-name>.<namespace>.svc.cluster.local`. |
+| `secrets.connectionString` | The bootstrap server, `<host>:9092`. Pass it to a Kafka client as `bootstrap.servers`. Delivered through the managed secret. |
 
 ## Using the resource type
 
