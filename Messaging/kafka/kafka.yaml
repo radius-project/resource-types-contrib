@@ -5,7 +5,9 @@ types:
       The Radius.Messaging/kafka Resource Type deploys a Kafka-compatible
       messaging namespace. On Azure, the verification recipe provisions Azure
       Event Hubs with its Kafka surface enabled by the Standard tier and creates
-      an Event Hub named by the developer-authored `topic` property.
+      an Event Hub named by the developer-authored `topic` property. On
+      Kubernetes, the Kubernetes recipe runs a single-node Apache Kafka broker
+      in the Environment's namespace and creates a topic named by `topic`.
       ```bicep
       resource kafka 'Radius.Messaging/kafka@2025-08-01-preview' = {
         name: 'kafka'
@@ -77,7 +79,7 @@ types:
               description: "(Optional) The Kafka topic/Event Hub name to create. Defaults to `events`."
             host:
               type: string
-              description: The host name used to connect to the Kafka-compatible endpoint. For Azure Event Hubs this is the namespace name; the bootstrap server is `<host>.servicebus.windows.net:9093`.
+              description: The host name used to connect to the Kafka-compatible endpoint. For Azure Event Hubs this is the namespace name; the bootstrap server is `<host>.servicebus.windows.net:9093`. For the Kubernetes recipe this is the broker Service DNS name; the bootstrap server is `<host>:9092`.
               readOnly: true
             secrets:
               type: object
@@ -95,5 +97,5 @@ types:
                 connectionString:
                   type: string
                   readOnly: true
-                  description: The connection string used to connect to the Kafka-compatible endpoint. Mapped from the recipe module's `primaryConnectionString` output; delivered via the managed secret.
+                  description: The connection string used to connect to the Kafka-compatible endpoint. On Azure it is mapped from the recipe module's `primaryConnectionString` output. The Kubernetes recipe sets it to the plaintext bootstrap server `<host>:9092`. Delivered via the managed secret.
           required: [environment]
