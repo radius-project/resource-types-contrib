@@ -216,6 +216,12 @@ if [[ ! -f "$TEST_FILE" ]]; then
     exit 0
 fi
 
+if [[ "$RESOURCE_TYPE" == "Radius.Data/postgreSqlDatabases" && "$PLATFORM" == "kubernetes" ]]; then
+    bash "$RESOURCE_TYPE_PATH/test/test-tls.sh" \
+        "$RECIPE_TYPE" "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE"
+    exit $?
+fi
+
 echo "==> Deploying test application from $TEST_FILE"
 APP_NAME="testapp-$(date +%s)"
 

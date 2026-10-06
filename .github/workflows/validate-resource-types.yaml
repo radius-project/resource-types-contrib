@@ -8,6 +8,7 @@ on:
     paths:
       - "**/kubernetes/**"
       - "**/test/app.bicep"
+      - "Data/postgreSqlDatabases/test/**"
       - "**/*.yaml"
       - "**/*.svg"
       - ".github/workflows/validate-resource-types.yaml"
@@ -58,6 +59,9 @@ jobs:
       - name: Run recipe namespace tests
         run: make test-recipe-namespace
 
+      - name: Validate PostgreSQL TLS test runner
+        run: bash Data/postgreSqlDatabases/test/test-tls-runner.sh
+
       - name: Validate resource type icons
         run: make validate-icons
 
@@ -98,6 +102,33 @@ jobs:
       - name: Validate MySQL Recipe result contract
         if: matrix.recipe == 'bicep'
         run: Data/mySqlDatabases/test/assert-recipe-result.sh
+
+      - name: Validate PostgreSQL Bicep transport and result contract
+        if: matrix.recipe == 'bicep'
+        run: bash Data/postgreSqlDatabases/test/assert-recipe-result.sh
+
+      - name: Set up Terraform for PostgreSQL contract tests
+        if: matrix.recipe == 'terraform'
+        run: |
+          # Pin the test runner; mock providers require Terraform >= 1.7.
+          version=1.9.8
+          curl -fsSLO "https://releases.hashicorp.com/terraform/$version/terraform_${version}_linux_amd64.zip"
+          curl -fsSLO "https://releases.hashicorp.com/terraform/$version/terraform_${version}_SHA256SUMS"
+          grep " terraform_${version}_linux_amd64.zip$" "terraform_${version}_SHA256SUMS" | sha256sum --check
+          unzip -q "terraform_${version}_linux_amd64.zip" -d "$RUNNER_TEMP/postgresql-terraform"
+          echo "$RUNNER_TEMP/postgresql-terraform" >> "$GITHUB_PATH"
+          rm "terraform_${version}_linux_amd64.zip" "terraform_${version}_SHA256SUMS"
+
+      - name: Validate PostgreSQL Terraform transport and result contract
+        if: matrix.recipe == 'terraform'
+        run: |
+          recipe=Data/postgreSqlDatabases/recipes/kubernetes/terraform
+          terraform -chdir="$recipe" init -backend=false -input=false
+          terraform -chdir="$recipe" fmt -check
+          terraform -chdir="$recipe" test -no-color
+          # Do not publish provider binaries or lock/test state in the module.
+          rm -rf "$recipe/.terraform"
+          rm "$recipe/.terraform.lock.hcl"
 
       - name: Validate containerImages local context resolver
         if: matrix.recipe == 'terraform'
