@@ -26,16 +26,57 @@ for object in "secret/$TLS_SECRET" "secret/postgresql-credentials" \
 done
 
 TMP_DIR="$(mktemp -d)"
+delete_test_resource() {
+    local type="$1" name="$2" metadata count
+    if ! metadata=$(rad resource list "$type" --workspace "$WORKSPACE_NAME" --output json |
+        jq -c --arg name "$name" '[.[] | select(.name == $name) |
+            {id, name, application: .properties.application}]'); then
+        echo "Error: Could not inspect $type/$name for cleanup." >&2
+        return 1
+    fi
+    count=$(jq 'length' <<<"$metadata")
+    if [[ "$count" -eq 0 ]]; then
+        echo "==> Cleanup: $type/$name was not created or is already deleted"
+        return 0
+    fi
+    if [[ "$count" -ne 1 ]]; then
+        echo "Error: Cleanup found multiple resources named $type/$name." >&2
+        return 1
+    fi
+    if [[ "$type" != "Radius.Core/applications" && "$type" != "Applications.Core/applications" ]]; then
+        local resource_id application_id
+        if ! resource_id=$(jq -er '.[0].id | strings | select(length > 0)' <<<"$metadata"); then
+            echo "Error: Cleanup could not determine the ID of $type/$name." >&2
+            return 1
+        fi
+        application_id="${resource_id%/providers/*}/providers/Radius.Core/applications/$APP_NAME"
+        if ! jq -e --arg application "$application_id" \
+            '.[0].application | strings | ascii_downcase == ($application | ascii_downcase)' \
+            <<<"$metadata" >/dev/null; then
+            echo "Error: Refusing to clean up $type/$name owned by another application." >&2
+            return 1
+        fi
+    fi
+    rad resource delete "$type" "$name" --workspace "$WORKSPACE_NAME" --yes
+}
+
 cleanup() {
     local status=$?
     trap - EXIT
     local cleanup_failed=0
-    rad app delete "$APP_NAME" --workspace "$WORKSPACE_NAME" --yes || cleanup_failed=1
+    # `rad app delete` targets the legacy application type, not Radius.Core.
+    delete_test_resource Radius.Compute/containers democontainer || cleanup_failed=1
+    delete_test_resource Radius.Data/postgreSqlDatabases postgresql || cleanup_failed=1
+    delete_test_resource Radius.Security/secrets postgresql-client-credentials || cleanup_failed=1
+    delete_test_resource Radius.Core/applications "$APP_NAME" || cleanup_failed=1
+    delete_test_resource Applications.Core/applications "$APP_NAME" || cleanup_failed=1
     # Remove only this test application's leftovers if Recipe cleanup is incomplete.
     kubectl delete deployments,services,secrets,configmaps -n "$NAMESPACE" \
         -l "radapp.io/application=$APP_NAME" --ignore-not-found --timeout=60s || cleanup_failed=1
+    kubectl delete deployments,services,secrets,configmaps -n "$NAMESPACE" \
+        -l "app=$APP_NAME" --ignore-not-found --timeout=60s || cleanup_failed=1
     kubectl delete "pod/$CLIENT_NAME" "secret/$TLS_SECRET" "configmap/$CLIENT_NAME-ca" -n "$NAMESPACE" \
-        --ignore-not-found --wait=false || cleanup_failed=1
+        --ignore-not-found --wait=true --timeout=60s || cleanup_failed=1
     rm -f "$TMP_DIR/ca.key" "$TMP_DIR/ca.crt" "$TMP_DIR/server.key" \
         "$TMP_DIR/server.csr" "$TMP_DIR/server.crt" "$TMP_DIR/extensions"
     rmdir "$TMP_DIR"
