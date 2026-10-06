@@ -41,11 +41,37 @@ Use `optional` only when the server is not publicly reachable. Non-TLS connectio
 
 ## Kubernetes certificates and recipe parameters
 
+### Breaking-change notice and pre-merge release coordination
+
+Adopting these Recipes requires a new operator-owned TLS Secret for **both**
+transport policies. Existing deployments without that Secret cannot start the
+new Pods. Bicep resource submission can complete while the database is
+unavailable; always require a successful rollout and TCP query.
+
+Merging to `main` refreshes the floating `edge` Bicep artifact. Consumers of that
+tag must prepare certificates, client trust, and backups before redeployment, or
+pin an immutable pre-change artifact while migrating. A merge does not alter an
+already-running server or an immutable Recipe reference.
+
+Before merging, maintainers must agree where the breaking-change notice will
+reach `edge` users, coordinate the next `Radius.Data` namespace release and its
+breaking-change versioning, and coordinate the resulting
+`bot/update-resource-types` PR in `radius-project/radius`. Released Radius
+versions pin a namespace release's commit; they do not automatically adopt every
+new `edge` artifact. The checked-in Kubernetes default pack currently has no
+PostgreSQL entry. Its unrelated stable Recipe references must not be changed as
+part of this migration.
+
+This notice is a proposed migration requirement, **not confirmation that release
+coordination has occurred**. Keep the PR draft and the release-coordination
+review thread open until the relevant maintainers acknowledge the notice and
+migration plan.
+
 An operator must provision a Kubernetes TLS Secret in the database's namespace **before deployment**, for both policies. By default the Recipes use `<resource-name>-tls` (for example, `postgresql-tls`). They do not generate certificates or fall back to plaintext when a Secret is absent or invalid.
 
 | Recipe parameter | Default | Purpose |
 | --- | --- | --- |
-| `postgresqlTlsSecretName` | `<resource-name>-tls` | Name of an existing operator-owned Secret in the database namespace. Terraform also accepts an empty string to select this default. |
+| `postgresqlTlsSecretName` | Empty; resolves to `<resource-name>-tls` | Name of an existing operator-owned Secret in the database namespace. Both Recipes accept omission or an empty string to select this default. |
 | `postgresqlTlsCertificateRevision` | `1` | Nonempty operator revision. Change it after replacing the certificate to trigger a pod rollout on redeployment. |
 
 Set these as `parameters` on the PostgreSQL entry in your Recipe Pack. The Secret must contain a PEM `tls.crt` (leaf certificate followed by intermediates, if needed) and an **unencrypted** matching PEM `tls.key`. Use a server-auth certificate from a CA trusted by your clients. Its DNS SAN must cover the returned `host`, `<resource-name>.<namespace>.svc.cluster.local`; include additional DNS names if clients use them. For clusters with a different DNS suffix, customize the existing host-output convention as well as the certificate.
@@ -79,7 +105,9 @@ Supply passwords through your client's secret mechanism (for example a protected
 
 The server uses a startup copy of the certificate, so updating the Secret alone does not rotate the active certificate. Replace its data without recording private keys in a last-applied annotation (use your secret manager or `kubectl create secret tls ... --dry-run=client -o json | kubectl replace -f -` for an existing Secret). Then change `postgresqlTlsCertificateRevision` in the Recipe Pack and redeploy the pack and application, or explicitly run `kubectl rollout restart deployment/<resource-name>`. Wait for the rollout and repeat `verify-full`. When rotating the CA, distribute a trust bundle containing both CAs before rolling out the new server certificate.
 
-Changing `tls` changes the selected HBA file and pod template. A single Recipe-owned ConfigMap contains both policies, so transitions neither depend on ConfigMap-update propagation nor leave behind policy-specific ConfigMaps. The `Recreate` strategy stops the old server before starting its replacement; expect downtime. Transport rules apply at every server start, even with existing PGDATA, rather than only through first-initialization SQL. A repeat deployment with unchanged inputs does not intentionally restart the database. Bicep's `initSql` behavior is preserved; Terraform still does not implement that property.
+Changing `tls` changes the selected HBA file and pod template. A single Recipe-owned ConfigMap contains both policies, so transitions neither depend on ConfigMap-update propagation nor leave behind policy-specific ConfigMaps. Terraform uses `Recreate`. Bicep uses `RollingUpdate` with `maxSurge: 0` and `maxUnavailable: 1`: it avoids a surge replica and permits downtime for the single database replica. This retains the existing strategy type because Radius's Bicep Kubernetes apply cannot clear defaulted `rollingUpdate` fields when switching an existing Deployment to `Recreate`, even with an explicit null. Kubernetes can retain terminating Pods during their grace period; zero surge is not a guarantee that every old process has exited before the replacement starts.
+
+Adopting the new Recipe changes the pod template and triggers a rollout. Live transition tests cover fresh ephemeral databases after those rollouts, not policy changes with retained PGDATA. A repeat deployment with unchanged inputs does not intentionally restart the database. Bicep's `initSql` behavior is preserved; Terraform still does not implement that property.
 
 ### Publishing and upgrading
 
@@ -107,6 +135,12 @@ Existing plaintext-only Kubernetes clients will stop working under the default `
 After publishing/registering the selected Recipe in an isolated test Environment, run `.github/scripts/test-recipe.sh Data/postgreSqlDatabases/recipes/kubernetes/bicep` or the corresponding `terraform` path. The normal CI recipe matrix runs this suite for both implementations and waits for explicit probe results.
 
 The suite creates a short-lived test CA and an operator-owned TLS Secret, then probes omitted, explicit `required`, and `optional`, repeat deployments, both policy transitions, and certificate rotation. It checks `pg_stat_ssl` over TCP with bounded connection/query timeouts, verifies `verify-full`, matches plaintext failures to the HBA transport rejection rather than unrelated errors, checks the schema default and `CONNECTION_POSTGRESQL_TLS`, preserves the output contract, and checks Bicep initialization SQL and private-key permissions. Test keys stay in a protected temporary directory and a Kubernetes Secret and are removed on exit. Do not run these destructive rollout tests against an existing database. Record Radius CLI/runtime versions, schema version, recipe artifact digest, Kubernetes/node versions, and the resolved `postgres:16-alpine` image digest when reproducing a failure.
+
+The first Bicep deployment delays initialization long enough for a separate observer to require an actual socket-ready, TCP-unavailable, Pod-NotReady window. It then requires the initialization-complete marker and final TCP readiness. Missing the window fails the test rather than counting as proof. Run `bash Data/postgreSqlDatabases/test/assert-readiness-test.sh` for the observer's positive and negative regression cases. Terraform's identical TCP probe is checked by its mock-provider tests and live rollouts; its Recipe does not support `initSql`.
+
+After publishing the current Recipes and their test dependencies, run `bash Data/postgreSqlDatabases/test/test-upgrade.sh bicep` or `terraform` in the same isolated cluster. CI runs each upgrade case after its normal deployment suite. The Bicep baseline is the published Recipe from `Radius.Data/v0.3.0`, pinned to commit `18142182e52e19a46b0ed172037357e8e142dcd2`; the test records its registry digest. There is no publicly published Terraform module: that case packages the same pinned source under a separate module-server key and verifies the checksum of the archive actually served. Neither case replaces the current Terraform module archive or uses a moving `edge` baseline.
+
+Each upgrade case owns a dedicated resource group, environment, Recipe Pack, and Kubernetes namespace. It switches only the PostgreSQL Recipe source, requires the same Radius resource ID and Deployment UID, checks the resulting rollout strategy, and runs the full transport suite. Terraform also requires unchanged backend state-Secret identities. Cleanup removes the dedicated resources and baseline module-server key. These checks prove in-place Recipe updates, not retention of database data across pod replacement.
 
 The template's `applicationName` parameter matches the CLI application and cleanup target. Cleanup explicitly deletes the contributed resources and their `Radius.Core/applications` resource, then removes any legacy `Applications.Core/applications` created by the CLI. `rad app delete` alone targets the legacy type and is insufficient. The fallback sweep supports both `radapp.io/application` and `app` labels with the generated application name, and deletes the named probe/certificate fixtures; it never sweeps the entire namespace. Fixture deletion waits up to 60 seconds so the next run does not race a terminating probe Pod. Run `bash Data/postgreSqlDatabases/test/test-tls-runner.sh` for cluster-free regression checks of parameter flags, application ownership, and cleanup on success and failure. CI runs these checks before deployment tests.
 

@@ -26,6 +26,7 @@ for object in "secret/$TLS_SECRET" "secret/postgresql-credentials" \
 done
 
 TMP_DIR="$(mktemp -d)"
+READINESS_PID=""
 delete_test_resource() {
     local type="$1" name="$2" metadata count
     if ! metadata=$(rad resource list "$type" --workspace "$WORKSPACE_NAME" --output json |
@@ -64,6 +65,12 @@ cleanup() {
     local status=$?
     trap - EXIT
     local cleanup_failed=0
+    if [[ -n "$READINESS_PID" ]]; then
+        if kill -0 "$READINESS_PID" 2>/dev/null; then
+            kill "$READINESS_PID"
+        fi
+        wait "$READINESS_PID" 2>/dev/null || true
+    fi
     # `rad app delete` targets the legacy application type, not Radius.Core.
     delete_test_resource Radius.Compute/containers democontainer || cleanup_failed=1
     delete_test_resource Radius.Data/postgreSqlDatabases postgresql || cleanup_failed=1
@@ -98,7 +105,10 @@ publish_certificate() {
     local serial="$1"
     openssl req -new -newkey rsa:2048 -nodes \
         -keyout "$TMP_DIR/server.key" -out "$TMP_DIR/server.csr" \
-        -subj "/CN=$HOST" >/dev/null 2>&1
+        -subj "/CN=Radius PostgreSQL test server" >/dev/null 2>&1 || {
+            echo "Error: Could not generate the test server certificate request." >&2
+            return 1
+        }
     openssl x509 -req -in "$TMP_DIR/server.csr" -CA "$TMP_DIR/ca.crt" \
         -CAkey "$TMP_DIR/ca.key" -set_serial "$serial" -days 2 \
         -extfile "$TMP_DIR/extensions" -out "$TMP_DIR/server.crt" >/dev/null 2>&1
@@ -128,7 +138,11 @@ deploy_policy() {
         parameters+=(--parameters "tlsPolicy=$policy")
     fi
     if [[ "$RECIPE_TYPE" == "bicep" ]]; then
-        parameters+=(--parameters "initSql=CREATE TABLE tls_init_check (id integer); INSERT INTO tls_init_check VALUES (1);")
+        local init_sql="CREATE TABLE tls_init_check (id integer); INSERT INTO tls_init_check VALUES (1);"
+        if [[ -z "$LAST_POLICY" && "${POSTGRESQL_TEST_READINESS:-1}" == 1 ]]; then
+            init_sql="SELECT pg_sleep(30); $init_sql"
+        fi
+        parameters+=(--parameters "initSql=$init_sql")
     fi
     echo "==> Deploying PostgreSQL ($RECIPE_TYPE, tls=$policy)"
     rad deploy "$TEST_DIR/app.bicep" --application "$APP_NAME" \
@@ -141,7 +155,93 @@ deploy_policy() {
     LAST_POLICY="$policy"
 }
 
+if [[ -n "${POSTGRESQL_UPGRADE_PACK:-}" ]]; then
+    switch_upgrade_source() {
+        rad deploy "$TEST_DIR/upgrade-pack.bicep" --workspace "$WORKSPACE_NAME" -e "$ENVIRONMENT_PATH" \
+            --parameters "packName=$POSTGRESQL_UPGRADE_PACK" \
+            --parameters "recipeKind=$RECIPE_TYPE" --parameters "postgresqlSource=$1"
+        rad env update "${ENVIRONMENT_PATH##*/}" --workspace "$WORKSPACE_NAME" \
+            --recipe-packs "$POSTGRESQL_UPGRADE_PACK" --preview
+    }
+    switch_upgrade_source "${POSTGRESQL_UPGRADE_OLD_SOURCE:?Old source required}"
+    # Old recipes ignore tls; establish a real running Deployment before upgrading.
+    LAST_POLICY=baseline
+    deploy_policy default
+    old_json=$(kubectl get deployment postgresql -n "$NAMESPACE" -o json)
+    jq -e '.spec.strategy.type == "RollingUpdate" and
+        (.spec.strategy.rollingUpdate | has("maxSurge") and has("maxUnavailable"))' \
+        <<<"$old_json" >/dev/null
+    OLD_DEPLOYMENT_UID=$(jq -r '.metadata.uid' <<<"$old_json")
+    OLD_RESOURCE_ID=$(rad resource show Radius.Data/postgreSqlDatabases postgresql \
+        --workspace "$WORKSPACE_NAME" -o json | jq -er '.id')
+    baseline_ready=false
+    for ((attempt=0; attempt<24; attempt++)); do
+        # Expand credentials inside the server container, never in local CLI arguments.
+        # shellcheck disable=SC2016
+        if kubectl --request-timeout=15s exec -n "$NAMESPACE" deployment/postgresql -c postgres -- \
+            /bin/sh -ec 'PGSSLMODE=disable PGPASSWORD="$POSTGRES_PASSWORD" psql -X -w -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT 1"' \
+            >/dev/null 2>&1; then
+            baseline_ready=true
+            break
+        fi
+        sleep 5
+    done
+    [[ "$baseline_ready" == true ]] || {
+        echo "Error: Pre-upgrade database did not answer a plaintext TCP query." >&2
+        exit 1
+    }
+    OLD_POD_UID=$(server_pod_uid)
+    if [[ "$RECIPE_TYPE" == terraform ]]; then
+        OLD_STATE_IDS=$(kubectl get secrets -A -l tfstate=true \
+            -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,UID:.metadata.uid' \
+            --no-headers | sort)
+        [[ -n "$OLD_STATE_IDS" ]] || {
+            echo "Error: No Terraform backend state Secret metadata found." >&2
+            exit 1
+        }
+    fi
+    echo "==> Pre-upgrade RollingUpdate database ready: resource=$OLD_RESOURCE_ID deployment=$OLD_DEPLOYMENT_UID"
+    switch_upgrade_source "${POSTGRESQL_UPGRADE_NEW_SOURCE:?New source required}"
+    LAST_POLICY=""
+fi
+
+if [[ "$RECIPE_TYPE" == bicep && "${POSTGRESQL_TEST_READINESS:-1}" == 1 ]]; then
+    bash "$TEST_DIR/assert-readiness.sh" "$NAMESPACE" postgresql "${OLD_POD_UID:-}" &
+    READINESS_PID=$!
+fi
 deploy_policy default
+if [[ -n "$READINESS_PID" ]]; then
+    if ! wait "$READINESS_PID"; then
+        READINESS_PID=""
+        echo "Error: PostgreSQL initialization readiness test failed." >&2
+        exit 1
+    fi
+    READINESS_PID=""
+fi
+if [[ -n "${POSTGRESQL_UPGRADE_PACK:-}" ]]; then
+    new_json=$(kubectl get deployment postgresql -n "$NAMESPACE" -o json)
+    jq -e --arg uid "$OLD_DEPLOYMENT_UID" --arg kind "$RECIPE_TYPE" '.metadata.uid == $uid and
+        (if $kind == "bicep" then
+            .spec.strategy.type == "RollingUpdate" and
+            .spec.strategy.rollingUpdate.maxSurge == 0 and
+            .spec.strategy.rollingUpdate.maxUnavailable == 1
+         else .spec.strategy.type == "Recreate" and (.spec.strategy | has("rollingUpdate") | not)
+         end)' \
+        <<<"$new_json" >/dev/null
+    new_resource_id=$(rad resource show Radius.Data/postgreSqlDatabases postgresql \
+        --workspace "$WORKSPACE_NAME" -o json | jq -er '.id')
+    [[ "$new_resource_id" == "$OLD_RESOURCE_ID" ]]
+    if [[ "$RECIPE_TYPE" == terraform ]]; then
+        new_state_ids=$(kubectl get secrets -A -l tfstate=true \
+            -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,UID:.metadata.uid' \
+            --no-headers | sort)
+        [[ "$new_state_ids" == "$OLD_STATE_IDS" ]] || {
+            echo "Error: Terraform upgrade changed backend state Secret identities." >&2
+            exit 1
+        }
+    fi
+    echo "==> In-place upgrade preserved identities and verified $RECIPE_TYPE rollout strategy"
+fi
 
 # The CA is public; only the server Secret and the private temp directory hold keys.
 kubectl create configmap "$CLIENT_NAME-ca" -n "$NAMESPACE" \
@@ -249,7 +349,8 @@ assert_policy() {
 }
 
 assert_policy default
-# Repeat deployment and both policy transitions must apply without initdb hooks.
+# Repeat deployments and both transitions exercise pod-template policy selection.
+# Rollouts use fresh ephemeral databases; this does not test retained PGDATA.
 for policy in required required optional optional required optional default; do
     deploy_policy "$policy"
     assert_policy "$policy"

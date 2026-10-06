@@ -173,6 +173,24 @@ resource secret 'Radius.Security/secrets@2025-08-01-preview' = {
 
 ### Step 2: Test Locally
 
+#### Platform-specific deployment suites
+
+A resource type can provide `test/<platform>/test.sh` for checks that need more
+than the generic application deployment. The shared runner invokes it with Bash
+after resolving the workspace and environment, before looking for `app.bicep`.
+Executable permissions are not required.
+
+The hook receives these positional arguments: recipe directory, recipe kind
+(`bicep` or `terraform`), full environment ID, workspace name, and Kubernetes
+namespace. It owns deployment, assertions, and cleanup. Its exit status becomes
+the test result; the shared runner does not subsequently deploy the generic app
+or perform namespace-wide cleanup.
+
+Keep hooks platform-scoped so a Kubernetes suite cannot intercept an Azure
+recipe. Recipes without a matching hook retain the generic `test/app.bicep`
+behavior. See `Data/postgreSqlDatabases/test/kubernetes/test.sh` for a small
+wrapper around a resource-specific suite.
+
 Before submitting to CI, test your application locally:
 
 ```bash

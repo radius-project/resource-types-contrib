@@ -189,7 +189,7 @@ run_case() {
     : > "$state/calls"
     local actual_status=0
     MOCK_STATE="$state" MOCK_RECIPE_TYPE="$recipe" MOCK_RESOURCE_GROUP="$group" MOCK_FAIL_DEPLOY="$fail_deploy" \
-        MOCK_FAIL_CLEANUP="$fail_cleanup" PATH="$TEST_ROOT/bin:$PATH" \
+        MOCK_FAIL_CLEANUP="$fail_cleanup" POSTGRESQL_TEST_READINESS=0 PATH="$TEST_ROOT/bin:$PATH" \
         bash "$TEST_DIR/test-tls.sh" "$recipe" \
         /planes/radius/local/resourcegroups/test/providers/Radius.Core/environments/test-environment test-workspace test \
         > "$state/output" 2>&1 || actual_status=$?

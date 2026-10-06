@@ -13,6 +13,7 @@ variable "context" {
   type        = any
 
   validation {
+    # Keep this default in sync with local.tls_policy; Terraform 1.5 validation cannot reference locals.
     condition     = contains(["required", "optional"], try(var.context.resource.properties.tls, null) == null ? "required" : var.context.resource.properties.tls)
     error_message = "PostgreSQL tls must be required or optional."
   }
@@ -137,8 +138,8 @@ resource "kubernetes_deployment" "postgresql" {
       metadata {
         labels = local.labels
         annotations = {
-          "radapp.io-postgresql-tls-policy"   = local.tls_policy
-          "radapp.io-postgresql-tls-revision" = var.postgresqlTlsCertificateRevision
+          "radapp.io/postgresql-tls-policy"   = local.tls_policy
+          "radapp.io/postgresql-tls-revision" = var.postgresqlTlsCertificateRevision
         }
       }
 
@@ -191,7 +192,7 @@ resource "kubernetes_deployment" "postgresql" {
 
           readiness_probe {
             exec {
-              command = ["pg_isready", "-q", "-h", "/var/run/postgresql"]
+              command = ["pg_isready", "-q", "-h", "127.0.0.1"]
             }
             period_seconds  = 5
             timeout_seconds = 3

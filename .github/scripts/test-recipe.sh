@@ -209,17 +209,17 @@ echo "==> Environment: $ENVIRONMENT_NAME"
 ensure_workspace_context
 resolve_environment_path
 
+TEST_HOOK="$RESOURCE_TYPE_PATH/test/$PLATFORM/test.sh"
+if [[ -f "$TEST_HOOK" ]]; then
+    exec bash "$TEST_HOOK" "$RECIPE_PATH" "$RECIPE_TYPE" \
+        "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE"
+fi
+
 # Check if test file exists
 TEST_FILE="$RESOURCE_TYPE_PATH/test/app.bicep"
 if [[ ! -f "$TEST_FILE" ]]; then
     echo "==> No test file found at $TEST_FILE, skipping deployment test"
     exit 0
-fi
-
-if [[ "$RESOURCE_TYPE" == "Radius.Data/postgreSqlDatabases" && "$PLATFORM" == "kubernetes" ]]; then
-    bash "$RESOURCE_TYPE_PATH/test/test-tls.sh" \
-        "$RECIPE_TYPE" "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE"
-    exit $?
 fi
 
 echo "==> Deploying test application from $TEST_FILE"

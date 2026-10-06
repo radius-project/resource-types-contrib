@@ -62,6 +62,9 @@ jobs:
       - name: Validate PostgreSQL TLS test runner
         run: bash Data/postgreSqlDatabases/test/test-tls-runner.sh
 
+      - name: Validate PostgreSQL initialization readiness observer
+        run: bash Data/postgreSqlDatabases/test/assert-readiness-test.sh
+
       - name: Validate resource type icons
         run: make validate-icons
 
@@ -157,6 +160,9 @@ jobs:
 
       - name: Test ${{ matrix.recipe }} recipes
         run: RECIPE_PLATFORM_FILTER=kubernetes make test ENVIRONMENT="$RAD_ENVIRONMENT_NAME" RECIPE_TYPE=${{ matrix.recipe }}
+
+      - name: Verify PostgreSQL upgrade from pre-TLS Recipes
+        run: bash Data/postgreSqlDatabases/test/test-upgrade.sh "${{ matrix.recipe }}"
 
       - name: Collect Radius pod logs
         if: always()

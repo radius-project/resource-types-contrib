@@ -16,8 +16,21 @@ jq -e '
   (.variables.hbaRequiredConfig | contains("hostnossl all all ::/0 reject")) and
   (.variables.hbaRequiredConfig | contains("hostssl all all ::/0 scram-sha-256")) and
   (.variables.hbaOptionalConfig | contains("scram-sha-256")) and
+  (.parameters.postgresqlTlsSecretName.defaultValue == "") and
+  (.parameters.postgresqlTlsSecretName | has("minLength") | not) and
+  (.parameters.postgresqlTlsCertificateRevision.minLength == 1) and
+  (.variables.tlsSecretName | contains("empty(parameters")) and
+  (.variables.tlsSecretName | contains("-tls")) and
   (.resources.transportConfig.properties.data | keys | sort) == ["pg_hba-optional.conf", "pg_hba-required.conf"] and
-  (.resources.postgresql.properties.spec.strategy.type == "Recreate") and
+  (.resources.postgresql.properties.spec.strategy.type == "RollingUpdate") and
+  (.resources.postgresql.properties.spec.strategy.rollingUpdate.maxSurge == 0) and
+  (.resources.postgresql.properties.spec.strategy.rollingUpdate.maxUnavailable == 1) and
+  (.resources.postgresql.properties.spec.template.metadata.annotations | keys | sort) ==
+    ["radapp.io/postgresql-tls-policy", "radapp.io/postgresql-tls-revision"] and
+  (.resources.postgresql.properties.spec.template.spec.containers[0].readinessProbe.exec.command ==
+    ["pg_isready", "-q", "-h", "127.0.0.1"]) and
+  (.resources.postgresql.properties.spec.template.spec.volumes | tostring |
+    contains("tlsSecretName")) and
   (.resources.postgresql.properties.spec.template.spec.containers[0].args |
     index("ssl=on") != null and
     any(.[]; contains("hba_file=/transport/pg_hba-")) and

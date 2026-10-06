@@ -38,6 +38,7 @@ run "omitted_policy" {
       contains(kubernetes_deployment.postgresql.spec[0].template[0].spec[0].container[0].args, "hba_file=/transport/pg_hba-required.conf") &&
       contains(kubernetes_deployment.postgresql.spec[0].template[0].spec[0].container[0].args, "password_encryption=scram-sha-256") &&
       kubernetes_deployment.postgresql.spec[0].strategy[0].type == "Recreate" &&
+      kubernetes_deployment.postgresql.spec[0].template[0].spec[0].container[0].readiness_probe[0].exec[0].command == tolist(["pg_isready", "-q", "-h", "127.0.0.1"]) &&
       strcontains(kubernetes_deployment.postgresql.spec[0].template[0].spec[0].init_container[0].command[2], "chmod 600 /tls/server.key") &&
       length(kubernetes_deployment.postgresql.spec[0].template[0].spec[0].volume) == 3
     )
@@ -86,7 +87,7 @@ run "optional_policy" {
       contains(kubernetes_deployment.postgresql.spec[0].template[0].spec[0].container[0].args, "hba_file=/transport/pg_hba-optional.conf") &&
       strcontains(kubernetes_config_map.transport.data["pg_hba-optional.conf"], "hostnossl all all 0.0.0.0/0 scram-sha-256") &&
       strcontains(kubernetes_config_map.transport.data["pg_hba-optional.conf"], "hostnossl all all ::/0 scram-sha-256") &&
-      kubernetes_deployment.postgresql.spec[0].template[0].metadata[0].annotations["radapp.io-postgresql-tls-policy"] == "optional"
+      kubernetes_deployment.postgresql.spec[0].template[0].metadata[0].annotations["radapp.io/postgresql-tls-policy"] == "optional"
     )
     error_message = "Optional must keep TLS enabled, require passwords for plaintext, and update the pod policy."
   }
@@ -101,7 +102,7 @@ run "operator_certificate" {
   assert {
     condition = (
       local.tls_secret_name == "operator-tls" &&
-      kubernetes_deployment.postgresql.spec[0].template[0].metadata[0].annotations["radapp.io-postgresql-tls-revision"] == "2" &&
+      kubernetes_deployment.postgresql.spec[0].template[0].metadata[0].annotations["radapp.io/postgresql-tls-revision"] == "2" &&
       alltrue([for id in output.result.resources : !strcontains(id, "operator-tls")])
     )
     error_message = "Operator certificate selection must trigger revision rollouts without taking ownership of the Secret."
@@ -117,7 +118,27 @@ run "invalid_policy" {
       })
     })
   }
+
   expect_failures = [var.context]
+}
+
+run "empty_secret_name" {
+  command = plan
+  variables {
+    postgresqlTlsSecretName = ""
+  }
+  assert {
+    condition     = local.tls_secret_name == "postgresql-tls"
+    error_message = "An empty Secret name must select the resource-name convention."
+  }
+}
+
+run "empty_certificate_revision" {
+  command = plan
+  variables {
+    postgresqlTlsCertificateRevision = ""
+  }
+  expect_failures = [var.postgresqlTlsCertificateRevision]
 }
 
 run "null_policy" {
