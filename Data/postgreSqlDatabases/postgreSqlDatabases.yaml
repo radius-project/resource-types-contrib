@@ -53,6 +53,8 @@ types:
       - CONNECTION_POSTGRESQL_PORT
       - CONNECTION_POSTGRESQL_TLS
 
+      Both Kubernetes recipes reject plaintext TCP when `tls` is `required` or omitted; `optional` supports TLS and plaintext. Both policies require a TLS Secret supplied by your platform operator. See [the PostgreSQL README](https://github.com/radius-project/resource-types-contrib/blob/main/Data/postgreSqlDatabases/README.md#kubernetes-certificates-and-recipe-parameters) for certificate setup and client verification.
+
     apiVersions:
       '2025-08-01-preview':
         schema: 
@@ -87,7 +89,7 @@ types:
               type: string
               enum: ['required', 'optional']
               default: 'required'
-              description: "(Optional) The requested transport policy for database connections. Configure your client using `CONNECTION_POSTGRESQL_TLS`. Defaults to `required`. Use `optional` only when the server is not publicly reachable; it permits connections without TLS."
+              description: "(Optional) The transport policy for database connections, reported in `CONNECTION_POSTGRESQL_TLS`. Defaults to `required`, which rejects plaintext TCP in both Kubernetes recipes. `optional` permits plaintext but keeps TLS enabled; use it only when the server is not publicly reachable. Kubernetes requires an operator-owned TLS Secret for either policy. Clients must configure CA trust and hostname verification separately. Azure operator overrides retain precedence over the requested policy."
             host:
               type: string
               description: "(Read Only) The host name used to connect to the database. Mapped from the recipe module's output."

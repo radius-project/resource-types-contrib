@@ -188,7 +188,8 @@ or perform namespace-wide cleanup.
 
 Keep hooks platform-scoped so a Kubernetes suite cannot intercept an Azure
 recipe. Recipes without a matching hook retain the generic `test/app.bicep`
-behavior.
+behavior. See `Data/postgreSqlDatabases/test/kubernetes/test.sh` for a small
+wrapper around a resource-specific suite.
 
 Before submitting to CI, test your application locally:
 
