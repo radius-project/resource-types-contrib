@@ -209,6 +209,12 @@ echo "==> Environment: $ENVIRONMENT_NAME"
 ensure_workspace_context
 resolve_environment_path
 
+TEST_HOOK="$RESOURCE_TYPE_PATH/test/$PLATFORM/test.sh"
+if [[ -f "$TEST_HOOK" ]]; then
+    exec bash "$TEST_HOOK" "$RECIPE_PATH" "$RECIPE_TYPE" \
+        "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE"
+fi
+
 # Check if test file exists
 TEST_FILE="$RESOURCE_TYPE_PATH/test/app.bicep"
 if [[ ! -f "$TEST_FILE" ]]; then
