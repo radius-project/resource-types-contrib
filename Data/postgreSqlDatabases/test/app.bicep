@@ -3,12 +3,22 @@ extension radius
 @description('The ID of your Radius Environment. Set automatically by the rad CLI.')
 param environment string
 
+@description('Application name. Deployment tests set this to the same name used by the CLI and cleanup.')
+param applicationName string = 'postgresql-test'
+
 @description('Database admin password. Set on the `password` property of the database (x-radius-sensitive, so Radius encrypts it at rest and injects it decrypted into the Recipe) and stored in a Radius.Security/secrets resource for the consuming container to bind by reference.')
 @secure()
 param password string
 
+@description('Use default to omit tls and exercise the schema default, or select an explicit transport policy.')
+@allowed(['default', 'required', 'optional'])
+param tlsPolicy string = 'default'
+
+@description('Initialization SQL used by the Bicep Kubernetes recipe tests. Terraform does not implement initSql.')
+param initSql string = ''
+
 resource app 'Radius.Core/applications@2025-08-01-preview' = {
-  name: 'postgresql-test'
+  name: applicationName
   properties: {
     environment: environment
   }
@@ -36,15 +46,15 @@ resource dbCreds 'Radius.Security/secrets@2025-08-01-preview' = {
 
 resource postgresql 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
   name: 'postgresql'
-  properties: {
+  properties: union({
     environment: environment
     application: app.id
     size: 'S'
     database: 'appdb'
     username: 'radadmin'
     password: password
-    // `tls` is omitted so this test exercises the schema default (`required`).
-  }
+    initSql: initSql
+  }, tlsPolicy == 'default' ? {} : { tls: tlsPolicy })
 }
 
 resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
