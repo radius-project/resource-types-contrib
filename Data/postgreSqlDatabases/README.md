@@ -41,7 +41,7 @@ Use `optional` only when the server is not publicly reachable. Non-TLS connectio
 
 ## Kubernetes certificates and recipe parameters
 
-### Breaking-change notice and pre-merge release coordination
+### TLS migration and release requirements
 
 Adopting these Recipes requires a new operator-owned TLS Secret for **both**
 transport policies. Existing deployments without that Secret cannot start the
@@ -53,19 +53,14 @@ tag must prepare certificates, client trust, and backups before redeployment, or
 pin an immutable pre-change artifact while migrating. A merge does not alter an
 already-running server or an immutable Recipe reference.
 
-Before merging, maintainers must agree where the breaking-change notice will
-reach `edge` users, coordinate the next `Radius.Data` namespace release and its
+For breaking Recipe upgrades, maintainers must publish a migration notice that
+reaches `edge` users, coordinate the `Radius.Data` namespace release and its
 breaking-change versioning, and coordinate the resulting
 `bot/update-resource-types` PR in `radius-project/radius`. Released Radius
 versions pin a namespace release's commit; they do not automatically adopt every
 new `edge` artifact. The checked-in Kubernetes default pack currently has no
 PostgreSQL entry. Its unrelated stable Recipe references must not be changed as
 part of this migration.
-
-This notice is a proposed migration requirement, **not confirmation that release
-coordination has occurred**. Keep the PR draft and the release-coordination
-review thread open until the relevant maintainers acknowledge the notice and
-migration plan.
 
 An operator must provision a Kubernetes TLS Secret in the database's namespace **before deployment**, for both policies. By default the Recipes use `<resource-name>-tls` (for example, `postgresql-tls`). They do not generate certificates or fall back to plaintext when a Secret is absent or invalid.
 
