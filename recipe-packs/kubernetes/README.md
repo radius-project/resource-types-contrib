@@ -10,7 +10,7 @@ The pack declares one `Radius.Core/recipePacks` resource whose `recipes` map con
 
 ## Recipes in this pack
 
-Kube-recipes tagged `:edge` are rebuilt on every push to `main`; `:latest` and the version tags track stable releases.
+Kube-recipes tagged `:edge` are rebuilt on every push to `main`. `:latest` and the version tags track stable releases, but `:latest` moves to a new digest each time a release publishes, so pin a version tag if you need a reproducible deployment.
 
 | Resource Type | Kind | Source |
 | --- | --- | --- |
@@ -22,6 +22,20 @@ Kube-recipes tagged `:edge` are rebuilt on every push to `main`; `:latest` and t
 | `Radius.Data/redisCaches` | Bicep | `ghcr.io/radius-project/kube-recipes/rediscaches:latest` |
 | `Radius.Messaging/rabbitMQ` | Bicep | `ghcr.io/radius-project/kube-recipes/rabbitmq:latest` |
 
+This pack has seven Recipes and does not cover `Radius.Data/postgreSqlDatabases`. `rad env create` without `--recipe-packs` links Radius's own built-in default pack, which has eight Recipes, including PostgreSQL, pinned to the SHA tags of that Radius release. **Deploying this pack into the same pack ID overwrites that built-in pack.** Only deploy this pack when you want this exact set of Recipes, or when you know the Environment does not already use the built-in default pack.
+
+## Prerequisite: `bicepconfig.json`
+
+`rad deploy` needs a `bicepconfig.json` that registers the `radius` extension. This repo does not commit one. Before deploying, create one above `recipe-packs/` (Bicep looks for `bicepconfig.json` by walking up from the `.bicep` file's directory, not your current directory), for example the file `rad init --preview` scaffolds:
+
+```json
+{
+  "extensions": {
+    "radius": "br:biceptypes.azurecr.io/radius:<rad-version>"
+  }
+}
+```
+
 ## Deploying
 
 Create the Environment first:
@@ -32,18 +46,32 @@ rad env create default \
   --preview
 ```
 
-Deploy the Recipe Pack into that existing Environment, then associate it:
+`rad deploy` writes the pack to your workspace's **current** resource group, not the Environment's group, and Radius's built-in default pack always lives in group `default`. Pass `--group default` so the pack lands in the same group as the Environment. If your workspace's current group is not `default`, also pass the Environment's full ID instead of its name:
 
 ```bash
 rad deploy recipe-packs/kubernetes/default.bicep \
+  --group default \
   --environment default
+```
 
+```bash
+# From a workspace scoped to a group other than "default":
+rad deploy recipe-packs/kubernetes/default.bicep \
+  --group default \
+  --environment /planes/radius/local/resourceGroups/default/providers/Radius.Core/environments/default
+```
+
+If the pack keeps the same ID as the Environment's current pack, the Environment's existing reference already resolves and no further step is needed. Only run `rad env update` if the Environment is not yet associated with the pack, and scope it to the Environment's own group (which may differ from `default`):
+
+```bash
 rad env update default \
+  --group <environment-group> \
   --recipe-packs default \
+  --recipe-pack-group default \
   --preview
 ```
 
-After the association is updated, every Resource Type the pack covers can be used in an application deployed to that Environment.
+After the association is confirmed, every Resource Type the pack covers can be used in an application deployed to that Environment.
 
 ## Contributing a Recipe
 
