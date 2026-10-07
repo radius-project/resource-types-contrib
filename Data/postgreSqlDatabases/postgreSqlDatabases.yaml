@@ -53,7 +53,7 @@ types:
       - CONNECTION_POSTGRESQL_PORT
       - CONNECTION_POSTGRESQL_TLS
 
-      Both Kubernetes recipes require an operator-owned TLS Secret (by default `<resource-name>-tls`) with `tls.crt` and `tls.key` in the database namespace. This is a breaking prerequisite for existing Kubernetes consumers; provision the Secret before adopting the new Recipe. They enable TLS for both policies and reject plaintext TCP when `tls` is `required` or omitted. Configure clients with a trusted CA and hostname verification (`sslmode=verify-full`); `sslmode=require` alone does not verify server identity. Updating the Secret requires an explicit rollout or a change to the recipe's `postgresqlTlsCertificateRevision` parameter followed by redeployment. Protect data first: these recipes do not provision durable volumes. See the PostgreSQL README for certificate ownership, rotation, migration, and release coordination. Bicep resource submission is not a database health check; require successful rollout and a TCP query.
+      Both Kubernetes recipes reject plaintext TCP when `tls` is `required` or omitted; `optional` supports TLS and plaintext. Both policies require a TLS Secret supplied by your platform operator. See [the PostgreSQL README](https://github.com/radius-project/resource-types-contrib/blob/main/Data/postgreSqlDatabases/README.md#kubernetes-certificates-and-recipe-parameters) for certificate setup and client verification.
 
     apiVersions:
       '2025-08-01-preview':

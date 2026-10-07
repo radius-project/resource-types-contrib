@@ -54,8 +54,23 @@ for mode in success early missing backwards; do
         grep -q 'Observed socket ready, TCP unavailable, and Pod Ready=False' "$state/output"
         grep -q 'TCP readiness passed after initialization' "$state/output"
     else
-        [[ "$status" == 1 ]]
-        grep -q '^Error:' "$state/output"
+        case "$mode" in
+            early)
+                expected_error='Error: Database became Ready before the temporary-server window was observed.'
+                ;;
+            missing)
+                expected_error='Error: Pod became Ready before initialization completed.'
+                ;;
+            backwards)
+                expected_error='Error: First readiness transition preceded initialization completion.'
+                ;;
+        esac
+        if [[ "$status" != 1 ]] || ! grep -Fxq "$expected_error" "$state/output"; then
+            printf 'Error: Readiness test %s expected exit 1 with "%s"; got exit %s.\n' \
+                "$mode" "$expected_error" "$status" >&2
+            cat "$state/output" >&2
+            exit 1
+        fi
     fi
 done
 echo "Readiness observation, old-Pod exclusion, and invalid evidence tests passed"
