@@ -8,6 +8,7 @@ on:
     paths:
       - "**/kubernetes/**"
       - "**/test/app.bicep"
+      - "Data/postgreSqlDatabases/test/**"
       - "**/*.yaml"
       - "**/*.svg"
       - ".github/workflows/validate-resource-types.yaml"
@@ -57,6 +58,12 @@ jobs:
 
       - name: Run recipe namespace tests
         run: make test-recipe-namespace
+
+      - name: Validate PostgreSQL TLS test runner
+        run: bash Data/postgreSqlDatabases/test/test-tls-runner.sh
+
+      - name: Validate PostgreSQL initialization readiness observer
+        run: bash Data/postgreSqlDatabases/test/assert-readiness-test.sh
 
       - name: Validate resource type icons
         run: make validate-icons
