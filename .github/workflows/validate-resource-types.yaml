@@ -161,6 +161,9 @@ jobs:
       - name: Test ${{ matrix.recipe }} recipes
         run: RECIPE_PLATFORM_FILTER=kubernetes make test ENVIRONMENT="$RAD_ENVIRONMENT_NAME" RECIPE_TYPE=${{ matrix.recipe }}
 
+      - name: Verify PostgreSQL upgrade from pre-TLS Recipes
+        run: bash Data/postgreSqlDatabases/test/test-upgrade.sh "${{ matrix.recipe }}"
+
       - name: Collect Radius pod logs
         if: always()
         run: |
