@@ -28,6 +28,7 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 | Platform | Recipe Pack | Recipe source |
 | --- | --- | --- |
 | Azure | [`recipe-packs/azure-aks/azure-aks.bicep`](../../recipe-packs/azure-aks/azure-aks.bicep) | Direct module — Azure Verified Module `avm/res/db-for-postgre-sql/flexible-server` |
+| Kubernetes | [`recipe-packs/kubernetes/default.bicep`](../../recipe-packs/kubernetes/default.bicep) | `ghcr.io/radius-project/kube-recipes/postgresqldatabases` |
 
 ## Using the resource type
 
