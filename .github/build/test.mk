@@ -72,6 +72,10 @@ validate-recipe-packs: ## Verify checked-in recipe packs contain only Recipe Pac
 	@./.github/scripts/tests/test-validate-recipe-packs.sh
 	@./.github/scripts/tests/test-deploy-checked-in-azure-recipe-pack.sh
 
+.PHONY: test-bicepconfig
+test-bicepconfig: ## Run offline Bicep extension configuration tests
+	@./.github/scripts/tests/test-update-bicepconfig.sh
+
 .PHONY: update-env-recipe-pack
 update-env-recipe-pack: ## Update environment with recipe pack ID (requires RECIPE_PACK_NAME and optionally RESOURCE_GROUP and ENVIRONMENT)
 ifndef RECIPE_PACK_NAME

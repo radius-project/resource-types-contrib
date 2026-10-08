@@ -12,6 +12,18 @@ Before testing, ensure you have:
 - `oras` installed
 - `make` available in your environment
 
+GHCR Bicep extensions require a **released Radius CLI** that uses Bicep **0.45.6
+or newer** with `experimentalFeaturesEnabled.ociEnabled: true`. Check `rad version`;
+installing an older Radius release or using `edge` alone is not compatibility
+evidence. The migration was tested separately with upstream Bicep 0.46.1, not
+certified against a particular released Radius CLI.
+
+**Migration merge gates:** both `ghcr.io/radius-project/bicep-types-radius` and
+`ghcr.io/radius-project/bicep-types-aws` must contain anonymously pullable canonical
+artifacts for the selected tags, and restore/compile must pass with a verified
+compatible released Radius CLI. Do not merge the consumer migration before these
+gates pass; there is no ACR fallback.
+
 ## Quick Start
 
 ### 1. Set Up Your Environment
@@ -19,8 +31,9 @@ Before testing, ensure you have:
 Create a local Kubernetes cluster with Radius (and Dapr) installed:
 
 ```bash
-# Install Radius CLI (optional: specify version with RAD_VERSION=0.48.0)
+# Install Radius CLI (optionally select a verified compatible release with RAD_VERSION)
 make install-radius-cli
+rad version
 
 # Create kind cluster with Radius configured
 make create-radius-cluster
@@ -41,6 +54,15 @@ This command:
 - Generates a Bicep extension file (`.tgz`)
 - Updates `bicepconfig.json` to reference the extension
 - Enables IntelliSense and validation in your Bicep files
+
+The config updater uses `br:ghcr.io/radius-project/bicep-types-radius:edge` and
+`br:ghcr.io/radius-project/bicep-types-aws:edge` for new configs and enables OCI
+support. Existing legacy ACR Radius/AWS references are migrated: development
+`latest` becomes `edge`, while stable channels and full-version tags are preserved.
+Other settings, experimental flags, and custom extension references are retained;
+published local `*-extension.tgz` files are still merged. To refresh just the
+configuration, run `./.github/scripts/update-bicepconfig.sh` from the repository root.
+Run `make test-bicepconfig` for offline regression tests (no publish or deployment).
 
 ### 3. Build Your Recipes
 
