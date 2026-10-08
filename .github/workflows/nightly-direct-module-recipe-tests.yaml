@@ -1,0 +1,228 @@
+# yaml-language-server: $schema=https://www.schemastore.org/github-workflow.json
+---
+name: Nightly Direct-Module Recipe Pack Tests
+
+# "Layer 3" from issue #312: the real-deployment counterpart to
+# validate-direct-module-mappings.sh's static check (which runs on every PR).
+# For each third-party module entry with a test/app.bicep, deploy the test
+# application with its pack active. Repository-owned recipes have separate
+# per-recipe tests.
+#
+# Runs nightly rather than per-PR because the Azure job stands up and tears
+# down real cloud infrastructure for every direct-module Resource Type.
+
+on:
+  schedule:
+    - cron: "0 9 * * *" # 09:00 UTC daily
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Radius version number to use (e.g. 0.51.0, 0.51.0-rc1, edge)."
+        required: false
+        default: edge
+        type: string
+
+permissions: {}
+
+jobs:
+  nightly-kubernetes-direct-module-tests:
+    name: Nightly Direct-Module Tests (Kubernetes)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      RAD_ENVIRONMENT_NAME: default
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
+        with:
+          version: "1.2.0"
+
+      - name: Install Radius CLI
+        run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
+
+      # This sets up a local k3d cluster for testing purposes and creates a
+      # workspace, group, and default environment.
+      - name: Create Radius Cluster
+        run: make create-radius-cluster
+
+      - name: Build Resource Types and Kubernetes Recipes
+        run: RECIPE_PLATFORM_FILTER=kubernetes make build
+
+      - name: Deploy checked-in Kubernetes Recipe Pack
+        run: .github/scripts/deploy-all-checked-in-recipe-packs.sh kubernetes "$RAD_ENVIRONMENT_NAME"
+
+      - name: Test direct-module Recipe Pack entries
+        run: make test-direct-module-recipes PLATFORM_GROUP=kubernetes WORKSPACE=default ENVIRONMENT="$RAD_ENVIRONMENT_NAME"
+
+      - name: Collect Radius pod logs
+        if: always()
+        run: |
+          mkdir -p radius-pod-logs
+          APP_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | startswith("applications-rp-")) | .metadata.name' | head -n1)
+          if [ -n "$APP_POD" ]; then
+            kubectl logs "$APP_POD" -n radius-system --all-containers > radius-pod-logs/applications-rp.log || true
+          else
+            echo "applications-rp pod not found" > radius-pod-logs/applications-rp.log
+          fi
+          UCP_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | startswith("ucp-")) | .metadata.name' | head -n1)
+          if [ -n "$UCP_POD" ]; then
+            kubectl logs "$UCP_POD" -n radius-system --all-containers > radius-pod-logs/ucp.log || true
+          else
+            echo "ucp pod not found" > radius-pod-logs/ucp.log
+          fi
+          DRP_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | startswith("dynamic-rp-")) | .metadata.name' | head -n1)
+          if [ -n "$DRP_POD" ]; then
+            kubectl logs "$DRP_POD" -n radius-system --all-containers > radius-pod-logs/dynamic-rp.log || true
+          else
+            echo "dynamic-rp pod not found" > radius-pod-logs/dynamic-rp.log
+          fi
+
+      - name: Upload Radius pod logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: radius-pod-logs-nightly-kubernetes
+          path: radius-pod-logs
+          if-no-files-found: warn
+
+  nightly-azure-direct-module-tests:
+    name: Nightly Direct-Module Tests (Azure)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Azure Login
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set Azure Test Context
+        id: set-context
+        run: |
+          LOCATION="${AZURE_LOCATION:-$DEFAULT_AZURE_LOCATION}"
+          if [ -z "$LOCATION" ]; then
+            LOCATION="westus3"
+          fi
+          RG="rrtnightly-${{ github.run_id }}-${{ github.run_attempt }}"
+          {
+            echo "AZURE_LOCATION=$LOCATION"
+            echo "AZURE_RESOURCE_GROUP=$RG"
+            echo "AZURE_WORKSPACE_NAME=default"
+            echo "AZURE_ENVIRONMENT_NAME=default"
+          } >> "$GITHUB_ENV"
+        env:
+          DEFAULT_AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+
+      - name: Create Azure Resource Group
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          RG="$AZURE_RESOURCE_GROUP"
+          LOCATION="$AZURE_LOCATION"
+          current_time=$(date +%s)
+          az group create \
+            --only-show-errors \
+            --output none \
+            --location "$LOCATION" \
+            --name "$RG" \
+            --subscription "$AZURE_SUBSCRIPTION_ID" \
+            --tags "creationTime=$current_time" > /dev/null
+          while [[ "$(az group exists --name "$RG" --subscription "$AZURE_SUBSCRIPTION_ID")" != "true" ]]; do
+            echo "Waiting for resource group '$RG' to be available..."
+            sleep 5
+          done
+          echo "Resource group '$RG' is ready"
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
+        with:
+          version: "1.2.0"
+
+      - name: Install Radius CLI
+        run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
+
+      - name: Create Radius Cluster
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          TEST_AZURE_OIDC_JSON: ${{ secrets.TEST_AZURE_OIDC_JSON }}
+        run: make create-radius-cluster
+
+      - name: Configure Azure Provider
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: make configure-azure-provider
+
+      - name: Build Azure Recipes
+        run: make build-azure-recipes
+
+      - name: Deploy checked-in Azure Recipe Packs
+        run: .github/scripts/deploy-all-checked-in-recipe-packs.sh azure "$AZURE_ENVIRONMENT_NAME"
+
+      - name: Test direct-module Recipe Pack entries
+        timeout-minutes: 140
+        run: make test-direct-module-recipes PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+
+      - name: Collect Radius pod logs
+        if: always()
+        run: |
+          mkdir -p radius-pod-logs
+          APP_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | startswith("applications-rp-")) | .metadata.name' | head -n1)
+          if [ -n "$APP_POD" ]; then
+            kubectl logs "$APP_POD" -n radius-system --all-containers > radius-pod-logs/applications-rp.log || true
+          else
+            echo "applications-rp pod not found" > radius-pod-logs/applications-rp.log
+          fi
+          UCP_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | startswith("ucp-")) | .metadata.name' | head -n1)
+          if [ -n "$UCP_POD" ]; then
+            kubectl logs "$UCP_POD" -n radius-system --all-containers > radius-pod-logs/ucp.log || true
+          else
+            echo "ucp pod not found" > radius-pod-logs/ucp.log
+          fi
+          DRP_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | startswith("dynamic-rp-")) | .metadata.name' | head -n1)
+          if [ -n "$DRP_POD" ]; then
+            kubectl logs "$DRP_POD" -n radius-system --all-containers > radius-pod-logs/dynamic-rp.log || true
+          else
+            echo "dynamic-rp pod not found" > radius-pod-logs/dynamic-rp.log
+          fi
+
+      - name: Upload Radius pod logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: radius-pod-logs-nightly-azure
+          path: radius-pod-logs
+          if-no-files-found: warn
+
+      - name: Cleanup Azure Resources
+        if: always()
+        run: make cleanup-azure-resources

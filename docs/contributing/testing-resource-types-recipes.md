@@ -10,6 +10,7 @@ Before testing, ensure you have:
 - `kubectl` installed
 - `helm` installed
 - `oras` installed
+- `jq` installed (also required by the Recipe Pack unit tests)
 - `make` available in your environment
 
 ## Quick Start
@@ -315,6 +316,26 @@ make build-resource-type TYPE_FOLDER=<folder>
 Ensure the recipe is built before testing:
 - **Bicep**: `make build-bicep-recipe RECIPE_PATH=<path>`
 - **Terraform**: `make build-terraform-recipe RECIPE_PATH=<path>`
+
+## Testing Recipe Packs
+
+Recipe Packs (`recipe-packs/*/*.bicep`) are tested separately from individual
+Recipes. See [Recipe Packs: How Recipe Packs are tested in CI](../../recipe-packs/README.md#how-recipe-packs-are-tested-in-ci)
+for the three layers of checks (deploy, static mapping validation, and nightly
+real-deployment tests) and the `make` targets for running them locally.
+
+Run the checks that do not require a cluster before submitting a pack change:
+
+```bash
+make validate-recipe-packs
+make validate-direct-module-mappings
+make test-direct-module-recipes-unit
+```
+
+Nightly tests activate each pack before testing its entries. They use the
+values in each Resource Type's test app; they do not test every enum value.
+The static check validates Radius property references and enum comparison
+literals, not the target module's parameter contract.
 
 ## Maturity Level Testing Requirements
 
