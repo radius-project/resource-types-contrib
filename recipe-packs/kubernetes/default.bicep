@@ -32,6 +32,10 @@ resource kubernetesRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
         kind: 'bicep'
         source: 'ghcr.io/radius-project/kube-recipes/secrets:latest'
       }
+      'Radius.Data/mongoDatabases': {
+        kind: 'bicep'
+        source: 'ghcr.io/radius-project/kube-recipes/mongodatabases:latest'
+      }
       'Radius.Data/mySqlDatabases': {
         kind: 'bicep'
         source: 'ghcr.io/radius-project/kube-recipes/mysqldatabases:latest'

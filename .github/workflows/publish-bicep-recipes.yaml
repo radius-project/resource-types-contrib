@@ -126,6 +126,8 @@ jobs:
             run: ./.github/scripts/publish-bicep-recipe.sh routes Compute/routes/recipes/kubernetes/bicep/kubernetes-routes.bicep
           - name: Publish secrets
             run: ./.github/scripts/publish-bicep-recipe.sh secrets Security/secrets/recipes/kubernetes/bicep/kubernetes-secrets.bicep
+          - name: Publish mongodatabases
+            run: ./.github/scripts/publish-bicep-recipe.sh mongodatabases Data/mongoDatabases/recipes/kubernetes/bicep/kubernetes-mongodb.bicep
           - name: Publish mysqldatabases
             run: ./.github/scripts/publish-bicep-recipe.sh mysqldatabases Data/mySqlDatabases/recipes/kubernetes/bicep/kubernetes-mysql.bicep
           - name: Publish postgresqldatabases
