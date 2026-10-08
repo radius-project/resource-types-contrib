@@ -24,6 +24,21 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 | --- | --- | --- |
 | Azure | [`recipe-packs/azure-aks/azure-aks.bicep`](../../recipe-packs/azure-aks/azure-aks.bicep) | Direct module — Azure Verified Module `avm/res/event-hub/namespace` |
 
+### Kubernetes Recipe
+
+The Kubernetes Recipe ([`recipes/kubernetes/terraform`](recipes/kubernetes/terraform)) runs a single Apache Kafka node from the official `apache/kafka` image in the Environment's namespace. The node runs in KRaft mode as both broker and controller, so no ZooKeeper or operator is needed. It is meant for development and testing:
+
+- Clients connect over plaintext on port `9092`. There is no TLS and no authentication.
+- Storage is an `emptyDir` volume, so topics and messages are lost when the Pod is replaced.
+- When the broker starts, the Recipe creates the topic named by `topic` with one partition and a replication factor of one. The Pod reports ready only after the topic exists.
+
+| Output | Value |
+| --- | --- |
+| `host` | The DNS name of the broker `Service`, `<resource-name>.<namespace>.svc.cluster.local`. |
+| `secrets.connectionString` | The bootstrap server, `<host>:9092`. Pass it to a Kafka client as `bootstrap.servers`. Delivered through the managed secret. |
+
+The checked-in Kubernetes Recipe Pack, [`recipe-packs/kubernetes/default.bicep`](../../recipe-packs/kubernetes/default.bicep), registers only Bicep Recipes published to GHCR, so it does not reference this Terraform module. To use the module, add a `Radius.Messaging/kafka` entry with `kind: 'terraform'` to a Recipe Pack and set its `source` to the location where you host the module, as the repository's CI does when it tests Terraform Recipes.
+
 ## Using the resource type
 
 Add a `kafka` resource to your application and connect a container to it. With Radius control-plane support from `radius-project/radius#12709` and Kubernetes Container Recipe support from `resource-types-contrib#300` or later, one connection named `kafka` injects the ordinary `CONNECTION_KAFKA_HOST` value plus the secret-backed `CONNECTION_KAFKA_CONNECTIONSTRING`. No second managed-Secret connection is needed on compatible Kubernetes versions. For custom or backward-compatible Kubernetes configuration, `kafka.properties.secrets.name` remains available as the `secretName` for an explicitly authored `secretKeyRef`. See [`test/app.bicep`](test/app.bicep) for the gradual-adoption example.
