@@ -10,6 +10,7 @@ Before testing, ensure you have:
 - `kubectl` installed
 - `helm` installed
 - `oras` installed
+- `jq` installed (also required by the Recipe Pack unit tests)
 - `make` available in your environment
 
 ## Quick Start
@@ -145,9 +146,10 @@ extension radius
 extension mySqlDatabases
 
 param environment string
+param applicationName string = 'testapp'
 
 resource app 'Applications.Core/applications@2023-10-01-preview' = {
-  name: 'testapp'
+  name: applicationName
   properties: {
     environment: environment
   }
@@ -163,6 +165,12 @@ resource mysql 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
 ```
 
 ## Cleanup
+
+All test apps must declare `applicationName` and use it for the application
+resource name. The test runner passes the generated name to both the template
+and the CLI, then uses that name for assertions and cleanup. Keep the default
+name for manual use. Other required credentials must use a secure `password`
+parameter; the runner generates its value. Usernames can have a test default.
 
 Delete your test cluster when done:
 
@@ -315,6 +323,26 @@ make build-resource-type TYPE_FOLDER=<folder>
 Ensure the recipe is built before testing:
 - **Bicep**: `make build-bicep-recipe RECIPE_PATH=<path>`
 - **Terraform**: `make build-terraform-recipe RECIPE_PATH=<path>`
+
+## Testing Recipe Packs
+
+Recipe Packs (`recipe-packs/*/*.bicep`) are tested separately from individual
+Recipes. See [Recipe Packs: How Recipe Packs are tested in CI](../../recipe-packs/README.md#how-recipe-packs-are-tested-in-ci)
+for the three layers of checks (deploy, static mapping validation, and nightly
+real-deployment tests) and the `make` targets for running them locally.
+
+Run the checks that do not require a cluster before submitting a pack change:
+
+```bash
+make validate-recipe-packs
+make validate-direct-module-mappings
+make test-direct-module-recipes-unit
+```
+
+Nightly tests activate each pack before testing its entries. They use the
+values in each Resource Type's test app; they do not test every enum value.
+The static check validates Radius property references and enum comparison
+literals, not the target module's parameter contract.
 
 ## Maturity Level Testing Requirements
 

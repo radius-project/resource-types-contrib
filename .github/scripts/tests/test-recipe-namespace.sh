@@ -25,7 +25,8 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 FIXTURE_ROOT="$TEST_ROOT/repo"
 RECIPE_PATH="$FIXTURE_ROOT/Data/widgets/recipes/kubernetes/bicep"
 mkdir -p "$RECIPE_PATH" "$FIXTURE_ROOT/Data/widgets/test" "$TEST_ROOT/bin"
-touch "$RECIPE_PATH/main.bicep" "$FIXTURE_ROOT/Data/widgets/test/app.bicep"
+touch "$RECIPE_PATH/main.bicep"
+echo "param applicationName string" >"$FIXTURE_ROOT/Data/widgets/test/app.bicep"
 
 export COMMAND_CALLS="$TEST_ROOT/command-calls"
 : >"$COMMAND_CALLS"
@@ -55,7 +56,11 @@ if grep -q '^rad env update ' "$COMMAND_CALLS"; then
 fi
 
 for resource in secrets deployments services; do
-    grep -qx "kubectl delete $resource --all -n radius-recipe-validation" "$COMMAND_CALLS"
+    grep -qxE "kubectl delete $resource -l radapp.io/application=testapp-[0-9]+ -n radius-recipe-validation" "$COMMAND_CALLS"
 done
+if grep -q -- '--all' "$COMMAND_CALLS"; then
+    echo "Recipe test attempted to delete shared namespace resources" >&2
+    exit 1
+fi
 
 echo "Recipe namespace test passed"

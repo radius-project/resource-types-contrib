@@ -18,6 +18,7 @@
 
 RESOURCE_TYPE_ROOT ?=$(shell pwd)
 ENVIRONMENT ?= default
+WORKSPACE ?= default
 RECIPE_TYPE ?= all
 
 .PHONY: build
@@ -70,7 +71,27 @@ endif
 validate-recipe-packs: ## Verify checked-in recipe packs contain only Recipe Pack resources
 	@./.github/scripts/validate-recipe-packs.sh
 	@./.github/scripts/tests/test-validate-recipe-packs.sh
-	@./.github/scripts/tests/test-deploy-checked-in-azure-recipe-pack.sh
+	@./.github/scripts/tests/test-recipe-pack-lib.sh
+	@./.github/scripts/tests/test-deploy-all-checked-in-recipe-packs.sh
+
+.PHONY: validate-direct-module-mappings
+validate-direct-module-mappings: ## Check direct-module Radius property references and enum comparison literals
+	@./.github/scripts/validate-direct-module-mappings.sh
+	@./.github/scripts/tests/test-validate-direct-module-mappings.sh
+
+.PHONY: test-direct-module-recipes
+test-direct-module-recipes: ## Deploy test apps for every direct-module Recipe Pack entry on a platform group (requires PLATFORM_GROUP; set WORKSPACE/ENVIRONMENT to override defaults)
+ifndef PLATFORM_GROUP
+	$(error PLATFORM_GROUP parameter is required. Usage: make test-direct-module-recipes PLATFORM_GROUP=<platform-group>)
+endif
+	@./.github/scripts/test-all-direct-module-recipes.sh "$(PLATFORM_GROUP)" "$(WORKSPACE)" "$(ENVIRONMENT)"
+
+.PHONY: test-direct-module-recipes-unit
+test-direct-module-recipes-unit: ## Run the fixture-based unit tests for the direct-module test scripts (no live environment needed)
+	@./.github/scripts/tests/test-mysql-transport.sh
+	@./.github/scripts/tests/test-recipe-test-lib.sh
+	@./.github/scripts/tests/test-test-direct-module-recipe.sh
+	@./.github/scripts/tests/test-test-all-direct-module-recipes.sh
 
 .PHONY: update-env-recipe-pack
 update-env-recipe-pack: ## Update environment with recipe pack ID (requires RECIPE_PACK_NAME and optionally RESOURCE_GROUP and ENVIRONMENT)

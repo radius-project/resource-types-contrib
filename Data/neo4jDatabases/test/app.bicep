@@ -4,11 +4,14 @@ extension neo4jDatabases
 @description('The Radius environment ID')
 param environment string
 
+@description('Application name. CI supplies a unique name for deployment and cleanup.')
+param applicationName string = 'myapp'
+
 @secure()
 param password string
 
 resource myapp 'Radius.Core/applications@2025-08-01-preview' = {
-  name: 'myapp'
+  name: applicationName
   properties: {
     environment: environment
   }
