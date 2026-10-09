@@ -66,7 +66,7 @@ Three consumers read from this one library, one per testing layer:
   2. Confirms each referenced property is actually declared in that Resource
      Type's YAML schema (catches typos/renames with zero deployment).
   3. For properties with a declared `enum` (e.g. `tls: [required, optional]`),
-     evaluates the mustache ternary/conditional for every enum value with a
+     evaluates the if/else expression inside `{{ ... }}` for every enum value with a
      tiny expression evaluator (`==`, `?:`, literals, property access — only
      the subset these packs actually use) and checks every value is handled
      and maps to an expected result (catches the `tls` →
