@@ -17,12 +17,14 @@
 # ------------------------------------------------------------
 
 # Tests test-direct-module-recipe.sh against a fixture Resource Type
-# directory, using fake `rad`/`jq`/`kubectl` binaries to assert behavior
+# directory, using fake `rad`/`kubectl` binaries and real jq to assert behavior
 # without a live Radius environment: successful deploy, failed deploy (no
 # recipe unregister -- this script never registered one), missing test file,
 # and missing arguments.
 
 set -euo pipefail
+
+command -v jq >/dev/null || { echo "Error: jq is required for these tests." >&2; exit 1; }
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/rtc-test-direct-module-tests-XXXXXX")"
@@ -40,6 +42,9 @@ resource mySql 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
 }
 EOF
 
+cp "$REPO_ROOT/Data/mySqlDatabases/test/verify-transport.parameters.json" \
+    "$FIXTURE_ROOT/Data/mySqlDatabases/test/verify-transport.parameters.json"
+
 export CALL_LOG="$TEST_ROOT/calls"
 export DEPLOY_EXIT_CODE=0
 : >"$CALL_LOG"
@@ -52,6 +57,23 @@ case "$1" in
         echo '{"id":"/planes/radius/local/resourceGroups/default/providers/Applications.Core/environments/azure","properties":{"providers":{"kubernetes":{"namespace":"azure-ns"}}}}'
         ;;
     deploy)
+        if [[ "$2" == */mySqlDatabases/test/app.bicep ]]; then
+            verified=false
+            args=("$@")
+            for ((i=0; i<${#args[@]}-1; i++)); do
+                if [[ "${args[i]}" == --parameters && "${args[i+1]}" == @* ]]; then
+                    if ! jq -e '.parameters.verifyTransport.value == true' "${args[i+1]#@}" >/dev/null; then
+                        echo "Error: verifyTransport must be a JSON Boolean true." >&2
+                        exit 1
+                    fi
+                    verified=true
+                fi
+            done
+            if [[ "$verified" != true || "$*" == *"verifyTransport="* ]]; then
+                echo "Error: Expected a typed verifyTransport parameter file, not a string argument." >&2
+                exit 1
+            fi
+        fi
         if [[ -n "${FAIL_TLS:-}" && "$*" == *"tls=$FAIL_TLS "* ]]; then
             exit 1
         fi
@@ -61,17 +83,6 @@ esac
 exit 0
 EOF
 chmod +x "$TEST_ROOT/bin/rad"
-
-cat >"$TEST_ROOT/bin/jq" <<'EOF'
-#!/bin/bash
-filter="${2:-$1}"
-case "$filter" in
-    *".id // \"\""*) echo "/planes/radius/local/resourceGroups/default/providers/Applications.Core/environments/azure" ;;
-    *"kubernetes.namespace"*) echo "azure-ns" ;;
-    *) echo "" ;;
-esac
-EOF
-chmod +x "$TEST_ROOT/bin/jq"
 
 cat >"$TEST_ROOT/bin/kubectl" <<'EOF'
 #!/bin/bash
@@ -106,7 +117,7 @@ grep -q "rad deploy Data/mySqlDatabases/test/app.bicep" "$CALL_LOG" ||
 grep -q "rad app delete" "$CALL_LOG" ||
     fail "expected test app to be cleaned up on success"
 for tls in required optional; do
-    grep -q "^rad deploy .*--parameters tls=$tls --parameters verifyTransport=true" "$CALL_LOG" ||
+    grep -q "^rad deploy .*--parameters tls=$tls --parameters @Data/mySqlDatabases/test/verify-transport.parameters.json" "$CALL_LOG" ||
         fail "expected the $tls transport branch to be tested with its setting assertion enabled"
 done
 [[ "$(grep -c '^rad app delete' "$CALL_LOG")" -eq 2 ]] ||
@@ -138,6 +149,25 @@ grep -q "kubectl delete secrets" "$CALL_LOG" ||
     fail "expected K8s cleanup to run after a failed deploy"
 grep -q "rad recipe unregister" "$CALL_LOG" &&
     fail "a direct-module test must never unregister a recipe on failure either"
+
+# --- a string that looks like a Boolean must not pass the deployment check ---
+jq '.parameters.verifyTransport.value = "true"' \
+    "$REPO_ROOT/Data/mySqlDatabases/test/verify-transport.parameters.json" \
+    >"$FIXTURE_ROOT/Data/mySqlDatabases/test/verify-transport.parameters.json"
+: >"$CALL_LOG"
+if run_test Data/mySqlDatabases azure azure; then
+    fail "a string verifyTransport parameter must fail the test"
+fi
+grep -q '^rad app delete' "$CALL_LOG" || fail "invalid parameter type must still clean up"
+
+# --- other resource types keep the generic deployment path ------------------
+mkdir -p "$FIXTURE_ROOT/Data/widgets/test"
+echo "param applicationName string" >"$FIXTURE_ROOT/Data/widgets/test/app.bicep"
+: >"$CALL_LOG"
+run_test Data/widgets azure azure || fail "expected generic deployment to succeed"
+if grep -q 'verify-transport.parameters.json' "$CALL_LOG"; then
+    fail "MySQL parameters must not be passed to other resource types"
+fi
 
 # --- missing test/app.bicep: skipped, exits 0 -------------------------------
 : >"$CALL_LOG"

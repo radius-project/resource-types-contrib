@@ -89,7 +89,7 @@ if [[ "$RESOURCE_TYPE" == "Radius.Data/mySqlDatabases" ]]; then
         echo "==> Testing MySQL transport policy: $tls"
         rtc_deploy_and_assert_test_app "$TEST_FILE" "$RESOURCE_TYPE" "directmoduletest-$tls" \
             "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE" \
-            --parameters "tls=$tls" --parameters verifyTransport=true || exit 1
+            --parameters "tls=$tls" --parameters "@$RESOURCE_TYPE_PATH/test/verify-transport.parameters.json" || exit 1
     done
 else
     rtc_deploy_and_assert_test_app "$TEST_FILE" "$RESOURCE_TYPE" "directmoduletest" \

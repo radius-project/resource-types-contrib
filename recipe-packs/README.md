@@ -54,6 +54,8 @@ app, not every possible property value. A type used by two packs is tested
 once per pack, with that pack active.
 
 MySQL direct-module tests run both `tls: required` and `tls: optional`.
+They pass `verifyTransport` through `test/verify-transport.parameters.json`
+because Radius CLI `name=value` arguments are strings, not Booleans.
 The client readiness probe reads `@@GLOBAL.require_secure_transport` from
 the deployed server and requires `1` or `0`, respectively. CI waits for that
 probe before it reports success. Reversed mappings fail even when a database
