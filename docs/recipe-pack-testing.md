@@ -1,127 +1,148 @@
-# Plan: CI coverage for committed Recipe Packs (Issue #312)
+# Recipe Pack testing
 
-## Problem
+## Purpose
 
-The checked-in Recipe Packs are the files users actually install:
-`recipe-packs/kubernetes/default.bicep`, `recipe-packs/azure-aks/azure-aks.bicep`,
-`recipe-packs/azure-aci/azure-aci.bicep`. CI does not reliably test these exact
-files, and today's testing is built ad hoc per pack rather than as a reusable
-framework:
+Test the Recipe Pack files stored in this repository, not only packs generated
+for tests. This document describes the implementation in this PR, not a report
+of successful cloud test runs.
 
-1. **The Kubernetes pack is never built/deployed in CI.** Only its static shape
-   is checked (`validate-recipe-packs.sh`). The Azure packs (`azure-aks`,
-   `azure-aci`) *are* deployed for real, but via two one-off, hand-written
-   workflow steps (PR #316 / #292) — adding a 4th pack today means writing a
-   5th near-duplicate step.
-2. **No coverage of "direct-module" mappings** — Resource Types whose only
-   implementation is an AVM/third-party module reference written straight into
-   a pack file, with no corresponding `recipes/<platform>/` folder elsewhere in
-   the repo. Today that's 9 Resource Types, all in the Azure pack (MySQL,
-   PostgreSQL, SQL Server, Redis, MongoDB, Kafka, Object Storage, AI Models, AI
-   Search) — but nothing in the repo *detects* this set generically. It's
-   whatever happens not to have a `recipes/azure/` folder today. A wrong AVM
-   parameter name, or a wrong conditional mapping (e.g. `tls` →
-   `require_secure_transport`), ships green.
+A Radius **Resource Type** defines the properties an application can request,
+such as a database size. A **recipe** creates the resources needed to meet that
+request. A **Recipe Pack** lists recipes and maps Radius properties to their
+inputs and outputs. A Radius **Environment** selects the packs applications use.
 
-**User requirement:** build this as a general framework that works for every
-pack we have today (Kubernetes, Azure AKS, Azure ACI) and keeps working when
-packs are added later, in both the per-PR and nightly test paths — not three
-separate hand-wired test paths.
+The tests cover the Kubernetes, Azure AKS, and Azure ACI packs. They use three
+layers because deploying a pack does not prove that each recipe in it works.
 
-## The Framework
+## Test layers
 
-One shared script, `.github/scripts/lib-recipe-packs.sh`, is the single source
-of truth that every other piece (existing and new) reads from. It answers
-three questions, and everything else is built on top of its answers:
+| Layer | What it checks | When it runs |
+| --- | --- | --- |
+| 1. Deploy the pack | Each stored pack deploys and can be selected by an Environment | PR Bicep jobs and nightly jobs |
+| 2. Check mappings without deployment | Referenced Radius properties exist; compared enum values are allowed by the schema | PR checks |
+| 3. Deploy test applications | Selected module entries can deploy their test apps and pass the checks below | Daily at 09:00 UTC and manual runs |
 
-| Function | Answers |
-|---|---|
-| `list_recipe_packs` | "What packs exist?" — scans `recipe-packs/*/*.bicep` |
-| `pack_platform_group <pack>` | "What platform does this pack target?" — small lookup table (`kubernetes` → `kubernetes`, `azure-aks`/`azure-aci` → `azure`); adding a *new platform* (e.g. a future AWS pack) means adding one line here, nothing else |
-| `list_direct_module_types <pack>` | "Which Resource Types in this pack have no backing `recipes/<platform-group>/` folder in this repo?" — reads the pack's `recipes` map, and for each Resource Type key checks whether `<Category>/<type>/recipes/<platform-group>/` exists; if not (and the type has a `test/app.bicep`), it's a direct-module entry |
+Layer 2 needs no cluster or cloud resources. Layers 1 and 3 use a local
+Kubernetes cluster; their Azure jobs also use real Azure resources and incur
+cloud costs. Existing tests for individual repository recipes remain in place.
 
-Because every pack and every direct-module gap is *discovered*, not
-hand-listed, adding a 4th pack or a 10th direct-module entry needs **no new
-test code** — only a config line if it's a genuinely new platform.
+### 1. Deploy each stored pack
 
-Three consumers read from this one library, one per testing layer:
+`deploy-all-checked-in-recipe-packs.sh` finds the packs for a platform group,
+deploys each Bicep file, and selects that pack on the Environment. It supplies
+test values for required parameters that have no default.
 
-- **Layer 1 — "does the committed pack still deploy?"**
-  New `.github/scripts/deploy-all-checked-in-recipe-packs.sh <platform-group>
-  <environment>` loops over `list_recipe_packs`, filters to the requested
-  platform group, and deploys+associates each one (reusing the existing
-  per-template parameter detection from `deploy-checked-in-azure-recipe-pack.sh`,
-  generalized). This replaces the two hand-written Azure steps and adds the
-  missing Kubernetes step, with one call per platform group:
-  - `validate-resource-types.yaml` calls it with `kubernetes` (local k3d, free).
-  - `validate-azure-recipes.yaml` calls it with `azure` (real Azure resources,
-    already gated by the existing approval flow for forks).
+The Bicep jobs in `validate-resource-types.yaml` and
+`validate-azure-recipes.yaml` call this script after the build step. The old
+Azure deployment entry point remains available because `pull_request_target`
+runs the base branch's workflow during the transition.
 
-- **Layer 2 — "are the direct-module mappings internally correct?"** (every PR,
-  no cloud cost)
-  New `.github/scripts/validate-direct-module-mappings.sh` loops over every
-  pack, calls `list_direct_module_types`, and for each hit:
-  1. Collects every `{{context.resource.properties.*}}` expression in that
-     entry's `parameters`/`outputs`.
-  2. Confirms each referenced property is actually declared in that Resource
-     Type's YAML schema (catches typos/renames with zero deployment).
-  3. For properties with a declared `enum` (e.g. `tls: [required, optional]`),
-     evaluates the if/else expression inside `{{ ... }}` for every enum value with a
-     tiny expression evaluator (`==`, `?:`, literals, property access — only
-     the subset these packs actually use) and checks every value is handled
-     and maps to an expected result (catches the `tls` →
-     `require_secure_transport` class of bug from the issue).
-  This runs once, against every pack, regardless of platform — today it will
-  find 9 hits in `azure-aks` and 0 in the others, but that's a result of the
-  scan, not something hardcoded.
+This layer checks pack deployment and selection only. It does not deploy each
+resource listed in the pack or prove its input and output mappings are correct.
 
-- **Layer 3 — "does the direct-module mapping actually work against real
-  infrastructure?"** (nightly, real cloud cost)
-  New workflow, matrixed over platform groups returned by the same library.
-  For each platform group: bring up its environment, run Layer 1's deploy
-  script, then call `list_direct_module_types` again and, for each hit, run a
-  new `.github/scripts/test-direct-module-recipe.sh <resource-type-path>
-  <platform-group> <environment>` that deploys that type's `test/app.bicep` for
-  real and asserts success (reusing shared deploy/assert logic refactored out
-  of `test-recipe.sh` into a sourced library, so it works without needing a
-  `recipes/<platform>/` folder to anchor on). Today this only does real work
-  for the `azure` group (9 types); the `kubernetes` group's matrix leg deploys
-  the pack and exits cleanly, and will start testing real resources
-  automatically the day a direct-module Kubernetes entry is added — no new
-  code required.
+### 2. Check property references and allowed values
 
-## Rollout
+`validate-direct-module-mappings.sh` reads selected pack entries and the
+Resource Type's YAML schema. It checks references such as
+`context.resource.properties.tls` inside `{{ ... }}` expressions.
 
-1. Build `lib-recipe-packs.sh` (discovery + platform-group mapping +
-   direct-module detection) and unit-test it directly, before anything else
-   depends on it.
-2. Build `deploy-all-checked-in-recipe-packs.sh`, wire it into both
-   `validate-resource-types.yaml` (kubernetes) and `validate-azure-recipes.yaml`
-   (azure), replacing the two hand-written Azure steps.
-3. Build `validate-direct-module-mappings.sh` (Layer 2) and wire it into the
-   existing cheap/local `validate-release-automation` job.
-4. Refactor `test-recipe.sh`'s shared deploy/assert logic into a sourced
-   library; build `test-direct-module-recipe.sh` on top of it.
-5. Build the nightly workflow (Layer 3), matrixed over platform groups, reusing
-   steps 2 and 4.
-6. Update docs: `recipe-packs/README.md` (how to add a pack / how coverage
-   works) and `docs/contributing/testing-resource-types-recipes.md`.
-7. Add script-level tests for every new script under `.github/scripts/tests/`,
-   matching existing conventions (e.g. `test-validate-recipe-packs.sh`).
+The check fails if the top-level property does not exist. For a property with
+an `enum` (a list of allowed values), it also checks comparisons in the form
+`context.resource.properties.tls == "optional"`. The quoted value must be in
+that list. Several values can share the same else branch.
 
-## What's Out of Scope
+The script uses text matching for the formats used in this repository. It is
+not a full Bicep or expression parser. It does not check module parameter
+names, nested property paths, input types, or the result of an if/else
+expression. In particular, it cannot detect a mapping that swaps `ON` and
+`OFF`. Deployment tests must check the resulting behavior.
 
-- Testing every possible value of a property, not just its declared `enum`
-  values.
-- Any new cloud platform support — the framework only covers platform groups
-  that already have a CI job (`kubernetes`, `azure`) to plug into.
+### 3. Deploy applications with each pack active
 
-## Open Questions / Risks
+`nightly-direct-module-recipe-tests.yaml` has two fixed jobs: Kubernetes and
+Azure. It does not generate jobs from the list of platform groups.
 
-- The exact grammar Radius uses for `{{...}}` recipe-context expressions isn't
-  formally documented here; the Layer 2 evaluator is scoped to what's actually
-  used in `recipe-packs/**` today and may need small extensions as new
-  expression shapes are added.
-- Nightly workflow needs the same `AZURE_*` secrets as
-  `validate-azure-recipes.yaml` — confirm they're available to
-  schedule/dispatch-triggered runs (expected yes, since it's not a fork PR).
+Each job prepares its environment and deploys its packs. Then
+`test-all-direct-module-recipes.sh` selects each pack before testing its
+entries. A Resource Type present in two packs is tested with each pack.
+A known pack with no selected entries needs no application deployment.
+
+`test-direct-module-recipe.sh` deploys the Resource Type's `test/app.bicep`.
+It uses the same deployment, result-check, and cleanup code as the existing
+recipe tests in `lib-recipe-test.sh`.
+
+| Resource Type | Additional check in the shared runner |
+| --- | --- |
+| MySQL | Run the direct-module test with both `tls: required` and `tls: optional`. The client reads `@@GLOBAL.require_secure_transport` from the server and expects `1` or `0`, respectively. The runner waits for the client deployment to become available. |
+| PostgreSQL | Require a nonempty host, a numeric port, database `appdb`, and no `secrets` field in the returned properties. |
+| Containers | Require two container resources to return distinct, nonempty hosts. |
+| Other types | Require successful test-app deployment; there is no extra result check in the shared runner. Coverage depends on the test app. |
+
+The MySQL server-setting check applies to direct-module tests. Existing
+per-recipe MySQL tests keep their connection-only check. The other shared
+checks run when their Resource Type is selected by either test path.
+
+## How entries are selected
+
+The shared library, `.github/scripts/lib-recipe-packs.sh`, finds pack
+directories and maps each to `kubernetes` or `azure`. Each discovered pack
+must have exactly one Bicep template and a platform mapping.
+
+Layers 2 and 3 select an entry when its module source is outside
+`ghcr.io/radius-project/` and its Resource Type has a `test/app.bicep`.
+These are called **direct-module entries** in the scripts. Entries with that
+source prefix are treated as repository recipes and use the existing recipe
+test path. Selection does not depend on whether a recipe folder exists.
+Entries without a test app are excluded from both layers.
+
+## Failures and cleanup
+
+Unknown platform groups, missing pack mappings, multiple pack templates, and
+required parameters without test values cause errors. A failed pack selection
+stops the run so tests cannot use the previous pack by mistake. An application
+test failure is counted, and the driver continues with the remaining entries.
+The driver returns failure if any application test failed.
+
+Test templates must accept `applicationName` and use it for the application
+resource name. The runner passes the same generated name to deployment,
+result checks, and deletion. If a template declares `password`, the runner
+generates a test password.
+
+The runner attempts cleanup after a deployment or result-check failure.
+It deletes the test application, then leftover Kubernetes secrets, deployments,
+and services with that application's `radapp.io/application` label.
+Cleanup errors also fail the test. The Azure job has a final resource cleanup
+step, and both nightly jobs collect Radius pod logs.
+
+Use a dedicated test environment: pack selection replaces its active pack
+list, and the scripts do not restore the previous list.
+
+## Maintaining coverage
+
+| Change | Required test setup |
+| --- | --- |
+| New pack on Kubernetes or Azure | Add its folder name to `rtc_recipe_pack_platform_group` in `.github/scripts/lib-recipe-packs.sh`. |
+| New platform | Add a platform mapping and PR/nightly jobs that prepare and test that platform. |
+| New direct-module entry | Add a compatible `test/app.bicep` and checks for the behavior that matters. |
+| New required pack parameter without a default | Add a test value to `rtc_recipe_pack_param_value` in `.github/scripts/lib-recipe-packs.sh`. |
+
+The PR workflow also runs script tests with small sample repositories and
+simulated commands. They check discovery, deployment arguments, invalid
+property references, invalid enum comparisons, pack selection, result checks,
+and cleanup failures. They do not replace live deployment tests.
+
+## Limits and operating requirements
+
+These tests do not cover every allowed property value or every module setting.
+Except for the explicit MySQL cases, deployment coverage uses the values in
+each test app. Passing static checks does not prove that a module accepts the
+mapped parameters or that the resulting service works.
+
+The nightly Azure job requires `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
+`AZURE_SUBSCRIPTION_ID`, and `TEST_AZURE_OIDC_JSON`. Azure must trust the
+GitHub identity for the branch used by the run. Scheduled runs use the default
+branch; manual runs on another branch need matching trust. The presence of
+secrets alone does not prove that login works.
+
+For commands and setup, see [Recipe Pack testing in CI](../recipe-packs/README.md#how-recipe-packs-are-tested-in-ci)
+and [Testing Resource Types and Recipes](contributing/testing-resource-types-recipes.md).
