@@ -10,7 +10,7 @@ param applicationName string = 'containers-testapp'
 #disable-next-line secure-parameter-default @secure()
 param username string = 'admin'
 #disable-next-line secure-parameter-default @secure()
-param password string = 'c2VjcmV0cGFzc3dvcmQ='
+param password string = 'secretpassword'
 #disable-next-line secure-parameter-default @secure()
 param apiKey string = 'abc123xyz'
 
@@ -222,7 +222,7 @@ resource secret 'Radius.Security/secrets@2025-08-01-preview' = {
         value: username
       }
       password: {
-        value: password
+        value: base64(password)
         encoding: 'base64'
       }
       apikey: {

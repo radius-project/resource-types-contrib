@@ -246,6 +246,19 @@ grep -q "^param username string = 'radadmin'$" "$REPO_ROOT/Data/sqlServerDatabas
 grep -A1 '^@secure()' "$REPO_ROOT/Data/sqlServerDatabases/test/app.bicep" | grep -q '^param password string$' ||
     fail "SQL Server password must remain secure"
 
+# The containers template must encode the runner's plain-text password before
+# passing it to a Secret entry marked as base64.
+container_password_entry="$(awk '
+    /^resource secret / { in_secret = 1 }
+    in_secret && /^[[:space:]]*password: \{/ { in_password = 1; next }
+    in_password && /^[[:space:]]*\}/ { exit }
+    in_password { print }
+' "$REPO_ROOT/Compute/containers/test/app.bicep")"
+grep -qE '^[[:space:]]*value: base64\(password\)$' <<<"$container_password_entry" ||
+    fail "containers test must base64-encode the generated password"
+grep -qE "^[[:space:]]*encoding: 'base64'$" <<<"$container_password_entry" ||
+    fail "containers test must retain base64 Secret coverage"
+
 echo 'param environment string' >"$TEST_ROOT/missing-application-name.bicep"
 : >"$CALL_LOG"
 if run_lib rtc_deploy_and_assert_test_app "$TEST_ROOT/missing-application-name.bicep" \
