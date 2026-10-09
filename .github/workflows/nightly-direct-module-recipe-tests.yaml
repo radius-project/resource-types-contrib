@@ -12,6 +12,8 @@ name: Nightly Direct-Module Recipe Pack Tests
 # down real cloud infrastructure for every direct-module Resource Type.
 
 on:
+  push:
+    branches: [nicolejms-test-recipe-packs-ci]
   schedule:
     - cron: "0 9 * * *" # 09:00 UTC daily
   workflow_dispatch:
