@@ -84,8 +84,15 @@ fi
 IFS=$'\t' read -r ENVIRONMENT_PATH KUBERNETES_NAMESPACE <<<"$RESOLVED"
 echo "==> Environment path: $ENVIRONMENT_PATH"
 
-if rtc_deploy_and_assert_test_app "$TEST_FILE" "$RESOURCE_TYPE" "directmoduletest" "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE"; then
-    echo "==> Test completed successfully"
+if [[ "$RESOURCE_TYPE" == "Radius.Data/mySqlDatabases" ]]; then
+    for tls in required optional; do
+        echo "==> Testing MySQL transport policy: $tls"
+        rtc_deploy_and_assert_test_app "$TEST_FILE" "$RESOURCE_TYPE" "directmoduletest-$tls" \
+            "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE" \
+            --parameters "tls=$tls" --parameters verifyTransport=true || exit 1
+    done
 else
-    exit 1
+    rtc_deploy_and_assert_test_app "$TEST_FILE" "$RESOURCE_TYPE" "directmoduletest" \
+        "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE" || exit 1
 fi
+echo "==> Test completed successfully"

@@ -146,9 +146,10 @@ extension radius
 extension mySqlDatabases
 
 param environment string
+param applicationName string = 'testapp'
 
 resource app 'Applications.Core/applications@2023-10-01-preview' = {
-  name: 'testapp'
+  name: applicationName
   properties: {
     environment: environment
   }
@@ -164,6 +165,12 @@ resource mysql 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
 ```
 
 ## Cleanup
+
+All test apps must declare `applicationName` and use it for the application
+resource name. The test runner passes the generated name to both the template
+and the CLI, then uses that name for assertions and cleanup. Keep the default
+name for manual use. Other required credentials must use a secure `password`
+parameter; the runner generates its value. Usernames can have a test default.
 
 Delete your test cluster when done:
 

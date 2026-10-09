@@ -25,7 +25,8 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 FIXTURE_ROOT="$TEST_ROOT/repo"
 RECIPE_PATH="$FIXTURE_ROOT/Data/widgets/recipes/kubernetes/bicep"
 mkdir -p "$RECIPE_PATH" "$FIXTURE_ROOT/Data/widgets/test" "$TEST_ROOT/bin"
-touch "$RECIPE_PATH/main.bicep" "$FIXTURE_ROOT/Data/widgets/test/app.bicep"
+touch "$RECIPE_PATH/main.bicep"
+echo "param applicationName string" >"$FIXTURE_ROOT/Data/widgets/test/app.bicep"
 
 export COMMAND_CALLS="$TEST_ROOT/command-calls"
 : >"$COMMAND_CALLS"

@@ -102,6 +102,16 @@ rad deploy $FIXTURE_ROOT/recipe-packs/azure-aks/azure-aks.bicep --group test-rg 
 rad env update test-env --recipe-packs azure-aks --preview"
 diff -u <(echo "$expected") "$CALL_LOG" || fail "azure group deploy calls did not match"
 
+# The base pull_request_target workflow still calls the legacy entry point.
+: >"$CALL_LOG"
+(
+    cd "$FIXTURE_ROOT"
+    PATH="$TEST_ROOT/bin:$PATH" "$REPO_ROOT/.github/scripts/deploy-checked-in-azure-recipe-pack.sh"
+)
+expected="rad deploy recipe-packs/azure-aks/azure-aks.bicep --group default --environment default --parameters routesGatewayName=validation-gateway --parameters containerImagesRegistry=localhost:5000
+rad env update default --recipe-packs azure-aks --preview"
+diff -u <(echo "$expected") "$CALL_LOG" || fail "legacy Azure deploy calls did not match"
+
 # --- deployment failures must prevent activation -------------------------
 : >"$CALL_LOG"
 if RAD_EXIT_CODE=1 run_deploy kubernetes test-env test-rg; then

@@ -180,12 +180,21 @@ run_lib rtc_assert_recipe_result "Radius.Data/somethingElse" testapp myws \
 # rtc_deploy_and_assert_test_app: successful deploy path cleans up the app
 # and any leftover K8s resources, with no error.
 TEST_APP_BICEP="$TEST_ROOT/app.bicep"
-echo "param environment string" >"$TEST_APP_BICEP"
+printf '%s\n' "param environment string" "param applicationName string" >"$TEST_APP_BICEP"
 : >"$CALL_LOG"
 DEPLOY_EXIT_CODE=0 run_lib rtc_deploy_and_assert_test_app \
     "$TEST_APP_BICEP" "Radius.Data/somethingElse" "rtc-test" "/envs/myenv" "myws" "my-ns" \
     || fail "rtc_deploy_and_assert_test_app should succeed when rad deploy succeeds"
 grep -q '^rad app delete' "$CALL_LOG" || fail "rtc_deploy_and_assert_test_app should delete the app on success"
+assert_app_name() {
+    local deployed_name
+    deployed_name="$(sed -nE 's/^rad deploy .*--parameters applicationName=([^ ]+).*/\1/p' "$CALL_LOG")"
+    [[ -n "$deployed_name" ]] || fail "deployment must pass the applicationName parameter"
+    grep -Fq -- "--application $deployed_name --workspace myws" "$CALL_LOG" || fail "CLI app must match the template parameter"
+    grep -Fxq "rad app delete $deployed_name --workspace myws --yes" "$CALL_LOG" || fail "cleanup must delete the deployed app"
+    grep -Fq -- "-l radapp.io/application=$deployed_name -n my-ns" "$CALL_LOG" || fail "cleanup selector must match the deployed app"
+}
+assert_app_name
 
 # ... failed deploy path still cleans up, but returns non-zero.
 : >"$CALL_LOG"
@@ -194,6 +203,7 @@ if DEPLOY_EXIT_CODE=1 run_lib rtc_deploy_and_assert_test_app \
     fail "rtc_deploy_and_assert_test_app should fail when rad deploy fails"
 fi
 grep -q '^rad app delete' "$CALL_LOG" || fail "rtc_deploy_and_assert_test_app should still attempt app cleanup after a failed deploy"
+assert_app_name
 
 for failure in APP_DELETE_EXIT_CODE KUBECTL_EXIT_CODE; do
     if (
@@ -215,13 +225,45 @@ grep -q '^rad app delete' "$CALL_LOG" || fail "assertion failure must still clea
 # ... a template with a `password` parameter auto-generates one instead of
 # passing a literal "password" placeholder through to `rad deploy`.
 TEST_APP_WITH_PASSWORD="$TEST_ROOT/app-with-password.bicep"
-echo "param password string" >"$TEST_APP_WITH_PASSWORD"
+printf '%s\n' "param applicationName string" "param password string" >"$TEST_APP_WITH_PASSWORD"
 : >"$CALL_LOG"
 DEPLOY_EXIT_CODE=0 run_lib rtc_deploy_and_assert_test_app \
     "$TEST_APP_WITH_PASSWORD" "Radius.Data/somethingElse" "rtc-test" "/envs/myenv" "myws" "my-ns" >/dev/null \
     || fail "rtc_deploy_and_assert_test_app should succeed with an auto-generated password"
-grep -q '^rad deploy .*--parameters password=mock-generated-password' "$CALL_LOG" \
+grep -Fq -- '--parameters password=Aa1!mock-generated-password' "$CALL_LOG" \
     || fail "rtc_deploy_and_assert_test_app should pass a generated password value to rad deploy"
+
+# Exercise the real SQL Server template, not a fixture with fewer parameters.
+: >"$CALL_LOG"
+run_lib rtc_deploy_and_assert_test_app \
+    "$REPO_ROOT/Data/sqlServerDatabases/test/app.bicep" "Radius.Data/sqlServerDatabases" rtc-test /envs/myenv myws my-ns >/dev/null ||
+    fail "SQL Server test template must accept generated credentials"
+grep -Fq -- '--parameters password=Aa1!mock-generated-password' "$CALL_LOG" ||
+    fail "SQL Server must receive a generated password"
+assert_app_name
+grep -q "^param username string = 'radadmin'$" "$REPO_ROOT/Data/sqlServerDatabases/test/app.bicep" ||
+    fail "SQL Server must provide a non-secret username default"
+grep -A1 '^@secure()' "$REPO_ROOT/Data/sqlServerDatabases/test/app.bicep" | grep -q '^param password string$' ||
+    fail "SQL Server password must remain secure"
+
+echo 'param environment string' >"$TEST_ROOT/missing-application-name.bicep"
+: >"$CALL_LOG"
+if run_lib rtc_deploy_and_assert_test_app "$TEST_ROOT/missing-application-name.bicep" \
+    Radius.Data/widgets rtc-test /envs/myenv myws my-ns >/dev/null 2>&1; then
+    fail "templates without the applicationName contract must fail before deployment"
+fi
+[[ ! -s "$CALL_LOG" ]] || fail "invalid template must not deploy or delete an application"
+
+# Guard all current test apps, including the types used only by per-recipe CI.
+while IFS= read -r template; do
+    grep -q '^param applicationName string' "$template" || fail "$template needs an applicationName parameter"
+    awk '
+        /^resource .*Radius.Core\/applications@/ { app = 1; next }
+        app && /^  name:/ { if ($0 != "  name: applicationName") exit 1; found++; app = 0 }
+        END { if (found != 1) exit 1 }
+    ' "$template" || fail "$template must use applicationName for its application"
+done < <(find "$REPO_ROOT/AI" "$REPO_ROOT/Compute" "$REPO_ROOT/Data" "$REPO_ROOT/Messaging" \
+    "$REPO_ROOT/Security" "$REPO_ROOT/Storage" -path '*/test/app.bicep' -type f)
 
 # The existing per-recipe caller must preserve failure and cleanup behavior.
 mkdir -p "$TEST_ROOT/Data/widgets/recipes/kubernetes/bicep" "$TEST_ROOT/Data/widgets/test"

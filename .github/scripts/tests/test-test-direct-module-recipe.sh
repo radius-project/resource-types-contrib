@@ -32,6 +32,9 @@ FIXTURE_ROOT="$TEST_ROOT/repo"
 mkdir -p "$FIXTURE_ROOT/Data/mySqlDatabases/test" "$FIXTURE_ROOT/Data/noTestFile" "$TEST_ROOT/bin"
 
 cat >"$FIXTURE_ROOT/Data/mySqlDatabases/test/app.bicep" <<'EOF'
+param applicationName string
+param tls string = 'required'
+param verifyTransport bool = false
 resource mySql 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
   name: 'testresource'
 }
@@ -49,6 +52,9 @@ case "$1" in
         echo '{"id":"/planes/radius/local/resourceGroups/default/providers/Applications.Core/environments/azure","properties":{"providers":{"kubernetes":{"namespace":"azure-ns"}}}}'
         ;;
     deploy)
+        if [[ -n "${FAIL_TLS:-}" && "$*" == *"tls=$FAIL_TLS "* ]]; then
+            exit 1
+        fi
         exit "${DEPLOY_EXIT_CODE:-0}"
         ;;
 esac
@@ -70,6 +76,9 @@ chmod +x "$TEST_ROOT/bin/jq"
 cat >"$TEST_ROOT/bin/kubectl" <<'EOF'
 #!/bin/bash
 echo "kubectl $*" >>"$CALL_LOG"
+if [[ "$1" == wait ]]; then
+    exit "${READINESS_EXIT_CODE:-0}"
+fi
 EOF
 chmod +x "$TEST_ROOT/bin/kubectl"
 
@@ -96,8 +105,29 @@ grep -q "rad deploy Data/mySqlDatabases/test/app.bicep" "$CALL_LOG" ||
     fail "expected test app to be deployed"
 grep -q "rad app delete" "$CALL_LOG" ||
     fail "expected test app to be cleaned up on success"
+for tls in required optional; do
+    grep -q "^rad deploy .*--parameters tls=$tls --parameters verifyTransport=true" "$CALL_LOG" ||
+        fail "expected the $tls transport branch to be tested with its setting assertion enabled"
+done
+[[ "$(grep -c '^rad app delete' "$CALL_LOG")" -eq 2 ]] ||
+    fail "each MySQL transport test must clean up its own application"
+[[ "$(grep -c '^kubectl wait deployment .*radapp.io/resource=mysqlclient --for=condition=Available --timeout=180s' "$CALL_LOG")" -eq 2 ]] ||
+    fail "both branches must wait for the client probe result before reporting success"
 grep -q "rad recipe unregister" "$CALL_LOG" &&
     fail "a direct-module test must never unregister a recipe -- it never registered one"
+
+: >"$CALL_LOG"
+if FAIL_TLS=optional run_test Data/mySqlDatabases azure azure; then
+    fail "failure in the optional branch must fail the test"
+fi
+[[ "$(grep -c '^rad app delete' "$CALL_LOG")" -eq 2 ]] ||
+    fail "a failed optional branch must still clean up"
+
+: >"$CALL_LOG"
+if READINESS_EXIT_CODE=1 run_test Data/mySqlDatabases azure azure; then
+    fail "a failed MySQL setting probe must fail even when rad deploy succeeds"
+fi
+grep -q '^rad app delete' "$CALL_LOG" || fail "readiness failure must still delete the app"
 
 # --- failed deploy: app/K8s cleanup still runs, no recipe unregister, exit 1
 : >"$CALL_LOG"

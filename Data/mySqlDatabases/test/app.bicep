@@ -3,6 +3,19 @@ extension radius
 @description('The ID of your Radius Environment. Set automatically by the rad CLI.')
 param environment string
 
+@description('Application name. CI supplies a unique name for deployment and cleanup.')
+param applicationName string = 'mysql-test'
+
+@description('Transport policy for the database.')
+@allowed([
+  'required'
+  'optional'
+])
+param tls string = 'required'
+
+@description('Check the server transport setting in direct-module tests.')
+param verifyTransport bool = false
+
 @description('Database admin password. Set on the resource `password` property (x-radius-sensitive), so Radius encrypts it at rest and injects it decrypted into the Recipe as the flexible server administrator password.')
 @secure()
 param password string
@@ -11,7 +24,7 @@ var databaseName = 'appdb'
 var username = 'radadmin'
 
 resource app 'Radius.Core/applications@2025-08-01-preview' = {
-  name: 'mysql-test'
+  name: applicationName
   properties: {
     environment: environment
   }
@@ -44,7 +57,7 @@ resource mysql 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
     database: databaseName
     username: username
     password: password
-    // `tls` is omitted so this test exercises the schema default (`required`).
+    tls: tls
   }
 }
 
@@ -72,6 +85,9 @@ done
 '''
         ]
         env: {
+          MYSQL_TLS: {
+            value: tls
+          }
           // MYSQL_HOST selects the real MySQL endpoint. The host reference and
           // connection below both preserve database-before-client ordering.
           MYSQL_HOST: {
@@ -100,10 +116,11 @@ done
             command: [
               '/bin/sh'
               '-c'
-              'test -f /tmp/mysql-ready'
+              verifyTransport ? loadTextContent('verify-transport.sh') : 'test -f /tmp/mysql-ready'
             ]
           }
           periodSeconds: 2
+          timeoutSeconds: 10
           failureThreshold: 30
         }
       }

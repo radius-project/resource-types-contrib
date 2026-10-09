@@ -3,12 +3,15 @@ extension radius
 @description('The ID of your Radius Environment. Set automatically by the rad CLI.')
 param environment string
 
+@description('Application name. CI supplies a unique name for deployment and cleanup.')
+param applicationName string = 'rabbitmq-azure-test'
+
 @description('The broker password. Passed to rad deploy as a secure parameter and stored in a Radius.Security/secrets resource.')
 @secure()
 param password string
 
 resource app 'Radius.Core/applications@2025-08-01-preview' = {
-  name: 'rabbitmq-azure-test'
+  name: applicationName
   properties: {
     environment: environment
   }

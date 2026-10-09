@@ -53,6 +53,12 @@ a default branch. The nightly deployment checks the values used by each test
 app, not every possible property value. A type used by two packs is tested
 once per pack, with that pack active.
 
+MySQL direct-module tests run both `tls: required` and `tls: optional`.
+The client readiness probe reads `@@GLOBAL.require_secure_transport` from
+the deployed server and requires `1` or `0`, respectively. CI waits for that
+probe before it reports success. Reversed mappings fail even when a database
+connection succeeds. Per-recipe MySQL tests keep their connection-only probe.
+
 ### What to do when you add or change a pack
 
 - **New pack, same platform group (`kubernetes` or `azure`):** map the folder

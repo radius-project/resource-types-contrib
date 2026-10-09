@@ -3,6 +3,9 @@ extension containers
 
 param environment string
 
+@description('Application name. CI supplies a unique name for deployment and cleanup.')
+param applicationName string = 'containers-testapp'
+
 // Secure parameters with test defaults 
 #disable-next-line secure-parameter-default @secure()
 param username string = 'admin'
@@ -12,7 +15,7 @@ param password string = 'c2VjcmV0cGFzc3dvcmQ='
 param apiKey string = 'abc123xyz'
 
 resource app 'Radius.Core/applications@2025-08-01-preview' = {
-  name: 'containers-testapp'
+  name: applicationName
   properties: {
     environment: environment
   }

@@ -88,6 +88,7 @@ endif
 
 .PHONY: test-direct-module-recipes-unit
 test-direct-module-recipes-unit: ## Run the fixture-based unit tests for the direct-module test scripts (no live environment needed)
+	@./.github/scripts/tests/test-mysql-transport.sh
 	@./.github/scripts/tests/test-recipe-test-lib.sh
 	@./.github/scripts/tests/test-test-direct-module-recipe.sh
 	@./.github/scripts/tests/test-test-all-direct-module-recipes.sh

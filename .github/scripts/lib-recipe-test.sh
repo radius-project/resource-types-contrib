@@ -137,6 +137,21 @@ rtc_assert_postgresql_result() {
 rtc_assert_recipe_result() {
     local resource_type="$1" app_name="$2" workspace_name="$3"
     case "$resource_type" in
+        Radius.Data/mySqlDatabases)
+            local kubernetes_namespace="${4:-}"
+            if [[ -z "$kubernetes_namespace" ]]; then
+                echo "Error: MySQL readiness assertion requires the environment Kubernetes namespace." >&2
+                return 1
+            fi
+            # The direct-module client probe checks the actual server setting.
+            if ! kubectl wait deployment \
+                -n "$kubernetes_namespace" \
+                -l "radapp.io/application=$app_name,radapp.io/resource=mysqlclient" \
+                --for=condition=Available --timeout=180s; then
+                echo "Error: MySQL client readiness assertion failed." >&2
+                return 1
+            fi
+            ;;
         Radius.Compute/containers)
             rtc_assert_containers_result "$app_name" "$workspace_name"
             ;;
@@ -162,13 +177,19 @@ rtc_assert_recipe_result() {
 #
 # Usage: rtc_deploy_and_assert_test_app <test-file> <resource-type> \
 #            <app-name-prefix> <environment-path> <workspace-name> \
-#            <kubernetes-namespace>
+#            <kubernetes-namespace> [additional rad deploy arguments...]
 rtc_deploy_and_assert_test_app() {
     local test_file="$1" resource_type="$2" app_name_prefix="$3" environment_path="$4" workspace_name="$5" kubernetes_namespace="$6"
     local app_name
     local -a params=()
+    shift 6
 
     app_name="${app_name_prefix}-$(date +%s)"
+
+    if ! grep -qE '^param applicationName string' "$test_file"; then
+        echo "Error: Test template must declare an applicationName parameter for cleanup." >&2
+        return 1
+    fi
 
     if grep -q 'param password' "$test_file" 2>/dev/null; then
         local generated_password
@@ -176,15 +197,18 @@ rtc_deploy_and_assert_test_app() {
             echo "Error: Could not generate the test password." >&2
             return 1
         fi
+        # SQL Server requires multiple character classes, not just hex digits.
+        generated_password="Aa1!${generated_password}"
         params=(--parameters "password=$generated_password")
         echo "==> Detected 'password' parameter in test template, auto-generating value"
     fi
+    params+=(--parameters "applicationName=$app_name")
 
     echo "==> Deploying test application from $test_file"
-    if rad deploy "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}"; then
+    if rad deploy "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
         echo "==> Test deployment successful"
 
-        if ! rtc_assert_recipe_result "$resource_type" "$app_name" "$workspace_name"; then
+        if ! rtc_assert_recipe_result "$resource_type" "$app_name" "$workspace_name" "$kubernetes_namespace"; then
             rad app delete "$app_name" --workspace "$workspace_name" --yes || echo "Error: Test app cleanup failed." >&2
             rtc_cleanup_kubernetes_resources "$kubernetes_namespace" "$app_name"
             return 1

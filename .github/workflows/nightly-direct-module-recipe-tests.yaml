@@ -124,7 +124,7 @@ jobs:
           if [ -z "$LOCATION" ]; then
             LOCATION="westus3"
           fi
-          RG="rrtnightly-${{ github.run_id }}-${{ github.run_attempt }}"
+          RG="rrttest-nightly-${{ github.run_id }}-${{ github.run_attempt }}"
           {
             echo "AZURE_LOCATION=$LOCATION"
             echo "AZURE_RESOURCE_GROUP=$RG"

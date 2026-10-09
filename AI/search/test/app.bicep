@@ -3,8 +3,11 @@ extension radius
 @description('The ID of your Radius Environment. Set automatically by the rad CLI.')
 param environment string
 
+@description('Application name. CI supplies a unique name for deployment and cleanup.')
+param applicationName string = 'search-azure-test'
+
 resource app 'Radius.Core/applications@2025-08-01-preview' = {
-  name: 'search-azure-test'
+  name: applicationName
   properties: {
     environment: environment
   }
