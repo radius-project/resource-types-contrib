@@ -19,9 +19,15 @@ for object in "secret/$TLS_SECRET" "secret/postgresql-credentials" \
     "deployment/postgresql" "pod/$CLIENT_NAME" "service/postgresql" \
     "configmap/$CLIENT_NAME-ca" "secret/postgresql-client-credentials" \
     "configmap/postgresql-transport" "configmap/postgresql-init-sql"; do
-    if [[ -n "$(kubectl get "$object" -n "$NAMESPACE" --ignore-not-found -o name)" ]]; then
-        echo "Error: $object already exists; use an isolated PostgreSQL test Environment." >&2
-        exit 1
+    if object_name=$(kubectl get "$object" -n "$NAMESPACE" --ignore-not-found -o name); then
+        if [[ -n "$object_name" ]]; then
+            echo "Error: $object already exists; use an isolated PostgreSQL test Environment." >&2
+            exit 1
+        fi
+    else
+        status=$?
+        echo "Error: Could not inspect $object in namespace $NAMESPACE before PostgreSQL test setup." >&2
+        exit "$status"
     fi
 done
 
