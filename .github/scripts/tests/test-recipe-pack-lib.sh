@@ -28,7 +28,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/rtc-recipe-pack-lib-tests-XXXXXX")"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
-FIXTURE_ROOT="$TEST_ROOT/repo"
+FIXTURE_ROOT="$TEST_ROOT/repo with spaces"
 
 # --- Resource types -----------------------------------------------------
 # Data/widgets: has a test app and a kubernetes recipe folder -> repo-owned,
@@ -90,6 +90,8 @@ EOF
 
 run_in_fixture() {
     (
+        # Disable GNU regex extensions so CI also catches non-portable awk patterns.
+        awk() { POSIXLY_CORRECT=1 command awk "$@"; }
         RTC_REPO_ROOT="$FIXTURE_ROOT"
         unset RTC_LIB_NAMESPACES_SOURCED RTC_LIB_RECIPE_PACKS_SOURCED
         cd "$FIXTURE_ROOT"
@@ -139,6 +141,23 @@ assert_eq "azure,kubernetes," "$actual" "list of platform groups"
 expected="Radius.Data/widgets	ghcr.io/radius-project/kube-recipes/widgets:latest|Radius.Data/gadgets	mcr.microsoft.com/bicep/avm/res/some/gadget-module:1.0.0|Radius.Data/untested	mcr.microsoft.com/bicep/avm/res/some/untested-module:1.0.0|"
 actual="$(run_in_fixture rtc_recipe_pack_entries "$FIXTURE_ROOT/recipe-packs/azure-aks/azure-aks.bicep" | tr '\n' '|')"
 assert_eq "$expected" "$actual" "rtc_recipe_pack_entries for azure-aks"
+
+actual="$(run_in_fixture rtc_recipe_pack_name "$FIXTURE_ROOT/recipe-packs/azure-aks/azure-aks.bicep")"
+assert_eq "azure-aks" "$actual" "space-indented recipe pack name"
+
+tab_template="$TEST_ROOT/tab-indented.bicep"
+sed $'s/^  */\t/' "$FIXTURE_ROOT/recipe-packs/azure-aks/azure-aks.bicep" >"$tab_template"
+actual="$(run_in_fixture rtc_recipe_pack_entries "$tab_template" | tr '\n' '|')"
+assert_eq "$expected" "$actual" "tab-indented recipe pack entries"
+actual="$(run_in_fixture rtc_recipe_pack_name "$tab_template")"
+assert_eq "azure-aks" "$actual" "tab-indented recipe pack name"
+
+crlf_template="$FIXTURE_ROOT/crlf template.bicep"
+sed $'s/$/\r/' "$tab_template" >"$crlf_template"
+actual="$(run_in_fixture rtc_recipe_pack_entries "$crlf_template" | tr '\n' '|')"
+assert_eq "$expected" "$actual" "CRLF recipe pack entries"
+actual="$(run_in_fixture rtc_recipe_pack_name "$crlf_template")"
+assert_eq "azure-aks" "$actual" "CRLF recipe pack name"
 
 # rtc_list_direct_module_types: kubernetes pack has zero gaps (its only entry
 # is repo-owned); azure-aks pack flags only Data/gadgets (Data/widgets is

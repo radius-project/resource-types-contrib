@@ -80,6 +80,11 @@ connection succeeds. Per-recipe MySQL tests keep their connection-only probe.
 
 ### Running these checks locally
 
+On Windows, run these Bash scripts in Git Bash, not PowerShell or Command
+Prompt. Keep `.sh` files with LF line endings. The `make` commands below
+require a separate Make installation. To run the static mapping check
+without Make, use `bash .github/scripts/validate-direct-module-mappings.sh`.
+
 ```bash
 # After cluster setup, build types and extension configuration
 RECIPE_PLATFORM_FILTER=kubernetes make build

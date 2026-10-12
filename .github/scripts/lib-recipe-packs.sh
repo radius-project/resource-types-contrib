@@ -155,7 +155,7 @@ rtc_recipe_pack_name() {
     local bicep_file="$1"
     awk '
         /resource[[:space:]]+[A-Za-z0-9_]+[[:space:]]+'"'"'Radius\.Core\/recipePacks@/ { capture=1; next }
-        capture && /^\s*name:[[:space:]]*'"'"'[^'"'"']*'"'"'/ {
+        capture && /^[[:space:]]*name:[[:space:]]*'"'"'[^'"'"']*'"'"'/ {
             match($0, /name:[[:space:]]*'"'"'[^'"'"']*'"'"'/)
             s = substr($0, RSTART, RLENGTH)
             sub(/^name:[[:space:]]*'"'"'/, "", s)
@@ -198,12 +198,12 @@ RTC_REPO_RECIPE_SOURCE_PREFIX='ghcr.io/radius-project/'
 rtc_recipe_pack_entries() {
     local bicep_file="$1"
     awk '
-        /^\s*'"'"'Radius\.[A-Za-z0-9]+\/[A-Za-z0-9]+'"'"':[[:space:]]*\{/ {
+        /^[[:space:]]*'"'"'Radius\.[A-Za-z0-9]+\/[A-Za-z0-9]+'"'"':[[:space:]]*\{/ {
             match($0, /Radius\.[A-Za-z0-9]+\/[A-Za-z0-9]+/)
             current_type = substr($0, RSTART, RLENGTH)
             next
         }
-        current_type != "" && /^\s*source:[[:space:]]*'"'"'[^'"'"']*'"'"'/ {
+        current_type != "" && /^[[:space:]]*source:[[:space:]]*'"'"'[^'"'"']*'"'"'/ {
             match($0, /source:[[:space:]]*'"'"'[^'"'"']*'"'"'/)
             source_literal = substr($0, RSTART, RLENGTH)
             sub(/^source:[[:space:]]*'"'"'/, "", source_literal)
