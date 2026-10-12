@@ -59,9 +59,11 @@ reaches `edge` users, coordinate the `Radius.Data` namespace release and its
 breaking-change versioning, and coordinate the resulting
 `bot/update-resource-types` PR in `radius-project/radius`. Released Radius
 versions pin a namespace release's commit; they do not automatically adopt every
-new `edge` artifact. The checked-in Kubernetes default pack currently has no
-PostgreSQL entry. Its unrelated stable Recipe references must not be changed as
-part of this migration.
+new `edge` artifact. The checked-in `recipe-packs/kubernetes/default.bicep`
+includes PostgreSQL and references
+`ghcr.io/radius-project/kube-recipes/postgresqldatabases:latest`. Pinning the pack
+template does not freeze that floating Recipe tag. Its unrelated stable Recipe
+references must not be changed as part of this migration.
 
 An operator must provision a Kubernetes TLS Secret in the database's namespace **before deployment**, for both policies. By default the Recipes use `<resource-name>-tls` (for example, `postgresql-tls`). They do not generate certificates or fall back to plaintext when a Secret is absent or invalid.
 
