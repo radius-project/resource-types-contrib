@@ -9,6 +9,8 @@ mkdir -p "$TEST_ROOT/bin"
 cat > "$TEST_ROOT/bin/rad" <<'EOF'
 #!/bin/bash
 set -euo pipefail
+printf '%q ' rad "$@" >> "$MOCK_STATE/invocations"
+printf '\n' >> "$MOCK_STATE/invocations"
 case "$1 $2" in
     "deploy "*)
         shift
@@ -101,6 +103,19 @@ EOF
 cat > "$TEST_ROOT/bin/kubectl" <<'EOF'
 #!/bin/bash
 set -euo pipefail
+printf '%q ' kubectl "$@" >> "$MOCK_STATE/invocations"
+printf '\n' >> "$MOCK_STATE/invocations"
+if [[ "$#" -eq 7 && "$1" == get && "$2" == "${MOCK_PREFLIGHT_OBJECT:-}" &&
+    "$3" == -n && "$4" == test && "$5" == --ignore-not-found && "$6" == -o && "$7" == name ]]; then
+    case "${MOCK_PREFLIGHT_MODE:-}" in
+        empty|nonempty)
+            [[ "$MOCK_PREFLIGHT_MODE" != nonempty ]] || printf '%s\n' "$2"
+            echo "Injected lookup failure for $2" >&2
+            exit 77
+            ;;
+        existing) printf '%s\n' "$2"; exit 0 ;;
+    esac
+fi
 [[ "$1" != --request-timeout=* ]] || shift
 case "$1 $2" in
     "get pods")
@@ -164,6 +179,8 @@ EOF
 cat > "$TEST_ROOT/bin/openssl" <<'EOF'
 #!/bin/bash
 set -euo pipefail
+printf '%q ' openssl "$@" >> "$MOCK_STATE/invocations"
+printf '\n' >> "$MOCK_STATE/invocations"
 if [[ "$1" == "rand" ]]; then
     echo "fake-test-password"
 elif [[ "$*" == *"-noout -serial"* ]]; then
@@ -187,6 +204,7 @@ run_case() {
     mkdir -p "$state"
     printf '0' > "$state/deploy-count"
     : > "$state/calls"
+    : > "$state/invocations"
     local actual_status=0
     MOCK_STATE="$state" MOCK_RECIPE_TYPE="$recipe" MOCK_RESOURCE_GROUP="$group" MOCK_FAIL_DEPLOY="$fail_deploy" \
         MOCK_FAIL_CLEANUP="$fail_cleanup" POSTGRESQL_TEST_READINESS=0 PATH="$TEST_ROOT/bin:$PATH" \
@@ -214,7 +232,60 @@ run_case() {
     fi
 }
 
+PREFLIGHT_OBJECTS=(
+    secret/postgresql-tls secret/postgresql-credentials deployment/postgresql
+    pod/postgresql-tls-probe service/postgresql configmap/postgresql-tls-probe-ca
+    secret/postgresql-client-credentials configmap/postgresql-transport configmap/postgresql-init-sql
+)
+
+run_preflight_case() {
+    local recipe="$1" position="$2" mode="$3"
+    local object="${PREFLIGHT_OBJECTS[position-1]}"
+    local state="$TEST_ROOT/preflight-$recipe-$position-$mode"
+    local actual_status=0 expected_status=77 expected_error failure=0
+    mkdir -p "$state"
+    printf '0' > "$state/deploy-count"
+    : > "$state/calls"
+    : > "$state/invocations"
+    MOCK_STATE="$state" MOCK_RECIPE_TYPE="$recipe" MOCK_RESOURCE_GROUP=test MOCK_FAIL_DEPLOY=0 \
+        MOCK_FAIL_CLEANUP=0 MOCK_PREFLIGHT_OBJECT="$object" MOCK_PREFLIGHT_MODE="$mode" \
+        POSTGRESQL_TEST_READINESS=0 PATH="$TEST_ROOT/bin:$PATH" \
+        bash "$TEST_DIR/test-tls.sh" "$recipe" \
+        /planes/radius/local/resourcegroups/test/providers/Radius.Core/environments/test-environment test-workspace test \
+        > "$state/output" 2>&1 || actual_status=$?
+    expected_error="Error: Could not inspect $object in namespace test before PostgreSQL test setup."
+    if [[ "$mode" == existing ]]; then
+        expected_status=1
+        expected_error="Error: $object already exists; use an isolated PostgreSQL test Environment."
+    fi
+    : > "$state/expected-invocations"
+    for ((index=0; index<position; index++)); do
+        printf '%q ' kubectl get "${PREFLIGHT_OBJECTS[index]}" -n test --ignore-not-found -o name \
+            >> "$state/expected-invocations"
+        printf '\n' >> "$state/expected-invocations"
+    done
+    if [[ "$actual_status" -ne "$expected_status" ]]; then
+        echo "Error: $recipe/$position/$mode expected status $expected_status, got $actual_status." >&2
+        failure=1
+    fi
+    if ! grep -Fxq "$expected_error" "$state/output"; then
+        echo "Error: $recipe/$position/$mode missing diagnostic: $expected_error" >&2
+        failure=1
+    fi
+    if ! cmp -s "$state/expected-invocations" "$state/invocations"; then
+        echo "Error: $recipe/$position/$mode invocation trace differs from the first $position preflight gets." >&2
+        diff -u "$state/expected-invocations" "$state/invocations" >&2 || true
+        failure=1
+    fi
+    return "$failure"
+}
+
 for recipe in bicep terraform; do
+    for position in "${!PREFLIGHT_OBJECTS[@]}"; do
+        run_preflight_case "$recipe" "$((position + 1))" empty
+    done
+    run_preflight_case "$recipe" 1 nonempty
+    run_preflight_case "$recipe" 1 existing
     run_case "$recipe" 0 0 0
     run_case "$recipe" 3 0 42
     run_case "$recipe" 3 1 42
@@ -224,3 +295,4 @@ run_case bicep 0 2 1
 run_case bicep 0 0 0 workloads
 
 echo "PostgreSQL TLS runner argument, application ownership, and cleanup tests passed"
+echo "PostgreSQL preflight tests passed: 20 lookup failures and 2 existing-object refusals"
