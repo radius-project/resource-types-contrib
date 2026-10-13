@@ -9,6 +9,7 @@ on:
       - "**/azure/**"
       - "**/azure-*/**"
       - "**/test/app.bicep"
+      - "recipe-packs/**"
       - ".github/workflows/validate-azure-recipes.yaml"
       - ".github/scripts/**"
       - ".github/build/**"
@@ -66,6 +67,7 @@ jobs:
             **/azure/**
             **/azure-*/**
             **/test/app.bicep
+            recipe-packs/**
             .github/workflows/validate-azure-recipes.yaml
             .github/scripts/**
             .github/build/**
@@ -300,13 +302,9 @@ jobs:
       - name: Build Azure Recipes
         run: make build-azure-recipes
 
-      - name: Deploy checked-in Azure AKS Recipe Pack
+      - name: Deploy checked-in Azure Recipe Packs
         if: matrix.recipe == 'bicep'
-        run: .github/scripts/deploy-checked-in-azure-recipe-pack.sh recipe-packs/azure-aks/azure-aks.bicep azure-aks
-
-      - name: Deploy checked-in Azure ACI Recipe Pack
-        if: matrix.recipe == 'bicep'
-        run: .github/scripts/deploy-checked-in-azure-recipe-pack.sh recipe-packs/azure-aci/azure-aci.bicep azure-aci
+        run: .github/scripts/deploy-all-checked-in-recipe-packs.sh azure
 
       - name: Generate Azure Recipe Pack
         id: generate

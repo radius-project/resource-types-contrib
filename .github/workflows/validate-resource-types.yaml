@@ -64,6 +64,12 @@ jobs:
       - name: Validate checked-in Recipe Packs
         run: make validate-recipe-packs
 
+      - name: Validate direct-module Recipe Pack mappings
+        run: make validate-direct-module-mappings
+
+      - name: Test direct-module test scripts
+        run: make test-direct-module-recipes-unit
+
   validate-resource-types:
     name: Validate Resource Types and Recipes
     runs-on: ubuntu-24.04
@@ -109,6 +115,10 @@ jobs:
 
       - name: Build Recipes
         run: RECIPE_PLATFORM_FILTER=kubernetes make build
+
+      - name: Deploy checked-in Kubernetes Recipe Pack
+        if: matrix.recipe == 'bicep'
+        run: .github/scripts/deploy-all-checked-in-recipe-packs.sh kubernetes "$RAD_ENVIRONMENT_NAME"
 
       # Generates the bicep definition for recipe pack in recipe-pack-{bicep|terraform}.bicep
       - name: Generate Recipe Pack
