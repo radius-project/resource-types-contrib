@@ -18,35 +18,25 @@
 
 set -euo pipefail
 
-# Deploys a checked-in Azure Recipe Pack and associates it with the default
-# Environment. `--recipe-packs` replaces the Environment's pack list, so packs
-# that cover the same Resource Types (azure-aks and azure-aci) can be validated
-# one after the other.
-#
-# Usage: deploy-checked-in-azure-recipe-pack.sh [template] [pack-name]
+# pull_request_target uses the base workflow with scripts from the PR checkout.
+# Keep its old entry point until all callers use the shared deployment driver.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib-recipe-packs.sh"
 
 template="${1:-recipe-packs/azure-aks/azure-aks.bicep}"
 pack_name="${2:-azure-aks}"
-environment=default
-
 if [[ ! -f "$template" ]]; then
     echo "Error: Azure Recipe Pack not found: $template" >&2
     exit 1
 fi
 
-# Only the AKS pack declares these parameters; passing an undeclared parameter
-# fails the deployment.
+required_params="$(rtc_recipe_pack_required_params "$template")"
 parameters=()
-if grep -Eq '^param[[:space:]]+routesGatewayName[[:space:]]' "$template"; then
-    parameters+=(--parameters routesGatewayName=validation-gateway)
-fi
-if grep -Eq '^param[[:space:]]+containerImagesRegistry[[:space:]]' "$template"; then
-    parameters+=(--parameters containerImagesRegistry=localhost:5000)
-fi
+while IFS= read -r param_name; do
+    [[ -z "$param_name" ]] && continue
+    param_value="$(rtc_recipe_pack_param_value "$param_name")"
+    parameters+=(--parameters "${param_name}=${param_value}")
+done <<<"$required_params"
 
-rad deploy "$template" \
-    --group default \
-    --environment "$environment" \
-    ${parameters[@]+"${parameters[@]}"}
-
-rad env update "$environment" --recipe-packs "$pack_name" --preview
+rad deploy "$template" --group default --environment default "${parameters[@]}"
+rad env update default --recipe-packs "$pack_name" --preview
