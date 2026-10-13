@@ -8,6 +8,12 @@
 
 extension radius
 
+@description('Registry path that Radius.Compute/containerImages pushes built images to. Defaults to the in-cluster registry that the Radius Helm chart exposes on NodePort 31500. Set to an external registry (e.g. ghcr.io/my-org) when the in-cluster registry is disabled.')
+param containerImagesRegistry string = 'localhost:31500'
+
+@description('Name of the Kubernetes Secret holding registry credentials for Radius.Compute/containerImages. Leave empty for an unauthenticated registry such as the default in-cluster registry.')
+param containerImagesRegistrySecretName string = ''
+
 resource kubernetesRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
   name: 'default'
   properties: {
@@ -26,6 +32,14 @@ resource kubernetesRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
         parameters: {
           gatewayName: 'radius'
           gatewayNamespace: 'radius-system'
+        }
+      }
+      'Radius.Compute/containerImages': {
+        kind: 'bicep'
+        source: 'ghcr.io/radius-project/kube-recipes/containerimages:latest'
+        parameters: {
+          registry: containerImagesRegistry
+          registrySecretName: containerImagesRegistrySecretName
         }
       }
       'Radius.Security/secrets': {
