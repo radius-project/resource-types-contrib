@@ -47,7 +47,7 @@ rad env create default \
   --preview
 ```
 
-`rad deploy` writes the pack to your workspace's **current** resource group, not the Environment's group, and Radius's built-in default pack always lives in group `default`. Pass `--group default` so the pack lands in the same group as the Environment. If your workspace's current group is not `default`, also pass the Environment's full ID instead of its name:
+`rad deploy` writes the pack to your workspace's **current** resource group, and Radius's built-in default pack always lives in group `default`. Pass `--group default` so the pack lands in group `default`. With `--group default`, `--environment <name>` is also looked up in group `default`; if the Environment is in another group, pass its full ID instead:
 
 ```bash
 rad deploy recipe-packs/kubernetes/default.bicep \
@@ -56,10 +56,10 @@ rad deploy recipe-packs/kubernetes/default.bicep \
 ```
 
 ```bash
-# From a workspace scoped to a group other than "default":
+# When the Environment is in a group other than "default":
 rad deploy recipe-packs/kubernetes/default.bicep \
   --group default \
-  --environment /planes/radius/local/resourceGroups/default/providers/Radius.Core/environments/default
+  --environment /planes/radius/local/resourceGroups/<environment-group>/providers/Radius.Core/environments/<env-name>
 ```
 
 If the pack keeps the same ID as the Environment's current pack, the Environment's existing reference already resolves and no further step is needed. Only run `rad env update` if the Environment is not yet associated with the pack, and scope it to the Environment's own group (which may differ from `default`):
