@@ -23,7 +23,7 @@ Kube-recipes tagged `:edge` are rebuilt on every push to `main`. `:latest` and t
 | `Radius.Data/redisCaches` | Bicep | `ghcr.io/radius-project/kube-recipes/rediscaches:latest` |
 | `Radius.Messaging/rabbitMQ` | Bicep | `ghcr.io/radius-project/kube-recipes/rabbitmq:latest` |
 
-This pack has seven Recipes and does not cover `Radius.Data/postgreSqlDatabases`. `rad env create` without `--recipe-packs` links Radius's own built-in default pack, which has eight Recipes, including PostgreSQL, pinned to the SHA tags of that Radius release. **Deploying this pack into the same pack ID overwrites that built-in pack.** Only deploy this pack when you want this exact set of Recipes, or when you know the Environment does not already use the built-in default pack.
+`rad init --preview` and `rad env create --preview` (without `--recipe-packs`) link Radius's built-in default pack, `/planes/radius/local/resourceGroups/default/providers/Radius.Core/recipePacks/default`. Radius builds that pack from this file at the release it pins, replacing each `:latest` source with a tag pinned for that Radius release (`:edge` for edge builds). **Deploying this file to the same pack ID overwrites the built-in pack for every Environment that references it and switches all of its sources to `:latest`.** To get the built-in pack back, see [Restoring Radius's default pack](#restoring-radiuss-default-pack).
 
 ## Prerequisite: `bicepconfig.json`
 
@@ -73,6 +73,28 @@ rad env update default \
 ```
 
 After the association is confirmed, every Resource Type the pack covers can be used in an application deployed to that Environment.
+
+## Restoring Radius's default pack
+
+Deploying this file cannot restore the exact pack Radius creates, because its sources are always `:latest`. Use `rad` instead:
+
+- `rad init --preview` always rewrites the default pack from the pack built into that `rad` version. It also creates or updates the Environment you choose during init.
+- `rad env create --preview` without `--recipe-packs`, and `rad deploy` of a template whose Environment sets no `recipePacks`, create the default pack only when it is missing; they never update an existing pack. Delete the pack first, then run one of them, for example by creating a new Environment:
+
+  ```bash
+  rad recipe-pack delete default --group default --yes
+  rad env create <new-env-name> --preview
+  ```
+
+  Environments that `rad init --preview` or `rad env create` linked to the default pack keep its ID and use the recreated pack. `rad recipe-pack delete` removes the pack from the Environments listed in its `referencedBy`, which are the ones linked with `--recipe-packs`. Re-link each of those:
+
+  ```bash
+  rad env update <env-name> \
+    --group <environment-group> \
+    --recipe-packs default \
+    --recipe-pack-group default \
+    --preview
+  ```
 
 ## Contributing a Recipe
 
