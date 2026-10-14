@@ -103,6 +103,14 @@ cat > "$TEST_ROOT/bin/oras" <<'EOF'
 set -euo pipefail
 echo "oras $*" >> "$MOCK_STATE/invocations"
 [[ "$*" == "manifest fetch --descriptor ghcr.io/radius-project/kube-recipes/postgresqldatabases:18142182e52e19a46b0ed172037357e8e142dcd2" ]]
+if [[ -f "$MOCK_STATE/registry-checked" ]]; then
+    case "$MOCK_CASE" in
+        post-registry-failure) exit 42 ;;
+        post-digest-mismatch) echo '{"digest":"sha256:changed"}'; exit ;;
+        post-missing-digest) echo '{}'; exit ;;
+    esac
+fi
+touch "$MOCK_STATE/registry-checked"
 case "$MOCK_CASE" in
     registry-failure) exit 41 ;;
     digest-mismatch) echo '{"digest":"sha256:wrong"}' ;;
@@ -123,7 +131,11 @@ cat > "$TEST_ROOT/scripts/test-tls.sh" <<'EOF'
 #!/bin/bash
 set -euo pipefail
 echo "transport $*" >> "$MOCK_STATE/invocations"
-[[ "$POSTGRESQL_UPGRADE_OLD_SOURCE" == "ghcr.io/radius-project/kube-recipes/postgresqldatabases@sha256:ca65f43501f39fc31689e8a292e9e0e3179e4ebf7a89ec0143c12b4a1dc24ddd" ]]
+if [[ "$POSTGRESQL_UPGRADE_OLD_SOURCE" == *@* ]]; then
+    echo "RecipeDownloadFailed: digest references are not supported" >&2
+    exit 52
+fi
+[[ "$POSTGRESQL_UPGRADE_OLD_SOURCE" == "ghcr.io/radius-project/kube-recipes/postgresqldatabases:18142182e52e19a46b0ed172037357e8e142dcd2" ]]
 [[ "$POSTGRESQL_UPGRADE_NEW_SOURCE" == "reciperegistry:5000/radius-recipes/data/postgresqldatabases/kubernetes/bicep/kubernetes-postgresql:latest" ]]
 [[ "$POSTGRESQL_UPGRADE_PACK" == postgresql-upgrade-bicep-fixture ]]
 [[ "$1" == bicep && "$3" == "$POSTGRESQL_UPGRADE_PACK" && "$4" == "$POSTGRESQL_UPGRADE_PACK" ]]
@@ -144,7 +156,7 @@ for scenario in success explicit-workspace current-failure malformed-current mis
     registry-failure digest-mismatch missing-digest group-lookup-failure group-collision \
     malformed-groups malformed-group-entry namespace-lookup-failure namespace-collision group-create-failure \
     workspace-create-failure namespace-create-failure env-create-failure transport-failure \
-    restore-failure delete-failure; do
+    restore-failure delete-failure post-registry-failure post-digest-mismatch post-missing-digest; do
     export MOCK_STATE="$TEST_ROOT/$scenario" MOCK_CASE="$scenario" MOCK_EXECUTION=default
     mkdir -p "$MOCK_STATE/home"
     echo user-current > "$MOCK_STATE/current"
@@ -160,6 +172,7 @@ for scenario in success explicit-workspace current-failure malformed-current mis
     if [[ "$scenario" == success || "$scenario" == explicit-workspace ]]; then
         [[ "$status" -eq 0 ]] || { cat "$MOCK_STATE/output"; exit 1; }
         grep -q '^transport ' "$MOCK_STATE/invocations"
+        [[ "$(grep -c '^oras manifest fetch ' "$MOCK_STATE/invocations")" -eq 2 ]]
     else
         [[ "$status" -ne 0 ]] || { echo "Expected failure: $scenario" >&2; exit 1; }
     fi
@@ -178,7 +191,7 @@ for scenario in success explicit-workspace current-failure malformed-current mis
         fi
     fi
     case "$scenario" in
-        success|explicit-workspace|namespace-create-failure|env-create-failure|transport-failure|delete-failure)
+        success|explicit-workspace|namespace-create-failure|env-create-failure|transport-failure|delete-failure|post-*)
             grep -q '^rad workspace switch user-current$' "$MOCK_STATE/invocations"
             grep -q '^rad workspace delete postgresql-upgrade-bicep-fixture --yes$' "$MOCK_STATE/invocations"
             ;;
@@ -188,6 +201,14 @@ for scenario in success explicit-workspace current-failure malformed-current mis
             assert_absent '^transport '
             ;;
     esac
+    if [[ "$scenario" == post-* ]]; then
+        grep -q '^transport ' "$MOCK_STATE/invocations"
+        [[ "$(grep -c '^oras manifest fetch ' "$MOCK_STATE/invocations")" -eq 2 ]]
+        if grep -q 'old-to-new Recipe upgrade and transport suite passed' "$MOCK_STATE/output"; then
+            echo "Post-upgrade digest failure reported success" >&2
+            exit 1
+        fi
+    fi
     case "$scenario" in
         digest-mismatch)
             grep -q 'Released baseline digest mismatch' "$MOCK_STATE/output"

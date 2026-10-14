@@ -7,7 +7,7 @@ param packName string
 @allowed(['bicep', 'terraform'])
 param recipeKind string
 
-@description('Immutable old source or locally published new PostgreSQL source.')
+@description('Verified baseline source or locally published new PostgreSQL source.')
 param postgresqlSource string
 
 var registry = 'reciperegistry:5000/radius-recipes'

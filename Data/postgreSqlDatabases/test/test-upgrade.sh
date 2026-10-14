@@ -93,14 +93,19 @@ fi
 if [[ "$RECIPE_TYPE" == bicep ]]; then
     command -v oras >/dev/null
     OLD_SOURCE="ghcr.io/radius-project/kube-recipes/postgresqldatabases:$BASELINE_SHA"
-    descriptor=$(oras manifest fetch --descriptor "$OLD_SOURCE")
-    digest=$(jq -er '.digest' <<<"$descriptor")
-    if [[ "$digest" != "$BASELINE_DIGEST" ]]; then
-        echo "Error: Released baseline digest mismatch: expected $BASELINE_DIGEST, got $digest." >&2
-        exit 1
-    fi
-    OLD_SOURCE="ghcr.io/radius-project/kube-recipes/postgresqldatabases@$BASELINE_DIGEST"
-    echo "==> Released Radius.Data/v0.3.0 baseline: source=$OLD_SOURCE digest=$digest commit=$BASELINE_SHA"
+    verify_baseline_digest() {
+        local descriptor digest
+        descriptor=$(oras manifest fetch --descriptor "$OLD_SOURCE")
+        digest=$(jq -er '.digest' <<<"$descriptor")
+        if [[ "$digest" != "$BASELINE_DIGEST" ]]; then
+            echo "Error: Released baseline digest mismatch: expected $BASELINE_DIGEST, got $digest." >&2
+            exit 1
+        fi
+    }
+    # Radius accepts tagged Recipe sources, not OCI digest references.
+    # Pre/post checks cannot detect a tag that changes and changes back mid-run.
+    verify_baseline_digest
+    echo "==> Released Radius.Data/v0.3.0 baseline: source=$OLD_SOURCE digest=$BASELINE_DIGEST commit=$BASELINE_SHA"
     NEW_SOURCE=reciperegistry:5000/radius-recipes/data/postgresqldatabases/kubernetes/bicep/kubernetes-postgresql:latest
 else
     command -v zip >/dev/null
@@ -162,4 +167,5 @@ environment_id=$(rad env show "$CASE" --workspace "$CASE" --preview -o json | jq
 POSTGRESQL_UPGRADE_PACK="$CASE" POSTGRESQL_UPGRADE_OLD_SOURCE="$OLD_SOURCE" \
     POSTGRESQL_UPGRADE_NEW_SOURCE="$NEW_SOURCE" \
     bash "$TEST_DIR/test-tls.sh" "$RECIPE_TYPE" "$environment_id" "$CASE" "$CASE"
+if [[ "$RECIPE_TYPE" == bicep ]]; then verify_baseline_digest; fi
 echo "==> $RECIPE_TYPE old-to-new Recipe upgrade and transport suite passed"
