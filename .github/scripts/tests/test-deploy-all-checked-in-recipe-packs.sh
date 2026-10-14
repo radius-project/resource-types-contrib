@@ -90,16 +90,16 @@ fail() {
 : >"$CALL_LOG"
 run_deploy kubernetes test-env test-rg
 expected="rad deploy $FIXTURE_ROOT/recipe-packs/kubernetes/default.bicep --group test-rg --environment test-env
-rad env update test-env --recipe-packs default --preview"
+rad env update test-env --recipe-packs default"
 diff -u <(echo "$expected") "$CALL_LOG" || fail "kubernetes group deploy calls did not match"
 
 # --- azure group: two packs, one with required params ----------------------
 : >"$CALL_LOG"
 run_deploy azure test-env test-rg
 expected="rad deploy $FIXTURE_ROOT/recipe-packs/azure-aci/azure-aci.bicep --group test-rg --environment test-env
-rad env update test-env --recipe-packs azure-aci --preview
+rad env update test-env --recipe-packs azure-aci
 rad deploy $FIXTURE_ROOT/recipe-packs/azure-aks/azure-aks.bicep --group test-rg --environment test-env --parameters routesGatewayName=validation-gateway --parameters containerImagesRegistry=localhost:5000
-rad env update test-env --recipe-packs azure-aks --preview"
+rad env update test-env --recipe-packs azure-aks"
 diff -u <(echo "$expected") "$CALL_LOG" || fail "azure group deploy calls did not match"
 
 # The base pull_request_target workflow still calls the legacy entry point.
@@ -109,7 +109,7 @@ diff -u <(echo "$expected") "$CALL_LOG" || fail "azure group deploy calls did no
     PATH="$TEST_ROOT/bin:$PATH" "$REPO_ROOT/.github/scripts/deploy-checked-in-azure-recipe-pack.sh"
 )
 expected="rad deploy recipe-packs/azure-aks/azure-aks.bicep --group default --environment default --parameters routesGatewayName=validation-gateway --parameters containerImagesRegistry=localhost:5000
-rad env update default --recipe-packs azure-aks --preview"
+rad env update default --recipe-packs azure-aks"
 diff -u <(echo "$expected") "$CALL_LOG" || fail "legacy Azure deploy calls did not match"
 
 # --- deployment failures must prevent activation -------------------------

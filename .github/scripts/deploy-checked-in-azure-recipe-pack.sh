@@ -39,4 +39,4 @@ while IFS= read -r param_name; do
 done <<<"$required_params"
 
 rad deploy "$template" --group default --environment default "${parameters[@]}"
-rad env update default --recipe-packs "$pack_name" --preview
+rad env update default --recipe-packs "$pack_name"
