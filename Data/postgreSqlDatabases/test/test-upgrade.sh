@@ -50,8 +50,8 @@ if [[ "$RECIPE_TYPE" == bicep ]]; then
     NEW_SOURCE=reciperegistry:5000/radius-recipes/data/postgresqldatabases/kubernetes/bicep/kubernetes-postgresql:latest
 else
     command -v zip >/dev/null
-    if kubectl get configmap "$MODULE_CONFIGMAP" -n "$MODULE_NAMESPACE" -o json |
-        jq -e --arg name "$MODULE_NAME" '.binaryData | has($name)' >/dev/null; then
+    module_configmap=$(kubectl get configmap "$MODULE_CONFIGMAP" -n "$MODULE_NAMESPACE" -o json)
+    if jq -e --arg name "$MODULE_NAME" '(.binaryData // {}) | has($name)' <<<"$module_configmap" >/dev/null; then
         echo "Error: Baseline module key already exists; refusing overwrite." >&2
         exit 1
     fi
