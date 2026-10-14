@@ -54,25 +54,43 @@ tag must prepare certificates, client trust, and backups before redeployment, or
 pin an immutable pre-change artifact while migrating. A merge does not alter an
 already-running server or an immutable Recipe reference.
 
+Before rolling out floating artifacts, update affected tutorials, samples, and
+demo clients to provision certificates and configure CA trust and hostname
+verification, and verify their complete deployment and connection flow. These
+downstream updates must precede the contrib merge that refreshes `edge`.
+
 For breaking Recipe upgrades, maintainers must publish a migration notice that
 reaches `edge` users, coordinate the `Radius.Data` namespace release and its
 breaking-change versioning, and coordinate the resulting
-`bot/update-resource-types` PR in `radius-project/radius`. Released Radius
-versions pin a namespace release's commit; they do not automatically adopt every
-new `edge` artifact. The checked-in `recipe-packs/kubernetes/default.bicep`
-includes PostgreSQL and references
-`ghcr.io/radius-project/kube-recipes/postgresqldatabases:latest`. Pinning the pack
-template does not freeze that floating Recipe tag. Its unrelated stable Recipe
+`bot/update-resource-types` PR in `radius-project/radius`. For newly created CLI
+default packs, edge builds select `:edge`; released builds select their
+`Radius.Data`-pinned namespace commit tag. Normal Environment creation and
+deployment defaulting use the CLI's get-or-create path, which reuses existing
+default packs unchanged. Upgrading the CLI alone does not retag an existing pack;
+explicit custom packs retain their configured sources. See the
+[CLI default-pack creation and tag selection](https://github.com/radius-project/radius/blob/ffd051cd6d81307f544a2a0c421a8c67e45a1dfd/pkg/cli/recipepack/recipepack.go#L129-L243).
+In contrast, `rad init --preview` [when creating an Environment](https://github.com/radius-project/radius/blob/ffd051cd6d81307f544a2a0c421a8c67e45a1dfd/pkg/cli/cmd/radinit/preview/init.go#L232-L237)
+[replaces the shared default pack](https://github.com/radius-project/radius/blob/ffd051cd6d81307f544a2a0c421a8c67e45a1dfd/pkg/cli/cmd/radinit/preview/environment.go#L115-L125)
+according to that CLI's channel and namespace pins, affecting every consumer's
+subsequent deployments. Reusing an existing Environment in init does not take
+that creation path. Inspect the stored pack sources after init or an explicit
+pack deployment rather than infer them from the current CLI version.
+Deploying the checked-in `recipe-packs/kubernetes/default.bicep` directly retains
+its authored PostgreSQL source,
+`ghcr.io/radius-project/kube-recipes/postgresqldatabases:latest`. Pinning that pack
+template does not freeze its floating Recipe tag. Its unrelated stable Recipe
 references must not be changed as part of this migration.
 
 An operator must provision a Kubernetes TLS Secret in the database's namespace **before deployment**, for both policies. By default the Recipes use `<resource-name>-tls` (for example, `postgresql-tls`). They do not generate certificates or fall back to plaintext when a Secret is absent or invalid.
 
 | Recipe parameter | Default | Purpose |
 | --- | --- | --- |
-| `postgresqlTlsSecretName` | Empty; resolves to `<resource-name>-tls` | Name of an existing operator-owned Secret in the database namespace. Both Recipes accept omission or an empty string to select this default. |
-| `postgresqlTlsCertificateRevision` | `1` | Nonempty operator revision. Change it after replacing the certificate to trigger a pod rollout on redeployment. |
+| `postgresqlTlsSecretName` | Empty; resolves to `<resource-name>-tls` | Name of an existing operator-managed Secret in the database namespace. An explicit name is shared by all databases using these parameters in that namespace. Omission or an empty string selects a separate name per resource. |
+| `postgresqlTlsCertificateRevision` | `1` | Nonempty operator revision. Changing it triggers a pod rollout for every database redeployed with these parameters, not just one database. |
 
-Set these as `parameters` on the PostgreSQL entry in your Recipe Pack. The Secret must contain a PEM `tls.crt` (leaf certificate followed by intermediates, if needed) and an **unencrypted** matching PEM `tls.key`. Use a server-auth certificate from a CA trusted by your clients. Its DNS SAN must cover the returned `host`, `<resource-name>.<namespace>.svc.cluster.local`; include additional DNS names if clients use them. For clusters with a different DNS suffix, customize the existing host-output convention as well as the certificate.
+Set these as `parameters` on the PostgreSQL entry in your Recipe Pack. Pack parameters apply to every database consuming that entry; Environment overrides still apply to every consuming database in that Environment, not to a single resource. A revision change can therefore roll out multiple ephemeral databases as they are redeployed. Inventory and back up all affected databases first.
+
+The Secret must contain a PEM `tls.crt` (leaf certificate followed by intermediates, if needed) and an **unencrypted** matching PEM `tls.key`. Use a server-auth certificate from a CA trusted by your clients. Its DNS SAN must cover the returned `host`, `<resource-name>.<namespace>.svc.cluster.local`; a shared Secret's certificate must cover every consuming database hostname. Include additional DNS names if clients use them. Each namespace needs its own Secret even when the configured name is the same. For clusters with a different DNS suffix, customize the existing host-output convention as well as the certificate.
 
 ```bash
 # server-chain.pem and server.key are issued/managed by the operator's CA.
@@ -80,7 +98,35 @@ kubectl create secret tls postgresql-tls --namespace <database-namespace> \
   --cert=server-chain.pem --key=server.key
 ```
 
-The operator owns issuance, expiry monitoring, renewal, access control, and deletion of this Secret. It is **not** in the Recipe's cleanup list, so deleting the Radius application does not delete it. Do not store private keys in ConfigMaps, application properties, recipe parameters, source control, or logs. The Recipes mount the Secret read-only to a root init container, copy it to a memory-backed volume, set the private key to `0600` owned by `postgres`, and mount that volume read-only in the server. Only public transport rules go into the Recipe-owned ConfigMap. Credentials retain their existing Secret-backed inputs; neither credentials nor TLS material are returned in `result.values` or `result.secrets`.
+The operator owns issuance, expiry monitoring, renewal, access control, and deletion of this Secret. It is **not** in the PostgreSQL Recipe's cleanup list; a Secret created outside Radius survives deletion of the Radius application. Do not store private keys in ConfigMaps, ordinary application properties, recipe parameters, source control, or logs. The Recipes mount the Secret read-only to a root init container, copy it to a memory-backed volume, set the private key to `0600` owned by `postgres`, and mount that volume read-only in the server. Only public transport rules go into the Recipe-owned ConfigMap. Credentials retain their existing Secret-backed inputs; neither credentials nor TLS material are returned in `result.values` or `result.secrets`.
+
+Operators can also provision the certificate through [`Radius.Security/secrets`](../../Security/secrets/README.md). Its Kubernetes Bicep Recipe maps `kind: 'certificate-pem'` and `tls.crt`/`tls.key` data to a `kubernetes.io/tls` Secret named after the Radius resource in the runtime namespace. For example, in a separate operator-managed deployment targeting the database namespace:
+
+```bicep
+extension radius
+
+param environment string
+
+@secure()
+param certificatePem string
+
+@secure()
+param privateKeyPem string
+
+resource certificate 'Radius.Security/secrets@2025-08-01-preview' = {
+  name: 'postgresql-tls'
+  properties: {
+    environment: environment
+    kind: 'certificate-pem'
+    data: {
+      'tls.crt': { value: certificatePem }
+      'tls.key': { value: privateKeyPem }
+    }
+  }
+}
+```
+
+Supply these secure parameters through a protected deployment mechanism, not literal values in source or command-line arguments. The Secret schema marks the data values sensitive. Complete this deployment before deploying PostgreSQL and select its Kubernetes name with `postgresqlTlsSecretName` (or use the matching default). If both resources are in one template, add `dependsOn: [certificate]` to the PostgreSQL resource; the name parameter alone does not establish ordering. This retains operator-managed issuance; it does not generate certificates. Unlike an externally created Secret, the Bicep Secret Recipe registers the Secret for Radius cleanup: keep its owning resource alive while databases consume it. Prefer separate operator-owned infrastructure when the certificate must outlive an application. PostgreSQL currently takes a Kubernetes name, not a Radius Secret ID, and creates no implicit dependency or lifecycle link to that resource. A first-class TLS Secret reference would require a separate resource-schema and Recipe contract change.
 
 Missing Secrets or keys block pod initialization (inspect Kubernetes events); empty files cause an explicit init-container error. PostgreSQL refuses to start with malformed or mismatched TLS material (inspect the server's startup error). Terraform waits for the Deployment rollout; Bicep's resource submission alone is not a health check, so operators must wait for `kubectl rollout status deployment/<resource-name> --timeout=180s` and run a TCP query before declaring deployment usable. There is no plaintext-only fallback.
 
@@ -99,9 +145,9 @@ Supply passwords through your client's secret mechanism (for example a protected
 
 ### Rotation, policy changes, and data protection
 
-**These Recipes do not provision durable data volumes. Recreating a pod can destroy the database.** Back up and verify restoration before upgrading a Recipe, changing policy, rotating certificates, or restarting pods. Arrange durable storage in a customized Recipe before relying on this deployment for persistent data; this fix does not redesign storage.
+**These Recipes do not provision durable data volumes. Recreating a pod can destroy the database.** Take a logical backup with `pg_dump`, and use `pg_dumpall` for roles and other cluster globals where needed. Verify restoration before upgrading a Recipe, changing policy, rotating certificates, or restarting pods in production. Arrange durable storage in a customized Recipe before relying on this deployment for persistent data; this fix does not redesign storage.
 
-The server uses a startup copy of the certificate, so updating the Secret alone does not rotate the active certificate. Replace its data without recording private keys in a last-applied annotation (use your secret manager or `kubectl create secret tls ... --dry-run=client -o json | kubectl replace -f -` for an existing Secret). Then change `postgresqlTlsCertificateRevision` in the Recipe Pack and redeploy the pack and application, or explicitly run `kubectl rollout restart deployment/<resource-name>`. Wait for the rollout and repeat `verify-full`. When rotating the CA, distribute a trust bundle containing both CAs before rolling out the new server certificate.
+The server uses a startup copy of the certificate, so updating the Secret alone does not rotate the active certificate. Replace its data without recording private keys in a last-applied annotation (use your secret manager or `kubectl create secret tls ... --dry-run=client -o json | kubectl replace -f -` for an existing Secret). For a single database, after backup and restore verification, prefer `kubectl rollout restart deployment/<resource-name> --namespace <database-namespace>` over changing a shared revision. For a coordinated rollout, change `postgresqlTlsCertificateRevision` in the Recipe Pack or Environment override, deploy that configuration, then redeploy each affected application; every consuming database redeployed with that revision will restart and may lose its data. Wait for each rollout and repeat `verify-full`. If the Secret is shared, all consumers need a planned restart to load its replacement. When rotating the CA, distribute a trust bundle containing both CAs before rolling out the new server certificate.
 
 Changing `tls` changes the selected HBA file and pod template. A single Recipe-owned ConfigMap contains both policies, so transitions neither depend on ConfigMap-update propagation nor leave behind policy-specific ConfigMaps. Terraform uses `Recreate`. Bicep uses `RollingUpdate` with `maxSurge: 0` and `maxUnavailable: 1`: it avoids a surge replica and permits downtime for the single database replica. This retains the existing strategy type because Radius's Bicep Kubernetes apply cannot clear defaulted `rollingUpdate` fields when switching an existing Deployment to `Recreate`, even with an explicit null. Kubernetes can retain terminating Pods during their grace period; zero surge is not a guarantee that every old process has exited before the replacement starts.
 

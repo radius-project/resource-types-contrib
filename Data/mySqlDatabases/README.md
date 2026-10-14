@@ -45,9 +45,7 @@ The Azure Recipe enforces the requested policy on the server. The Kubernetes
 Recipe does not configure or enforce `tls`; its TLS behavior depends on the
 MySQL image and deployment configuration.
 
-PostgreSQL Kubernetes TLS enforcement is tracked separately in
-[resource-types-contrib#337](https://github.com/radius-project/resource-types-contrib/issues/337);
-see the [PostgreSQL certificate and migration guidance](../postgreSqlDatabases/README.md#kubernetes-certificates-and-recipe-parameters).
+For PostgreSQL, see the [certificate and migration guidance](../postgreSqlDatabases/README.md#kubernetes-certificates-and-recipe-parameters).
 
 Use `optional` only when the server is not publicly reachable. Non-TLS
 connections can expose administrator credentials and query traffic in transit.

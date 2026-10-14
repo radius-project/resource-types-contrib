@@ -73,7 +73,7 @@ cleanup() {
     local cleanup_failed=0
     if [[ -n "$READINESS_PID" ]]; then
         if kill -0 "$READINESS_PID" 2>/dev/null; then
-            kill "$READINESS_PID"
+            kill "$READINESS_PID" 2>/dev/null || true
         fi
         wait "$READINESS_PID" 2>/dev/null || true
     fi
@@ -104,7 +104,10 @@ kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -
 openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
     -keyout "$TMP_DIR/ca.key" -out "$TMP_DIR/ca.crt" \
     -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign \
-    -subj "/CN=Radius PostgreSQL test CA" >/dev/null 2>&1
+    -subj "/CN=Radius PostgreSQL test CA" >/dev/null 2>&1 || {
+        echo "Error: Could not generate the test CA certificate." >&2
+        exit 1
+    }
 printf 'subjectAltName=DNS:%s\nextendedKeyUsage=serverAuth\nbasicConstraints=critical,CA:FALSE\n' "$HOST" > "$TMP_DIR/extensions"
 
 publish_certificate() {
@@ -117,7 +120,10 @@ publish_certificate() {
         }
     openssl x509 -req -in "$TMP_DIR/server.csr" -CA "$TMP_DIR/ca.crt" \
         -CAkey "$TMP_DIR/ca.key" -set_serial "$serial" -days 2 \
-        -extfile "$TMP_DIR/extensions" -out "$TMP_DIR/server.crt" >/dev/null 2>&1
+        -extfile "$TMP_DIR/extensions" -out "$TMP_DIR/server.crt" >/dev/null 2>&1 || {
+            echo "Error: Could not sign the test server certificate." >&2
+            return 1
+        }
     # Server-side apply avoids copying private keys into last-applied annotations.
     kubectl create secret tls "$TLS_SECRET" -n "$NAMESPACE" \
         --cert="$TMP_DIR/server.crt" --key="$TMP_DIR/server.key" \
@@ -176,7 +182,10 @@ if [[ -n "${POSTGRESQL_UPGRADE_PACK:-}" ]]; then
     old_json=$(kubectl get deployment postgresql -n "$NAMESPACE" -o json)
     jq -e '.spec.strategy.type == "RollingUpdate" and
         (.spec.strategy.rollingUpdate | has("maxSurge") and has("maxUnavailable"))' \
-        <<<"$old_json" >/dev/null
+        <<<"$old_json" >/dev/null || {
+            echo "Error: Pre-upgrade Deployment must use RollingUpdate with maxSurge and maxUnavailable." >&2
+            exit 1
+        }
     OLD_DEPLOYMENT_UID=$(jq -r '.metadata.uid' <<<"$old_json")
     OLD_RESOURCE_ID=$(rad resource show Radius.Data/postgreSqlDatabases postgresql \
         --workspace "$WORKSPACE_NAME" -o json | jq -er '.id')
@@ -233,10 +242,16 @@ if [[ -n "${POSTGRESQL_UPGRADE_PACK:-}" ]]; then
             .spec.strategy.rollingUpdate.maxUnavailable == 1
          else .spec.strategy.type == "Recreate" and (.spec.strategy | has("rollingUpdate") | not)
          end)' \
-        <<<"$new_json" >/dev/null
+        <<<"$new_json" >/dev/null || {
+            echo "Error: Upgraded Deployment changed identity or has an incorrect $RECIPE_TYPE rollout strategy." >&2
+            exit 1
+        }
     new_resource_id=$(rad resource show Radius.Data/postgreSqlDatabases postgresql \
         --workspace "$WORKSPACE_NAME" -o json | jq -er '.id')
-    [[ "$new_resource_id" == "$OLD_RESOURCE_ID" ]]
+    [[ "$new_resource_id" == "$OLD_RESOURCE_ID" ]] || {
+        echo "Error: Upgrade changed the PostgreSQL Radius resource ID." >&2
+        exit 1
+    }
     if [[ "$RECIPE_TYPE" == terraform ]]; then
         new_state_ids=$(kubectl get secrets -A -l tfstate=true \
             -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,UID:.metadata.uid' \
