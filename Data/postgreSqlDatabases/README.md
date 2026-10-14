@@ -66,7 +66,7 @@ breaking-change versioning, and coordinate the resulting
 default packs, edge builds select `:edge`; released builds select their
 `Radius.Data`-pinned namespace commit tag. Normal Environment creation and
 deployment defaulting use the CLI's get-or-create path, which reuses existing
-default packs unchanged. Upgrading the CLI alone does not retag an existing pack;
+default packs unchanged. Upgrading the CLI alone does not change an existing pack's source tags;
 explicit custom packs retain their configured sources. See the
 [CLI default-pack creation and tag selection](https://github.com/radius-project/radius/blob/ffd051cd6d81307f544a2a0c421a8c67e45a1dfd/pkg/cli/recipepack/recipepack.go#L129-L243).
 In contrast, `rad init --preview` [when creating an Environment](https://github.com/radius-project/radius/blob/ffd051cd6d81307f544a2a0c421a8c67e45a1dfd/pkg/cli/cmd/radinit/preview/init.go#L232-L237)
