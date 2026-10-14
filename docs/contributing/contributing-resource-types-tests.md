@@ -183,8 +183,8 @@ Executable permissions are not required.
 The hook receives these positional arguments: recipe directory, recipe kind
 (`bicep` or `terraform`), full environment ID, workspace name, and Kubernetes
 namespace. It owns deployment, assertions, and cleanup. Its exit status becomes
-the test result; the shared runner does not subsequently deploy the generic app
-or perform namespace-wide cleanup.
+the test result; the shared runner does not deploy or clean up the generic
+test app.
 
 Keep hooks platform-scoped so a Kubernetes suite cannot intercept an Azure
 recipe. Recipes without a matching hook retain the generic `test/app.bicep`
