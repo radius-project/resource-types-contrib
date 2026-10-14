@@ -89,7 +89,7 @@ locals {
   }
 }
 
-resource "kubernetes_config_map" "transport" {
+resource "kubernetes_config_map_v1" "transport" {
   metadata {
     name      = "${local.resource_name}-transport"
     namespace = local.namespace
@@ -272,7 +272,7 @@ resource "kubernetes_deployment" "postgresql" {
         volume {
           name = "transport"
           config_map {
-            name = kubernetes_config_map.transport.metadata[0].name
+            name = kubernetes_config_map_v1.transport.metadata[0].name
           }
         }
       }
@@ -307,7 +307,7 @@ output "result" {
   value = {
     resources = [
       "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Secret/${kubernetes_secret.postgres.metadata[0].name}",
-      "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/ConfigMap/${kubernetes_config_map.transport.metadata[0].name}",
+      "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/ConfigMap/${kubernetes_config_map_v1.transport.metadata[0].name}",
       "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Service/${local.resource_name}",
       "/planes/kubernetes/local/namespaces/${local.namespace}/providers/apps/Deployment/${local.resource_name}"
     ]

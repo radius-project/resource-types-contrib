@@ -25,9 +25,9 @@ run "omitted_policy" {
     condition = (
       local.tls_policy == "required" &&
       local.tls_secret_name == "postgresql-tls" &&
-      strcontains(kubernetes_config_map.transport.data["pg_hba-required.conf"], "hostnossl all all 0.0.0.0/0 reject") &&
-      strcontains(kubernetes_config_map.transport.data["pg_hba-required.conf"], "hostnossl all all ::/0 reject") &&
-      strcontains(kubernetes_config_map.transport.data["pg_hba-required.conf"], "hostssl all all ::/0 scram-sha-256")
+      strcontains(kubernetes_config_map_v1.transport.data["pg_hba-required.conf"], "hostnossl all all 0.0.0.0/0 reject") &&
+      strcontains(kubernetes_config_map_v1.transport.data["pg_hba-required.conf"], "hostnossl all all ::/0 reject") &&
+      strcontains(kubernetes_config_map_v1.transport.data["pg_hba-required.conf"], "hostssl all all ::/0 scram-sha-256")
     )
     error_message = "Omitted tls must reject plaintext for both IP families and allow authenticated TLS."
   }
@@ -85,8 +85,8 @@ run "optional_policy" {
     condition = (
       contains(kubernetes_deployment.postgresql.spec[0].template[0].spec[0].container[0].args, "ssl=on") &&
       contains(kubernetes_deployment.postgresql.spec[0].template[0].spec[0].container[0].args, "hba_file=/transport/pg_hba-optional.conf") &&
-      strcontains(kubernetes_config_map.transport.data["pg_hba-optional.conf"], "hostnossl all all 0.0.0.0/0 scram-sha-256") &&
-      strcontains(kubernetes_config_map.transport.data["pg_hba-optional.conf"], "hostnossl all all ::/0 scram-sha-256") &&
+      strcontains(kubernetes_config_map_v1.transport.data["pg_hba-optional.conf"], "hostnossl all all 0.0.0.0/0 scram-sha-256") &&
+      strcontains(kubernetes_config_map_v1.transport.data["pg_hba-optional.conf"], "hostnossl all all ::/0 scram-sha-256") &&
       kubernetes_deployment.postgresql.spec[0].template[0].metadata[0].annotations["radapp.io/postgresql-tls-policy"] == "optional"
     )
     error_message = "Optional must keep TLS enabled, require passwords for plaintext, and update the pod policy."
