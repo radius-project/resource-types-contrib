@@ -132,6 +132,7 @@ echo "==> Environment path: $ENVIRONMENT_PATH"
 
 TEST_HOOK="$RESOURCE_TYPE_PATH/test/$PLATFORM/test.sh"
 if [[ -f "$TEST_HOOK" ]]; then
+    echo "==> Running platform test hook: $TEST_HOOK"
     exec bash "$TEST_HOOK" "$RECIPE_PATH" "$RECIPE_TYPE" \
         "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE"
 fi
