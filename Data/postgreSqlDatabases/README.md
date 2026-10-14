@@ -64,9 +64,9 @@ reaches `edge` users, coordinate the `Radius.Data` namespace release and its
 breaking-change versioning, and coordinate the resulting
 `bot/update-resource-types` PR in `radius-project/radius`. For newly created CLI
 default packs, edge builds select `:edge`; released builds select their
-`Radius.Data`-pinned namespace commit tag. Existing default packs are reused
-unchanged, so inspect the deployed pack source rather than infer it from the
-current CLI version. Upgrading the CLI alone does not retag an existing pack;
+`Radius.Data`-pinned namespace commit tag. The CLI's get-or-create path reuses
+existing default packs unchanged, so inspect the deployed pack source rather
+than infer it from the current CLI version. Upgrading the CLI alone does not retag an existing pack;
 explicit custom packs retain their configured sources. See the
 [CLI default-pack creation and tag selection](https://github.com/radius-project/radius/blob/ffd051cd6d81307f544a2a0c421a8c67e45a1dfd/pkg/cli/recipepack/recipepack.go#L129-L243).
 Deploying the checked-in `recipe-packs/kubernetes/default.bicep` directly retains

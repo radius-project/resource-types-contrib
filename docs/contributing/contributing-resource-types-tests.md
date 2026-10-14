@@ -173,24 +173,6 @@ resource secret 'Radius.Security/secrets@2025-08-01-preview' = {
 
 ### Step 2: Test Locally
 
-#### Platform-specific deployment suites
-
-A resource type can provide `test/<platform>/test.sh` for checks that need more
-than the generic application deployment. The shared runner invokes it with Bash
-after resolving the workspace and environment, before looking for `app.bicep`.
-Executable permissions are not required.
-
-The hook receives these positional arguments: recipe directory, recipe kind
-(`bicep` or `terraform`), full environment ID, workspace name, and Kubernetes
-namespace. It owns deployment, assertions, and cleanup. Its exit status becomes
-the test result; the shared runner does not subsequently deploy the generic app
-or perform namespace-wide cleanup.
-
-Keep hooks platform-scoped so a Kubernetes suite cannot intercept an Azure
-recipe. Recipes without a matching hook retain the generic `test/app.bicep`
-behavior. See `Data/postgreSqlDatabases/test/kubernetes/test.sh` for a small
-wrapper around a resource-specific suite.
-
 Before submitting to CI, test your application locally:
 
 ```bash
@@ -203,7 +185,7 @@ make build-resource-type TYPE_FOLDER=Security/secrets
 # Build recipes
 make build-bicep-recipe RECIPE_PATH=Security/secrets/recipes/kubernetes/bicep
 
-# Test the recipe (deploys test/app.bicep)
+# Test the recipe (runs its platform hook, or deploys test/app.bicep)
 make test-recipe RECIPE_PATH=Security/secrets/recipes/kubernetes/bicep
 ```
 
@@ -217,15 +199,39 @@ When you submit your PR, the CI workflow will:
 4. Build all recipes (Bicep and Terraform)
 5. Test each recipe by:
    - Registering it as the default
-   - Deploying your `test/app.bicep`
-   - Verifying successful deployment
-   - Cleaning up resources
+   - Running its platform hook, which owns deployment, assertions, and cleanup
+   - Otherwise deploying your `test/app.bicep`, verifying deployment, and cleaning up resources
 
 You can see these steps by running:
 
 ```bash
 make test
 ```
+
+## Platform-specific Deployment Suites
+
+A resource type can provide `test/<platform>/test.sh` for checks that need more
+than the generic application deployment. Here, `<platform>` is the exact directory
+name immediately after `recipes/`, not a cloud-provider alias. For example,
+`recipes/azure-cache/bicep` maps to `test/azure-cache/test.sh`, not
+`test/azure/test.sh`.
+
+Only `.github/scripts/test-recipe.sh` dispatches these hooks. It invokes the hook
+with Bash after resolving the workspace and environment, before looking for
+`app.bicep`. Executable permissions are not required. The nightly direct-module
+runner, `.github/scripts/test-direct-module-recipe.sh`, still uses the generic
+`test/app.bicep` flow and does not dispatch platform hooks.
+
+The hook receives these positional arguments: recipe directory, recipe kind
+(`bicep` or `terraform`), full environment ID, workspace name, and Kubernetes
+namespace. It owns deployment, assertions, and cleanup. Its exit status becomes
+the test result; the shared runner does not deploy or clean up the generic
+test app.
+
+Keep hooks platform-scoped so a Kubernetes suite cannot intercept an Azure
+recipe. Recipes without a matching hook retain the generic `test/app.bicep`
+behavior. See `Data/postgreSqlDatabases/test/kubernetes/test.sh` for a small
+wrapper around a resource-specific suite.
 
 ## Testing Multiple Recipes
 
@@ -246,10 +252,12 @@ Data/redisCaches/
 │       └── terraform/
 │           └── main.tf                    # Tested automatically
 └── test/
-    └── app.bicep                          # Used for all recipe tests
+    └── app.bicep                          # Fallback when no platform hook exists
 ```
 
-Each recipe is tested independently using the same `test/app.bicep` file.
+Each recipe is tested independently. Recipes with a matching
+`test/<platform>/test.sh` use that hook; recipes without one use the shared
+`test/app.bicep` file.
 
 ## Troubleshooting
 
