@@ -215,8 +215,10 @@ jobs:
       # resource group.
       #
       # SECURITY: approval authorizes arbitrary PR-authored code (Makefile targets,
-      # Bicep, Terraform) to execute with this repository's Azure identity. Approve
-      # only after reading the diff, including build scripts and Terraform
+      # Bicep, Terraform, and test/<platform>/test.sh shell hooks) to execute with
+      # this repository's Azure identity. Hooks inherit the job's cloud credentials;
+      # hook dispatch introduces no new privilege boundary. Approve only after
+      # reading the diff, including test hooks, build scripts, and Terraform
       # provisioners — not just the recipe templates.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
