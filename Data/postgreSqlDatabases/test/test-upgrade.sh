@@ -39,7 +39,7 @@ cleanup() {
 trap cleanup EXIT
 
 for tool in rad kubectl jq curl sha256sum; do
-    command -v "$tool" >/dev/null
+    command -v "$tool" >/dev/null || { echo "Error: $tool is required." >&2; exit 1; }
 done
 if [[ "$RECIPE_TYPE" == bicep ]]; then
     command -v oras >/dev/null
