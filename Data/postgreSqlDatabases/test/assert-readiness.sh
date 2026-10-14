@@ -44,8 +44,16 @@ for ((attempt=0; attempt<120; attempt++)); do
             ready_time=$(jq -r --arg old "$OLD_POD_UID" '.items[] |
                 select(.metadata.deletionTimestamp == null and .metadata.uid != $old) |
                 .status.conditions[] | select(.type == "Ready") | .lastTransitionTime' <<<"$pod_json")
+            if ! ready_seconds=$(date -d "$ready_time" +%s); then
+                echo "Error: Could not parse Pod readiness timestamp with GNU date: $ready_time" >&2
+                exit 1
+            fi
+            if ! init_seconds=$(date -d "$init_time" +%s); then
+                echo "Error: Could not parse initialization timestamp with GNU date: $init_time" >&2
+                exit 1
+            fi
             # Kubernetes condition timestamps have lower precision than log timestamps.
-            [[ "$(date -d "$ready_time" +%s)" -ge "$(date -d "$init_time" +%s)" ]] || {
+            [[ "$ready_seconds" -ge "$init_seconds" ]] || {
                 echo "Error: First readiness transition preceded initialization completion." >&2
                 exit 1
             }

@@ -15,6 +15,7 @@ case "$1" in
         [[ "$(cat "$STATE/phase")" == 0 && "$MODE" != early ]] || ready=True
         timestamp=2026-10-06T21:00:06Z
         [[ "$MODE" != backwards ]] || timestamp=2026-10-06T21:00:04Z
+        [[ "$MODE" != invalid-ready ]] || timestamp=invalid-ready-time
         jq -nc --arg ready "$ready" --arg timestamp "$timestamp" \
             '{items: [
                 {metadata: {name: "old-pod", uid: "ignored"}, status: {conditions: [{type: "Ready", status: "True"}]}},
@@ -29,7 +30,9 @@ case "$1" in
         ;;
     logs)
         if [[ "$MODE" != missing ]]; then
-            echo '2026-10-06T21:00:05.123456Z PostgreSQL init process complete; ready for start up.'
+            timestamp=2026-10-06T21:00:05.123456Z
+            [[ "$MODE" != invalid-init ]] || timestamp=invalid-init-time
+            echo "$timestamp PostgreSQL init process complete; ready for start up."
         fi
         ;;
     *) exit 1 ;;
@@ -41,7 +44,7 @@ exit 0
 EOF
 chmod +x "$TEST_ROOT/bin/"*
 
-for mode in success early missing backwards; do
+for mode in success early missing backwards invalid-ready invalid-init; do
     state="$TEST_ROOT/$mode"
     mkdir "$state"
     printf '0' >"$state/phase"
@@ -63,6 +66,12 @@ for mode in success early missing backwards; do
                 ;;
             backwards)
                 expected_error='Error: First readiness transition preceded initialization completion.'
+                ;;
+            invalid-ready)
+                expected_error='Error: Could not parse Pod readiness timestamp with GNU date: invalid-ready-time'
+                ;;
+            invalid-init)
+                expected_error='Error: Could not parse initialization timestamp with GNU date: invalid-init-time'
                 ;;
         esac
         if [[ "$status" != 1 ]] || ! grep -Fxq "$expected_error" "$state/output"; then
