@@ -64,11 +64,17 @@ reaches `edge` users, coordinate the `Radius.Data` namespace release and its
 breaking-change versioning, and coordinate the resulting
 `bot/update-resource-types` PR in `radius-project/radius`. For newly created CLI
 default packs, edge builds select `:edge`; released builds select their
-`Radius.Data`-pinned namespace commit tag. The CLI's get-or-create path reuses
-existing default packs unchanged, so inspect the deployed pack source rather
-than infer it from the current CLI version. Upgrading the CLI alone does not retag an existing pack;
+`Radius.Data`-pinned namespace commit tag. Normal Environment creation and
+deployment defaulting use the CLI's get-or-create path, which reuses existing
+default packs unchanged. Upgrading the CLI alone does not retag an existing pack;
 explicit custom packs retain their configured sources. See the
 [CLI default-pack creation and tag selection](https://github.com/radius-project/radius/blob/ffd051cd6d81307f544a2a0c421a8c67e45a1dfd/pkg/cli/recipepack/recipepack.go#L129-L243).
+In contrast, `rad init --preview` [when creating an Environment](https://github.com/radius-project/radius/blob/ffd051cd6d81307f544a2a0c421a8c67e45a1dfd/pkg/cli/cmd/radinit/preview/init.go#L232-L237)
+[replaces the shared default pack](https://github.com/radius-project/radius/blob/ffd051cd6d81307f544a2a0c421a8c67e45a1dfd/pkg/cli/cmd/radinit/preview/environment.go#L115-L125)
+according to that CLI's channel and namespace pins, affecting every consumer's
+subsequent deployments. Reusing an existing Environment in init does not take
+that creation path. Inspect the stored pack sources after init or an explicit
+pack deployment rather than infer them from the current CLI version.
 Deploying the checked-in `recipe-packs/kubernetes/default.bicep` directly retains
 its authored PostgreSQL source,
 `ghcr.io/radius-project/kube-recipes/postgresqldatabases:latest`. Pinning that pack
