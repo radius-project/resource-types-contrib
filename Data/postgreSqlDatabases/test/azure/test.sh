@@ -68,7 +68,7 @@ cleanup() {
         done
     fi
     if [[ "$ENV_CHANGED" == true ]]; then
-        rad env update "$ENVIRONMENT_NAME" --workspace "$WORKSPACE" --recipe-packs "$ORIGINAL_PACKS" --preview || status=1
+        rad env update "$ENVIRONMENT_NAME" --workspace "$WORKSPACE" --recipe-packs "$ORIGINAL_PACKS" || status=1
     fi
     if [[ "$PACK_CREATED" == true ]]; then
         rad recipe-pack delete "$PACK" --workspace "$WORKSPACE" --yes || status=1
@@ -104,7 +104,7 @@ activate() {
     PACK_CREATED=true
     rad deploy "$1" --workspace "$WORKSPACE" -e "$ENVIRONMENT" "${parameters[@]}"
     ENV_CHANGED=true
-    rad env update "$ENVIRONMENT_NAME" --workspace "$WORKSPACE" --recipe-packs "$PACK" --preview
+    rad env update "$ENVIRONMENT_NAME" --workspace "$WORKSPACE" --recipe-packs "$PACK"
 }
 # A protected ARM parameter file avoids passing the generated password in argv.
 openssl rand -hex 24 | jq -Rs --arg app "$APP" \

@@ -128,13 +128,11 @@ Create and configure the Environment first:
 
 ```bash
 rad env create default \
-  --kubernetes-namespace default \
-  --preview
+  --kubernetes-namespace default
 
 rad env update default \
   --azure-subscription-id <subscription-id> \
-  --azure-resource-group <resource-group> \
-  --preview
+  --azure-resource-group <resource-group>
 ```
 
 Deploy the Recipe Pack into that existing Environment, supplying only Recipe parameters:
@@ -150,8 +148,7 @@ Finally, associate the pack with the Environment:
 
 ```bash
 rad env update default \
-  --recipe-packs azure-aks \
-  --preview
+  --recipe-packs azure-aks
 ```
 
 After the association is updated, every Resource Type the pack covers can be used in an application deployed to that Environment.

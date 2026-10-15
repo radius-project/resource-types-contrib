@@ -17,7 +17,7 @@ if [[ "$1" == deploy && "$2" == */upgrade-pack.bicep ]]; then
     exit 0
 fi
 case "$1 $2" in
-    "env update") [[ "$*" == *"--recipe-packs mock-upgrade --preview"* ]] ;;
+    "env update") [[ "$*" == *"--recipe-packs mock-upgrade"* && "$*" != *"--preview"* ]] ;;
     "deploy "*)
         shift
         positional=0

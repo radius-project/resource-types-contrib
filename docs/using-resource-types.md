@@ -47,13 +47,11 @@ For example, create an Azure-backed Environment:
 
 ```bash
 rad env create default \
-  --kubernetes-namespace default \
-  --preview
+  --kubernetes-namespace default
 
 rad env update default \
   --azure-subscription-id <subscription-id> \
-  --azure-resource-group <resource-group> \
-  --preview
+  --azure-resource-group <resource-group>
 ```
 
 Then deploy and associate the Azure Recipe Pack:
@@ -65,8 +63,7 @@ rad deploy recipe-packs/azure-aks/azure-aks.bicep \
   --parameters containerImagesRegistry=<registry-path>
 
 rad env update default \
-  --recipe-packs azure-aks \
-  --preview
+  --recipe-packs azure-aks
 ```
 
 For the zero-config Kubernetes default, create the Environment with `rad env create`, deploy `recipe-packs/kubernetes/default.bicep`, and associate the `default` pack in the same way. After association, every Resource Type the pack covers can be used in an application deployed to that Environment.

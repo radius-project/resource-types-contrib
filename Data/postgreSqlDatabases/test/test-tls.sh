@@ -194,7 +194,7 @@ if [[ -n "${POSTGRESQL_UPGRADE_PACK:-}" ]]; then
             --parameters "packName=$POSTGRESQL_UPGRADE_PACK" \
             --parameters "recipeKind=$RECIPE_TYPE" --parameters "postgresqlSource=$1"
         rad env update "${ENVIRONMENT_PATH##*/}" --workspace "$WORKSPACE_NAME" \
-            --recipe-packs "$POSTGRESQL_UPGRADE_PACK" --preview
+            --recipe-packs "$POSTGRESQL_UPGRADE_PACK"
     }
     switch_upgrade_source "${POSTGRESQL_UPGRADE_OLD_SOURCE:?Old source required}"
     # Old recipes ignore tls; establish a real running Deployment before upgrading.
