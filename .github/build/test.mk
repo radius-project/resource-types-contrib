@@ -93,6 +93,10 @@ test-direct-module-recipes-unit: ## Run the fixture-based unit tests for the dir
 	@./.github/scripts/tests/test-test-direct-module-recipe.sh
 	@./.github/scripts/tests/test-test-all-direct-module-recipes.sh
 
+.PHONY: test-bicepconfig
+test-bicepconfig: ## Run offline Bicep extension configuration tests
+	@./.github/scripts/tests/test-update-bicepconfig.sh
+
 .PHONY: update-env-recipe-pack
 update-env-recipe-pack: ## Update environment with recipe pack ID (requires RECIPE_PACK_NAME and optionally RESOURCE_GROUP and ENVIRONMENT)
 ifndef RECIPE_PACK_NAME
