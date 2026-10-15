@@ -26,6 +26,6 @@ kubectl create namespace radius-recipe-validation
 rad group create default
 rad workspace create kubernetes default --group default --force
 rad group switch default
-rad env create default --kubernetes-namespace radius-recipe-validation --preview
-rad env switch default --preview
+rad env create default --kubernetes-namespace radius-recipe-validation
+rad env switch default
 echo "✅ environment initialization completed successfully"

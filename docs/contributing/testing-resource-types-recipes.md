@@ -299,7 +299,7 @@ make create-radius-cluster
 Verify cluster is running:
 ```bash
 kubectl cluster-info
-rad env list --preview
+rad env list
 ```
 
 ### Recipe not found during testing
