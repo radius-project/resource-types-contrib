@@ -465,7 +465,11 @@ assert_policy() {
 
 assert_policy "$INITIAL_POLICY"
 if [[ "$INITIAL_POLICY" == disabled ]]; then
-    [[ -z "$(kubectl get secret "$TLS_SECRET" -n "$NAMESPACE" --ignore-not-found -o name)" ]] || {
+    if ! disabled_secret=$(kubectl get secret "$TLS_SECRET" -n "$NAMESPACE" --ignore-not-found -o name); then
+        echo "Error: Could not verify TLS Secret absence after disabled deployment." >&2
+        exit 1
+    fi
+    [[ -z "$disabled_secret" ]] || {
         echo "Error: Fresh disabled deployment unexpectedly needs a TLS Secret." >&2
         exit 1
     }

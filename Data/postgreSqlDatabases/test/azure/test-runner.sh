@@ -52,7 +52,10 @@ cat >"$TMP/bin/rad" <<'EOF'
 #!/bin/bash
 set -euo pipefail
 case "$1 $2" in
-    "env show") echo '{"properties":{"recipePacks":["original-pack"]}}' ;;
+    "env show")
+        [[ "$SCENARIO" != environment-lookup ]] || { echo 'fixture Environment lookup failure' >&2; exit 1; }
+        echo '{"properties":{"recipePacks":["original-pack"],"providers":{"azure":{"scope":"/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/owned"}}}}'
+        ;;
     "env update"|"recipe-pack delete") ;;
     "deploy "*)
         if [[ "$2" == *.json ]]; then
@@ -64,6 +67,9 @@ case "$1 $2" in
             [[ "$arg" != tlsPolicy=* ]] || policy="${arg#*=}"
         done
         if [[ "$policy" == disabled ]]; then
+            override=$(cat "$STATE/override")
+            printf '%s\n' "${override:-none}" >>"$STATE/rejections"
+            [[ "$SCENARIO" != no-override-bypass || -n "$override" ]] || exit 0
             [[ ! -f "$STATE/server" ]] || touch "$STATE/rejected"
             if [[ "$SCENARIO" == unrelated ]]; then
                 echo AuthenticationFailed >&2
@@ -98,6 +104,12 @@ cat >"$TMP/bin/az" <<'EOF'
 #!/bin/bash
 set -euo pipefail
 case "$1 $2" in
+    "account show")
+        [[ "$SCENARIO" != account-lookup ]] || { echo 'fixture account lookup failure' >&2; exit 1; }
+        if [[ "$SCENARIO" == account-mismatch ]]; then
+            echo 22222222-2222-2222-2222-222222222222
+        else echo 11111111-1111-1111-1111-111111111111; fi
+        ;;
     "postgres flexible-server")
         if [[ -f "$STATE/server" ]]; then
             changed=false
@@ -135,17 +147,24 @@ cat >"$TMP/bin/pg_dump" <<'EOF'
 echo 'fixture backup'
 EOF
 chmod +x "$TMP/bin/"* "$TMP/home/.rad/bin/bicep"
-for scenario in success unrelated changed mutation cleanup; do
+for scenario in success success-explicit unrelated changed mutation cleanup no-override-bypass environment-lookup account-lookup account-mismatch; do
     mkdir "$TMP/$scenario"
     status=0
+    subscription=""
+    [[ "$scenario" != success-explicit ]] || subscription=11111111-1111-1111-1111-111111111111
     STATE="$TMP/$scenario" SCENARIO="$scenario" PATH="$TMP/bin:$PATH" HOME="$TMP/home" \
-        AZURE_SUBSCRIPTION_ID=fixture AZURE_RESOURCE_GROUP=owned \
+        AZURE_SUBSCRIPTION_ID="$subscription" AZURE_RESOURCE_GROUP=owned \
         bash "$ROOT/Data/postgreSqlDatabases/test/azure/test.sh" unused bicep \
         /planes/radius/local/resourceGroups/default/providers/Applications.Core/environments/azure azure \
         >"$TMP/$scenario.log" 2>&1 || status=$?
-    if [[ "$scenario" == success ]]; then
+    if [[ "$scenario" == success* ]]; then
         [[ "$status" == 0 ]] || { cat "$TMP/$scenario.log"; exit 1; }
         grep -Fq 'actual-pack migration, rejection, and data checks passed' "$TMP/$scenario.log"
+        for override in none ON OFF; do
+            [[ "$(grep -Fxc "$override" "$TMP/$scenario/rejections")" == 2 ]] || {
+                echo "Error: Azure hook did not test fresh and existing $override rejection." >&2; exit 1;
+            }
+        done
     else
         [[ "$status" != 0 ]] || { echo "Error: Azure hook accepted $scenario failure." >&2; exit 1; }
         case "$scenario" in
@@ -153,8 +172,12 @@ for scenario in success unrelated changed mutation cleanup; do
             changed) expected='changed PostgreSQL server state' ;;
             mutation) expected='unsupported policy mutated' ;;
             cleanup) expected='fixture cleanup failure' ;;
+            no-override-bypass) expected='accepted unsupported policy' ;;
+            environment-lookup) expected='Could not read the Azure test Environment' ;;
+            account-lookup) expected='Could not read the authenticated Azure subscription' ;;
+            account-mismatch) expected='does not match the Environment provider scope' ;;
         esac
         grep -Fq "$expected" "$TMP/$scenario.log" || { cat "$TMP/$scenario.log"; exit 1; }
     fi
 done
-echo "Azure full-hook fixtures passed: migration/overrides/rejection/cleanup success and 4 failures (not live proof)"
+echo "Azure full-hook fixtures passed: explicit/inferred subscription controls and 8 failures (not live proof)"
