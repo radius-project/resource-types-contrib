@@ -55,7 +55,16 @@ module server 'br:mcr.microsoft.com/bicep/avm/res/db-for-postgre-sql/flexible-se
   }
 }
 
-output result object = {
+// Typed results select stable ARM 2.0 symbolic module references, avoiding
+// resourceId() resolving a Radius deployment against the Azure resource group.
+type recipeResult = {
+  resources: string[]
+  values: {
+    host: string
+  }
+}
+
+output result recipeResult = {
   // Preserve the exact ARM ID accepted by the Bicep driver; do not add a plane prefix.
   resources: [server.outputs.resourceId]
   values: {
