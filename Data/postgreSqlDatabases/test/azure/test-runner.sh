@@ -54,7 +54,14 @@ set -euo pipefail
 case "$1 $2" in
     "env show")
         [[ "$SCENARIO" != environment-lookup ]] || { echo 'fixture Environment lookup failure' >&2; exit 1; }
-        echo '{"properties":{"recipePacks":["original-pack"],"providers":{"azure":{"scope":"/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/owned"}}}}'
+        case "$SCENARIO" in
+            missing-provider) provider='null' ;;
+            missing-group) provider='{"subscriptionId":"11111111-1111-1111-1111-111111111111"}' ;;
+            invalid-provider) provider='{"subscriptionId":42,"resourceGroupName":"owned"}' ;;
+            provider-group-mismatch) provider='{"subscriptionId":"11111111-1111-1111-1111-111111111111","resourceGroupName":"unowned"}' ;;
+            *) provider='{"subscriptionId":"11111111-1111-1111-1111-111111111111","resourceGroupName":"owned"}' ;;
+        esac
+        jq -n --argjson provider "$provider" '{properties:{recipePacks:["original-pack"],providers:{azure:$provider}}}'
         ;;
     "env update") [[ "$*" != *"--preview"* ]] ;;
     "recipe-pack delete") ;;
@@ -148,7 +155,7 @@ cat >"$TMP/bin/pg_dump" <<'EOF'
 echo 'fixture backup'
 EOF
 chmod +x "$TMP/bin/"* "$TMP/home/.rad/bin/bicep"
-for scenario in success success-explicit unrelated changed mutation cleanup no-override-bypass environment-lookup account-lookup account-mismatch; do
+for scenario in success success-explicit unrelated changed mutation cleanup no-override-bypass environment-lookup account-lookup account-mismatch missing-provider missing-group invalid-provider provider-group-mismatch; do
     mkdir "$TMP/$scenario"
     status=0
     subscription=""
@@ -177,8 +184,10 @@ for scenario in success success-explicit unrelated changed mutation cleanup no-o
             environment-lookup) expected='Could not read the Azure test Environment' ;;
             account-lookup) expected='Could not read the authenticated Azure subscription' ;;
             account-mismatch) expected='does not match the Environment provider scope' ;;
+            missing-provider|missing-group|invalid-provider) expected='has no valid subscription/resource group' ;;
+            provider-group-mismatch) expected='does not match the Environment provider scope' ;;
         esac
         grep -Fq "$expected" "$TMP/$scenario.log" || { cat "$TMP/$scenario.log"; exit 1; }
     fi
 done
-echo "Azure full-hook fixtures passed: explicit/inferred subscription controls and 8 failures (not live proof)"
+echo "Azure full-hook fixtures passed: explicit/inferred subscription controls and 12 failures (not live proof)"
