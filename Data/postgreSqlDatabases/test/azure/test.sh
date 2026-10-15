@@ -5,13 +5,37 @@ umask 077
 ENVIRONMENT="${3:?Environment required}"
 ENVIRONMENT_NAME="${ENVIRONMENT##*/}"
 WORKSPACE="${4:?Workspace required}"
-SUBSCRIPTION="${AZURE_SUBSCRIPTION_ID:?Use an isolated CI Azure subscription context}"
+SUBSCRIPTION="${AZURE_SUBSCRIPTION_ID:-}"
 GROUP="${AZURE_RESOURCE_GROUP:?Use an isolated CI Azure resource group}"
 ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
 TEST_DIR="$ROOT/Data/postgreSqlDatabases/test/azure"
-for tool in az rad psql pg_dump jq openssl; do
+for tool in az rad jq openssl; do
     command -v "$tool" >/dev/null || { echo "Error: Missing Azure acceptance tool: $tool" >&2; exit 1; }
 done
+if ! command -v psql >/dev/null || ! command -v pg_dump >/dev/null; then
+    if [[ "${GITHUB_ACTIONS:-}" != true || "${RUNNER_ENVIRONMENT:-}" != github-hosted ]]; then
+        echo "Error: Install psql and pg_dump before running Azure acceptance tests." >&2
+        exit 1
+    fi
+    sudo apt-get update -qq
+    sudo apt-get install -y postgresql-client
+fi
+if ! environment_state=$(rad env show "$ENVIRONMENT_NAME" --workspace "$WORKSPACE" -o json); then
+    echo "Error: Could not read the Azure test Environment." >&2; exit 1
+fi
+if ! provider_scope=$(jq -er '.properties.providers.azure.scope | strings | select(length > 0)' <<<"$environment_state"); then
+    echo "Error: Azure test Environment has no provider scope." >&2; exit 1
+fi
+if [[ -z "$SUBSCRIPTION" ]]; then
+    if ! SUBSCRIPTION=$(az account show --query id -o tsv); then
+        echo "Error: Could not read the authenticated Azure subscription." >&2; exit 1
+    fi
+fi
+if [[ ! "$SUBSCRIPTION" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]] ||
+    [[ "${provider_scope,,}" != "/subscriptions/${SUBSCRIPTION,,}/resourcegroups/${GROUP,,}" ]]; then
+    echo "Error: Azure test subscription/resource group does not match the Environment provider scope." >&2
+    exit 1
+fi
 TMP="$(mktemp -d "$ROOT/.postgresql-azure-test-XXXXXX")"
 APP="postgresql-azure-$(date +%s)-$$"
 PACK="$APP-pack"
@@ -19,7 +43,7 @@ RESOURCE_CREATED=false
 PACK_CREATED=false
 ENV_CHANGED=false
 SERVER_ID=""
-ORIGINAL_PACKS=$(rad env show "$ENVIRONMENT_NAME" --workspace "$WORKSPACE" -o json |
+ORIGINAL_PACKS=$(printf '%s' "$environment_state" |
     jq -er '.properties.recipePacks | select(length > 0) | map(split("/")[-1]) | join(",")')
 snapshot() {
     az postgres flexible-server list --subscription "$SUBSCRIPTION" --resource-group "$GROUP" -o json
@@ -129,6 +153,8 @@ assert_disabled_rejection() {
         echo "Error: Azure unsupported policy mutated the server." >&2; exit 1;
     }
 }
+activate "$TMP/candidate.json"
+assert_disabled_rejection
 for override in ON OFF; do
     jq --arg value "$override" '
       .resources.azureAksRecipePack.properties.properties.recipes["Radius.Data/postgreSqlDatabases"].parameters.postgreSqlServerConfigurations =
@@ -195,6 +221,11 @@ resource_state >"$TMP/generated-resource.json"
 }
 [[ "$(query 'SELECT id FROM radius_migration_marker')" == 73 ]] || {
     echo "Error: Generated Azure pack lost migration data." >&2; exit 1;
+}
+activate "$TMP/candidate.json"
+assert_disabled_rejection
+[[ "$(query 'SELECT id FROM radius_migration_marker')" == 73 ]] || {
+    echo "Error: Azure rejection lost migration data." >&2; exit 1;
 }
 for override in ON OFF; do
     jq --arg value "$override" '

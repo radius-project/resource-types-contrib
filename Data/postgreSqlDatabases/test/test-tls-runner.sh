@@ -175,6 +175,10 @@ case "$1 $2" in
         printf '{"metadata":{"uid":"%s"},"spec":{"strategy":%s,"template":%s}}\n' "$uid" "$strategy" "$template"
         ;;
     "get secret")
+        if [[ "$*" == *"-o name"* && "${MOCK_CASE:-}" == disabled-secret-lookup ]]; then
+            echo 'Error from server (Forbidden): fixture lookup failure' >&2
+            exit 2
+        fi
         [[ "$*" != *"-o json"* ]] || echo '{"metadata":{"uid":"external"},"data":{"tls.crt":"unchanged","tls.key":"fixture"}}'
         ;;
     "get secrets") echo 'test tfstate stable-state-uid' ;;
@@ -462,6 +466,7 @@ for recipe in bicep terraform; do
     run_review_case "$recipe" disabled-stale 'Error: Disabled workload retained certificate configuration or failed to disable TLS.'
     run_review_case "$recipe" disabled-tls-accepted 'Error: Disabled PostgreSQL admitted a TLS-forcing client.'
     run_review_case "$recipe" disabled-auth-accepted 'Error: Disabled PostgreSQL admitted the wrong password.'
+    run_review_case "$recipe" disabled-secret-lookup 'Error: Could not verify TLS Secret absence after disabled deployment.'
     run_review_case "$recipe" plaintext-accepted 'Error: PostgreSQL admitted plaintext with tls=required.'
     run_review_case "$recipe" plaintext-password 'Error: Plaintext probe failed for a reason other than TLS policy: FATAL: password authentication failed'
     run_review_case "$recipe" upgrade-old-strategy 'Error: Pre-upgrade Deployment must use RollingUpdate with maxSurge and maxUnavailable.'
@@ -491,4 +496,4 @@ run_case bicep 0 0 0 workloads
 
 echo "PostgreSQL TLS runner argument, application ownership, and cleanup tests passed"
 echo "PostgreSQL preflight tests passed: 20 lookup failures and 2 existing-object refusals"
-echo "PostgreSQL review tests passed: 41 failure cases and 4 upgrade success controls"
+echo "PostgreSQL review tests passed: 43 failure cases and 4 upgrade success controls"
