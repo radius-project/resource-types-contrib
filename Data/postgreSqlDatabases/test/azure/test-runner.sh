@@ -56,7 +56,8 @@ case "$1 $2" in
         [[ "$SCENARIO" != environment-lookup ]] || { echo 'fixture Environment lookup failure' >&2; exit 1; }
         echo '{"properties":{"recipePacks":["original-pack"],"providers":{"azure":{"scope":"/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/owned"}}}}'
         ;;
-    "env update"|"recipe-pack delete") ;;
+    "env update") [[ "$*" != *"--preview"* ]] ;;
+    "recipe-pack delete") ;;
     "deploy "*)
         if [[ "$2" == *.json ]]; then
             jq -r '.resources.azureAksRecipePack.properties.properties.recipes["Radius.Data/postgreSqlDatabases"].parameters.postgreSqlServerConfigurations[0].value // ""' "$2" >"$STATE/override"

@@ -128,9 +128,9 @@ fail() {
 : >"$CALL_LOG"
 FAIL_TYPE="" run_driver azure azure-ws azure-env ||
     fail "expected all-pass run to exit 0"
-expected="rad env update azure-env --workspace azure-ws --recipe-packs azure-aci --preview
+expected="rad env update azure-env --workspace azure-ws --recipe-packs azure-aci
 test-direct-module-recipe.sh Data/redisCaches azure-ws azure-env
-rad env update azure-env --workspace azure-ws --recipe-packs azure-aks --preview
+rad env update azure-env --workspace azure-ws --recipe-packs azure-aks
 test-direct-module-recipe.sh Data/redisCaches azure-ws azure-env
 test-direct-module-recipe.sh Data/mySqlDatabases azure-ws azure-env"
 diff -u <(echo "$expected") "$CALL_LOG" || fail "each pack must be active for all its tests"
