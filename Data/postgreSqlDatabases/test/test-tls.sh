@@ -13,6 +13,20 @@ APP_NAME="postgresql-tls-test-$(date +%s)"
 CLIENT_NAME="postgresql-tls-probe"
 TLS_SECRET="postgresql-tls"
 HOST="postgresql.${NAMESPACE}.svc.cluster.local"
+INITIAL_POLICY=disabled
+if [[ -n "${POSTGRESQL_UPGRADE_PACK:-}" ]]; then
+    INITIAL_POLICY="${POSTGRESQL_UPGRADE_POLICY:-default}"
+fi
+case "$INITIAL_POLICY" in
+    default|disabled) ;;
+    *) echo "Error: POSTGRESQL_UPGRADE_POLICY must be default or disabled." >&2; exit 1 ;;
+esac
+TLS_SECRET_FINGERPRINT=""
+
+certificate_fingerprint() {
+    kubectl get secret "$TLS_SECRET" -n "$NAMESPACE" -o json |
+        jq -ce '{uid: .metadata.uid, data: .data}' | sha256sum
+}
 
 # Refuse to overwrite operator-owned resources, even in a test Environment.
 for object in "secret/$TLS_SECRET" "secret/postgresql-credentials" \
@@ -83,6 +97,10 @@ cleanup() {
     delete_test_resource Radius.Security/secrets postgresql-client-credentials || cleanup_failed=1
     delete_test_resource Radius.Core/applications "$APP_NAME" || cleanup_failed=1
     delete_test_resource Applications.Core/applications "$APP_NAME" || cleanup_failed=1
+    if [[ -n "$TLS_SECRET_FINGERPRINT" && "$(certificate_fingerprint)" != "$TLS_SECRET_FINGERPRINT" ]]; then
+        echo "Error: Application cleanup changed the external TLS Secret." >&2
+        cleanup_failed=1
+    fi
     # Remove only this test application's leftovers if Recipe cleanup is incomplete.
     kubectl delete deployments,services,secrets,configmaps -n "$NAMESPACE" \
         -l "radapp.io/application=$APP_NAME" --ignore-not-found --timeout=60s || cleanup_failed=1
@@ -91,7 +109,7 @@ cleanup() {
     kubectl delete "pod/$CLIENT_NAME" "secret/$TLS_SECRET" "configmap/$CLIENT_NAME-ca" -n "$NAMESPACE" \
         --ignore-not-found --wait=true --timeout=60s || cleanup_failed=1
     rm -f "$TMP_DIR/ca.key" "$TMP_DIR/ca.crt" "$TMP_DIR/server.key" \
-        "$TMP_DIR/server.csr" "$TMP_DIR/server.crt" "$TMP_DIR/extensions"
+        "$TMP_DIR/server.csr" "$TMP_DIR/server.crt" "$TMP_DIR/extensions" "$TMP_DIR/baseline.sql"
     rmdir "$TMP_DIR"
     if [[ "$status" -eq 0 && "$cleanup_failed" -ne 0 ]]; then
         status=1
@@ -130,7 +148,10 @@ publish_certificate() {
         --dry-run=client -o json | kubectl apply --server-side --field-manager=postgresql-tls-test -f - >/dev/null
 }
 
-publish_certificate 1
+if [[ "$INITIAL_POLICY" != disabled ]]; then
+    publish_certificate 1
+    TLS_SECRET_FINGERPRINT=$(certificate_fingerprint)
+fi
 PASSWORD="$(openssl rand -hex 24)"
 LAST_POLICY=""
 
@@ -205,6 +226,17 @@ if [[ -n "${POSTGRESQL_UPGRADE_PACK:-}" ]]; then
         echo "Error: Pre-upgrade database did not answer a plaintext TCP query." >&2
         exit 1
     }
+    # shellcheck disable=SC2016
+    kubectl --request-timeout=15s exec -n "$NAMESPACE" deployment/postgresql -c postgres -- \
+        /bin/sh -ec 'PGSSLMODE=disable PGPASSWORD="$POSTGRES_PASSWORD" psql -X -w -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "CREATE TABLE radius_upgrade_marker (id integer); INSERT INTO radius_upgrade_marker VALUES (73)"' >/dev/null || {
+        echo "Error: Could not create the pre-upgrade backup marker." >&2; exit 1;
+    }
+    # shellcheck disable=SC2016
+    kubectl --request-timeout=15s exec -n "$NAMESPACE" deployment/postgresql -c postgres -- \
+        /bin/sh -ec 'PGSSLMODE=disable PGPASSWORD="$POSTGRES_PASSWORD" pg_dump -w -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --table=radius_upgrade_marker' >"$TMP_DIR/baseline.sql" || {
+        echo "Error: Could not back up the pre-upgrade marker." >&2; exit 1;
+    }
+    [[ -s "$TMP_DIR/baseline.sql" ]] || { echo "Error: Pre-upgrade backup was empty." >&2; exit 1; }
     OLD_POD_UID=$(server_pod_uid)
     if [[ "$RECIPE_TYPE" == terraform ]]; then
         OLD_STATE_IDS=$(kubectl get secrets -A -l tfstate=true \
@@ -224,7 +256,7 @@ if [[ "$RECIPE_TYPE" == bicep && "${POSTGRESQL_TEST_READINESS:-1}" == 1 ]]; then
     bash "$TEST_DIR/assert-readiness.sh" "$NAMESPACE" postgresql "${OLD_POD_UID:-}" &
     READINESS_PID=$!
 fi
-deploy_policy default
+deploy_policy "$INITIAL_POLICY"
 if [[ -n "$READINESS_PID" ]]; then
     if ! wait "$READINESS_PID"; then
         READINESS_PID=""
@@ -262,6 +294,18 @@ if [[ -n "${POSTGRESQL_UPGRADE_PACK:-}" ]]; then
         }
     fi
     echo "==> In-place upgrade preserved identities and verified $RECIPE_TYPE rollout strategy"
+    restore_mode=require
+    [[ "$INITIAL_POLICY" != disabled ]] || restore_mode=disable
+    # shellcheck disable=SC2016
+    kubectl --request-timeout=15s exec -i -n "$NAMESPACE" deployment/postgresql -c postgres -- \
+        env "PGSSLMODE=$restore_mode" /bin/sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -X -w -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' \
+        <"$TMP_DIR/baseline.sql" >/dev/null || {
+        echo "Error: Could not restore the pre-upgrade backup." >&2; exit 1;
+    }
+    # shellcheck disable=SC2016
+    restored=$(kubectl --request-timeout=15s exec -n "$NAMESPACE" deployment/postgresql -c postgres -- \
+        env "PGSSLMODE=$restore_mode" /bin/sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -X -w -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT id FROM radius_upgrade_marker"')
+    [[ "$restored" == 73 ]] || { echo "Error: Restored upgrade marker did not match." >&2; exit 1; }
 fi
 
 # The CA is public; only the server Secret and the private temp directory hold keys.
@@ -347,6 +391,56 @@ assert_policy() {
         return 1
     }
     assert_projection "$expected"
+    local workload
+    workload=$(kubectl get deployment postgresql -n "$NAMESPACE" -o json)
+    if [[ "$expected" == disabled ]]; then
+        jq -e '
+          .spec.template as $t |
+          ($t.spec.initContainers // [] | length == 0) and
+          ($t.spec.volumes | all(.name != "tls" and .name != "tls-source")) and
+          ($t.spec.containers[0].volumeMounts | all(.name != "tls")) and
+          ($t.metadata.annotations | has("radapp.io/postgresql-tls-revision") | not) and
+          ($t.spec.containers[0].args | index("ssl=off") != null) and
+          ($t.spec.containers[0].args | all(contains("ssl_cert_file") or contains("ssl_key_file") or contains("ssl_min_protocol_version") | not))
+        ' <<<"$workload" >/dev/null || {
+            echo "Error: Disabled workload retained certificate configuration or failed to disable TLS." >&2
+            return 1
+        }
+        assert_query disable 'SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()' f
+        if error=$(query require 'SELECT 1' 2>&1); then
+            echo "Error: Disabled PostgreSQL admitted a TLS-forcing client." >&2
+            return 1
+        fi
+        grep -Eq 'server does not support SSL|SSL is not enabled on the server' <<<"$error" || {
+            echo "Error: Disabled TLS probe failed for an unrelated reason: $error" >&2
+            return 1
+        }
+        if error=$(kubectl --request-timeout=15s exec -n "$NAMESPACE" "$CLIENT_NAME" -- \
+            env PGSSLMODE=disable PGPASSWORD=deliberately-wrong-password \
+            psql -X -A -t -w -v ON_ERROR_STOP=1 -c 'SELECT 1' 2>&1); then
+            echo "Error: Disabled PostgreSQL admitted the wrong password." >&2
+            return 1
+        fi
+        grep -Fq 'password authentication failed' <<<"$error" || {
+            echo "Error: Wrong-password probe failed for an unrelated reason: $error" >&2
+            return 1
+        }
+        if [[ "$RECIPE_TYPE" == bicep ]]; then
+            assert_query disable 'SELECT count(*) FROM tls_init_check' 1
+        fi
+        echo "==> PostgreSQL tls=$policy TCP and output probes passed"
+        return
+    fi
+    jq -e '.spec.template as $t |
+      ($t.spec.initContainers | any(.name == "prepare-tls")) and
+      ($t.spec.volumes | any(.name == "tls-source")) and
+      ($t.spec.volumes | any(.name == "tls")) and
+      ($t.spec.containers[0].volumeMounts | any(.name == "tls")) and
+      ($t.metadata.annotations | has("radapp.io/postgresql-tls-revision"))' \
+      <<<"$workload" >/dev/null || {
+        echo "Error: Enabled workload is missing TLS configuration." >&2
+        return 1
+    }
     assert_query require 'SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()' t
     assert_query verify-full 'SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()' t
     if [[ "$expected" == "optional" ]]; then
@@ -369,18 +463,33 @@ assert_policy() {
     echo "==> PostgreSQL tls=$policy TCP and output probes passed"
 }
 
-assert_policy default
+assert_policy "$INITIAL_POLICY"
+if [[ "$INITIAL_POLICY" == disabled ]]; then
+    [[ -z "$(kubectl get secret "$TLS_SECRET" -n "$NAMESPACE" --ignore-not-found -o name)" ]] || {
+        echo "Error: Fresh disabled deployment unexpectedly needs a TLS Secret." >&2
+        exit 1
+    }
+    deploy_policy disabled
+    assert_policy disabled
+    publish_certificate 1
+    TLS_SECRET_FINGERPRINT=$(certificate_fingerprint)
+fi
 # Repeat deployments and both transitions exercise pod-template policy selection.
 # Rollouts use fresh ephemeral databases; this does not test retained PGDATA.
-for policy in required required optional optional required optional default; do
+for policy in required required disabled optional optional disabled required optional default; do
     deploy_policy "$policy"
     assert_policy "$policy"
+    [[ "$(certificate_fingerprint)" == "$TLS_SECRET_FINGERPRINT" ]] || {
+        echo "Error: Policy transition changed the external TLS Secret." >&2
+        exit 1
+    }
 done
 
 # Rotation is explicit: the recipe copies the Secret at pod startup, never at
 # first database initialization. In production use the recipe revision parameter
 # or an operator-triggered rollout after protecting data.
 publish_certificate 2
+TLS_SECRET_FINGERPRINT=$(certificate_fingerprint)
 kubectl rollout restart deployment/postgresql -n "$NAMESPACE"
 kubectl rollout status deployment/postgresql -n "$NAMESPACE" --timeout=180s
 assert_policy default

@@ -1,4 +1,5 @@
 extension radius
+extension postgreSqlDatabases
 
 @description('The ID of your Radius Environment. Set automatically by the rad CLI.')
 param environment string
@@ -11,7 +12,7 @@ param applicationName string = 'postgresql-test'
 param password string
 
 @description('Use default to omit tls and exercise the schema default, or select an explicit transport policy.')
-@allowed(['default', 'required', 'optional'])
+@allowed(['default', 'required', 'optional', 'disabled'])
 param tlsPolicy string = 'default'
 
 @description('Initialization SQL used by the Bicep Kubernetes recipe tests. Terraform does not implement initSql.')
@@ -44,7 +45,7 @@ resource dbCreds 'Radius.Security/secrets@2025-08-01-preview' = {
   }
 }
 
-resource postgresql 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
+resource postgresql 'postgreSqlDatabases:Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
   name: 'postgresql'
   properties: union({
     environment: environment

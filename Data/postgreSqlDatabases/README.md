@@ -34,9 +34,23 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 Add a `postgreSqlDatabases` resource to your application and connect a container to it. Radius injects the database's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_POSTGRESQL_HOST`, `CONNECTION_POSTGRESQL_PORT`, `CONNECTION_POSTGRESQL_DATABASE`, and `CONNECTION_POSTGRESQL_TLS`). See [`test/app.bicep`](test/app.bicep) for a complete example.
 
-Because `tls` defaults to `required`, configure your PostgreSQL client for TLS. Both Kubernetes Recipes enable PostgreSQL SSL for every policy and enforce the requested policy through ordered `pg_hba.conf` rules for IPv4 and IPv6. `required` (including an omitted `tls`) rejects plaintext TCP connections; `optional` permits both TLS and plaintext. Both paths require SCRAM password authentication. Unix-socket access remains available for the image entrypoint's local database initialization and Bicep `initSql`.
+Because `tls` defaults to `required`, configure your PostgreSQL client for TLS. The Kubernetes Recipes enforce the requested policy through ordered `pg_hba.conf` rules for IPv4 and IPv6. `required` (including an omitted `tls`) rejects plaintext TCP connections; `optional` enables TLS but permits both TLS and plaintext. Explicit `disabled` turns PostgreSQL SSL off and accepts only password-authenticated plaintext, without certificates. All modes retain SCRAM TCP authentication. Unix-socket access remains available for the image entrypoint's local database initialization and Bicep `initSql`.
 
-The Azure Recipe also enforces the requested policy, but a platform engineer can pin the Azure server's transport policy to `ON` or `OFF`; the connection variable still reports the application's request. See [PostgreSQL transport policy](../../recipe-packs/azure-aks/README.md#postgresql-transport-policy) for unchanged precedence and public-network restrictions.
+The Azure context Recipe rejects `disabled`, even with an operator transport override. For `required` and `optional`, a platform engineer can still pin the Azure server's transport policy to `ON` or `OFF`; the connection variable reports the application's request. The checked-in Azure pack still uses the previous direct AVM mapping until the guarded wrapper is published and verified. **Do not release the expanded schema or activate `disabled` on Azure before that guard is active.** See [PostgreSQL transport policy](../../recipe-packs/azure-aks/README.md#postgresql-transport-policy) for precedence, public-network restrictions, and publication gates.
+
+For an explicitly disposable Kubernetes database on a trusted/private network, set `tls: 'disabled'` and configure the client with `PGSSLMODE=disable`. No TLS Secret or CA is needed. This sends credentials and data without transport encryption; the documentation does not enforce network isolation. `optional` is not a certificate-free alternative. Neither mode is a fallback for broken or missing certificates in a TLS-enabled deployment.
+
+```bicep
+resource disposableDatabase 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
+  name: 'disposable-database'
+  properties: {
+    environment: environment
+    username: 'radadmin'
+    password: databasePassword // Supply through a secure parameter.
+    tls: 'disabled'
+  }
+}
+```
 
 Use `optional` only when the server is not publicly reachable. Non-TLS connections can expose administrator credentials and query traffic in transit. Private reachability does not encrypt traffic, so TLS remains preferred; keep it required with the Azure pack as written.
 
@@ -44,8 +58,9 @@ Use `optional` only when the server is not publicly reachable. Non-TLS connectio
 
 ### TLS migration and release requirements
 
-Adopting these Recipes requires a new operator-owned TLS Secret for **both**
-transport policies. Existing deployments without that Secret cannot start the
+Adopting these Recipes requires a new operator-owned TLS Secret for **both
+TLS-enabled policies**, `required` and `optional`. Explicit Kubernetes `disabled`
+needs no certificate. Existing TLS-enabled deployments without that Secret cannot start the
 new Pods. Bicep resource submission can complete while the database is
 unavailable; always require a successful rollout and TCP query.
 
@@ -81,12 +96,14 @@ its authored PostgreSQL source,
 template does not freeze its floating Recipe tag. Its unrelated stable Recipe
 references must not be changed as part of this migration.
 
-An operator must provision a Kubernetes TLS Secret in the database's namespace **before deployment**, for both policies. By default the Recipes use `<resource-name>-tls` (for example, `postgresql-tls`). They do not generate certificates or fall back to plaintext when a Secret is absent or invalid.
+An operator must provision a Kubernetes TLS Secret in the database's namespace **before deployment** for `required` and `optional`. By default the Recipes use `<resource-name>-tls` (for example, `postgresql-tls`). They do not generate certificates or fall back to plaintext when a Secret is absent or invalid. `disabled` does not read or mount this Secret, run the certificate initialization container, or apply certificate-only PostgreSQL settings or rollout metadata.
 
 | Recipe parameter | Default | Purpose |
 | --- | --- | --- |
 | `postgresqlTlsSecretName` | Empty; resolves to `<resource-name>-tls` | Name of an existing operator-managed Secret in the database namespace. An explicit name is shared by all databases using these parameters in that namespace. Omission or an empty string selects a separate name per resource. |
 | `postgresqlTlsCertificateRevision` | `1` | Nonempty operator revision. Changing it triggers a pod rollout for every database redeployed with these parameters, not just one database. |
+
+Both certificate parameters are ignored in `disabled` mode, including an empty revision. Certificate-only changes do not change its Pod template. They resume taking effect when TLS is enabled again.
 
 Set these as `parameters` on the PostgreSQL entry in your Recipe Pack. Pack parameters apply to every database consuming that entry; Environment overrides still apply to every consuming database in that Environment, not to a single resource. A revision change can therefore roll out multiple ephemeral databases as they are redeployed. Inventory and back up all affected databases first.
 
@@ -149,7 +166,7 @@ Supply passwords through your client's secret mechanism (for example a protected
 
 The server uses a startup copy of the certificate, so updating the Secret alone does not rotate the active certificate. Replace its data without recording private keys in a last-applied annotation (use your secret manager or `kubectl create secret tls ... --dry-run=client -o json | kubectl replace -f -` for an existing Secret). For a single database, after backup and restore verification, prefer `kubectl rollout restart deployment/<resource-name> --namespace <database-namespace>` over changing a shared revision. For a coordinated rollout, change `postgresqlTlsCertificateRevision` in the Recipe Pack or Environment override, deploy that configuration, then redeploy each affected application; every consuming database redeployed with that revision will restart and may lose its data. Wait for each rollout and repeat `verify-full`. If the Secret is shared, all consumers need a planned restart to load its replacement. When rotating the CA, distribute a trust bundle containing both CAs before rolling out the new server certificate.
 
-Changing `tls` changes the selected HBA file and pod template. A single Recipe-owned ConfigMap contains both policies, so transitions neither depend on ConfigMap-update propagation nor leave behind policy-specific ConfigMaps. Terraform uses `Recreate`. Bicep uses `RollingUpdate` with `maxSurge: 0` and `maxUnavailable: 1`: it avoids a surge replica and permits downtime for the single database replica. This retains the existing strategy type because Radius's Bicep Kubernetes apply cannot clear defaulted `rollingUpdate` fields when switching an existing Deployment to `Recreate`, even with an explicit null. Kubernetes can retain terminating Pods during their grace period; zero surge is not a guarantee that every old process has exited before the replacement starts.
+Changing `tls` changes the selected HBA file and pod template. A single Recipe-owned ConfigMap contains all three policies, so transitions neither depend on ConfigMap-update propagation nor leave behind policy-specific ConfigMaps. Moving to `disabled` removes TLS initialization, volumes, mounts, settings, and revision metadata; moving back requires the external certificate again. Always inspect the applied workload and its TCP behavior: source-level omission is not proof that a deployment engine removed old fields. Terraform uses `Recreate`. Bicep uses `RollingUpdate` with `maxSurge: 0` and `maxUnavailable: 1`: it avoids a surge replica and permits downtime for the single database replica. This retains the existing strategy type because Radius's Bicep Kubernetes apply cannot clear defaulted `rollingUpdate` fields when switching an existing Deployment to `Recreate`, even with an explicit null. Kubernetes can retain terminating Pods during their grace period; zero surge is not a guarantee that every old process has exited before the replacement starts.
 
 Adopting the new Recipe changes the pod template and triggers a rollout. Live transition tests cover fresh ephemeral databases after those rollouts, not policy changes with retained PGDATA. A repeat deployment with unchanged inputs does not intentionally restart the database. Bicep's `initSql` behavior is preserved; Terraform still does not implement that property.
 
@@ -178,7 +195,7 @@ Existing plaintext-only Kubernetes clients will stop working under the default `
 
 After publishing/registering the selected Recipe in an isolated test Environment, run `.github/scripts/test-recipe.sh Data/postgreSqlDatabases/recipes/kubernetes/bicep` or the corresponding `terraform` path. The normal CI recipe matrix runs this suite for both implementations and waits for explicit probe results.
 
-The suite creates a short-lived test CA and an operator-owned TLS Secret, then probes omitted, explicit `required`, and `optional`, repeat deployments, both policy transitions, and certificate rotation. It checks `pg_stat_ssl` over TCP with bounded connection/query timeouts, verifies `verify-full`, matches plaintext failures to the HBA transport rejection rather than unrelated errors, checks the schema default and `CONNECTION_POSTGRESQL_TLS`, preserves the output contract, and checks Bicep initialization SQL and private-key permissions. Test keys stay in a protected temporary directory and a Kubernetes Secret and are removed on exit. Do not run these destructive rollout tests against an existing database. Record Radius CLI/runtime versions, schema version, recipe artifact digest, Kubernetes/node versions, and the resolved `postgres:16-alpine` image digest when reproducing a failure.
+The suite starts with `disabled` and no TLS Secret, checks authenticated plaintext and rejection of wrong passwords and TLS-forcing clients, then provisions an operator-managed TLS Secret from its short-lived test CA for the secure modes. It probes omitted, explicit `required`, and `optional`, repeated deployments, transitions in both directions, applied TLS field removal/restoration, external Secret identity/data preservation, and certificate rotation. It checks `pg_stat_ssl` over TCP with bounded connection/query timeouts, verifies `verify-full`, matches plaintext failures to the HBA transport rejection rather than unrelated errors, checks the schema default and `CONNECTION_POSTGRESQL_TLS`, preserves the output contract, and checks Bicep initialization SQL and private-key permissions. Test keys stay in a protected temporary directory and a Kubernetes Secret and are removed on exit. Do not run these destructive rollout tests against an existing database. Record Radius CLI/runtime versions, schema version, recipe artifact digest, Kubernetes/node versions, and the resolved `postgres:16-alpine` image digest when reproducing a failure.
 
 The first Bicep deployment delays initialization long enough for a separate observer to require an actual socket-ready, TCP-unavailable, Pod-NotReady window. It then requires the initialization-complete marker and final TCP readiness. Missing the window fails the test rather than counting as proof. Run `bash Data/postgreSqlDatabases/test/assert-readiness-test.sh` for the observer's positive and negative regression cases. Terraform's identical TCP probe is checked by its mock-provider tests and live rollouts; its Recipe does not support `initSql`.
 

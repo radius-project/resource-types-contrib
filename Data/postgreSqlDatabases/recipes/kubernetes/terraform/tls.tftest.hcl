@@ -114,7 +114,7 @@ run "invalid_policy" {
   variables {
     context = merge(var.context, {
       resource = merge(var.context.resource, {
-        properties = merge(var.context.resource.properties, { tls = "disabled" })
+        properties = merge(var.context.resource.properties, { tls = "invalid" })
       })
     })
   }
@@ -138,7 +138,7 @@ run "empty_certificate_revision" {
   variables {
     postgresqlTlsCertificateRevision = ""
   }
-  expect_failures = [var.postgresqlTlsCertificateRevision]
+  expect_failures = [kubernetes_deployment.postgresql]
 }
 
 run "null_policy" {
@@ -165,5 +165,43 @@ run "empty_policy" {
       })
     })
   }
+
   expect_failures = [var.context]
+}
+
+run "disabled_policy" {
+  command = plan
+  variables {
+    context = merge(var.context, {
+      resource = merge(var.context.resource, {
+        properties = merge(var.context.resource.properties, { tls = "disabled" })
+      })
+    })
+    postgresqlTlsSecretName          = "must-not-be-used"
+    postgresqlTlsCertificateRevision = ""
+  }
+  assert {
+    condition = (
+      local.tls_policy == "disabled" &&
+      kubernetes_deployment.postgresql.spec[0].template[0].spec[0].container[0].args == tolist([
+        "postgres", "-c", "ssl=off", "-c", "hba_file=/transport/pg_hba-disabled.conf",
+        "-c", "password_encryption=scram-sha-256"
+      ]) &&
+      length(kubernetes_deployment.postgresql.spec[0].template[0].spec[0].init_container) == 0 &&
+      length(kubernetes_deployment.postgresql.spec[0].template[0].spec[0].volume) == 1 &&
+      kubernetes_deployment.postgresql.spec[0].template[0].spec[0].volume[0].name == "transport" &&
+      length(kubernetes_deployment.postgresql.spec[0].template[0].spec[0].container[0].volume_mount) == 1 &&
+      keys(kubernetes_deployment.postgresql.spec[0].template[0].metadata[0].annotations) == tolist(["radapp.io/postgresql-tls-policy"]) &&
+      kubernetes_config_map_v1.transport.data["pg_hba-disabled.conf"] == "local all all trust\nhostnossl all all 0.0.0.0/0 scram-sha-256\nhostnossl all all ::/0 scram-sha-256\n"
+    )
+    error_message = "Disabled must use authenticated plaintext with no certificate configuration or revision validation."
+  }
+  assert {
+    condition = (
+      keys(output.result) == ["resources", "values"] &&
+      keys(output.result.values) == ["database", "host", "port"] &&
+      length(output.result.resources) == 4
+    )
+    error_message = "Disabled must preserve the cleanup and connection output contract."
+  }
 }

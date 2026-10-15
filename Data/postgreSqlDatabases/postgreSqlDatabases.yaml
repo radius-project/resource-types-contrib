@@ -53,7 +53,20 @@ types:
       - CONNECTION_POSTGRESQL_PORT
       - CONNECTION_POSTGRESQL_TLS
 
-      Both Kubernetes recipes reject plaintext TCP when `tls` is `required` or omitted; `optional` supports TLS and plaintext. Both policies require a TLS Secret supplied by your platform operator. See [the PostgreSQL README](https://github.com/radius-project/resource-types-contrib/blob/main/Data/postgreSqlDatabases/README.md#kubernetes-certificates-and-recipe-parameters) for certificate setup and client verification.
+      Both Kubernetes recipes reject plaintext TCP when `tls` is `required` or omitted; `optional` supports TLS and plaintext. These two policies require an operator-supplied TLS Secret. Explicit `disabled` turns off TLS on Kubernetes without a certificate and still requires password authentication. Use it only for disposable databases on trusted/private networks: credentials and data are not encrypted. Azure does not support `disabled`; its guarded Recipe rejects it even with operator transport overrides. See [the PostgreSQL README](https://github.com/radius-project/resource-types-contrib/blob/main/Data/postgreSqlDatabases/README.md#kubernetes-certificates-and-recipe-parameters) for certificate setup, client verification, and release prerequisites.
+
+      For a disposable Kubernetes database without certificates:
+      ```bicep
+      resource disposableDatabase 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
+        name: 'disposable-database'
+        properties: {
+          environment: environment
+          username: 'radadmin'
+          password: databasePassword // Supply through a secure parameter.
+          tls: 'disabled'
+        }
+      }
+      ```
 
     apiVersions:
       '2025-08-01-preview':
@@ -87,9 +100,9 @@ types:
               description: "(Optional) SQL script mounted into the PostgreSQL container's `/docker-entrypoint-initdb.d/` directory and executed whenever PGDATA is empty. With the default ephemeral storage this runs on every pod restart. If a PersistentVolumeClaim is used, the script runs only on the very first startup and subsequent changes to initSql are ignored on existing volumes. Limited to ~1 MiB. Useful for creating tables, indexes, and inserting seed data."
             tls:
               type: string
-              enum: ['required', 'optional']
+              enum: ['required', 'optional', 'disabled']
               default: 'required'
-              description: "(Optional) The transport policy for database connections, reported in `CONNECTION_POSTGRESQL_TLS`. Defaults to `required`, which rejects plaintext TCP in both Kubernetes recipes. `optional` permits plaintext but keeps TLS enabled; use it only when the server is not publicly reachable. Kubernetes requires an operator-owned TLS Secret for either policy. Clients must configure CA trust and hostname verification separately. Azure operator overrides retain precedence over the requested policy."
+              description: "(Optional) The transport policy, reported in `CONNECTION_POSTGRESQL_TLS`. Defaults to `required`, which rejects plaintext TCP on Kubernetes. `optional` permits plaintext but keeps TLS enabled. Both need an operator-managed TLS Secret and separate client CA trust and hostname verification. Explicit `disabled` turns TLS off on Kubernetes, needs no certificate, ignores certificate parameters, and retains password authentication. Use plaintext only for disposable databases on trusted/private networks. Azure rejects `disabled` regardless of operator transport overrides; overrides retain precedence for `required` and `optional`."
             host:
               type: string
               description: "(Read Only) The host name used to connect to the database. Mapped from the recipe module's output."
