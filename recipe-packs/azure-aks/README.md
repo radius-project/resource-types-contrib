@@ -62,6 +62,42 @@ This Recipe therefore requires a registered `Radius.Data` namespace whose `mySql
 
 ### PostgreSQL transport policy
 
+#### Guarded Recipe publication prerequisite
+
+The preparatory context Recipe at
+`Data/postgreSqlDatabases/recipes/azure/bicep/azure-postgresql.bicep` wraps the same
+AVM `flexible-server:0.15.2`, preserving `pgsql-${context.azure.resourceNameHash}`,
+settings, and the host output. It rejects unsupported policies, including
+`disabled`, through a required AVM name input before server deployment, even when
+the operator supplies `require_secure_transport`. Missing or null `tls` uses
+`required`. The override rules below still apply to `required` and `optional`.
+
+**Public activation is blocked pending publication and live migration evidence.**
+The checked-in pack intentionally still uses the previous direct AVM mapping.
+Publish the preparatory wrapper through the existing main-only publisher at
+`ghcr.io/radius-project/azure-recipes/postgresqldatabases`, then verify its actual
+commit tag and record its manifest digest. Only then replace this pack's
+PostgreSQL source with that verified immutable reference, pass the literal
+`postgreSqlServerConfigurations` array, and remove all direct-module context
+expressions and the `outputs` mapping for this entry. Never substitute a guessed
+commit, a floating tag, or a placeholder for that reference.
+
+The expanded `disabled` schema must not be released before the Azure guard is
+active. Preparatory publication and subsequent activation require coordinated
+release approval; having both changes on a feature branch does not satisfy that
+ordering. No unrelated Recipe sources should change.
+
+Before activation, test the actual pack with the owned CI registry source.
+Record the old direct-AVM server ID and all tracked output resources, migrate to
+the wrapper, verify the exact same server ID, retained data/settings, repeated
+deployment, and the absence of server deletion. The wrapper explicitly returns
+the AVM's ARM resource ID; do not add a plane prefix because driver garbage
+collection compares identifiers exactly. Inspect any additional deployment IDs
+the driver tracks. Test unsupported requests with operator transport `ON` and
+`OFF`, capture server state and activity, and require final owned-app cleanup to
+delete its server without affecting unrelated resources. Compiled contracts and
+mock rejection tests do not establish these live acceptance gates.
+
 Unless the platform engineer pins the server parameter as described below, the `Radius.Data/postgreSqlDatabases` Recipe maps the resource's `tls` property onto the flexible server's `require_secure_transport` parameter, so the server rejects connections that do not use TLS unless the application sets `tls: 'optional'`. This relies on the Radius runtime materializing schema defaults into the resource's properties, so applications that omit `tls` still resolve to `required`.
 
 **Keep TLS required with this pack as written.** It enables public network access and includes an allow-all firewall rule, with no parameter to make the server private. Allowing non-TLS connections can expose administrator credentials and query traffic in transit. Use `optional` only with a Recipe or customized pack that makes the server not publicly reachable. Private reachability does not encrypt traffic, so TLS remains preferred. `optional` allows plaintext when honored by the Recipe; it does not disable TLS support or change network access.

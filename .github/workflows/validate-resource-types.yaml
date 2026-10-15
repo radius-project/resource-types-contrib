@@ -68,6 +68,9 @@ jobs:
       - name: Validate PostgreSQL initialization readiness observer
         run: bash Data/postgreSqlDatabases/test/assert-readiness-test.sh
 
+      - name: Validate Azure PostgreSQL rejection runner and registration
+        run: bash Data/postgreSqlDatabases/test/azure/test-runner.sh
+
       - name: Validate resource type icons
         run: make validate-icons
 
@@ -118,6 +121,10 @@ jobs:
       - name: Validate PostgreSQL Bicep transport and result contract
         if: matrix.recipe == 'bicep'
         run: bash Data/postgreSqlDatabases/test/assert-recipe-result.sh
+
+      - name: Validate Azure PostgreSQL context and result contract
+        if: matrix.recipe == 'bicep'
+        run: bash Data/postgreSqlDatabases/test/assert-azure-recipe.sh
 
       - name: Set up Terraform for PostgreSQL contract tests
         if: matrix.recipe == 'terraform'

@@ -14,8 +14,8 @@ variable "context" {
 
   validation {
     # Keep this default in sync with local.tls_policy; Terraform 1.5 validation cannot reference locals.
-    condition     = contains(["required", "optional"], try(var.context.resource.properties.tls, null) == null ? "required" : var.context.resource.properties.tls)
-    error_message = "PostgreSQL tls must be required or optional."
+    condition     = contains(["required", "optional", "disabled"], try(var.context.resource.properties.tls, null) == null ? "required" : var.context.resource.properties.tls)
+    error_message = "PostgreSQL tls must be required, optional, or disabled."
   }
 }
 
@@ -32,10 +32,6 @@ variable "postgresqlTlsCertificateRevision" {
   default     = "1"
   nullable    = false
 
-  validation {
-    condition     = length(var.postgresqlTlsCertificateRevision) > 0
-    error_message = "postgresqlTlsCertificateRevision must not be empty."
-  }
 }
 
 variable "memory" {
@@ -69,6 +65,7 @@ locals {
   database         = try(var.context.resource.properties.database, "postgres_db")
   size_value       = try(var.context.resource.properties.size, "S")
   tls_policy       = try(var.context.resource.properties.tls, null) == null ? "required" : var.context.resource.properties.tls
+  tls_enabled      = local.tls_policy != "disabled"
   tls_secret_name  = coalesce(var.postgresqlTlsSecretName, "${local.resource_name}-tls")
   # Keep Unix-socket initialization available; no broad host rule may bypass TLS.
   hba_required_config = <<-EOT
@@ -79,6 +76,11 @@ locals {
     hostssl all all ::/0 scram-sha-256
   EOT
   hba_optional_config = replace(local.hba_required_config, " reject", " scram-sha-256")
+  hba_disabled_config = <<-EOT
+    local all all trust
+    hostnossl all all 0.0.0.0/0 scram-sha-256
+    hostnossl all all ::/0 scram-sha-256
+  EOT
 
   labels = {
     "radapp.io/resource"       = local.resource_name
@@ -97,9 +99,10 @@ resource "kubernetes_config_map_v1" "transport" {
   }
 
   data = {
-    # Both files are stable across policy transitions; selection happens in args.
+    # All files are stable across policy transitions; selection happens in args.
     "pg_hba-required.conf" = local.hba_required_config
     "pg_hba-optional.conf" = local.hba_optional_config
+    "pg_hba-disabled.conf" = local.hba_disabled_config
   }
 }
 
@@ -117,6 +120,12 @@ resource "kubernetes_secret" "postgres" {
 }
 
 resource "kubernetes_deployment" "postgresql" {
+  lifecycle {
+    precondition {
+      condition     = !local.tls_enabled || length(var.postgresqlTlsCertificateRevision) > 0
+      error_message = "PostgreSQL certificate revision must not be empty when TLS is enabled."
+    }
+  }
   metadata {
     name      = local.resource_name
     namespace = local.namespace
@@ -137,17 +146,20 @@ resource "kubernetes_deployment" "postgresql" {
     template {
       metadata {
         labels = local.labels
-        annotations = {
-          "radapp.io/postgresql-tls-policy"   = local.tls_policy
+        annotations = merge({
+          "radapp.io/postgresql-tls-policy" = local.tls_policy
+          }, local.tls_enabled ? {
           "radapp.io/postgresql-tls-revision" = var.postgresqlTlsCertificateRevision
-        }
+        } : {})
       }
 
       spec {
-        init_container {
-          name  = "prepare-tls"
-          image = "postgres:${local.tag}"
-          command = ["/bin/sh", "-ec", <<-EOT
+        dynamic "init_container" {
+          for_each = local.tls_enabled ? [1] : []
+          content {
+            name  = "prepare-tls"
+            image = "postgres:${local.tag}"
+            command = ["/bin/sh", "-ec", <<-EOT
             test -s /tls-source/tls.crt && test -s /tls-source/tls.key || {
               echo "PostgreSQL requires a TLS Secret with nonempty tls.crt and tls.key" >&2
               exit 1
@@ -159,36 +171,38 @@ resource "kubernetes_deployment" "postgresql" {
             chmod 600 /tls/server.key
             chmod 644 /tls/server.crt
           EOT
-          ]
+            ]
 
-          security_context {
-            run_as_user = 0
-          }
+            security_context {
+              run_as_user = 0
+            }
 
-          volume_mount {
-            name       = "tls-source"
-            mount_path = "/tls-source"
-            read_only  = true
-          }
+            volume_mount {
+              name       = "tls-source"
+              mount_path = "/tls-source"
+              read_only  = true
+            }
 
-          volume_mount {
-            name       = "tls"
-            mount_path = "/tls"
+            volume_mount {
+              name       = "tls"
+              mount_path = "/tls"
+            }
           }
         }
 
         container {
           name  = "postgres"
           image = "postgres:${local.tag}"
-          args = [
+          args = concat([
             "postgres",
-            "-c", "ssl=on",
+            "-c", "ssl=${local.tls_enabled ? "on" : "off"}",
+            "-c", "hba_file=/transport/pg_hba-${local.tls_policy}.conf",
+            "-c", "password_encryption=scram-sha-256",
+            ], local.tls_enabled ? [
             "-c", "ssl_min_protocol_version=TLSv1.2",
             "-c", "ssl_cert_file=/tls/server.crt",
             "-c", "ssl_key_file=/tls/server.key",
-            "-c", "hba_file=/transport/pg_hba-${local.tls_policy}.conf",
-            "-c", "password_encryption=scram-sha-256",
-          ]
+          ] : [])
 
           readiness_probe {
             exec {
@@ -198,10 +212,13 @@ resource "kubernetes_deployment" "postgresql" {
             timeout_seconds = 3
           }
 
-          volume_mount {
-            name       = "tls"
-            mount_path = "/tls"
-            read_only  = true
+          dynamic "volume_mount" {
+            for_each = local.tls_enabled ? [1] : []
+            content {
+              name       = "tls"
+              mount_path = "/tls"
+              read_only  = true
+            }
           }
 
           volume_mount {
@@ -246,26 +263,32 @@ resource "kubernetes_deployment" "postgresql" {
           }
         }
 
-        volume {
-          name = "tls-source"
-          secret {
-            secret_name  = local.tls_secret_name
-            default_mode = "0400"
-            items {
-              key  = "tls.crt"
-              path = "tls.crt"
-            }
-            items {
-              key  = "tls.key"
-              path = "tls.key"
+        dynamic "volume" {
+          for_each = local.tls_enabled ? [1] : []
+          content {
+            name = "tls-source"
+            secret {
+              secret_name  = local.tls_secret_name
+              default_mode = "0400"
+              items {
+                key  = "tls.crt"
+                path = "tls.crt"
+              }
+              items {
+                key  = "tls.key"
+                path = "tls.key"
+              }
             }
           }
         }
 
-        volume {
-          name = "tls"
-          empty_dir {
-            medium = "Memory"
+        dynamic "volume" {
+          for_each = local.tls_enabled ? [1] : []
+          content {
+            name = "tls"
+            empty_dir {
+              medium = "Memory"
+            }
           }
         }
 

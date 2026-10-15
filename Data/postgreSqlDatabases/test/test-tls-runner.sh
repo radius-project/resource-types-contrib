@@ -166,12 +166,41 @@ case "$1 $2" in
         elif [[ "${MOCK_CASE:-}" == upgrade-old-strategy ]]; then
             strategy='{"type":"Recreate"}'
         fi
-        printf '{"metadata":{"uid":"%s"},"spec":{"strategy":%s}}\n' "$uid" "$strategy"
+        policy=$(cat "$MOCK_STATE/policy")
+        if [[ "$policy" == disabled && "${MOCK_CASE:-}" != disabled-stale ]]; then
+            template='{"metadata":{"annotations":{}},"spec":{"initContainers":[],"volumes":[{"name":"transport"}],"containers":[{"args":["ssl=off"],"volumeMounts":[{"name":"transport"}]}]}}'
+        else
+            template='{"metadata":{"annotations":{"radapp.io/postgresql-tls-revision":"1"}},"spec":{"initContainers":[{"name":"prepare-tls"}],"volumes":[{"name":"tls-source"},{"name":"tls"}],"containers":[{"args":["ssl=on"],"volumeMounts":[{"name":"tls"}]}]}}'
+        fi
+        printf '{"metadata":{"uid":"%s"},"spec":{"strategy":%s,"template":%s}}\n' "$uid" "$strategy" "$template"
+        ;;
+    "get secret")
+        [[ "$*" != *"-o json"* ]] || echo '{"metadata":{"uid":"external"},"data":{"tls.crt":"unchanged","tls.key":"fixture"}}'
         ;;
     "get secrets") echo 'test tfstate stable-state-uid' ;;
     "get "*) ;; # No pre-existing objects.
     "exec "*)
-        if [[ "$*" == *"cat /tls/server.crt"* ]]; then
+        if [[ "$*" == *"CREATE TABLE radius_upgrade_marker"* ]]; then
+            [[ "${MOCK_CASE:-}" != upgrade-marker ]] || exit 2
+        elif [[ "$*" == *"pg_dump "* ]]; then
+            [[ "${MOCK_CASE:-}" != upgrade-backup ]] || exit 2
+            [[ "${MOCK_CASE:-}" != upgrade-empty-backup ]] || exit 0
+            echo 'test-only backup'
+        elif [[ "$*" == *"SELECT id FROM radius_upgrade_marker"* ]]; then
+            [[ "${MOCK_CASE:-}" != upgrade-restored-marker ]] || { echo 0; exit 0; }
+            echo 73
+        elif [[ "$2" == -i ]]; then
+            cat >/dev/null
+            [[ "${MOCK_CASE:-}" != upgrade-restore ]] || exit 2
+        elif [[ "$*" == *"PGPASSWORD=deliberately-wrong-password"* ]]; then
+            [[ "${MOCK_CASE:-}" != disabled-auth-accepted ]] || { echo 1; exit 0; }
+            echo 'FATAL: password authentication failed' >&2
+            exit 2
+        elif [[ "$*" == *"PGSSLMODE=require"* && "$(cat "$MOCK_STATE/policy")" == disabled ]]; then
+            [[ "${MOCK_CASE:-}" != disabled-tls-accepted ]] || { echo t; exit 0; }
+            echo 'server does not support SSL, but SSL was required' >&2
+            exit 2
+        elif [[ "$*" == *"cat /tls/server.crt"* ]]; then
             echo "mock-public-certificate"
         elif [[ "$*" == *"stat -c"* ]]; then
             echo "600:postgres"
@@ -180,6 +209,8 @@ case "$1 $2" in
         elif [[ "$*" == *"PGSSLMODE=disable"* ]]; then
             if [[ -f "$MOCK_STATE/source" && "$(cat "$MOCK_STATE/source")" == *old ]]; then
                 echo 1
+            elif [[ "$(cat "$MOCK_STATE/policy")" == disabled ]]; then
+                echo f
             elif [[ "${MOCK_CASE:-}" == plaintext-accepted ]]; then
                 echo 1
             elif [[ "${MOCK_CASE:-}" == plaintext-password ]]; then
@@ -310,9 +341,10 @@ run_case() {
         grep -qx "typed-cleanup $type" "$state/calls"
     done
     if [[ "$fail_deploy" -eq 0 ]]; then
-        [[ "$(cat "$state/deploy-count")" -eq 8 ]]
+        [[ "$(cat "$state/deploy-count")" -eq 11 ]]
         [[ "$(grep -c '^deploy optional$' "$state/calls")" -eq 3 ]]
-        [[ "$(grep -c '^deploy required$' "$state/calls")" -eq 5 ]]
+        [[ "$(grep -c '^deploy required$' "$state/calls")" -eq 4 ]]
+        [[ "$(grep -c '^deploy disabled$' "$state/calls")" -eq 4 ]]
     else
         [[ "$(cat "$state/deploy-count")" -eq "$fail_deploy" ]]
     fi
@@ -368,7 +400,8 @@ run_preflight_case() {
 
 run_review_case() {
     local recipe="$1" scenario="$2" expected_error="$3"
-    local state="$TEST_ROOT/review-$recipe-$scenario" actual_status=0 expected_status=1
+    local initial_policy="${4:-default}"
+    local state="$TEST_ROOT/review-$recipe-$scenario-$initial_policy" actual_status=0 expected_status=1
     local readiness=0 fail_deploy=0 upgrade_pack=""
     mkdir -p "$state"
     printf '0' > "$state/deploy-count"
@@ -387,6 +420,7 @@ run_review_case() {
     MOCK_STATE="$state" MOCK_RECIPE_TYPE="$recipe" MOCK_RESOURCE_GROUP=test MOCK_CASE="$scenario" \
         MOCK_FAIL_DEPLOY="$fail_deploy" MOCK_FAIL_CLEANUP=0 POSTGRESQL_TEST_READINESS="$readiness" \
         POSTGRESQL_UPGRADE_PACK="$upgrade_pack" POSTGRESQL_UPGRADE_OLD_SOURCE=old POSTGRESQL_UPGRADE_NEW_SOURCE=new \
+        POSTGRESQL_UPGRADE_POLICY="$initial_policy" \
         BASH_ENV="$TEST_ROOT/race-env" PATH="$TEST_ROOT/bin:$PATH" \
         bash "$TEST_DIR/test-tls.sh" "$recipe" \
         /planes/radius/local/resourcegroups/test/providers/Radius.Core/environments/test-environment test-workspace test \
@@ -401,7 +435,7 @@ run_review_case() {
         return 1
     fi
     [[ ! -d "$(cat "$state/certificate-dir")" ]]
-    if [[ "$scenario" == ca-failure || "$scenario" == signing-failure ]]; then
+    if [[ "$scenario" == ca-failure ]]; then
         [[ "$(grep -c '^rad resource list ' "$state/invocations")" == 5 ]]
         [[ "$(grep -c '^pre-deploy-scoped-cleanup$' "$state/calls")" == 2 ]]
     else
@@ -424,14 +458,23 @@ for recipe in bicep terraform; do
     run_review_case "$recipe" signing-failure 'Error: Could not sign the test server certificate.'
     run_review_case "$recipe" repeat-uid 'Error: Unchanged repeat deployment unexpectedly recreated PostgreSQL.'
     run_review_case "$recipe" output-policy 'Error: PostgreSQL output contract or schema TLS default is incorrect.'
-    run_review_case "$recipe" projection-policy "Error: CONNECTION_POSTGRESQL_TLS expected 'required', got 'wrong'."
+    run_review_case "$recipe" projection-policy "Error: CONNECTION_POSTGRESQL_TLS expected 'disabled', got 'wrong'."
+    run_review_case "$recipe" disabled-stale 'Error: Disabled workload retained certificate configuration or failed to disable TLS.'
+    run_review_case "$recipe" disabled-tls-accepted 'Error: Disabled PostgreSQL admitted a TLS-forcing client.'
+    run_review_case "$recipe" disabled-auth-accepted 'Error: Disabled PostgreSQL admitted the wrong password.'
     run_review_case "$recipe" plaintext-accepted 'Error: PostgreSQL admitted plaintext with tls=required.'
     run_review_case "$recipe" plaintext-password 'Error: Plaintext probe failed for a reason other than TLS policy: FATAL: password authentication failed'
     run_review_case "$recipe" upgrade-old-strategy 'Error: Pre-upgrade Deployment must use RollingUpdate with maxSurge and maxUnavailable.'
     run_review_case "$recipe" upgrade-uid "Error: Upgraded Deployment changed identity or has an incorrect $recipe rollout strategy."
     run_review_case "$recipe" upgrade-strategy "Error: Upgraded Deployment changed identity or has an incorrect $recipe rollout strategy."
     run_review_case "$recipe" upgrade-resource 'Error: Upgrade changed the PostgreSQL Radius resource ID.'
+    run_review_case "$recipe" upgrade-marker 'Error: Could not create the pre-upgrade backup marker.'
+    run_review_case "$recipe" upgrade-backup 'Error: Could not back up the pre-upgrade marker.'
+    run_review_case "$recipe" upgrade-empty-backup 'Error: Pre-upgrade backup was empty.'
+    run_review_case "$recipe" upgrade-restore 'Error: Could not restore the pre-upgrade backup.'
+    run_review_case "$recipe" upgrade-restored-marker 'Error: Restored upgrade marker did not match.'
     run_review_case "$recipe" upgrade-success "==> In-place upgrade preserved identities and verified $recipe rollout strategy"
+    run_review_case "$recipe" upgrade-success "==> In-place upgrade preserved identities and verified $recipe rollout strategy" disabled
     for position in "${!PREFLIGHT_OBJECTS[@]}"; do
         run_preflight_case "$recipe" "$((position + 1))" empty
     done
@@ -448,4 +491,4 @@ run_case bicep 0 0 0 workloads
 
 echo "PostgreSQL TLS runner argument, application ownership, and cleanup tests passed"
 echo "PostgreSQL preflight tests passed: 20 lookup failures and 2 existing-object refusals"
-echo "PostgreSQL review tests passed: 25 failure cases and 2 upgrade success controls"
+echo "PostgreSQL review tests passed: 41 failure cases and 4 upgrade success controls"

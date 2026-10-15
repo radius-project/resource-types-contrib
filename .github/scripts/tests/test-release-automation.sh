@@ -311,6 +311,8 @@ test_recipe_publication_requires_main() {
         fail "namespace release can invoke recipe publication outside main"
     grep -q "github.ref == 'refs/heads/main'" "$PUBLISH_WORKFLOW" ||
         fail "recipe publisher can run outside main"
+    grep -Fq 'REGISTRY=ghcr.io/radius-project/azure-recipes ./.github/scripts/publish-bicep-recipe.sh postgresqldatabases Data/postgreSqlDatabases/recipes/azure/bicep/azure-postgresql.bicep' "$PUBLISH_WORKFLOW" ||
+        fail "Azure PostgreSQL context Recipe has no explicit publisher"
 }
 
 test_namespace_release_choices() {

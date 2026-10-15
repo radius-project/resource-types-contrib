@@ -15,7 +15,6 @@ param context object
 param postgresqlTlsSecretName string = ''
 
 @description('Change this value after replacing the TLS Secret to roll out the new certificate. Back up data before rolling out this ephemeral database.')
-@minLength(1)
 param postgresqlTlsCertificateRevision string = '1'
 
 var resourceName = context.resource.name
@@ -36,9 +35,13 @@ var sizeValue = context.resource.properties.?size ?? 'S'
 var initSql = context.resource.properties.?initSql ?? ''
 var hasInitSql = initSql != ''
 var requestedTls = context.resource.properties.?tls ?? 'required'
-var tlsPolicy = contains(['required', 'optional'], requestedTls)
+var tlsPolicy = contains(['required', 'optional', 'disabled'], requestedTls)
   ? requestedTls
-  : fail('PostgreSQL tls must be required or optional.')
+  : fail('PostgreSQL tls must be required, optional, or disabled.')
+var tlsEnabled = tlsPolicy != 'disabled'
+var certificateRevision = !tlsEnabled || !empty(postgresqlTlsCertificateRevision)
+  ? postgresqlTlsCertificateRevision
+  : fail('PostgreSQL certificate revision must not be empty when TLS is enabled.')
 // Keep Unix-socket initialization available; no broad host rule may bypass TLS.
 var hbaRequiredConfig = join([
   'local all all trust'
@@ -49,6 +52,12 @@ var hbaRequiredConfig = join([
   ''
 ], '\n')
 var hbaOptionalConfig = replace(hbaRequiredConfig, ' reject', ' scram-sha-256')
+var hbaDisabledConfig = join([
+  'local all all trust'
+  'hostnossl all all 0.0.0.0/0 scram-sha-256'
+  'hostnossl all all ::/0 scram-sha-256'
+  ''
+], '\n')
 var tag string = '16-alpine'
 var port = 5432
 var memory ={
@@ -115,9 +124,10 @@ resource transportConfig 'core/ConfigMap@v1' = {
     labels: labels
   }
   data: {
-    // Both files are stable across policy transitions; selection happens in args.
+    // All files are stable across policy transitions; selection happens in args.
     'pg_hba-required.conf': hbaRequiredConfig
     'pg_hba-optional.conf': hbaOptionalConfig
+    'pg_hba-disabled.conf': hbaDisabledConfig
   }
 }
 
@@ -149,13 +159,14 @@ resource postgresql 'apps/Deployment@v1' = {
     template: {
       metadata: {
         labels: labels
-        annotations: {
+        annotations: union({
           'radapp.io/postgresql-tls-policy': tlsPolicy
-          'radapp.io/postgresql-tls-revision': postgresqlTlsCertificateRevision
-        }
+        }, tlsEnabled ? {
+          'radapp.io/postgresql-tls-revision': certificateRevision
+        } : {})
       }
       spec: {
-        initContainers: [
+        initContainers: tlsEnabled ? [
           {
             name: 'prepare-tls'
             image: 'postgres:${tag}'
@@ -190,27 +201,28 @@ chmod 644 /tls/server.crt
               }
             ]
           }
-        ]
+        ] : []
         containers: [
           {
             // This container is the running postgresql instance.
             name: 'postgres'
             image: 'postgres:${tag}'
-            args: [
+            args: concat([
               'postgres'
               '-c'
-              'ssl=on'
+              'ssl=${tlsEnabled ? 'on' : 'off'}'
+              '-c'
+              'hba_file=/transport/pg_hba-${tlsPolicy}.conf'
+              '-c'
+              'password_encryption=scram-sha-256'
+            ], tlsEnabled ? [
               '-c'
               'ssl_min_protocol_version=TLSv1.2'
               '-c'
               'ssl_cert_file=/tls/server.crt'
               '-c'
               'ssl_key_file=/tls/server.key'
-              '-c'
-              'hba_file=/transport/pg_hba-${tlsPolicy}.conf'
-              '-c'
-              'password_encryption=scram-sha-256'
-            ]
+            ] : [])
             readinessProbe: {
               exec: {
                 command: ['pg_isready', '-q', '-h', '127.0.0.1']
@@ -252,12 +264,13 @@ chmod 644 /tls/server.crt
                 value: database
               }
             ]
-            volumeMounts: concat([
+            volumeMounts: concat(tlsEnabled ? [
               {
                 name: 'tls'
                 mountPath: '/tls'
                 readOnly: true
               }
+            ] : [], [
               {
                 name: 'transport'
                 mountPath: '/transport'
@@ -272,7 +285,7 @@ chmod 644 /tls/server.crt
             ] : [])
           }
         ]
-        volumes: concat([
+        volumes: concat(tlsEnabled ? [
           {
             name: 'tls-source'
             secret: {
@@ -290,6 +303,7 @@ chmod 644 /tls/server.crt
               medium: 'Memory'
             }
           }
+        ] : [], [
           {
             name: 'transport'
             configMap: {
