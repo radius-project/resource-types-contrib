@@ -4,6 +4,7 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 TEMPLATE=$("$HOME/.rad/bin/bicep" build --stdout "$ROOT/Data/postgreSqlDatabases/recipes/azure/bicep/azure-postgresql.bicep")
 jq -e '
   (.parameters | keys == ["context", "postgreSqlServerConfigurations"]) and
+  (.parameters.context.type == "secureObject") and
   (.parameters.postgreSqlServerConfigurations.defaultValue == []) and
   (.variables.requestedTls | contains("tryGet") and contains("required")) and
   (.variables.serverName | contains("required") and contains("optional") and

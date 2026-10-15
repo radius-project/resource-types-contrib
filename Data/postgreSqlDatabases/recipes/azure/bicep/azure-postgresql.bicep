@@ -1,4 +1,5 @@
 @description('Authoritative resource and Azure context injected by Radius.')
+@secure()
 param context object
 
 @description('Literal AVM server configurations. An exact require_secure_transport entry overrides required/optional, but never permits disabled.')
