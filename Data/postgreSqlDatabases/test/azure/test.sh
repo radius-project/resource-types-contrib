@@ -23,8 +23,13 @@ fi
 if ! environment_state=$(rad env show "$ENVIRONMENT_NAME" --workspace "$WORKSPACE" -o json); then
     echo "Error: Could not read the Azure test Environment." >&2; exit 1
 fi
-if ! provider_scope=$(jq -er '.properties.providers.azure.scope | strings | select(length > 0)' <<<"$environment_state"); then
-    echo "Error: Azure test Environment has no provider scope." >&2; exit 1
+if ! provider_scope=$(jq -er '
+    .properties.providers.azure |
+    select((.subscriptionId | type) == "string" and (.resourceGroupName | type) == "string") |
+    select((.subscriptionId | length) > 0 and (.resourceGroupName | length) > 0) |
+    "/subscriptions/\(.subscriptionId)/resourceGroups/\(.resourceGroupName)"
+' <<<"$environment_state"); then
+    echo "Error: Azure test Environment has no valid subscription/resource group." >&2; exit 1
 fi
 if [[ -z "$SUBSCRIPTION" ]]; then
     if ! SUBSCRIPTION=$(az account show --query id -o tsv); then
