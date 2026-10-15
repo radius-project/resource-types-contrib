@@ -11,6 +11,10 @@ cat > "$TEST_ROOT/bin/rad" <<'EOF'
 #!/bin/bash
 set -euo pipefail
 echo "rad $*" >> "$MOCK_STATE/invocations"
+if [[ "$1" == env && " $* " == *" --preview "* ]]; then
+    echo "Error: unknown flag: --preview" >&2
+    exit 29
+fi
 table() {
     printf '%-48s %-12s %-15s %-12s %s\n' WORKSPACE KIND KUBECONTEXT GROUP ENVIRONMENT
     printf '%-48s %-12s %-15s %-12s %s\n' "$1" kubernetes kind-radius default env
@@ -71,8 +75,14 @@ case "$1 $2" in
         [[ "$MOCK_CASE" != delete-failure ]] || exit 27
         rm "$MOCK_STATE/workspace"
         ;;
-    "env create") [[ "$MOCK_CASE" != env-create-failure ]] || exit 28 ;;
-    "env show") echo '{"id":"/planes/radius/local/resourceGroups/fixture/providers/Radius.Core/environments/fixture"}' ;;
+    "env create")
+        [[ "$*" == "env create postgresql-upgrade-bicep-fixture --workspace postgresql-upgrade-bicep-fixture --kubernetes-namespace postgresql-upgrade-bicep-fixture" ]]
+        [[ "$MOCK_CASE" != env-create-failure ]] || exit 28
+        ;;
+    "env show")
+        [[ "$*" == "env show postgresql-upgrade-bicep-fixture --workspace postgresql-upgrade-bicep-fixture -o json" ]]
+        echo '{"id":"/planes/radius/local/resourceGroups/fixture/providers/Radius.Core/environments/fixture"}'
+        ;;
     *) echo "Unexpected rad call: $*" >&2; exit 99 ;;
 esac
 EOF

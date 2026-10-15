@@ -176,8 +176,8 @@ rad workspace create kubernetes "$CASE" --group "$CASE"
 WORKSPACE_CREATED=true
 kubectl create namespace "$CASE"
 NAMESPACE_CREATED=true
-rad env create "$CASE" --workspace "$CASE" --kubernetes-namespace "$CASE" --preview
-environment_id=$(rad env show "$CASE" --workspace "$CASE" --preview -o json | jq -er '.id')
+rad env create "$CASE" --workspace "$CASE" --kubernetes-namespace "$CASE"
+environment_id=$(rad env show "$CASE" --workspace "$CASE" -o json | jq -er '.id')
 POSTGRESQL_UPGRADE_PACK="$CASE" POSTGRESQL_UPGRADE_OLD_SOURCE="$OLD_SOURCE" \
     POSTGRESQL_UPGRADE_NEW_SOURCE="$NEW_SOURCE" \
     POSTGRESQL_UPGRADE_POLICY="$UPGRADE_POLICY" \
