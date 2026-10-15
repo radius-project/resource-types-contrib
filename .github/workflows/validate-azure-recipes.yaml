@@ -304,6 +304,10 @@ jobs:
       - name: Build Azure Recipes
         run: make build-azure-recipes
 
+      - name: Install PostgreSQL migration test client
+        if: matrix.recipe == 'bicep'
+        run: sudo apt-get update -qq && sudo apt-get install -y postgresql-client
+
       - name: Deploy checked-in Azure Recipe Packs
         if: matrix.recipe == 'bicep'
         run: .github/scripts/deploy-all-checked-in-recipe-packs.sh azure
@@ -328,6 +332,8 @@ jobs:
 
       - name: Test Azure ${{ matrix.recipe }} Recipes
         if: steps.generate.outputs.has_recipes == 'true'
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: RECIPE_PLATFORM_FILTER=azure make test ENVIRONMENT="$AZURE_ENVIRONMENT_NAME" RECIPE_TYPE=${{ matrix.recipe }}
 
       - name: Collect Radius pod logs
