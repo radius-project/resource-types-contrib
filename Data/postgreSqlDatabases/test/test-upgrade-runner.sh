@@ -131,6 +131,11 @@ cat > "$TEST_ROOT/scripts/test-tls.sh" <<'EOF'
 #!/bin/bash
 set -euo pipefail
 echo "transport $*" >> "$MOCK_STATE/invocations"
+case "$POSTGRESQL_UPGRADE_POLICY" in default|disabled) ;; *) exit 53 ;; esac
+if [[ "$MOCK_POLICY" != all ]]; then
+    [[ "$POSTGRESQL_UPGRADE_POLICY" == "$MOCK_POLICY" ]]
+fi
+echo "policy $POSTGRESQL_UPGRADE_POLICY" >> "$MOCK_STATE/invocations"
 if [[ "$POSTGRESQL_UPGRADE_OLD_SOURCE" == *@* ]]; then
     echo "RecipeDownloadFailed: digest references are not supported" >&2
     exit 52
@@ -140,6 +145,9 @@ fi
 [[ "$POSTGRESQL_UPGRADE_PACK" == postgresql-upgrade-bicep-fixture ]]
 [[ "$1" == bicep && "$3" == "$POSTGRESQL_UPGRADE_PACK" && "$4" == "$POSTGRESQL_UPGRADE_PACK" ]]
 [[ "$MOCK_CASE" != transport-failure ]] || exit 51
+if [[ "$MOCK_CASE" == disabled-transport-failure && "$POSTGRESQL_UPGRADE_POLICY" == disabled ]]; then
+    exit 54
+fi
 EOF
 chmod +x "$TEST_ROOT/bin/"*
 
@@ -151,27 +159,28 @@ assert_absent() {
 }
 
 count=0
+for policy in default disabled; do
 for scenario in success explicit-workspace current-failure malformed-current missing-current \
     spaced-current multiple-current list-failure malformed-list workspace-collision \
     registry-failure digest-mismatch missing-digest group-lookup-failure group-collision \
     malformed-groups malformed-group-entry namespace-lookup-failure namespace-collision group-create-failure \
     workspace-create-failure namespace-create-failure env-create-failure transport-failure \
     restore-failure delete-failure post-registry-failure post-digest-mismatch post-missing-digest; do
-    export MOCK_STATE="$TEST_ROOT/$scenario" MOCK_CASE="$scenario" MOCK_EXECUTION=default
+    export MOCK_STATE="$TEST_ROOT/$policy-$scenario" MOCK_CASE="$scenario" MOCK_EXECUTION=default MOCK_POLICY="$policy"
     mkdir -p "$MOCK_STATE/home"
     echo user-current > "$MOCK_STATE/current"
     : > "$MOCK_STATE/invocations"
-    args=(bicep)
     if [[ "$scenario" == explicit-workspace ]]; then
         MOCK_EXECUTION=execution-only
-        args+=("$MOCK_EXECUTION")
     fi
+    args=(bicep "$MOCK_EXECUTION" "$policy")
     status=0
     HOME="$MOCK_STATE/home" PATH="$TEST_ROOT/bin:$PATH" \
         bash "$TEST_ROOT/scripts/test-upgrade.sh" "${args[@]}" > "$MOCK_STATE/output" 2>&1 || status=$?
     if [[ "$scenario" == success || "$scenario" == explicit-workspace ]]; then
         [[ "$status" -eq 0 ]] || { cat "$MOCK_STATE/output"; exit 1; }
         grep -q '^transport ' "$MOCK_STATE/invocations"
+        grep -Fxq "policy $policy" "$MOCK_STATE/invocations"
         [[ "$(grep -c '^oras manifest fetch ' "$MOCK_STATE/invocations")" -eq 2 ]]
     else
         [[ "$status" -ne 0 ]] || { echo "Expected failure: $scenario" >&2; exit 1; }
@@ -221,4 +230,55 @@ for scenario in success explicit-workspace current-failure malformed-current mis
     esac
     count=$((count + 1))
 done
+done
+
+for scenario in success transport-failure disabled-transport-failure restore-failure; do
+    export MOCK_STATE="$TEST_ROOT/matrix-$scenario" MOCK_CASE="$scenario" MOCK_EXECUTION=execution-only MOCK_POLICY=all
+    mkdir -p "$MOCK_STATE/home"
+    echo user-current > "$MOCK_STATE/current"
+    : > "$MOCK_STATE/invocations"
+    status=0
+    HOME="$MOCK_STATE/home" PATH="$TEST_ROOT/bin:$PATH" \
+        bash "$TEST_ROOT/scripts/test-upgrade.sh" bicep "$MOCK_EXECUTION" > "$MOCK_STATE/output" 2>&1 || status=$?
+    if [[ "$scenario" == success ]]; then
+        [[ "$status" -eq 0 ]] || { cat "$MOCK_STATE/output"; exit 1; }
+        [[ "$(grep '^policy ' "$MOCK_STATE/invocations")" == $'policy default\npolicy disabled' ]]
+        [[ "$(grep -c '^oras manifest fetch ' "$MOCK_STATE/invocations")" -eq 4 ]]
+        # The first owned workspace must be deleted before the next is created.
+        [[ "$(grep '^rad workspace \(create\|switch\|delete\) ' "$MOCK_STATE/invocations" |
+            awk '{print $3}')" == $'create\nswitch\ndelete\ncreate\nswitch\ndelete' ]]
+        grep -q 'pre-TLS upgrades to default and disabled passed' "$MOCK_STATE/output"
+    else
+        [[ "$status" -ne 0 ]] || { echo "Expected matrix failure: $scenario" >&2; exit 1; }
+        if grep -q 'pre-TLS upgrades to default and disabled passed' "$MOCK_STATE/output"; then
+            echo "Failed upgrade matrix reported success" >&2
+            exit 1
+        fi
+        if [[ "$scenario" != disabled-transport-failure ]]; then
+            assert_absent '^policy disabled$'
+        else
+            grep -Fxq 'policy disabled' "$MOCK_STATE/invocations"
+        fi
+    fi
+    [[ ! -f "$MOCK_STATE/group" && ! -f "$MOCK_STATE/namespace" ]]
+    [[ ! -d "$MOCK_STATE/postgresql-upgrade-bicep-fixture" ]]
+    if [[ "$scenario" == restore-failure ]]; then
+        [[ -f "$MOCK_STATE/workspace" ]]
+    else
+        [[ ! -f "$MOCK_STATE/workspace" && "$(cat "$MOCK_STATE/current")" == user-current ]]
+    fi
+    count=$((count + 1))
+done
+
+export MOCK_STATE="$TEST_ROOT/invalid-policy" MOCK_CASE=success MOCK_EXECUTION=default MOCK_POLICY=invalid
+mkdir -p "$MOCK_STATE/home"
+: > "$MOCK_STATE/invocations"
+if HOME="$MOCK_STATE/home" PATH="$TEST_ROOT/bin:$PATH" \
+    bash "$TEST_ROOT/scripts/test-upgrade.sh" bicep default invalid > "$MOCK_STATE/output" 2>&1; then
+    echo "Invalid upgrade policy was accepted" >&2
+    exit 1
+fi
+grep -q 'Unsupported upgrade policy' "$MOCK_STATE/output"
+[[ ! -s "$MOCK_STATE/invocations" ]]
+count=$((count + 1))
 echo "PostgreSQL upgrade runner: $count mocked cases passed."

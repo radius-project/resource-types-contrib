@@ -5,9 +5,23 @@ umask 077
 RECIPE_TYPE="${1:?Recipe kind required}"
 case "$RECIPE_TYPE" in bicep|terraform) ;; *) echo "Unsupported recipe kind" >&2; exit 1 ;; esac
 TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
+EXECUTION_WORKSPACE="${2:-default}"
+UPGRADE_POLICY="${3:-all}"
+case "$UPGRADE_POLICY" in
+    all)
+        # Each baseline upgrade owns its setup and cleanup; never downgrade the
+        # already-upgraded database to simulate a second historical baseline.
+        for policy in default disabled; do
+            bash "$TEST_DIR/test-upgrade.sh" "$RECIPE_TYPE" "$EXECUTION_WORKSPACE" "$policy"
+        done
+        echo "==> $RECIPE_TYPE pre-TLS upgrades to default and disabled passed"
+        exit 0
+        ;;
+    default|disabled) ;;
+    *) echo "Error: Unsupported upgrade policy: $UPGRADE_POLICY" >&2; exit 1 ;;
+esac
 BASELINE_SHA=18142182e52e19a46b0ed172037357e8e142dcd2
 BASELINE_DIGEST=sha256:ca65f43501f39fc31689e8a292e9e0e3179e4ebf7a89ec0143c12b4a1dc24ddd
-EXECUTION_WORKSPACE="${2:-default}"
 ORIGINAL_WORKSPACE=""
 TMP_DIR="$(mktemp -d -t "postgresql-upgrade-$RECIPE_TYPE-XXXXXXXXXX")"
 CASE="$(basename "$TMP_DIR" | tr '[:upper:]' '[:lower:]')"
@@ -166,6 +180,7 @@ rad env create "$CASE" --workspace "$CASE" --kubernetes-namespace "$CASE" --prev
 environment_id=$(rad env show "$CASE" --workspace "$CASE" --preview -o json | jq -er '.id')
 POSTGRESQL_UPGRADE_PACK="$CASE" POSTGRESQL_UPGRADE_OLD_SOURCE="$OLD_SOURCE" \
     POSTGRESQL_UPGRADE_NEW_SOURCE="$NEW_SOURCE" \
+    POSTGRESQL_UPGRADE_POLICY="$UPGRADE_POLICY" \
     bash "$TEST_DIR/test-tls.sh" "$RECIPE_TYPE" "$environment_id" "$CASE" "$CASE"
 if [[ "$RECIPE_TYPE" == bicep ]]; then verify_baseline_digest; fi
-echo "==> $RECIPE_TYPE old-to-new Recipe upgrade and transport suite passed"
+echo "==> $RECIPE_TYPE old-to-new Recipe upgrade and transport suite passed (initial policy=$UPGRADE_POLICY)"
