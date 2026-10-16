@@ -190,6 +190,20 @@ and the CLI, then uses that name for assertions and cleanup. Keep the default
 name for manual use. Other required credentials must use a secure `password`
 parameter; the runner generates its value. Usernames can have a test default.
 
+The automated runners delete `Radius.Core` applications using the CLI's
+`--preview` mode and verify that the application is absent. They inventory
+registered resource types in the same workspace scope and verify that no
+resource retains the full application ID or an ID captured before deletion.
+Group-wide typed listing also detects orphans when the application record is
+already missing; listing or cleanup errors are failures, not proof of absence.
+Before deletion,
+they discover app-labelled workloads across namespaces rather than assuming the
+configured environment namespace is the runtime namespace. Any remaining
+Secrets, Deployments, Services, and ConfigMaps are removed only with that test
+application's label in the discovered namespaces, and their absence is checked.
+Deployment, assertion, discovery, or cleanup errors fail the test. Pack-backed
+tests never unregister a recipe or delete a shared Recipe Pack.
+
 Delete your test cluster when done:
 
 ```bash

@@ -12,9 +12,7 @@ cleanup() {
     local status=$?
     trap - EXIT
     if [[ "$app_started" == true ]]; then
-        rad app delete "$app_name" --workspace "$workspace" --yes || status=1
-        rtc_cleanup_kubernetes_resources "$namespace" "$app_name" || status=1
-        kubectl delete configmap -n "$namespace" -l "radapp.io/application=$app_name" || status=1
+        rtc_cleanup_test_application "$app_name" "$workspace" "$namespace" || status=1
     fi
     if [[ "$secret_created" == true ]]; then
         kubectl delete secret postgresql-tls -n "$namespace" || status=1

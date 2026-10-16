@@ -17,8 +17,8 @@
 # ------------------------------------------------------------
 
 # =============================================================================
-# Test a single Radius recipe by registering it, deploying a test app, and 
-# cleaning up. Automatically detects whether the recipe is Bicep or Terraform.
+# Test a recipe from an active Recipe Pack by deploying and cleaning up a test
+# app. Automatically detects whether the recipe is Bicep or Terraform.
 #
 # Usage: ./test-recipe.sh <path-to-recipe-directory>
 # Example: ./test-recipe.sh Security/secrets/recipes/kubernetes/bicep
@@ -143,10 +143,6 @@ if [[ "$RESOURCE_TYPE" == Radius.Data/postgreSqlDatabases && "$PLATFORM" == kube
 elif rtc_deploy_and_assert_test_app "$TEST_FILE" "$RESOURCE_TYPE" "testapp" "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE"; then
     : # Falls through to the shared success message below.
 else
-    rad recipe unregister default \
-        --workspace "$WORKSPACE_NAME" \
-        --environment "$ENVIRONMENT_PATH" \
-        --resource-type "$RESOURCE_TYPE"
     exit 1
 fi
 

@@ -79,6 +79,24 @@ case "$1" in
         fi
         exit "${DEPLOY_EXIT_CODE:-0}"
         ;;
+    app)
+        [[ " $* " == *" --preview "* ]] || { echo "Legacy application command refused" >&2; exit 90; }
+        case "$2" in
+            delete) exit 0 ;;
+            list) echo '[]' ;;
+            *) exit 90 ;;
+        esac
+        ;;
+    resource-type)
+        [[ "$2" == list ]] || exit 90
+        echo '[{"Name":"Radius.Data/mySqlDatabases"}]'
+        ;;
+    resource)
+        [[ "$2" == list && "$3" == Radius.Data/mySqlDatabases && " $* " == *" --preview "* ]] || exit 90
+        echo '[]'
+        ;;
+    workspace) exit 0 ;;
+    *) echo "Unexpected rad command: $1" >&2; exit 90 ;;
 esac
 exit 0
 EOF
@@ -89,6 +107,16 @@ cat >"$TEST_ROOT/bin/kubectl" <<'EOF'
 echo "kubectl $*" >>"$CALL_LOG"
 if [[ "$1" == wait ]]; then
     exit "${READINESS_EXIT_CODE:-0}"
+fi
+if [[ "$1" == get ]]; then
+    if [[ " $* " == *" --all-namespaces "* ]]; then
+        for arg in "$@"; do
+            [[ "$arg" != radapp.io/application=* ]] || app="${arg#*=}"
+        done
+        printf '{"items":[{"metadata":{"namespace":"azure-ns","labels":{"radapp.io/application":"%s"}}}]}\n' "$app"
+    else
+        echo '{"items":[]}'
+    fi
 fi
 EOF
 chmod +x "$TEST_ROOT/bin/kubectl"
