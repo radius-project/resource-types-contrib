@@ -20,8 +20,8 @@
 # Tests every runnable entry in every checked-in Recipe Pack for a platform
 # group. Each pack is activated before its entries are deployed.
 #
-# Entries without test/app.bicep are reported. A pack with no runnable entries
-# fails so nightly cannot report success without exercising that pack.
+# Temporarily excluded entries are reported as explicit skips. Any other entry
+# without test/app.bicep fails so nightly cannot silently lose coverage.
 #
 # Usage: ./test-all-recipe-pack-entries.sh <platform-group> [workspace] [environment]
 # Example: ./test-all-recipe-pack-entries.sh azure default default
@@ -58,6 +58,20 @@ tested=0
 skipped=0
 empty_packs=0
 
+skip_reason() {
+    case "$1" in
+        Compute/containerImages)
+            echo "requires a registry-backed test application; tracked by #398"
+            ;;
+        Compute/persistentVolumes | Compute/routes)
+            echo "test applications are being added by #397; enablement is tracked by #398"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 for pack_id in "${packs[@]}"; do
     resource_types="$(rtc_list_recipe_pack_types "$pack_id")"
     template="$(rtc_recipe_pack_template "$pack_id")"
@@ -72,9 +86,15 @@ for pack_id in "${packs[@]}"; do
 
     while IFS= read -r resource_type_dir; do
         [[ -z "$resource_type_dir" ]] && continue
-        if [[ ! -f "$resource_type_dir/test/app.bicep" ]]; then
-            echo "==> SKIPPED: $resource_type_dir from pack '$pack_id' has no test/app.bicep"
+        if reason="$(skip_reason "$resource_type_dir")"; then
+            echo "==> SKIPPED: $resource_type_dir from pack '$pack_id': $reason"
             skipped=$((skipped + 1))
+            continue
+        fi
+
+        if [[ ! -f "$resource_type_dir/test/app.bicep" ]]; then
+            echo "==> FAILED: $resource_type_dir from pack '$pack_id' has no test/app.bicep" >&2
+            failures=$((failures + 1))
             continue
         fi
 

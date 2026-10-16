@@ -93,8 +93,11 @@ Three testing layers use these shared helpers:
   MySQL runs with both TLS values and checks the server's
   `require_secure_transport` setting. This catches reversed TLS mappings that
   Layer 2 cannot detect.
-  Entries without test apps are reported as skipped. A pack with no runnable
-  entries fails, so nightly cannot pass without exercising each pack.
+  Explicit temporary exclusions are reported as skipped. Any other entry
+  without a test app fails, as does a pack with no runnable entries, so
+  nightly cannot silently lose coverage. The current exclusions are
+  `persistentVolumes`, `routes`, and `containerImages`; issue #398 tracks
+  their enablement.
   New entries with test apps are picked up automatically.
 
 ## Rollout

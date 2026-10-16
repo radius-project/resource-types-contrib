@@ -29,7 +29,9 @@ mkdir -p \
     "$FIXTURE_ROOT/Data/redisCaches/test" \
     "$FIXTURE_ROOT/Messaging/rabbitMQ/test" \
     "$FIXTURE_ROOT/Compute/containers/test" \
-    "$FIXTURE_ROOT/Compute/persistentVolumes" \
+    "$FIXTURE_ROOT/Compute/persistentVolumes/test" \
+    "$FIXTURE_ROOT/Compute/routes/test" \
+    "$FIXTURE_ROOT/Compute/containerImages/test" \
     "$TEST_ROOT/bin"
 
 cat >"$FIXTURE_ROOT/recipe-packs/azure-aks/azure-aks.bicep" <<'EOF'
@@ -48,6 +50,14 @@ resource pack 'Radius.Core/recipePacks@2025-08-01-preview' = {
       'Radius.Compute/persistentVolumes': {
         kind: 'bicep'
         source: 'ghcr.io/radius-project/kube-recipes/persistentvolumes:latest'
+      }
+      'Radius.Compute/routes': {
+        kind: 'bicep'
+        source: 'ghcr.io/radius-project/kube-recipes/routes:latest'
+      }
+      'Radius.Compute/containerImages': {
+        kind: 'bicep'
+        source: 'ghcr.io/radius-project/kube-recipes/containerimages:latest'
       }
     }
   }
@@ -71,7 +81,10 @@ EOF
 for test_file in \
     "$FIXTURE_ROOT/Data/redisCaches/test/app.bicep" \
     "$FIXTURE_ROOT/Messaging/rabbitMQ/test/app.bicep" \
-    "$FIXTURE_ROOT/Compute/containers/test/app.bicep"; do
+    "$FIXTURE_ROOT/Compute/containers/test/app.bicep" \
+    "$FIXTURE_ROOT/Compute/persistentVolumes/test/app.bicep" \
+    "$FIXTURE_ROOT/Compute/routes/test/app.bicep" \
+    "$FIXTURE_ROOT/Compute/containerImages/test/app.bicep"; do
     echo "param applicationName string" >"$test_file"
 done
 
@@ -123,8 +136,20 @@ test-recipe-pack-entry.sh Data/redisCaches azure-ws azure-env
 test-recipe-pack-entry.sh Messaging/rabbitMQ azure-ws azure-env"
 diff -u <(echo "$expected") "$CALL_LOG" ||
     fail "expected direct-module and repository-owned entries to run with their pack active"
-grep -q "1 skipped" <<<"$output" ||
-    fail "expected entries without test apps to be reported"
+grep -q "3 skipped" <<<"$output" ||
+    fail "expected the three explicit exclusions to be reported"
+if grep -Eq 'test-recipe-pack-entry.sh Compute/(persistentVolumes|routes|containerImages)' "$CALL_LOG"; then
+    fail "explicitly excluded entries should not run even when test apps exist"
+fi
+
+rm "$FIXTURE_ROOT/Messaging/rabbitMQ/test/app.bicep"
+: >"$CALL_LOG"
+if FAIL_TYPE="" run_driver azure azure-ws azure-env; then
+    fail "expected an unapproved missing test app to fail the driver"
+fi
+grep -q "test-recipe-pack-entry.sh Data/redisCaches" "$CALL_LOG" ||
+    fail "expected testing to continue after an unapproved missing test app"
+echo "param applicationName string" >"$FIXTURE_ROOT/Messaging/rabbitMQ/test/app.bicep"
 
 : >"$CALL_LOG"
 if FAIL_TYPE="Messaging/rabbitMQ" run_driver azure azure-ws azure-env; then
