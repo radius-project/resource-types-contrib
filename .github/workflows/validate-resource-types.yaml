@@ -126,6 +126,10 @@ jobs:
         if: matrix.recipe == 'bicep'
         run: bash Data/postgreSqlDatabases/test/assert-azure-tls-guard.sh
 
+      - name: Verify generated Azure PostgreSQL mappings
+        if: matrix.recipe == 'bicep'
+        run: bash Data/postgreSqlDatabases/test/assert-generated-azure-pack.sh
+
       - name: Build Recipes
         run: RECIPE_PLATFORM_FILTER=kubernetes make build
 

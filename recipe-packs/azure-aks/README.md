@@ -70,6 +70,15 @@ transport override. It is never mapped to `ON` or `OFF` as a fallback.
 Existing mapped AVM parameter names, credentials, settings, and the `fqdn`
 output are preserved.
 
+The pack exports `postgreSqlRecipeParameters` and `postgreSqlRecipeOutputs`
+as the canonical mapping. The Azure Bicep pack generator imports these exports
+for the locally built PostgreSQL wrapper, retaining its local registry source
+and `plainHttp: true`. Both paths accept `postgreSqlServerConfigurations` and
+map `host` to `fqdn`; neither maintains a separate copy of the parameter map.
+Generated packs need their relative import of this file to remain reachable.
+Regenerate a pack if you move it. The checked-in pack remains self-contained
+for release bundling.
+
 Publish the wrapper through the Bicep recipe publication workflow and ensure
 the selected tag is anonymously pullable before releasing this pack. Upgrade
 the schema and pack together; older packs do not reject the new `disabled`

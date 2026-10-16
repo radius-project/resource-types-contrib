@@ -86,6 +86,17 @@ exercise policy changes and rotation, and wait for explicit rollout/probe
 results. Use an isolated Environment without an existing `postgresql-tls`
 Secret. See the [PostgreSQL guide](../../Data/postgreSqlDatabases/README.md#kubernetes-transport-tests).
 
+Generated Azure Bicep packs reuse the checked-in Azure PostgreSQL parameter
+and output mapping while selecting the locally built wrapper. Run
+`bash .github/scripts/tests/test-generate-recipe-pack.sh` for generator fixtures.
+With an isolated Radius environment available, run
+`bash Data/postgreSqlDatabases/test/assert-generated-azure-pack.sh` to compile
+and register test-only packs and compare their evaluated mappings. This test
+does not activate the packs or provision Azure resources; Radius context
+expressions remain literal until an application resource is deployed. The
+Azure workflow's subsequent application deployment is the live provisioning
+check.
+
 ### 5. Test All Recipes
 
 Run tests for all recipes in the repository:
