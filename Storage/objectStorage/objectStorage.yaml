@@ -7,7 +7,10 @@ types:
       one, add an objectStorage resource to the application definition Bicep file.
       Unlike database types, no secret is required from the developer: Azure Storage
       generates its own account keys, so the platform-engineer recipe needs no
-      injected credentials.
+      injected credentials. On Kubernetes, the Kubernetes recipe runs a
+      single-node S3-compatible object store in the Environment's namespace,
+      creates the bucket named by `containerName`, and generates its own
+      secret key.
       ```bicep
       resource store 'Radius.Storage/objectStorage@2025-08-01-preview' = {
         name: 'store'
@@ -80,11 +83,11 @@ types:
               description: "(Optional) The object container (blob container / S3 bucket) name to create inside the storage account. Defaults to `data` if not provided."
             endpoint:
               type: string
-              description: The object storage endpoint used to connect to the store. Mapped from the recipe module's `primaryBlobEndpoint` output.
+              description: The object storage endpoint used to connect to the store. On Azure it is mapped from the recipe module's `primaryBlobEndpoint` output. For the Kubernetes recipe this is the in-cluster S3 endpoint, an `http` URL on port `9000` of the store's Service DNS name.
               readOnly: true
             accountName:
               type: string
-              description: The Azure Storage account name. Mapped from the recipe module's `name` output.
+              description: The storage account name. On Azure it is the Azure Storage account name, mapped from the recipe module's `name` output. The Kubernetes recipe sets it to the S3 access key ID.
               readOnly: true
             secrets:
               type: object
@@ -102,9 +105,9 @@ types:
                 connectionString:
                   type: string
                   readOnly: true
-                  description: The storage account connection string. Mapped from the recipe module's `primaryConnectionString` output; delivered via the managed secret.
+                  description: The connection string used to connect to the store. On Azure it is mapped from the recipe module's `primaryConnectionString` output. The Kubernetes recipe sets it to the endpoint URL with the access key ID and secret key embedded as user information. Delivered via the managed secret.
                 accountKey:
                   type: string
                   readOnly: true
-                  description: The Azure Storage account access key. Mapped from the recipe module's `primaryAccessKey` output; delivered via the managed secret.
+                  description: The access key used to connect to the store. On Azure it is the Azure Storage account access key, mapped from the recipe module's `primaryAccessKey` output. The Kubernetes recipe sets it to the generated S3 secret access key. Delivered via the managed secret.
           required: [environment]
