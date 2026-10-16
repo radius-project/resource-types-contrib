@@ -3,12 +3,15 @@ extension radius
 @description('The ID of your Radius Environment. Set automatically by the rad CLI.')
 param environment string
 
+@description('Application name. CI supplies a unique name for deployment and cleanup.')
+param applicationName string = 'postgresql-test'
+
 @description('Database admin password. Set on the `password` property of the database (x-radius-sensitive, so Radius encrypts it at rest and injects it decrypted into the Recipe) and stored in a Radius.Security/secrets resource for the consuming container to bind by reference.')
 @secure()
 param password string
 
 resource app 'Radius.Core/applications@2025-08-01-preview' = {
-  name: 'postgresql-test'
+  name: applicationName
   properties: {
     environment: environment
   }
