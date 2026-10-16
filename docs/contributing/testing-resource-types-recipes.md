@@ -343,10 +343,9 @@ Nightly tests first generate Bicep and Terraform packs and run every repository
 recipe for the selected platform. They then activate each checked-in pack
 before testing every entry that has a `test/app.bicep`. Entries without a test
 application fail unless they are explicitly excluded. The current temporary
-exclusions are `persistentVolumes`, `routes`, and `containerImages`; issue
-#398 tracks their enablement. A pack with no runnable entries also fails. The
-tests use the values in each Resource Type's test app; they do not test every
-enum value.
+exclusion is `containerImages`; issue #398 tracks its enablement. A pack with
+no runnable entries also fails. The tests use the values in each Resource
+Type's test app; they do not test every enum value.
 The static check validates Radius property references and enum comparison
 literals, not the target module's parameter contract.
 

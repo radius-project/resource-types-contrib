@@ -63,9 +63,6 @@ skip_reason() {
         Compute/containerImages)
             echo "requires a registry-backed test application; tracked by #398"
             ;;
-        Compute/persistentVolumes | Compute/routes)
-            echo "test applications are being added by #397; enablement is tracked by #398"
-            ;;
         *)
             return 1
             ;;

@@ -163,13 +163,15 @@ test-recipe-pack-entry.sh Compute/containers azure-ws azure-env
 rad env update azure-env --workspace azure-ws --recipe-packs azure-aks
 test-recipe-pack-entry.sh Data/redisCaches azure-ws azure-env
 test-recipe-pack-entry.sh Messaging/rabbitMQ azure-ws azure-env
-test-recipe-pack-entry.sh Data/mySqlDatabases azure-ws azure-env verify-transport"
+test-recipe-pack-entry.sh Data/mySqlDatabases azure-ws azure-env verify-transport
+test-recipe-pack-entry.sh Compute/persistentVolumes azure-ws azure-env
+test-recipe-pack-entry.sh Compute/routes azure-ws azure-env"
 diff -u <(echo "$expected") "$CALL_LOG" ||
     fail "expected direct-module and repository-owned entries to run with their pack active"
-grep -q "3 skipped" <<<"$output" ||
-    fail "expected the three explicit exclusions to be reported"
-if grep -Eq 'test-recipe-pack-entry.sh Compute/(persistentVolumes|routes|containerImages)' "$CALL_LOG"; then
-    fail "explicitly excluded entries should not run even when test apps exist"
+grep -q "1 skipped" <<<"$output" ||
+    fail "expected the containerImages exclusion to be reported"
+if grep -q 'test-recipe-pack-entry.sh Compute/containerImages' "$CALL_LOG"; then
+    fail "the explicitly excluded containerImages entry should not run"
 fi
 
 rm "$FIXTURE_ROOT/Messaging/rabbitMQ/test/app.bicep"

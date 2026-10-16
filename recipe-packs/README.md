@@ -101,7 +101,7 @@ make validate-direct-module-mappings
 # Layer 3: real deployment test of every repository recipe and every
 # non-excluded entry in every checked-in pack. The entry command requires all
 # packs for the group to be deployed and activates each in turn. Issue #398
-# tracks the temporary persistentVolumes, routes, and containerImages skips.
+# tracks the temporary containerImages skip.
 make test-recipe-pack-entries PLATFORM_GROUP=kubernetes WORKSPACE=default ENVIRONMENT=default
 
 # Test the shared library and test drivers without cloud resources (requires jq)

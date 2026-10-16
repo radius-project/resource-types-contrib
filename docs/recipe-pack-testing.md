@@ -95,9 +95,8 @@ Three testing layers use these shared helpers:
   Layer 2 cannot detect.
   Explicit temporary exclusions are reported as skipped. Any other entry
   without a test app fails, as does a pack with no runnable entries, so
-  nightly cannot silently lose coverage. The current exclusions are
-  `persistentVolumes`, `routes`, and `containerImages`; issue #398 tracks
-  their enablement.
+  nightly cannot silently lose coverage. The current exclusion is
+  `containerImages`; issue #398 tracks its enablement.
   New entries with test apps are picked up automatically.
 
 ## Rollout
