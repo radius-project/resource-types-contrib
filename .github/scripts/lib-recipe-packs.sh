@@ -52,8 +52,8 @@
 #   - deploy-all-checked-in-recipe-packs.sh  (Layer 1: does the pack deploy?)
 #   - validate-direct-module-mappings.sh     (Layer 2: are the gap mappings
 #     correct, checked statically, no cloud cost?)
-#   - test-direct-module-recipe.sh / the nightly workflow (Layer 3: does the
-#     gap actually work against real infrastructure?)
+#   - test-all-recipe-pack-entries.sh / the nightly workflow (Layer 3: does
+#     every non-excluded mapping work against real infrastructure?)
 #
 # Usage:
 #   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -293,6 +293,17 @@ rtc_recipe_pack_entry_body() {
             print line
         }
     ' "$bicep_file" 2>/dev/null
+}
+
+# True when a pack's MySQL entry maps the Radius tls property to the server's
+# require_secure_transport setting. Callers use this to choose between a
+# transport-policy assertion and a connection-only probe.
+rtc_recipe_pack_verifies_mysql_transport() {
+    local pack_id="$1" bicep_file body
+    bicep_file="$(rtc_recipe_pack_template "$pack_id")" || return 1
+    body="$(rtc_recipe_pack_entry_body "$bicep_file" "Radius.Data/mySqlDatabases")" || return 1
+    grep -Fq "name: 'require_secure_transport'" <<<"$body" &&
+        grep -Fq 'context.resource.properties.tls' <<<"$body"
 }
 
 # Print the Resource Type directories (e.g. "Data/mySqlDatabases") in a pack

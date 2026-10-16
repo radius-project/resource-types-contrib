@@ -16,10 +16,13 @@
 # limitations under the License.
 # ------------------------------------------------------------
 
-# Compatibility entry point for direct-module callers. The shared Recipe Pack
-# entry runner now tests both direct-module and repository-owned mappings.
+# Compatibility entry point for direct-module callers. Direct-module MySQL
+# mappings enforce tls, so preserve their transport-policy assertions.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ $# -eq 3 ]]; then
+    set -- "$@" verify-transport
+fi
 exec "$SCRIPT_DIR/test-recipe-pack-entry.sh" "$@"

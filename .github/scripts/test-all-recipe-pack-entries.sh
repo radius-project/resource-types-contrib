@@ -101,10 +101,19 @@ for pack_id in "${packs[@]}"; do
         tested=$((tested + 1))
         pack_tested=$((pack_tested + 1))
 
+        test_args=("$resource_type_dir" "$workspace_name" "$environment_name")
+        if [[ "$resource_type_dir" == "Data/mySqlDatabases" ]]; then
+            mysql_test_mode="connection-only"
+            if rtc_recipe_pack_verifies_mysql_transport "$pack_id"; then
+                mysql_test_mode="verify-transport"
+            fi
+            test_args+=("$mysql_test_mode")
+        fi
+
         echo "=============================================================="
         echo "==> Recipe Pack entry test: $resource_type_dir (from pack '$pack_id')"
         echo "=============================================================="
-        if ! "$SCRIPT_DIR/test-recipe-pack-entry.sh" "$resource_type_dir" "$workspace_name" "$environment_name"; then
+        if ! "$SCRIPT_DIR/test-recipe-pack-entry.sh" "${test_args[@]}"; then
             echo "==> FAILED: $resource_type_dir (from pack '$pack_id')" >&2
             failures=$((failures + 1))
         fi

@@ -18,10 +18,11 @@
 
 # =============================================================================
 # Runs test-direct-module-recipe.sh for every direct-module Resource Type
-# across every checked-in Recipe Pack targeting a platform group. This is the
-# driver the nightly workflow (Layer 3 of issue #312) uses: it assumes
-# deploy-all-checked-in-recipe-packs.sh has already deployed that group's
-# packs. Each pack is activated before its mappings are tested.
+# across every checked-in Recipe Pack targeting a platform group. Retained as
+# a compatibility command for focused direct-module checks; the nightly
+# workflow uses test-all-recipe-pack-entries.sh. This script assumes
+# deploy-all-checked-in-recipe-packs.sh has already deployed the group's packs.
+# Each pack is activated before its mappings are tested.
 #
 # A type in two packs is tested twice: each pack can use a different mapping.
 #

@@ -23,8 +23,8 @@
 # The script does not register or unregister an individual recipe. The active
 # pack must resolve the Resource Type.
 #
-# Usage: ./test-recipe-pack-entry.sh <resource-type-dir> <workspace-name> <environment-name>
-# Example: ./test-recipe-pack-entry.sh Data/mySqlDatabases default default
+# Usage: ./test-recipe-pack-entry.sh <resource-type-dir> <workspace-name> <environment-name> [mysql-test-mode]
+# Example: ./test-recipe-pack-entry.sh Data/mySqlDatabases default default connection-only
 # =============================================================================
 
 set -euo pipefail
@@ -32,14 +32,15 @@ set -euo pipefail
 RESOURCE_TYPE_PATH="${1:-}"
 WORKSPACE_NAME="${2:-}"
 ENVIRONMENT_NAME="${3:-}"
+MYSQL_TEST_MODE="${4:-connection-only}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=.github/scripts/lib-recipe-test.sh
 source "$SCRIPT_DIR/lib-recipe-test.sh"
 
 if [[ -z "$RESOURCE_TYPE_PATH" || -z "$WORKSPACE_NAME" || -z "$ENVIRONMENT_NAME" ]]; then
-    echo "Usage: $0 <resource-type-dir> <workspace-name> <environment-name>" >&2
-    echo "Example: $0 Data/mySqlDatabases default default" >&2
+    echo "Usage: $0 <resource-type-dir> <workspace-name> <environment-name> [mysql-test-mode]" >&2
+    echo "Example: $0 Data/mySqlDatabases default default connection-only" >&2
     exit 1
 fi
 
@@ -72,13 +73,16 @@ fi
 IFS=$'\t' read -r ENVIRONMENT_PATH KUBERNETES_NAMESPACE <<<"$RESOLVED"
 echo "==> Environment path: $ENVIRONMENT_PATH"
 
-if [[ "$RESOURCE_TYPE" == "Radius.Data/mySqlDatabases" ]]; then
-    for tls in required optional; do
-        echo "==> Testing MySQL transport policy: $tls"
-        rtc_deploy_and_assert_test_app "$TEST_FILE" "$RESOURCE_TYPE" "recipepacktest-$tls" \
+if [[ "$RESOURCE_TYPE" == "Radius.Data/mySqlDatabases" && "$MYSQL_TEST_MODE" == "verify-transport" ]]; then
+    for tls_policy in required optional; do
+        echo "==> Testing MySQL transport policy: $tls_policy"
+        rtc_deploy_and_assert_test_app "$TEST_FILE" "$RESOURCE_TYPE" "recipepacktest-$tls_policy" \
             "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE" \
-            --parameters "tls=$tls" --parameters "@$RESOURCE_TYPE_PATH/test/verify-transport.parameters.json" || exit 1
+            --parameters "tls=$tls_policy" --parameters "@$RESOURCE_TYPE_PATH/test/verify-transport.parameters.json" || exit 1
     done
+elif [[ "$RESOURCE_TYPE" == "Radius.Data/mySqlDatabases" && "$MYSQL_TEST_MODE" != "connection-only" ]]; then
+    echo "Error: unsupported MySQL test mode '$MYSQL_TEST_MODE'. Use connection-only or verify-transport." >&2
+    exit 1
 else
     rtc_deploy_and_assert_test_app "$TEST_FILE" "$RESOURCE_TYPE" "recipepacktest" \
         "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE" || exit 1

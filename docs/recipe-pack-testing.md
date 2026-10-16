@@ -113,9 +113,10 @@ The implementation follows these steps:
 3. Build `validate-direct-module-mappings.sh` (Layer 2) and wire it into the
    existing cheap/local `validate-release-automation` job.
 4. Refactor `test-recipe.sh`'s shared deploy/assert logic into a sourced
-   library; build `test-direct-module-recipe.sh` on top of it.
+   library; build `test-recipe-pack-entry.sh` and its compatibility wrapper on
+   top of it.
 5. Build the nightly workflow (Layer 3), with Kubernetes and Azure jobs, reusing
-   steps 2 and 4.
+   steps 2 and 4 through `test-all-recipe-pack-entries.sh`.
 6. Update docs: `recipe-packs/README.md` (how to add a pack / how coverage
    works) and `docs/contributing/testing-resource-types-recipes.md`.
 7. Add script-level tests for every new script under `.github/scripts/tests/`,

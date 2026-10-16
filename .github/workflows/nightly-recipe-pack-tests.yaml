@@ -59,29 +59,82 @@ jobs:
       - name: Build Resource Types and Kubernetes Recipes
         run: RECIPE_PLATFORM_FILTER=kubernetes make build
 
-      - name: Test all Kubernetes recipes
+      - name: Test Kubernetes Bicep recipes
+        id: kubernetes_bicep
+        continue-on-error: true
         run: |
           set -euo pipefail
-          for recipe_type in bicep terraform; do
-            pack_name="nightly${recipe_type}recipepack"
-            pack_file="recipe-pack-nightly-${recipe_type}.bicep"
-            RECIPE_PLATFORM_FILTER=kubernetes make generate-recipe-pack \
-              PACK_NAME="$pack_name" \
-              OUTPUT_FILE="$pack_file"
-            make deploy-recipe-pack BICEP_FILE="$pack_file"
-            make update-env-recipe-pack \
-              RECIPE_PACK_NAME="$pack_name" \
-              ENVIRONMENT="$RAD_ENVIRONMENT_NAME"
-            RECIPE_PLATFORM_FILTER=kubernetes make test \
-              ENVIRONMENT="$RAD_ENVIRONMENT_NAME" \
-              RECIPE_TYPE="$recipe_type"
-          done
+          pack_name="nightlybiceprecipepack"
+          pack_file="recipe-pack-nightly-bicep.bicep"
+          RECIPE_PLATFORM_FILTER=kubernetes make generate-recipe-pack \
+            PACK_NAME="$pack_name" \
+            OUTPUT_FILE="$pack_file"
+          if [[ ! -f "$pack_file" ]]; then
+            echo "No Kubernetes bicep recipes found."
+            exit 0
+          fi
+          make deploy-recipe-pack BICEP_FILE="$pack_file"
+          make update-env-recipe-pack \
+            RECIPE_PACK_NAME="$pack_name" \
+            ENVIRONMENT="$RAD_ENVIRONMENT_NAME"
+          RECIPE_PLATFORM_FILTER=kubernetes make test \
+            ENVIRONMENT="$RAD_ENVIRONMENT_NAME" \
+            RECIPE_TYPE=bicep
+
+      - name: Test Kubernetes Terraform recipes
+        id: kubernetes_terraform
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          pack_name="nightlyterraformrecipepack"
+          pack_file="recipe-pack-nightly-terraform.bicep"
+          RECIPE_PLATFORM_FILTER=kubernetes make generate-recipe-pack \
+            PACK_NAME="$pack_name" \
+            OUTPUT_FILE="$pack_file"
+          if [[ ! -f "$pack_file" ]]; then
+            echo "No Kubernetes terraform recipes found."
+            exit 0
+          fi
+          make deploy-recipe-pack BICEP_FILE="$pack_file"
+          make update-env-recipe-pack \
+            RECIPE_PACK_NAME="$pack_name" \
+            ENVIRONMENT="$RAD_ENVIRONMENT_NAME"
+          RECIPE_PLATFORM_FILTER=kubernetes make test \
+            ENVIRONMENT="$RAD_ENVIRONMENT_NAME" \
+            RECIPE_TYPE=terraform
 
       - name: Deploy checked-in Kubernetes Recipe Pack
+        id: kubernetes_pack_deploy
+        continue-on-error: true
         run: .github/scripts/deploy-all-checked-in-recipe-packs.sh kubernetes "$RAD_ENVIRONMENT_NAME"
 
       - name: Test all runnable Recipe Pack entries
+        id: kubernetes_pack_entries
+        continue-on-error: true
         run: make test-recipe-pack-entries PLATFORM_GROUP=kubernetes WORKSPACE=default ENVIRONMENT="$RAD_ENVIRONMENT_NAME"
+
+      - name: Report Kubernetes test failures
+        if: ${{ !cancelled() }}
+        env:
+          BICEP_OUTCOME: ${{ steps.kubernetes_bicep.outcome }}
+          TERRAFORM_OUTCOME: ${{ steps.kubernetes_terraform.outcome }}
+          PACK_DEPLOY_OUTCOME: ${{ steps.kubernetes_pack_deploy.outcome }}
+          PACK_ENTRIES_OUTCOME: ${{ steps.kubernetes_pack_entries.outcome }}
+        run: |
+          failures=0
+          for result in \
+            "Bicep recipes:$BICEP_OUTCOME" \
+            "Terraform recipes:$TERRAFORM_OUTCOME" \
+            "checked-in pack deployment:$PACK_DEPLOY_OUTCOME" \
+            "checked-in pack entries:$PACK_ENTRIES_OUTCOME"; do
+            name="${result%%:*}"
+            outcome="${result#*:}"
+            if [[ "$outcome" != "success" ]]; then
+              echo "::error::$name finished with outcome '$outcome'"
+              failures=1
+            fi
+          done
+          exit "$failures"
 
       - name: Collect Radius pod logs
         if: always()
@@ -202,34 +255,83 @@ jobs:
       - name: Build Azure Recipes
         run: make build-azure-recipes
 
-      - name: Test all Azure recipes
+      - name: Test Azure Bicep recipes
+        id: azure_bicep
+        continue-on-error: true
         run: |
           set -euo pipefail
-          for recipe_type in bicep terraform; do
-            pack_name="nightlyazure${recipe_type}recipepack"
-            pack_file="recipe-pack-nightly-azure-${recipe_type}.bicep"
-            RECIPE_PLATFORM_FILTER=azure make generate-recipe-pack \
-              PACK_NAME="$pack_name" \
-              OUTPUT_FILE="$pack_file"
-            if [[ ! -f "$pack_file" ]]; then
-              echo "No Azure $recipe_type recipes found."
-              continue
-            fi
-            make deploy-recipe-pack BICEP_FILE="$pack_file" RESOURCE_GROUP=default
-            make update-env-recipe-pack \
-              RECIPE_PACK_NAME="$pack_name" \
-              ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
-            RECIPE_PLATFORM_FILTER=azure make test \
-              ENVIRONMENT="$AZURE_ENVIRONMENT_NAME" \
-              RECIPE_TYPE="$recipe_type"
-          done
+          pack_name="nightlyazurebiceprecipepack"
+          pack_file="recipe-pack-nightly-azure-bicep.bicep"
+          RECIPE_PLATFORM_FILTER=azure make generate-recipe-pack \
+            PACK_NAME="$pack_name" \
+            OUTPUT_FILE="$pack_file"
+          if [[ ! -f "$pack_file" ]]; then
+            echo "No Azure bicep recipes found."
+            exit 0
+          fi
+          make deploy-recipe-pack BICEP_FILE="$pack_file" RESOURCE_GROUP=default
+          make update-env-recipe-pack \
+            RECIPE_PACK_NAME="$pack_name" \
+            ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+          RECIPE_PLATFORM_FILTER=azure make test \
+            ENVIRONMENT="$AZURE_ENVIRONMENT_NAME" \
+            RECIPE_TYPE=bicep
+
+      - name: Test Azure Terraform recipes
+        id: azure_terraform
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          pack_name="nightlyazureterraformrecipepack"
+          pack_file="recipe-pack-nightly-azure-terraform.bicep"
+          RECIPE_PLATFORM_FILTER=azure make generate-recipe-pack \
+            PACK_NAME="$pack_name" \
+            OUTPUT_FILE="$pack_file"
+          if [[ ! -f "$pack_file" ]]; then
+            echo "No Azure terraform recipes found."
+            exit 0
+          fi
+          make deploy-recipe-pack BICEP_FILE="$pack_file" RESOURCE_GROUP=default
+          make update-env-recipe-pack \
+            RECIPE_PACK_NAME="$pack_name" \
+            ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+          RECIPE_PLATFORM_FILTER=azure make test \
+            ENVIRONMENT="$AZURE_ENVIRONMENT_NAME" \
+            RECIPE_TYPE=terraform
 
       - name: Deploy checked-in Azure Recipe Packs
+        id: azure_pack_deploy
+        continue-on-error: true
         run: .github/scripts/deploy-all-checked-in-recipe-packs.sh azure "$AZURE_ENVIRONMENT_NAME"
 
       - name: Test all runnable Recipe Pack entries
+        id: azure_pack_entries
+        continue-on-error: true
         timeout-minutes: 180
         run: make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+
+      - name: Report Azure test failures
+        if: ${{ !cancelled() }}
+        env:
+          BICEP_OUTCOME: ${{ steps.azure_bicep.outcome }}
+          TERRAFORM_OUTCOME: ${{ steps.azure_terraform.outcome }}
+          PACK_DEPLOY_OUTCOME: ${{ steps.azure_pack_deploy.outcome }}
+          PACK_ENTRIES_OUTCOME: ${{ steps.azure_pack_entries.outcome }}
+        run: |
+          failures=0
+          for result in \
+            "Bicep recipes:$BICEP_OUTCOME" \
+            "Terraform recipes:$TERRAFORM_OUTCOME" \
+            "checked-in pack deployment:$PACK_DEPLOY_OUTCOME" \
+            "checked-in pack entries:$PACK_ENTRIES_OUTCOME"; do
+            name="${result%%:*}"
+            outcome="${result#*:}"
+            if [[ "$outcome" != "success" ]]; then
+              echo "::error::$name finished with outcome '$outcome'"
+              failures=1
+            fi
+          done
+          exit "$failures"
 
       - name: Collect Radius pod logs
         if: always()

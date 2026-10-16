@@ -26,7 +26,9 @@ FIXTURE_ROOT="$TEST_ROOT/repo"
 mkdir -p \
     "$FIXTURE_ROOT/recipe-packs/azure-aks" \
     "$FIXTURE_ROOT/recipe-packs/azure-aci" \
+    "$FIXTURE_ROOT/recipe-packs/kubernetes" \
     "$FIXTURE_ROOT/Data/redisCaches/test" \
+    "$FIXTURE_ROOT/Data/mySqlDatabases/test" \
     "$FIXTURE_ROOT/Messaging/rabbitMQ/test" \
     "$FIXTURE_ROOT/Compute/containers/test" \
     "$FIXTURE_ROOT/Compute/persistentVolumes/test" \
@@ -47,6 +49,18 @@ resource pack 'Radius.Core/recipePacks@2025-08-01-preview' = {
         kind: 'bicep'
         source: 'ghcr.io/radius-project/kube-recipes/rabbitmq:latest'
       }
+      'Radius.Data/mySqlDatabases': {
+        kind: 'bicep'
+        source: 'mcr.microsoft.com/bicep/avm/res/db-for-my-sql/flexible-server:0.10.3'
+        parameters: {
+          configurations: [
+            {
+              name: 'require_secure_transport'
+              value: '{{context.resource.properties.tls == "optional" ? "OFF" : "ON"}}'
+            }
+          ]
+        }
+      }
       'Radius.Compute/persistentVolumes': {
         kind: 'bicep'
         source: 'ghcr.io/radius-project/kube-recipes/persistentvolumes:latest'
@@ -58,6 +72,20 @@ resource pack 'Radius.Core/recipePacks@2025-08-01-preview' = {
       'Radius.Compute/containerImages': {
         kind: 'bicep'
         source: 'ghcr.io/radius-project/kube-recipes/containerimages:latest'
+      }
+    }
+  }
+}
+EOF
+
+cat >"$FIXTURE_ROOT/recipe-packs/kubernetes/default.bicep" <<'EOF'
+resource pack 'Radius.Core/recipePacks@2025-08-01-preview' = {
+  name: 'default'
+  properties: {
+    recipes: {
+      'Radius.Data/mySqlDatabases': {
+        kind: 'bicep'
+        source: 'ghcr.io/radius-project/kube-recipes/mysqldatabases:latest'
       }
     }
   }
@@ -80,6 +108,7 @@ EOF
 
 for test_file in \
     "$FIXTURE_ROOT/Data/redisCaches/test/app.bicep" \
+    "$FIXTURE_ROOT/Data/mySqlDatabases/test/app.bicep" \
     "$FIXTURE_ROOT/Messaging/rabbitMQ/test/app.bicep" \
     "$FIXTURE_ROOT/Compute/containers/test/app.bicep" \
     "$FIXTURE_ROOT/Compute/persistentVolumes/test/app.bicep" \
@@ -133,7 +162,8 @@ expected="rad env update azure-env --workspace azure-ws --recipe-packs azure-aci
 test-recipe-pack-entry.sh Compute/containers azure-ws azure-env
 rad env update azure-env --workspace azure-ws --recipe-packs azure-aks
 test-recipe-pack-entry.sh Data/redisCaches azure-ws azure-env
-test-recipe-pack-entry.sh Messaging/rabbitMQ azure-ws azure-env"
+test-recipe-pack-entry.sh Messaging/rabbitMQ azure-ws azure-env
+test-recipe-pack-entry.sh Data/mySqlDatabases azure-ws azure-env verify-transport"
 diff -u <(echo "$expected") "$CALL_LOG" ||
     fail "expected direct-module and repository-owned entries to run with their pack active"
 grep -q "3 skipped" <<<"$output" ||
@@ -152,11 +182,17 @@ grep -q "test-recipe-pack-entry.sh Data/redisCaches" "$CALL_LOG" ||
 echo "param applicationName string" >"$FIXTURE_ROOT/Messaging/rabbitMQ/test/app.bicep"
 
 : >"$CALL_LOG"
-if FAIL_TYPE="Messaging/rabbitMQ" run_driver azure azure-ws azure-env; then
+if FAIL_TYPE="Data/redisCaches" run_driver azure azure-ws azure-env; then
     fail "expected a failing entry to fail the driver"
 fi
-grep -q "test-recipe-pack-entry.sh Compute/containers" "$CALL_LOG" ||
+grep -q "test-recipe-pack-entry.sh Messaging/rabbitMQ" "$CALL_LOG" ||
     fail "expected testing to continue after an entry failure"
+
+: >"$CALL_LOG"
+run_driver kubernetes kubernetes-ws kubernetes-env >/dev/null ||
+    fail "expected the Kubernetes MySQL connection probe to pass"
+grep -q "test-recipe-pack-entry.sh Data/mySqlDatabases kubernetes-ws kubernetes-env connection-only" "$CALL_LOG" ||
+    fail "expected Kubernetes MySQL to use the connection-only probe"
 
 : >"$CALL_LOG"
 if ACTIVATE_EXIT_CODE=1 run_driver azure azure-ws azure-env; then
@@ -168,8 +204,10 @@ fi
 
 rm -f "$FIXTURE_ROOT/Compute/containers/test/app.bicep"
 : >"$CALL_LOG"
-if run_driver azure azure-ws azure-env; then
+if output=$(run_driver azure azure-ws azure-env 2>&1); then
     fail "expected a pack with no runnable entries to fail"
 fi
+grep -q "Recipe Pack 'azure-aci' has no entries with test applications" <<<"$output" ||
+    fail "expected the empty azure-aci pack rule to cause the failure"
 
 echo "Test all Recipe Pack entries tests passed"

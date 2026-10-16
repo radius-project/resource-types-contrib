@@ -53,13 +53,15 @@ a default branch. The nightly deployment checks the values used by each test
 app, not every possible property value. A type used by two packs is tested
 once per pack, with that pack active.
 
-MySQL direct-module tests run both `tls: required` and `tls: optional`.
-They pass `verifyTransport` through `test/verify-transport.parameters.json`
-because Radius CLI `name=value` arguments are strings, not Booleans.
-The client readiness probe reads `@@GLOBAL.require_secure_transport` from
-the deployed server and requires `1` or `0`, respectively. CI waits for that
-probe before it reports success. Reversed mappings fail even when a database
-connection succeeds. Per-recipe MySQL tests keep their connection-only probe.
+MySQL pack entries that map `tls` to `require_secure_transport` run both
+`tls: required` and `tls: optional`. They pass `verifyTransport` through
+`test/verify-transport.parameters.json` because Radius CLI `name=value`
+arguments are strings, not Booleans. The client readiness probe reads
+`@@GLOBAL.require_secure_transport` from the deployed server and requires `1`
+or `0`, respectively. CI waits for that probe before it reports success.
+Reversed mappings fail even when a database connection succeeds. Pack entries
+that do not enforce transport policy, such as the Kubernetes MySQL recipe, use
+the connection-only probe.
 
 ### What to do when you add or change a pack
 

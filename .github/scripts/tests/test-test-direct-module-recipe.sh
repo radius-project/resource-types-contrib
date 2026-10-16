@@ -58,19 +58,24 @@ case "$1" in
         ;;
     deploy)
         if [[ "$2" == */mySqlDatabases/test/app.bicep ]]; then
-            verified=false
-            args=("$@")
-            for ((i=0; i<${#args[@]}-1; i++)); do
-                if [[ "${args[i]}" == --parameters && "${args[i+1]}" == @* ]]; then
-                    if ! jq -e '.parameters.verifyTransport.value == true' "${args[i+1]#@}" >/dev/null; then
-                        echo "Error: verifyTransport must be a JSON Boolean true." >&2
-                        exit 1
+            if [[ "${EXPECT_VERIFY_TRANSPORT:-true}" == "true" ]]; then
+                verified=false
+                args=("$@")
+                for ((i=0; i<${#args[@]}-1; i++)); do
+                    if [[ "${args[i]}" == --parameters && "${args[i+1]}" == @* ]]; then
+                        if ! jq -e '.parameters.verifyTransport.value == true' "${args[i+1]#@}" >/dev/null; then
+                            echo "Error: verifyTransport must be a JSON Boolean true." >&2
+                            exit 1
+                        fi
+                        verified=true
                     fi
-                    verified=true
+                done
+                if [[ "$verified" != true || "$*" == *"verifyTransport="* ]]; then
+                    echo "Error: Expected a typed verifyTransport parameter file, not a string argument." >&2
+                    exit 1
                 fi
-            done
-            if [[ "$verified" != true || "$*" == *"verifyTransport="* ]]; then
-                echo "Error: Expected a typed verifyTransport parameter file, not a string argument." >&2
+            elif [[ "$*" == *"tls="* || "$*" == *"verify-transport.parameters.json"* ]]; then
+                echo "Error: connection-only mode must not assert transport policy." >&2
                 exit 1
             fi
         fi
@@ -101,6 +106,15 @@ run_test() {
     )
 }
 
+run_entry_test() {
+    (
+        export EXPECT_VERIFY_TRANSPORT="${EXPECT_VERIFY_TRANSPORT:-true}"
+        PATH="$TEST_ROOT/bin:$PATH"
+        cd "$FIXTURE_ROOT"
+        "$REPO_ROOT/.github/scripts/test-recipe-pack-entry.sh" "$@"
+    )
+}
+
 fail() {
     echo "FAIL: $1" >&2
     exit 1
@@ -126,6 +140,26 @@ done
     fail "both branches must wait for the client probe result before reporting success"
 grep -q "rad recipe unregister" "$CALL_LOG" &&
     fail "a direct-module test must never unregister a recipe -- it never registered one"
+
+# --- connection-only MySQL mode deploys once without policy parameters -----
+: >"$CALL_LOG"
+EXPECT_VERIFY_TRANSPORT=false run_entry_test Data/mySqlDatabases azure azure connection-only ||
+    fail "expected the MySQL connection-only probe to succeed"
+[[ "$(grep -c '^rad deploy' "$CALL_LOG")" -eq 1 ]] ||
+    fail "connection-only mode must deploy one MySQL test application"
+if grep -Eq 'tls=|verify-transport.parameters.json' "$CALL_LOG"; then
+    fail "connection-only mode must not pass transport-policy parameters"
+fi
+[[ "$(grep -c '^rad app delete' "$CALL_LOG")" -eq 1 ]] ||
+    fail "connection-only mode must clean up its application"
+
+: >"$CALL_LOG"
+if run_entry_test Data/mySqlDatabases azure azure unsupported-mode; then
+    fail "an unsupported MySQL test mode must fail"
+fi
+if grep -q '^rad deploy' "$CALL_LOG"; then
+    fail "an unsupported MySQL test mode must fail before deployment"
+fi
 
 : >"$CALL_LOG"
 if FAIL_TLS=optional run_test Data/mySqlDatabases azure azure; then

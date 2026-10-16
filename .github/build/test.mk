@@ -94,11 +94,7 @@ endif
 	@./.github/scripts/test-all-recipe-pack-entries.sh "$(PLATFORM_GROUP)" "$(WORKSPACE)" "$(ENVIRONMENT)"
 
 .PHONY: test-direct-module-recipes-unit
-test-direct-module-recipes-unit: ## Run the fixture-based unit tests for the direct-module test scripts (no live environment needed)
-	@./.github/scripts/tests/test-mysql-transport.sh
-	@./.github/scripts/tests/test-recipe-test-lib.sh
-	@./.github/scripts/tests/test-test-direct-module-recipe.sh
-	@./.github/scripts/tests/test-test-all-direct-module-recipes.sh
+test-direct-module-recipes-unit: test-recipe-pack-entries-unit ## Compatibility alias for the Recipe Pack entry unit test suite
 
 .PHONY: test-recipe-pack-entries-unit
 test-recipe-pack-entries-unit: ## Run fixture-based unit tests for all Recipe Pack entry test scripts (no live environment needed)
