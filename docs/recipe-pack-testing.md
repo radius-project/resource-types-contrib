@@ -33,6 +33,7 @@ helpers for the three testing layers. It answers three questions:
 | `rtc_list_recipe_packs` (from `lib-namespaces.sh`) | "What packs exist?" — scans directories under `recipe-packs/` for Bicep files |
 | `rtc_recipe_pack_platform_group <pack>` | "What platform does this pack target?" — small lookup table (`kubernetes` → `kubernetes`, `azure-aks`/`azure-aci` → `azure`); every new pack needs a mapping, and a new platform also needs CI jobs |
 | `rtc_list_direct_module_types <pack>` | "Which entries reference external modules and have test apps?" — selects sources outside `ghcr.io/radius-project/` when the Resource Type has a `test/app.bicep`; it does not check for a recipe folder |
+| `rtc_list_recipe_pack_types <pack>` | "Which Resource Types does this pack contain?" — lists every entry for full nightly coverage |
 
 Each discovered pack must contain exactly one Bicep template. Missing platform
 mappings and multiple templates fail the checks. Entries without test apps
@@ -75,14 +76,16 @@ Three testing layers use these shared helpers:
   This runs once, against every pack, regardless of platform. Entries are
   discovered, not hardcoded.
 
-- **Layer 3 — "does the direct-module mapping actually work against real
+- **Layer 3 — "does every runnable pack entry work against real
   infrastructure?"** (nightly and manual runs, real cloud cost)
   New workflow with two fixed jobs: `kubernetes` and `azure`.
-  For each platform group: bring up its environment, run Layer 1's deploy
-  script, then use `test-all-direct-module-recipes.sh` to activate each pack
-  before testing its entries. A type in two packs is tested with each pack.
+  For each platform group: bring up its environment; generate and test Bicep
+  and Terraform packs for every repository recipe; run Layer 1's checked-in
+  pack deploy script; then use `test-all-recipe-pack-entries.sh` to activate
+  each pack before testing every entry that has `test/app.bicep`. A type in
+  two packs is tested with each pack.
   For each entry, run
-  `.github/scripts/test-direct-module-recipe.sh <resource-type-path>
+  `.github/scripts/test-recipe-pack-entry.sh <resource-type-path>
   <workspace> <environment>` to deploy that type's `test/app.bicep` for
   real and assert success (reusing shared deploy/assert logic refactored out
   of `test-recipe.sh` into a sourced library, so it works without needing a
@@ -90,7 +93,8 @@ Three testing layers use these shared helpers:
   MySQL runs with both TLS values and checks the server's
   `require_secure_transport` setting. This catches reversed TLS mappings that
   Layer 2 cannot detect.
-  A known pack with no direct-module entries needs no application deployment.
+  Entries without test apps are reported as skipped. A pack with no runnable
+  entries fails, so nightly cannot pass without exercising each pack.
   New entries with test apps are picked up automatically.
 
 ## Rollout

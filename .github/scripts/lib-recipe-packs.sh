@@ -220,6 +220,17 @@ rtc_resource_type_dir_for_entry() {
     echo "${1#Radius.}"
 }
 
+# Print every Resource Type directory in a pack, one per line, in file order.
+rtc_list_recipe_pack_types() {
+    local pack_id="$1" bicep_file entries resource_type entry_source
+    bicep_file="$(rtc_recipe_pack_template "$pack_id")" || return 1
+    entries="$(rtc_recipe_pack_entries "$bicep_file")" || return 1
+    while IFS=$'\t' read -r resource_type entry_source; do
+        [[ -z "$resource_type" ]] && continue
+        rtc_resource_type_dir_for_entry "$resource_type"
+    done <<<"$entries"
+}
+
 # True (exit 0) if the given Resource Type has a test application AND the
 # given source is not one of this repo's own published recipe images --
 # i.e. it is a "direct module" gap: the only way this entry gets exercised at

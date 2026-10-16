@@ -70,7 +70,7 @@ connection succeeds. Per-recipe MySQL tests keep their connection-only probe.
   platform group following the existing `kubernetes`/`azure` jobs as a
   template (see [`validate-resource-types.yaml`](../.github/workflows/validate-resource-types.yaml),
   [`validate-azure-recipes.yaml`](../.github/workflows/validate-azure-recipes.yaml),
-  and [`nightly-direct-module-recipe-tests.yaml`](../.github/workflows/nightly-direct-module-recipe-tests.yaml)).
+  and [`nightly-recipe-pack-tests.yaml`](../.github/workflows/nightly-recipe-pack-tests.yaml)).
 - **New direct-module entry in an existing pack:** add a `test/app.bicep`
   under that Resource Type's folder (see
   [Testing Resource Types and Recipes](../docs/contributing/testing-resource-types-recipes.md)
@@ -96,12 +96,13 @@ RECIPE_PLATFORM_FILTER=kubernetes make build
 # Layer 2: static check of every direct-module mapping (no cluster needed)
 make validate-direct-module-mappings
 
-# Layer 3: real deployment test of every direct-module entry for a platform group
-# Requires all packs for the group to be deployed. Activates each in turn.
-make test-direct-module-recipes PLATFORM_GROUP=kubernetes WORKSPACE=default ENVIRONMENT=default
+# Layer 3: real deployment test of every repository recipe and every runnable
+# entry in every checked-in pack. The entry command requires all packs for the
+# group to be deployed and activates each in turn.
+make test-recipe-pack-entries PLATFORM_GROUP=kubernetes WORKSPACE=default ENVIRONMENT=default
 
 # Test the shared library and test drivers without cloud resources (requires jq)
-make test-direct-module-recipes-unit
+make test-recipe-pack-entries-unit
 ```
 
 Use a dedicated test environment. The scripts replace its active pack list
