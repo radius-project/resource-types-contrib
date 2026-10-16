@@ -137,7 +137,10 @@ if [[ ! -f "$TEST_FILE" ]]; then
     exit 0
 fi
 
-if rtc_deploy_and_assert_test_app "$TEST_FILE" "$RESOURCE_TYPE" "testapp" "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE"; then
+if [[ "$RESOURCE_TYPE" == Radius.Data/postgreSqlDatabases && "$PLATFORM" == kubernetes ]]; then
+    bash "$SCRIPT_DIR/test-postgresql-transport.sh" "$TEST_FILE" "$ENVIRONMENT_PATH" \
+        "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE" "$RECIPE_TYPE"
+elif rtc_deploy_and_assert_test_app "$TEST_FILE" "$RESOURCE_TYPE" "testapp" "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE"; then
     : # Falls through to the shared success message below.
 else
     rad recipe unregister default \

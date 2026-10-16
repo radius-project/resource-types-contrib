@@ -23,6 +23,15 @@ Kube-recipes tagged `:edge` are rebuilt on every push to `main`. `:latest` and t
 | `Radius.Data/redisCaches` | Bicep | `ghcr.io/radius-project/kube-recipes/rediscaches:latest` |
 | `Radius.Messaging/rabbitMQ` | Bicep | `ghcr.io/radius-project/kube-recipes/rabbitmq:latest` |
 
+**PostgreSQL TLS prerequisite:** The updated PostgreSQL recipe enforces the
+default `tls: 'required'`. Before adopting that recipe version, provision an
+operator-owned `<resource-name>-tls` Secret in the database's actual runtime
+namespace and configure client CA trust. `optional` also requires a certificate;
+only explicitly selected `disabled` runs without one. Back up database data
+before rollout, and verify rollout and TCP behavior rather than relying on raw
+Bicep deployment success. See the [PostgreSQL provisioning and migration
+guide](../../Data/postgreSqlDatabases/README.md#kubernetes-tls-prerequisites).
+
 `rad init --preview` and `rad env create` (without `--recipe-packs`) link Radius's built-in default pack, `/planes/radius/local/resourceGroups/default/providers/Radius.Core/recipePacks/default`. Radius does not read this file. The `rad` CLI defines the same recipes and pins each source to the resource-types-contrib commit for that Radius release (`:edge` for edge builds). **Deploying this file to the same pack ID overwrites the built-in pack for every Environment that references it and switches all of its sources to `:latest`.** To get the built-in pack back, see [Restoring Radius's default pack](#restoring-radiuss-default-pack).
 
 ## Prerequisite: `bicepconfig.json`

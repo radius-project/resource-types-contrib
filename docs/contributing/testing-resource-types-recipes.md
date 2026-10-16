@@ -79,6 +79,13 @@ The `test-recipe` command:
 - Deploys the `test/app.bicep` file (if it exists)
 - Cleans up resources after testing
 
+PostgreSQL Kubernetes tests also run a TCP policy matrix for omitted,
+`required`, `optional`, and certificate-free `disabled` modes. They create
+test certificates in the actual recipe namespace, verify CA/hostname trust,
+exercise policy changes and rotation, and wait for explicit rollout/probe
+results. Use an isolated Environment without an existing `postgresql-tls`
+Secret. See the [PostgreSQL guide](../../Data/postgreSqlDatabases/README.md#kubernetes-transport-tests).
+
 ### 5. Test All Recipes
 
 Run tests for all recipes in the repository:

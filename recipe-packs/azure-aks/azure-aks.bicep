@@ -183,8 +183,9 @@ resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
       }
       'Radius.Data/postgreSqlDatabases': {
         kind: 'bicep'
-        source: 'mcr.microsoft.com/bicep/avm/res/db-for-postgre-sql/flexible-server:0.15.2'
+        source: 'ghcr.io/radius-project/azure-recipes/postgresqldatabases:latest'
         parameters: {
+          tlsPolicy: '{{context.resource.properties.tls}}'
           name: 'pgsql-{{context.azure.resourceNameHash}}'
           administratorLogin: '{{context.resource.properties.username}}'
           administratorLoginPassword: '{{context.resource.properties.password}}'
