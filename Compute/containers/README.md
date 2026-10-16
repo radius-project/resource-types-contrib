@@ -64,9 +64,12 @@ Note: The Azure ACI recipe does not support `context.resource.properties.replica
 Note: The Azure ACI recipe does not support `context.resource.properties.containers.args` or `context.resource.properties.containers.workingDir`; `args` are only used by merging into the ACI `command` array, and `workingDir` is ignored.
 Note: The Azure ACI recipe accepts an optional `allowPlatformOptions` parameter (default `true`). When set to `false`, the recipe ignores all `context.resource.properties.platformOptions` values.
 Note: The Azure ACI recipe always deploys to `resourceGroup().location`; `context.resource.properties.platformOptions.location` is not supported and is ignored.
+Note: The Azure ACI recipe names its Azure resources (virtual network, load balancer, public IPs, NAT gateway, network security group, container group profile, and NGroups) with a hash of the resource group and the Radius resource ID, so containers resources that share a resource group get separate infrastructure. Overriding a name through a recipe parameter applies it to every containers resource that uses the recipe.
 
 ## Recipe Output Properties
 
 | Radius Property | Kubernetes Property | Notes |
 |---|---|---|
 | context.resource.properties.hosts | Service in-cluster DNS names | Read-only. Map of container name to that container's Kubernetes Service DNS name (`<container-resource-name>-<container-name>.<namespace>`). The name is cluster-domain-independent, so it resolves regardless of the cluster's configured DNS domain. Populated for every container that exposes a port, so a multi-container resource publishes all of its Service hosts. Peers reference `<peer>.properties.hosts.<containerName>`. |
+
+For the Azure ACI recipe, `hosts` maps the first regular container that exposes a port to the public IP address of the recipe's load balancer. The load balancer forwards only that container's first port, so other containers are not included.
