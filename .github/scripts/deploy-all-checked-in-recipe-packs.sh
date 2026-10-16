@@ -84,5 +84,5 @@ for pack_id in "${packs[@]}"; do
         ${parameters[@]+"${parameters[@]}"}
 
     echo "==> Activating recipe pack '$pack_name' on environment '$environment'"
-    rad env update "$environment" --recipe-packs "$pack_name" --preview
+    rad env update "$environment" --recipe-packs "$pack_name"
 done

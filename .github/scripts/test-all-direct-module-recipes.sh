@@ -67,7 +67,7 @@ for pack_id in "${packs[@]}"; do
         echo "Error: could not determine the recipe pack name in $template." >&2
         exit 1
     fi
-    rad env update "$environment_name" --workspace "$workspace_name" --recipe-packs "$pack_name" --preview
+    rad env update "$environment_name" --workspace "$workspace_name" --recipe-packs "$pack_name"
 
     while IFS= read -r resource_type_dir; do
         [[ -z "$resource_type_dir" ]] && continue

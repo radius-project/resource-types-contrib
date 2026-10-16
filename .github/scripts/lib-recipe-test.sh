@@ -51,7 +51,7 @@ rtc_ensure_workspace_context() {
 # if the environment cannot be found.
 rtc_resolve_environment_path() {
     local environment_name="$1" workspace_name="$2" environment_json environment_path kubernetes_namespace
-    if ! environment_json=$(rad env show "$environment_name" --workspace "$workspace_name" -o json --preview 2>/dev/null); then
+    if ! environment_json=$(rad env show "$environment_name" --workspace "$workspace_name" -o json 2>/dev/null); then
         echo "Error: Environment '$environment_name' was not found in workspace '$workspace_name'." >&2
         return 1
     fi

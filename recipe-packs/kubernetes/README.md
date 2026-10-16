@@ -10,7 +10,7 @@ The pack declares one `Radius.Core/recipePacks` resource whose `recipes` map con
 
 ## Recipes in this pack
 
-Kube-recipes tagged `:edge` are rebuilt on every push to `main`; `:latest` and the version tags track stable releases.
+Kube-recipes tagged `:edge` are rebuilt on every push to `main`. `:latest` and the version tags track stable releases, but `:latest` moves to a new digest each time a release publishes, so pin a version tag if you need a reproducible deployment.
 
 | Resource Type | Kind | Source |
 | --- | --- | --- |
@@ -24,28 +24,87 @@ Kube-recipes tagged `:edge` are rebuilt on every push to `main`; `:latest` and t
 | `Radius.Messaging/rabbitMQ` | Bicep | `ghcr.io/radius-project/kube-recipes/rabbitmq:latest` |
 | `Radius.AI/search` | Bicep | `ghcr.io/radius-project/kube-recipes/search:latest` |
 
+`rad init --preview` and `rad env create` (without `--recipe-packs`) link Radius's built-in default pack, `/planes/radius/local/resourceGroups/default/providers/Radius.Core/recipePacks/default`. Radius does not read this file. The `rad` CLI defines the same recipes and pins each source to the resource-types-contrib commit for that Radius release (`:edge` for edge builds). **Deploying this file to the same pack ID overwrites the built-in pack for every Environment that references it and switches all of its sources to `:latest`.** To get the built-in pack back, see [Restoring Radius's default pack](#restoring-radiuss-default-pack).
+
+## Prerequisite: `bicepconfig.json`
+
+`rad deploy` needs a `bicepconfig.json` that registers the `radius` extension. This repo does not commit one. Before deploying, create one above `recipe-packs/` (Bicep looks for `bicepconfig.json` by walking up from the `.bicep` file's directory, not your current directory), for example:
+
+```json
+{
+  "extensions": {
+    "radius": "br:biceptypes.azurecr.io/radius:<rad-release-channel>"
+  }
+}
+```
+
+Replace `<rad-release-channel>` with the major and minor version of your `rad` CLI (for example `0.61` for `rad` 0.61.1), or `latest` for edge builds. A full version such as `0.61.1` is not a valid tag. `rad init --preview` scaffolds a similar file that also registers the `aws` extension.
+
 ## Deploying
 
 Create the Environment first:
 
 ```bash
 rad env create default \
-  --kubernetes-namespace default \
-  --preview
+  --kubernetes-namespace default
 ```
 
-Deploy the Recipe Pack into that existing Environment, then associate it:
+`rad deploy` writes the pack to your workspace's **current** resource group, and Radius's built-in default pack always lives in group `default`. Pass `--group default` so the pack lands in group `default`. With `--group default`, `--environment <name>` is also looked up in group `default`; if the Environment is in another group, pass its full ID instead:
 
 ```bash
 rad deploy recipe-packs/kubernetes/default.bicep \
+  --group default \
   --environment default
-
-rad env update default \
-  --recipe-packs default \
-  --preview
 ```
 
-After the association is updated, every Resource Type the pack covers can be used in an application deployed to that Environment.
+```bash
+# When the Environment is in a group other than "default":
+rad deploy recipe-packs/kubernetes/default.bicep \
+  --group default \
+  --environment /planes/radius/local/resourceGroups/<environment-group>/providers/Radius.Core/environments/<env-name>
+```
+
+If the pack keeps the same ID as the Environment's current pack, the Environment's existing reference already resolves and no further step is needed. Only run `rad env update` if the Environment is not yet associated with the pack, and scope it to the Environment's own group (which may differ from `default`):
+
+```bash
+rad env update default \
+  --group <environment-group> \
+  --recipe-packs default \
+  --recipe-pack-group default
+```
+
+After the association is confirmed, every Resource Type the pack covers can be used in an application deployed to that Environment.
+
+## Restoring Radius's default pack
+
+Deploying this file cannot restore the exact pack Radius creates, because its sources are always `:latest`. Use `rad` instead:
+
+- `rad init --preview` always rewrites the default pack from the pack built into that `rad` version. It also creates or updates the Environment you choose during init.
+- `rad env create` without `--recipe-packs`, and `rad deploy` of a template whose Environment sets no `recipePacks`, create the default pack only when it is missing; they never update an existing pack. To use one of them, delete the pack first.
+
+  `rad recipe-pack delete` removes the pack from each Environment in the pack's `referencedBy` list. Before you delete the pack, record the Environments in that list:
+
+  ```bash
+  rad recipe-pack show default --group default -o json
+  ```
+
+  `rad env create` and `rad env update` add an Environment to `referencedBy` only when you link the pack with `--recipe-packs`. A full write of the pack, such as `rad deploy` of this file or `rad init --preview`, clears the list. Thus, after you deploy this file, the list is usually empty.
+
+  Delete the pack, then recreate it, for example by creating a new Environment:
+
+  ```bash
+  rad recipe-pack delete default --group default --yes
+  rad env create <new-env-name>
+  ```
+
+  Environments that are not in `referencedBy` keep the pack ID and use the recreated pack. Re-link each Environment that was in `referencedBy`:
+
+  ```bash
+  rad env update <env-name> \
+    --group <environment-group> \
+    --recipe-packs default \
+    --recipe-pack-group default
+  ```
 
 ## Contributing a Recipe
 

@@ -24,13 +24,11 @@ Create and configure an Environment with the Azure provider first:
 
 ```bash
 rad env create default \
-  --kubernetes-namespace default \
-  --preview
+  --kubernetes-namespace default
 
 rad env update default \
   --azure-subscription-id <subscription-id> \
-  --azure-resource-group <resource-group> \
-  --preview
+  --azure-resource-group <resource-group>
 ```
 
 Deploy the Recipe Pack into that existing Environment. The pack takes no parameters:
@@ -44,8 +42,7 @@ Finally, associate the pack with the Environment. `--recipe-packs` replaces the 
 
 ```bash
 rad env update default \
-  --recipe-packs azure-aci \
-  --preview
+  --recipe-packs azure-aci
 ```
 
 After the association is updated, every Resource Type the pack covers can be used in an application deployed to that Environment.
