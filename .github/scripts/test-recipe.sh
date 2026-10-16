@@ -31,92 +31,9 @@ ENVIRONMENT_NAME_OVERRIDE="${2:-}"
 ENVIRONMENT_PATH=""
 KUBERNETES_NAMESPACE=""
 
-ensure_workspace_context() {
-    # Ensure we are operating in the expected workspace context
-    rad workspace switch "$WORKSPACE_NAME" >/dev/null 2>&1 || true
-}
-
-resolve_environment_path() {
-    # Resolve the full environment resource ID to avoid hardcoding the provider path
-    if ! ENVIRONMENT_JSON=$(rad env show "$ENVIRONMENT_NAME" --workspace "$WORKSPACE_NAME" -o json --preview 2>/dev/null); then
-        echo "Error: Environment '$ENVIRONMENT_NAME' was not found in workspace '$WORKSPACE_NAME'."
-        exit 1
-    fi
-
-    ENVIRONMENT_PATH=$(echo "$ENVIRONMENT_JSON" | jq -r 'if type=="object" then (.id // "") elif type=="array" and length>0 then (.[0].id // "") else "" end')
-    if [[ -z "$ENVIRONMENT_PATH" ]]; then
-        echo "Error: Could not determine environment id from rad env show output."
-        echo "$ENVIRONMENT_JSON"
-        exit 1
-    fi
-    KUBERNETES_NAMESPACE=$(echo "$ENVIRONMENT_JSON" | jq -r 'if type=="object" then (.properties.providers.kubernetes.namespace // "") elif type=="array" and length>0 then (.[0].properties.providers.kubernetes.namespace // "") else "" end')
-    echo "==> Environment path: $ENVIRONMENT_PATH"
-}
-
-cleanup_kubernetes_resources() {
-    if [[ -z "$KUBERNETES_NAMESPACE" ]]; then
-        return
-    fi
-
-    echo "==> Cleaning up leftover K8s resources in $KUBERNETES_NAMESPACE namespace"
-    kubectl delete secrets --all -n "$KUBERNETES_NAMESPACE" 2>/dev/null || true
-    kubectl delete deployments --all -n "$KUBERNETES_NAMESPACE" 2>/dev/null || true
-    kubectl delete services --all -n "$KUBERNETES_NAMESPACE" 2>/dev/null || true
-}
-
-assert_containers_result() {
-    local app_host peer_host
-    app_host=$(rad resource show "$RESOURCE_TYPE" myApp \
-        --application "$APP_NAME" \
-        --workspace "$WORKSPACE_NAME" \
-        --output json | jq -r '.properties.hosts.orderProcessor // ""') || return 1
-    peer_host=$(rad resource show "$RESOURCE_TYPE" no-connections-app \
-        --application "$APP_NAME" \
-        --workspace "$WORKSPACE_NAME" \
-        --output json | jq -r '.properties.hosts.simple // ""') || return 1
-
-    # Each containers resource must publish its own host; equal hosts mean the
-    # two resources share infrastructure.
-    if [[ -z "$app_host" || -z "$peer_host" || "$app_host" == "$peer_host" ]]; then
-        echo "Error: Each containers resource must publish a distinct host (myApp: '$app_host', no-connections-app: '$peer_host')."
-        return 1
-    fi
-
-    echo "==> Containers hosts validated"
-}
-
-assert_recipe_result() {
-    if [[ "$RESOURCE_TYPE" == "Radius.Compute/containers" ]]; then
-        assert_containers_result
-        return
-    fi
-
-    if [[ "$RESOURCE_TYPE" != "Radius.Data/postgreSqlDatabases" ]]; then
-        return
-    fi
-
-    local resource_json
-    if ! resource_json=$(rad resource show "$RESOURCE_TYPE" postgresql \
-        --application "$APP_NAME" \
-        --workspace "$WORKSPACE_NAME" \
-        --output json); then
-        echo "Error: Could not read the deployed PostgreSQL resource."
-        return 1
-    fi
-
-    if ! jq -e '
-        (.properties.host | type == "string" and length > 0) and
-        (.properties.port | type == "number") and
-        (.properties.database == "appdb") and
-        (.properties | has("secrets") | not)
-    ' <<<"$resource_json" >/dev/null; then
-        echo "Error: PostgreSQL result must expose host, port, and database without secrets."
-        echo "$resource_json"
-        return 1
-    fi
-
-    echo "==> PostgreSQL result properties validated"
-}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=.github/scripts/lib-recipe-test.sh
+source "$SCRIPT_DIR/lib-recipe-test.sh"
 
 if [[ -z "$RECIPE_PATH" ]]; then
     echo "Error: Recipe path is required"
@@ -206,8 +123,12 @@ echo "==> Resource type: $RESOURCE_TYPE"
 echo "==> Workspace: $WORKSPACE_NAME"
 echo "==> Environment: $ENVIRONMENT_NAME"
 
-ensure_workspace_context
-resolve_environment_path
+rtc_ensure_workspace_context "$WORKSPACE_NAME"
+if ! RESOLVED=$(rtc_resolve_environment_path "$ENVIRONMENT_NAME" "$WORKSPACE_NAME"); then
+    exit 1
+fi
+IFS=$'\t' read -r ENVIRONMENT_PATH KUBERNETES_NAMESPACE <<<"$RESOLVED"
+echo "==> Environment path: $ENVIRONMENT_PATH"
 
 # Check if test file exists
 TEST_FILE="$RESOURCE_TYPE_PATH/test/app.bicep"
@@ -216,45 +137,13 @@ if [[ ! -f "$TEST_FILE" ]]; then
     exit 0
 fi
 
-echo "==> Deploying test application from $TEST_FILE"
-APP_NAME="testapp-$(date +%s)"
-
-# Build parameters if the test template requires them
-# Detect @secure() param password by scanning the Bicep file
-PARAMS=""
-if grep -q 'param password' "$TEST_FILE" 2>/dev/null; then
-    GENERATED_PASSWORD=$(openssl rand -hex 16 2>/dev/null || echo "testpassword$(date +%s)")
-    PARAMS="--parameters password=${GENERATED_PASSWORD}"
-    echo "==> Detected 'password' parameter in test template, auto-generating value"
-fi
-
-# Deploy the test app
-if rad deploy "$TEST_FILE" --application "$APP_NAME" -e "$ENVIRONMENT_PATH" $PARAMS; then
-    echo "==> Test deployment successful"
-
-    if ! assert_recipe_result; then
-        rad app delete "$APP_NAME" --yes 2>/dev/null || true
-        cleanup_kubernetes_resources
-        exit 1
-    fi
-
-    # Cleanup: delete the app
-    echo "==> Cleaning up test application"
-    rad app delete "$APP_NAME" --yes
-
-    # Clean up any leftover K8s resources in the environment namespace to avoid conflicts
-    # with subsequent tests (e.g., secrets created by Bicep recipes that persist after app deletion)
-    cleanup_kubernetes_resources
+if rtc_deploy_and_assert_test_app "$TEST_FILE" "$RESOURCE_TYPE" "testapp" "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE"; then
+    : # Falls through to the shared success message below.
 else
-    echo "==> Test deployment failed"
-    rad app delete "$APP_NAME" --yes 2>/dev/null || true
     rad recipe unregister default \
         --workspace "$WORKSPACE_NAME" \
         --environment "$ENVIRONMENT_PATH" \
         --resource-type "$RESOURCE_TYPE"
-
-    # Clean up leftover K8s resources even on failure
-    cleanup_kubernetes_resources
     exit 1
 fi
 
