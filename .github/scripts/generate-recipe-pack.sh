@@ -59,10 +59,39 @@ fi
 
 echo "==> Found ${#RECIPE_DIRS[@]} $RECIPE_TYPE recipe(s)"
 
+uses_postgresql_mapping=false
+for recipe_dir in "${RECIPE_DIRS[@]}"; do
+    if [[ "$RECIPE_TYPE" == bicep && "$recipe_dir" == */Data/postgreSqlDatabases/recipes/azure/bicep ]]; then
+        uses_postgresql_mapping=true
+    fi
+done
+
+if [[ "$uses_postgresql_mapping" == true ]]; then
+    mapping_template="$REPO_ROOT/recipe-packs/azure-aks/azure-aks.bicep"
+    [[ -f "$mapping_template" ]] || {
+        echo "Error: PostgreSQL's canonical Azure mapping is missing: $mapping_template" >&2
+        exit 1
+    }
+    mapping_import="$(realpath --relative-to="$(dirname "$OUTPUT_FILE")" "$mapping_template")"
+    mapping_import="$(printf '%s' "$mapping_import" |
+        sed -e 's/\\/\\\\/g' -e "s/'/\\\\'/g" -e 's/\${/\\${/g')"
+fi
+
 # Start building the Bicep template
 cat > "$OUTPUT_FILE" << EOF
 extension radius
+EOF
 
+if [[ "$uses_postgresql_mapping" == true ]]; then
+    cat >> "$OUTPUT_FILE" << EOF
+
+import { postgreSqlRecipeParameters, postgreSqlRecipeOutputs } from '$mapping_import'
+
+param postgreSqlServerConfigurations array = []
+EOF
+fi
+
+cat >> "$OUTPUT_FILE" << EOF
 resource PACK_NAME_PLACEHOLDER 'Radius.Core/recipePacks@2025-08-01-preview' = {
   name: 'PACK_NAME_PLACEHOLDER'
   location: 'global'
@@ -107,6 +136,14 @@ for recipe_dir in "${RECIPE_DIRS[@]}"; do
         kind: '$RECIPE_KIND'
         source: '$TEMPLATE_PATH'
         plainHttp: true
+EOF
+    if [[ "$RECIPE_TYPE" == bicep && "$recipe_dir" == */Data/postgreSqlDatabases/recipes/azure/bicep ]]; then
+        cat >> "$OUTPUT_FILE" << 'EOF'
+        parameters: postgreSqlRecipeParameters(postgreSqlServerConfigurations)
+        outputs: postgreSqlRecipeOutputs
+EOF
+    fi
+    cat >> "$OUTPUT_FILE" << 'EOF'
       }
 EOF
 done

@@ -31,6 +31,7 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 
 MOCK_BIN="$TEST_ROOT/bin"
 mkdir -p "$MOCK_BIN"
+TEST_PATH="$MOCK_BIN:$PATH"
 CALL_LOG="$TEST_ROOT/calls.log"
 
 cat >"$MOCK_BIN/rad" <<'EOF'
@@ -51,7 +52,38 @@ case "$1 $2" in
         fi
         ;;
     "deploy "*)
+        rm -f "$CALL_LOG.deleted"
+        for ((i=1; i<$#; i++)); do
+            if [[ "${!i}" == --application ]]; then
+                next=$((i+1))
+                echo "${!next}" > "$CALL_LOG.app"
+            fi
+        done
         exit "${DEPLOY_EXIT_CODE:-0}"
+        ;;
+    "resource-type list")
+        if [[ -n "${CATALOG_JSON+x}" ]]; then
+            printf '%s\n' "$CATALOG_JSON"
+        else
+            echo '[{"Name":"Radius.Data/widgets"},{"Name":"Radius.Core/applications"},{"Name":"Radius.Core/environments"},{"Name":"Microsoft.Resources/deployments"}]'
+        fi
+        exit "${CATALOG_EXIT_CODE:-0}"
+        ;;
+    "resource list")
+        [[ "$3" == Radius.Data/widgets && " $* " == *" --preview "* ]] || exit 90
+        [[ " $* " != *" --application "* && " $* " != *" --environment "* ]] || exit 90
+        if [[ -n "${RESOURCE_JSON+x}" ]]; then
+            printf '%s\n' "$RESOURCE_JSON"
+        elif [[ "${RESOURCE_REMAINS:-0}" == 1 || "${OWNERSHIP_LOST:-0}" == 1 ]]; then
+            app="$(cat "$CALL_LOG.app")"
+            if [[ "${OWNERSHIP_LOST:-0}" == 1 && -f "$CALL_LOG.deleted" ]]; then
+                app=another-app
+            fi
+            printf '[{"id":"/planes/radius/local/resourceGroups/default/providers/Radius.Data/widgets/fixture","properties":{"application":"/planes/radius/local/resourceGroups/default/providers/Radius.Core/applications/%s"}}]\n' "$app"
+        else
+            echo '[]'
+        fi
+        exit "${RESOURCE_LIST_EXIT_CODE:-0}"
         ;;
     "resource show")
         # Used by the containers/postgresql assertion helpers.
@@ -73,7 +105,23 @@ case "$1 $2" in
         esac
         ;;
     "app delete")
+        [[ " $* " == *" --preview "* ]] || { echo "Legacy application delete refused" >&2; exit 90; }
+        echo "$3" > "$CALL_LOG.app"
+        touch "$CALL_LOG.deleted"
         exit "${APP_DELETE_EXIT_CODE:-0}"
+        ;;
+    "app list")
+        [[ " $* " == *" --preview "* ]] || { echo "Legacy application list refused" >&2; exit 90; }
+        if [[ "${APP_REMAINS:-0}" == 1 ]]; then
+            printf '[{"name":"%s"}]\n' "$(cat "$CALL_LOG.app")"
+        else
+            printf '%s\n' "${APP_LIST_JSON-[]}"
+        fi
+        exit "${APP_LIST_EXIT_CODE:-0}"
+        ;;
+    *)
+        echo "Unexpected rad command: $1 $2" >&2
+        exit 90
         ;;
 esac
 EOF
@@ -82,6 +130,28 @@ chmod +x "$MOCK_BIN/rad"
 cat >"$MOCK_BIN/kubectl" <<'EOF'
 #!/bin/bash
 echo "kubectl $*" >>"$CALL_LOG"
+[[ "${KUBECTL_EXIT_CODE:-0}" == 0 ]] || exit "$KUBECTL_EXIT_CODE"
+if [[ "$1" == get ]]; then
+    if [[ " $* " == *" --all-namespaces "* ]]; then
+        [[ "${DISCOVERY_EXIT_CODE:-0}" == 0 ]] || exit "$DISCOVERY_EXIT_CODE"
+        if [[ -n "${DISCOVERY_JSON:-}" ]]; then
+            printf '%s\n' "$DISCOVERY_JSON"
+        else
+            for arg in "$@"; do
+                [[ "$arg" != radapp.io/application=* ]] || app="${arg#*=}"
+            done
+            printf '{"items":[{"metadata":{"namespace":"%s","labels":{"radapp.io/application":"%s"}}}]}\n' \
+                "${ACTUAL_NAMESPACE:-my-ns}" "$app"
+        fi
+    else
+        if [[ -n "${REMAINING_JSON+x}" ]]; then
+            printf '%s\n' "$REMAINING_JSON"
+        else
+            echo '{"items":[]}'
+        fi
+        exit "${KUBECTL_GET_EXIT_CODE:-0}"
+    fi
+fi
 exit "${KUBECTL_EXIT_CODE:-0}"
 EOF
 chmod +x "$MOCK_BIN/kubectl"
@@ -94,7 +164,7 @@ chmod +x "$MOCK_BIN/openssl"
 
 run_lib() {
     (
-        export PATH="$MOCK_BIN:$PATH"
+        export PATH="$TEST_PATH"
         export CALL_LOG
         unset RTC_LIB_RECIPE_TEST_SOURCED
         # shellcheck source=/dev/null
@@ -133,7 +203,7 @@ run_lib rtc_cleanup_kubernetes_resources "" testapp
 : >"$CALL_LOG"
 run_lib rtc_cleanup_kubernetes_resources "my-ns" testapp
 kubectl_calls="$(grep -c '^kubectl delete' "$CALL_LOG" || true)"
-assert_eq "3" "$kubectl_calls" "rtc_cleanup_kubernetes_resources kubectl delete call count"
+assert_eq "4" "$kubectl_calls" "rtc_cleanup_kubernetes_resources kubectl delete call count"
 grep -q -- '-l radapp.io/application=testapp -n my-ns' "$CALL_LOG" ||
     fail "cleanup must select only the test app"
 if grep -q -- '--all' "$CALL_LOG"; then
@@ -191,7 +261,7 @@ assert_app_name() {
     deployed_name="$(sed -nE 's/^rad deploy .*--parameters applicationName=([^ ]+).*/\1/p' "$CALL_LOG")"
     [[ -n "$deployed_name" ]] || fail "deployment must pass the applicationName parameter"
     grep -Fq -- "--application $deployed_name --workspace myws" "$CALL_LOG" || fail "CLI app must match the template parameter"
-    grep -Fxq "rad app delete $deployed_name --workspace myws --yes" "$CALL_LOG" || fail "cleanup must delete the deployed app"
+    grep -Fxq "rad app delete $deployed_name --workspace myws --preview --yes" "$CALL_LOG" || fail "cleanup must delete the modern deployed app"
     grep -Fq -- "-l radapp.io/application=$deployed_name -n my-ns" "$CALL_LOG" || fail "cleanup selector must match the deployed app"
 }
 assert_app_name
@@ -205,7 +275,7 @@ fi
 grep -q '^rad app delete' "$CALL_LOG" || fail "rtc_deploy_and_assert_test_app should still attempt app cleanup after a failed deploy"
 assert_app_name
 
-for failure in APP_DELETE_EXIT_CODE KUBECTL_EXIT_CODE; do
+for failure in APP_DELETE_EXIT_CODE APP_LIST_EXIT_CODE APP_REMAINS KUBECTL_EXIT_CODE DISCOVERY_EXIT_CODE KUBECTL_GET_EXIT_CODE CATALOG_EXIT_CODE RESOURCE_LIST_EXIT_CODE RESOURCE_REMAINS OWNERSHIP_LOST; do
     if (
         export "$failure=1"
         run_lib rtc_deploy_and_assert_test_app \
@@ -214,6 +284,67 @@ for failure in APP_DELETE_EXIT_CODE KUBECTL_EXIT_CODE; do
         fail "$failure must cause the test to fail"
     fi
 done
+
+APP_LIST_JSON=null run_lib rtc_cleanup_test_application testapp myws '' ||
+    fail "successful JSON null application list is the CLI's empty result"
+for malformed in false '{}' '[{}]' 'not json'; do
+    if APP_LIST_JSON="$malformed" run_lib rtc_cleanup_test_application testapp myws '' >/dev/null 2>&1; then
+        fail "invalid application list must not prove absence: $malformed"
+    fi
+done
+for malformed in null '{}' '[{"name":"Radius.Data/widgets"}]' 'not json'; do
+    if CATALOG_JSON="$malformed" run_lib rtc_cleanup_test_application testapp myws '' >/dev/null 2>&1; then
+        fail "invalid resource catalog must fail verification"
+    fi
+done
+for malformed in null '{}' '[{}]' 'not json'; do
+    if RESOURCE_JSON="$malformed" run_lib rtc_cleanup_test_application testapp myws '' >/dev/null 2>&1; then
+        fail "invalid typed resource list must fail verification"
+    fi
+done
+RESOURCE_JSON='[{"id":"/planes/radius/local/resourceGroups/default/providers/Radius.Data/widgets/unrelated","properties":{"application":"/planes/radius/local/resourceGroups/other/providers/Radius.Core/applications/testapp"}}]' \
+    run_lib rtc_cleanup_test_application testapp myws '' ||
+    fail "same application name in another scope must not be treated as owned"
+if APP_LIST_JSON=null RESOURCE_JSON='[{"id":"/planes/radius/local/resourceGroups/default/providers/Radius.Data/widgets/orphan","properties":{"application":"/PLANES/RADIUS/LOCAL/RESOURCEGROUPS/DEFAULT/PROVIDERS/RADIUS.CORE/APPLICATIONS/TESTAPP"}}]' \
+    run_lib rtc_cleanup_test_application testapp myws '' >/dev/null 2>&1; then
+    fail "missing app with remaining owned resources must not pass cleanup"
+fi
+if REMAINING_JSON='{"items":[{}]}' run_lib rtc_cleanup_test_application testapp myws my-ns >/dev/null 2>&1; then
+    fail "leftover Kubernetes resources must fail cleanup"
+fi
+for malformed in '{}' '{"items":[{"metadata":{"namespace":"another-ns","labels":{"radapp.io/application":"another-app"}}}]}' 'not json'; do
+    : >"$CALL_LOG"
+    if DISCOVERY_JSON="$malformed" run_lib rtc_cleanup_test_application testapp myws configured-ns >/dev/null 2>&1; then
+        fail "untrusted namespace discovery must fail cleanup"
+    fi
+    grep -q '^rad app delete' "$CALL_LOG" || fail "discovery failure must still attempt Radius cleanup"
+    if grep -q '^kubectl delete' "$CALL_LOG"; then fail "discovery failure must not guess a namespace"; fi
+done
+
+: >"$CALL_LOG"
+ACTUAL_NAMESPACE=runtime-ns run_lib rtc_cleanup_test_application testapp myws configured-ns ||
+    fail "actual namespace may differ from configured namespace"
+grep -q '^kubectl delete .* -n runtime-ns$' "$CALL_LOG" || fail "must clean up actual namespace"
+if grep -q -- '-n configured-ns' "$CALL_LOG"; then fail "must not assume configured namespace"; fi
+grep -q '^rad app list --workspace myws --preview -o json$' "$CALL_LOG" ||
+    fail "cleanup must verify modern application absence"
+
+: >"$CALL_LOG"
+DISCOVERY_JSON='{"items":[]}' run_lib rtc_cleanup_test_application testapp myws configured-ns ||
+    fail "partial deployment without workloads must clean up"
+if grep -q '^kubectl delete' "$CALL_LOG"; then fail "empty discovery must not delete in a guessed namespace"; fi
+
+# Exercise the actual transport runner's EXIT trap on its first failed deploy.
+: >"$CALL_LOG"
+if PATH="$TEST_PATH" CALL_LOG="$CALL_LOG" DEPLOY_EXIT_CODE=1 ACTUAL_NAMESPACE=runtime-ns \
+    bash "$REPO_ROOT/.github/scripts/test-postgresql-transport.sh" \
+        "$TEST_APP_BICEP" /envs/myenv myws configured-ns bicep >/dev/null 2>&1; then
+    fail "transport runner must retain deployment failure"
+fi
+grep -q '^rad app delete postgresql-tls-.* --workspace myws --preview --yes$' "$CALL_LOG" ||
+    fail "transport runner must use modern application cleanup"
+grep -q '^kubectl delete .* -n runtime-ns$' "$CALL_LOG" ||
+    fail "transport failure must discover the actual namespace before cleanup"
 
 : >"$CALL_LOG"
 if POSTGRES_JSON='{"properties":{}}' run_lib rtc_deploy_and_assert_test_app \
@@ -285,7 +416,7 @@ cp "$TEST_APP_BICEP" "$TEST_ROOT/Data/widgets/test/app.bicep"
 run_recipe() {
     (
         cd "$TEST_ROOT"
-        PATH="$MOCK_BIN:$PATH" CALL_LOG="$CALL_LOG" \
+        PATH="$TEST_PATH" CALL_LOG="$CALL_LOG" \
             bash "$REPO_ROOT/.github/scripts/test-recipe.sh" Data/widgets/recipes/kubernetes/bicep
     )
 }
@@ -294,6 +425,8 @@ run_recipe >/dev/null || fail "existing per-recipe success path failed"
 if DEPLOY_EXIT_CODE=1 run_recipe >/dev/null; then
     fail "existing per-recipe deploy failure must fail"
 fi
-grep -q '^rad recipe unregister default' "$CALL_LOG" || fail "per-recipe failure must unregister"
+if grep -q '^rad recipe ' "$CALL_LOG"; then
+    fail "pack-backed tests must not register or unregister a single recipe"
+fi
 
 echo "Recipe test library test passed"

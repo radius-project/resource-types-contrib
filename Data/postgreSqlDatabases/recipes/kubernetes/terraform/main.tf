@@ -13,6 +13,18 @@ variable "context" {
   type        = any
 }
 
+variable "postgresqlTlsSecretName" {
+  description = "Operator-owned TLS Secret in the runtime namespace. Defaults to <resource-name>-tls; ignored for disabled policy."
+  type        = string
+  default     = null
+}
+
+variable "postgresqlTlsCertificateRevision" {
+  description = "Non-secret revision that triggers rollout when a TLS-enabled database is redeployed. Protect ephemeral data first."
+  type        = string
+  default     = ""
+}
+
 variable "memory" {
   description = "Memory limits for the PostgreSQL container"
   type = map(object({
@@ -43,6 +55,13 @@ locals {
   password         = var.context.resource.properties.password
   database         = try(var.context.resource.properties.database, "postgres_db")
   size_value       = try(var.context.resource.properties.size, "S")
+  tls_policy       = coalesce(try(var.context.resource.properties.tls, null), "required")
+  tls_secret_name  = coalesce(var.postgresqlTlsSecretName, "${local.resource_name}-tls")
+  tls_enabled = {
+    required = true
+    optional = true
+    disabled = false
+  }[local.tls_policy]
 
   labels = {
     "radapp.io/resource"       = local.resource_name
@@ -83,21 +102,39 @@ resource "kubernetes_deployment" "postgresql" {
     template {
       metadata {
         labels = local.labels
+        annotations = local.tls_enabled ? {
+          "radapp.io/tls-certificate-revision" = var.postgresqlTlsCertificateRevision
+        } : {}
       }
 
       spec {
         container {
-          name  = "postgres"
-          image = "postgres:${local.tag}"
+          name    = "postgres"
+          image   = "postgres:${local.tag}"
+          command = ["/bin/sh", "-ec"]
+          args    = [file("${path.module}/configure-postgresql.sh")]
 
           port {
             container_port = local.port
+          }
+
+          readiness_probe {
+            exec {
+              command = ["/bin/sh", "-ec", "pg_isready -h 127.0.0.1 -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            }
+            period_seconds  = 5
+            timeout_seconds = 5
           }
 
           resources {
             requests = {
               memory = var.memory[local.size_value].memoryRequest
             }
+          }
+
+          env {
+            name  = "POSTGRES_TLS"
+            value = local.tls_policy
           }
 
           env {
@@ -123,6 +160,46 @@ resource "kubernetes_deployment" "postgresql" {
           env {
             name  = "POSTGRES_DB"
             value = local.database
+          }
+
+          volume_mount {
+            name       = "postgres-config"
+            mount_path = "/postgres-config"
+          }
+
+          dynamic "volume_mount" {
+            for_each = local.tls_enabled ? [1] : []
+            content {
+              name       = "tls-source"
+              mount_path = "/tls-source"
+              read_only  = true
+            }
+          }
+        }
+
+        volume {
+          name = "postgres-config"
+          empty_dir {
+            medium = "Memory"
+          }
+        }
+
+        dynamic "volume" {
+          for_each = local.tls_enabled ? [1] : []
+          content {
+            name = "tls-source"
+            secret {
+              secret_name  = local.tls_secret_name
+              default_mode = "0400"
+              items {
+                key  = "tls.crt"
+                path = "tls.crt"
+              }
+              items {
+                key  = "tls.key"
+                path = "tls.key"
+              }
+            }
           }
         }
       }

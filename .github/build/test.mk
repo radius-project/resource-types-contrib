@@ -73,6 +73,7 @@ validate-recipe-packs: ## Verify checked-in recipe packs contain only Recipe Pac
 	@./.github/scripts/tests/test-validate-recipe-packs.sh
 	@./.github/scripts/tests/test-recipe-pack-lib.sh
 	@./.github/scripts/tests/test-deploy-all-checked-in-recipe-packs.sh
+	@bash ./.github/scripts/tests/test-generate-recipe-pack.sh
 
 .PHONY: validate-direct-module-mappings
 validate-direct-module-mappings: ## Check direct-module Radius property references and enum comparison literals
@@ -89,6 +90,7 @@ endif
 .PHONY: test-direct-module-recipes-unit
 test-direct-module-recipes-unit: ## Run the fixture-based unit tests for the direct-module test scripts (no live environment needed)
 	@./.github/scripts/tests/test-mysql-transport.sh
+	@bash ./.github/scripts/tests/test-postgresql-transport.sh
 	@./.github/scripts/tests/test-recipe-test-lib.sh
 	@./.github/scripts/tests/test-test-direct-module-recipe.sh
 	@./.github/scripts/tests/test-test-all-direct-module-recipes.sh

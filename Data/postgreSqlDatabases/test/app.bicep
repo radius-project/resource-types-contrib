@@ -6,6 +6,17 @@ param environment string
 @description('Application name. CI supplies a unique name for deployment and cleanup.')
 param applicationName string = 'postgresql-test'
 
+@description('Omit the property to test the schema default, or choose an explicit policy.')
+@allowed(['omitted', 'required', 'optional', 'disabled'])
+param tls string = 'omitted'
+
+@description('Enable the dedicated Kubernetes TCP probe client instead of the demo.')
+@allowed(['false', 'true'])
+param verifyTransport string = 'false'
+
+@description('SQL used by the Bicep Kubernetes initialization test.')
+param initSql string = ''
+
 @description('Database admin password. Set on the `password` property of the database (x-radius-sensitive, so Radius encrypts it at rest and injects it decrypted into the Recipe) and stored in a Radius.Security/secrets resource for the consuming container to bind by reference.')
 @secure()
 param password string
@@ -39,18 +50,46 @@ resource dbCreds 'Radius.Security/secrets@2025-08-01-preview' = {
 
 resource postgresql 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
   name: 'postgresql'
-  properties: {
+  properties: union({
     environment: environment
     application: app.id
     size: 'S'
     database: 'appdb'
     username: 'radadmin'
     password: password
-    // `tls` is omitted so this test exercises the schema default (`required`).
+    initSql: initSql
+  }, tls == 'omitted' ? {} : { tls: tls })
+}
+
+resource postgresclient 'Radius.Compute/containers@2025-08-01-preview' = if (verifyTransport == 'true') {
+  name: 'postgresclient'
+  properties: {
+    environment: environment
+    application: app.id
+    containers: {
+      client: {
+        image: 'postgres:16-alpine'
+        command: ['/bin/sh', '-ec']
+        args: ['while true; do sleep 3600; done']
+        env: {
+          CONNECTION_POSTGRESQL_PASSWORD: {
+            valueFrom: {
+              secretKeyRef: {
+                secretName: dbCreds.name
+                key: 'password'
+              }
+            }
+          }
+        }
+      }
+    }
+    connections: {
+      postgresql: { source: postgresql.id }
+    }
   }
 }
 
-resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
+resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = if (verifyTransport != 'true') {
   name: 'democontainer'
   properties: {
     environment: environment

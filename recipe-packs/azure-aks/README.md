@@ -33,7 +33,7 @@ Defaults are applied when a resource is written, not when a Resource Type is reg
 | Resource Type | Kind | Source |
 | --- | --- | --- |
 | `Radius.Data/sqlServerDatabases` | Bicep | Azure Verified Module — `mcr.microsoft.com/bicep/avm/res/sql/server:0.21.4` |
-| `Radius.Data/postgreSqlDatabases` | Bicep | Azure Verified Module — `avm/res/db-for-postgre-sql/flexible-server` |
+| `Radius.Data/postgreSqlDatabases` | Bicep | TLS-validating wrapper `ghcr.io/radius-project/azure-recipes/postgresqldatabases`, forwarding to AVM `avm/res/db-for-postgre-sql/flexible-server:0.15.2` |
 | `Radius.AI/search` | Bicep | Azure Verified Module — `avm/res/search/search-service` |
 | `Radius.AI/models` | Bicep | Azure Verified Module — `avm/res/cognitive-services/account` |
 | `Radius.Messaging/rabbitMQ` | Bicep | `ghcr.io/radius-project/kube-recipes/rabbitmq` |
@@ -61,6 +61,28 @@ The `Radius.Data/mySqlDatabases` Recipe maps the resource's `tls` property onto 
 This Recipe therefore requires a registered `Radius.Data` namespace whose `mySqlDatabases` definition includes the `tls` property. The property was added without changing the `2025-08-01-preview` API version, so an older definition cannot be detected by version negotiation. Register a `Radius.Data` namespace release that contains the property before deploying this pack.
 
 ### PostgreSQL transport policy
+
+The PostgreSQL entry uses a thin Bicep wrapper around the same pinned AVM.
+Its `tlsPolicy` parameter accepts only `required` and `optional`. The
+Kubernetes-only `disabled` value fails parameter validation before any Azure
+resource is deployed, even when `postgreSqlServerConfigurations` contains a
+transport override. It is never mapped to `ON` or `OFF` as a fallback.
+Existing mapped AVM parameter names, credentials, settings, and the `fqdn`
+output are preserved.
+
+The pack exports `postgreSqlRecipeParameters` and `postgreSqlRecipeOutputs`
+as the canonical mapping. The Azure Bicep pack generator imports these exports
+for the locally built PostgreSQL wrapper, retaining its local registry source
+and `plainHttp: true`. Both paths accept `postgreSqlServerConfigurations` and
+map `host` to `fqdn`; neither maintains a separate copy of the parameter map.
+Generated packs need their relative import of this file to remain reachable.
+Regenerate a pack if you move it. The checked-in pack remains self-contained
+for release bundling.
+
+Publish the wrapper through the Bicep recipe publication workflow and ensure
+the selected tag is anonymously pullable before releasing this pack. Upgrade
+the schema and pack together; older packs do not reject the new `disabled`
+value. See the [PostgreSQL adoption guidance](../../Data/postgreSqlDatabases/README.md#adopting-the-change).
 
 Unless the platform engineer pins the server parameter as described below, the `Radius.Data/postgreSqlDatabases` Recipe maps the resource's `tls` property onto the flexible server's `require_secure_transport` parameter, so the server rejects connections that do not use TLS unless the application sets `tls: 'optional'`. This relies on the Radius runtime materializing schema defaults into the resource's properties, so applications that omit `tls` still resolve to `required`.
 

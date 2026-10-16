@@ -79,6 +79,24 @@ The `test-recipe` command:
 - Deploys the `test/app.bicep` file (if it exists)
 - Cleans up resources after testing
 
+PostgreSQL Kubernetes tests also run a TCP policy matrix for omitted,
+`required`, `optional`, and certificate-free `disabled` modes. They create
+test certificates in the actual recipe namespace, verify CA/hostname trust,
+exercise policy changes and rotation, and wait for explicit rollout/probe
+results. Use an isolated Environment without an existing `postgresql-tls`
+Secret. See the [PostgreSQL guide](../../Data/postgreSqlDatabases/README.md#kubernetes-transport-tests).
+
+Generated Azure Bicep packs reuse the checked-in Azure PostgreSQL parameter
+and output mapping while selecting the locally built wrapper. Run
+`bash .github/scripts/tests/test-generate-recipe-pack.sh` for generator fixtures.
+With an isolated Radius environment available, run
+`bash Data/postgreSqlDatabases/test/assert-generated-azure-pack.sh` to compile
+and register test-only packs and compare their evaluated mappings. This test
+does not activate the packs or provision Azure resources; Radius context
+expressions remain literal until an application resource is deployed. The
+Azure workflow's subsequent application deployment is the live provisioning
+check.
+
 ### 5. Test All Recipes
 
 Run tests for all recipes in the repository:
@@ -171,6 +189,20 @@ resource name. The test runner passes the generated name to both the template
 and the CLI, then uses that name for assertions and cleanup. Keep the default
 name for manual use. Other required credentials must use a secure `password`
 parameter; the runner generates its value. Usernames can have a test default.
+
+The automated runners delete `Radius.Core` applications using the CLI's
+`--preview` mode and verify that the application is absent. They inventory
+registered resource types in the same workspace scope and verify that no
+resource retains the full application ID or an ID captured before deletion.
+Group-wide typed listing also detects orphans when the application record is
+already missing; listing or cleanup errors are failures, not proof of absence.
+Before deletion,
+they discover app-labelled workloads across namespaces rather than assuming the
+configured environment namespace is the runtime namespace. Any remaining
+Secrets, Deployments, Services, and ConfigMaps are removed only with that test
+application's label in the discovered namespaces, and their absence is checked.
+Deployment, assertion, discovery, or cleanup errors fail the test. Pack-backed
+tests never unregister a recipe or delete a shared Recipe Pack.
 
 Delete your test cluster when done:
 

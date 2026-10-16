@@ -27,7 +27,7 @@
 # third-party module reference baked directly into a pack, never exercised
 # by any recipes/<platform>/ folder test.
 #
-# Unlike test-recipe.sh, this script does NOT register or unregister a
+# Like test-recipe.sh, this script does NOT register or unregister a
 # single recipe: the Resource Type must already be resolvable because a pack
 # covering it is active on the given environment. The all-types driver
 # activates each deployed pack before calling this script.

@@ -19,7 +19,54 @@ param postgreSqlServerConfigurations array = []
 // Names are compared exactly: Require_Secure_Transport is not recognized as an override,
 // so the derived entry is still added. Use canonical lowercase Azure parameter names.
 // Safe navigation does not validate entries; they are forwarded for downstream validation.
-var postgreSqlOperatorSetsSecureTransport = !empty(filter(postgreSqlServerConfigurations, config => config.?name == 'require_secure_transport'))
+@export()
+func postgreSqlRecipeParameters(serverConfigurations array) object => {
+  tlsPolicy: '{{context.resource.properties.tls}}'
+  name: 'pgsql-{{context.azure.resourceNameHash}}'
+  administratorLogin: '{{context.resource.properties.username}}'
+  administratorLoginPassword: '{{context.resource.properties.password}}'
+  authConfig: {
+    activeDirectoryAuth: 'Enabled'
+    passwordAuth: 'Enabled'
+  }
+  skuName: '{{context.resource.properties.size == "S" ? "Standard_B1ms" : "Standard_D2ds_v5"}}'
+  tier: '{{context.resource.properties.size == "S" ? "Burstable" : "GeneralPurpose"}}'
+  databases: [
+    {
+      name: '{{context.resource.properties.database}}'
+    }
+  ]
+  version: '16'
+  availabilityZone: -1
+  highAvailability: 'Disabled'
+  geoRedundantBackup: 'Disabled'
+  storageSizeGB: 32
+  publicNetworkAccess: 'Enabled'
+  firewallRules: [
+    {
+      name: 'allow-all'
+      startIpAddress: '0.0.0.0'
+      endIpAddress: '255.255.255.255'
+    }
+  ]
+  enableAdvancedThreatProtection: false
+  enableTelemetry: false
+  lock: {
+    kind: 'None'
+  }
+  configurations: concat(serverConfigurations, !empty(filter(serverConfigurations, config => config.?name == 'require_secure_transport')) ? [] : [
+    {
+      name: 'require_secure_transport'
+      source: 'user-override'
+      value: '{{context.resource.properties.tls == "optional" ? "OFF" : "ON"}}'
+    }
+  ])
+}
+
+@export()
+var postgreSqlRecipeOutputs = {
+  host: 'fqdn'
+}
 
 resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
   name: 'azure-aks'
@@ -183,51 +230,9 @@ resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
       }
       'Radius.Data/postgreSqlDatabases': {
         kind: 'bicep'
-        source: 'mcr.microsoft.com/bicep/avm/res/db-for-postgre-sql/flexible-server:0.15.2'
-        parameters: {
-          name: 'pgsql-{{context.azure.resourceNameHash}}'
-          administratorLogin: '{{context.resource.properties.username}}'
-          administratorLoginPassword: '{{context.resource.properties.password}}'
-          authConfig: {
-            activeDirectoryAuth: 'Enabled'
-            passwordAuth: 'Enabled'
-          }
-          skuName: '{{context.resource.properties.size == "S" ? "Standard_B1ms" : "Standard_D2ds_v5"}}'
-          tier: '{{context.resource.properties.size == "S" ? "Burstable" : "GeneralPurpose"}}'
-          databases: [
-            {
-              name: '{{context.resource.properties.database}}'
-            }
-          ]
-          version: '16'
-          availabilityZone: -1
-          highAvailability: 'Disabled'
-          geoRedundantBackup: 'Disabled'
-          storageSizeGB: 32
-          publicNetworkAccess: 'Enabled'
-          firewallRules: [
-            {
-              name: 'allow-all'
-              startIpAddress: '0.0.0.0'
-              endIpAddress: '255.255.255.255'
-            }
-          ]
-          enableAdvancedThreatProtection: false
-          enableTelemetry: false
-          lock: {
-            kind: 'None'
-          }
-          configurations: concat(postgreSqlServerConfigurations, postgreSqlOperatorSetsSecureTransport ? [] : [
-            {
-              name: 'require_secure_transport'
-              source: 'user-override'
-              value: '{{context.resource.properties.tls == "optional" ? "OFF" : "ON"}}'
-            }
-          ])
-        }
-        outputs: {
-          host: 'fqdn'
-        }
+        source: 'ghcr.io/radius-project/azure-recipes/postgresqldatabases:latest'
+        parameters: postgreSqlRecipeParameters(postgreSqlServerConfigurations)
+        outputs: postgreSqlRecipeOutputs
       }
       'Radius.Data/sqlServerDatabases': {
         kind: 'bicep'

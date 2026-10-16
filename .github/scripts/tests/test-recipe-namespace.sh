@@ -33,15 +33,41 @@ export COMMAND_CALLS="$TEST_ROOT/command-calls"
 cat >"$TEST_ROOT/bin/rad" <<'EOF'
 #!/bin/bash
 printf 'rad %s\n' "$*" >>"$COMMAND_CALLS"
-if [[ "$1 $2" == "env show" ]]; then
-    cat <<'JSON'
+case "$1 $2" in
+    "env show")
+        cat <<'JSON'
 {"id":"/planes/radius/local/resourcegroups/default/providers/Radius.Core/environments/default","properties":{"providers":{"kubernetes":{"namespace":"radius-recipe-validation"}}}}
 JSON
-fi
+        ;;
+    "workspace switch"|"deploy "*) ;;
+    "app delete")
+        [[ " $* " == *" --preview "* ]] || exit 90
+        ;;
+    "app list")
+        [[ " $* " == *" --preview "* ]] || exit 90
+        echo null
+        ;;
+    "resource-type list") echo '[{"Name":"Radius.Data/widgets"}]' ;;
+    "resource list")
+        [[ "$3" == Radius.Data/widgets && " $* " == *" --preview "* ]] || exit 90
+        echo '[]'
+        ;;
+    *) echo "Unexpected rad command: $*" >&2; exit 90 ;;
+esac
 EOF
 cat >"$TEST_ROOT/bin/kubectl" <<'EOF'
 #!/bin/bash
 printf 'kubectl %s\n' "$*" >>"$COMMAND_CALLS"
+if [[ "$1" == get ]]; then
+    if [[ " $* " == *" --all-namespaces "* ]]; then
+        for arg in "$@"; do
+            [[ "$arg" != radapp.io/application=* ]] || app="${arg#*=}"
+        done
+        printf '{"items":[{"metadata":{"namespace":"actual-runtime-ns","labels":{"radapp.io/application":"%s"}}}]}\n' "$app"
+    else
+        echo '{"items":[]}'
+    fi
+fi
 EOF
 chmod +x "$TEST_ROOT/bin/rad" "$TEST_ROOT/bin/kubectl"
 
@@ -55,10 +81,10 @@ if grep -q '^rad env update ' "$COMMAND_CALLS"; then
     exit 1
 fi
 
-for resource in secrets deployments services; do
-    grep -qxE "kubectl delete $resource -l radapp.io/application=testapp-[0-9]+ -n radius-recipe-validation" "$COMMAND_CALLS"
+for resource in secrets deployments services configmaps; do
+    grep -qxE "kubectl delete $resource -l radapp.io/application=testapp-[0-9]+ -n actual-runtime-ns" "$COMMAND_CALLS"
 done
-if grep -q -- '--all' "$COMMAND_CALLS"; then
+if grep -qE '^kubectl delete .*--all|^kubectl delete .* -n radius-recipe-validation' "$COMMAND_CALLS"; then
     echo "Recipe test attempted to delete shared namespace resources" >&2
     exit 1
 fi
