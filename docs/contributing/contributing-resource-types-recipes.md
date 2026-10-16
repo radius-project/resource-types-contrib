@@ -415,8 +415,7 @@ After creating your Resource Type and Recipes, test them locally using the provi
 
    # Associate the deployed pack with the existing Environment
    rad env update default \
-     --recipe-packs azure-aks \
-     --preview
+     --recipe-packs azure-aks
    ```
 
 4. **Deploy the test application**:

@@ -3,16 +3,18 @@ extension radius
 @description('The ID of your Radius Environment. Set automatically by the rad CLI.')
 param environment string
 
+@description('Application name. CI supplies a unique name for deployment and cleanup.')
+param applicationName string = 'sqlserver-azure-test'
+
 @description('Database username.')
-@secure()
-param dbUsername string
+param username string = 'radadmin'
 
 @description('Database password.')
 @secure()
-param dbPassword string
+param password string
 
 resource app 'Radius.Core/applications@2025-08-01-preview' = {
-  name: 'sqlserver-azure-test'
+  name: applicationName
   properties: {
     environment: environment
   }
@@ -24,8 +26,8 @@ resource sqlserver 'Radius.Data/sqlServerDatabases@2025-08-01-preview' = {
     environment: environment
     application: app.id
     database: 'appdb'
-    username: dbUsername
-    password: dbPassword
+    username: username
+    password: password
   }
 }
 
