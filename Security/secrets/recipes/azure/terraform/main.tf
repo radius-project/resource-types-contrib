@@ -45,7 +45,7 @@ resource "azurerm_key_vault" "vault" {
 resource "azurerm_key_vault_secret" "secrets" {
   for_each     = local.secret_data
   name         = each.key
-  value        = try(coalesce(each.value.value, "unused-on-destroy"), "unused-on-destroy")
+  value        = each.value.value
   key_vault_id = azurerm_key_vault.vault.id
 }
 

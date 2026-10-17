@@ -122,7 +122,7 @@ fail() {
 
 # --- successful deploy: resolves environment, deploys, asserts, cleans up ---
 : >"$CALL_LOG"
-DEPLOY_EXIT_CODE=0 run_test Data/mySqlDatabases azure azure ||
+DEPLOY_EXIT_CODE=0 run_test Data/mySqlDatabases azure azure verify-transport ||
     fail "expected successful run to exit 0"
 grep -q "rad env show azure --workspace azure" "$CALL_LOG" ||
     fail "expected environment to be resolved"
@@ -162,21 +162,21 @@ if grep -q '^rad deploy' "$CALL_LOG"; then
 fi
 
 : >"$CALL_LOG"
-if FAIL_TLS=optional run_test Data/mySqlDatabases azure azure; then
+if FAIL_TLS=optional run_test Data/mySqlDatabases azure azure verify-transport; then
     fail "failure in the optional branch must fail the test"
 fi
 [[ "$(grep -c '^rad app delete' "$CALL_LOG")" -eq 2 ]] ||
     fail "a failed optional branch must still clean up"
 
 : >"$CALL_LOG"
-if READINESS_EXIT_CODE=1 run_test Data/mySqlDatabases azure azure; then
+if READINESS_EXIT_CODE=1 run_test Data/mySqlDatabases azure azure verify-transport; then
     fail "a failed MySQL setting probe must fail even when rad deploy succeeds"
 fi
 grep -q '^rad app delete' "$CALL_LOG" || fail "readiness failure must still delete the app"
 
 # --- failed deploy: app/K8s cleanup still runs, no recipe unregister, exit 1
 : >"$CALL_LOG"
-if DEPLOY_EXIT_CODE=1 run_test Data/mySqlDatabases azure azure; then
+if DEPLOY_EXIT_CODE=1 run_test Data/mySqlDatabases azure azure verify-transport; then
     fail "expected failed deploy to exit non-zero"
 fi
 grep -q "kubectl delete secrets" "$CALL_LOG" ||
@@ -189,7 +189,7 @@ jq '.parameters.verifyTransport.value = "true"' \
     "$REPO_ROOT/Data/mySqlDatabases/test/verify-transport.parameters.json" \
     >"$FIXTURE_ROOT/Data/mySqlDatabases/test/verify-transport.parameters.json"
 : >"$CALL_LOG"
-if run_test Data/mySqlDatabases azure azure; then
+if run_test Data/mySqlDatabases azure azure verify-transport; then
     fail "a string verifyTransport parameter must fail the test"
 fi
 grep -q '^rad app delete' "$CALL_LOG" || fail "invalid parameter type must still clean up"

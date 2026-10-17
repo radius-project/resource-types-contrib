@@ -16,13 +16,9 @@
 # limitations under the License.
 # ------------------------------------------------------------
 
-# Compatibility entry point for direct-module callers. Direct-module MySQL
-# mappings enforce tls, so preserve their transport-policy assertions.
+# Compatibility entry point for direct-module callers.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ $# -eq 3 ]]; then
-    set -- "$@" verify-transport
-fi
 exec "$SCRIPT_DIR/test-recipe-pack-entry.sh" "$@"

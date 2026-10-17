@@ -168,18 +168,20 @@ test-recipe-pack-entry.sh Compute/persistentVolumes azure-ws azure-env
 test-recipe-pack-entry.sh Compute/routes azure-ws azure-env"
 diff -u <(echo "$expected") "$CALL_LOG" ||
     fail "expected direct-module and repository-owned entries to run with their pack active"
-grep -q "1 skipped" <<<"$output" ||
-    fail "expected the containerImages exclusion to be reported"
+grep -q "6 tested, 1 skipped, 0 failed" <<<"$output" ||
+    fail "expected six runnable entries and only the containerImages exclusion"
 if grep -q 'test-recipe-pack-entry.sh Compute/containerImages' "$CALL_LOG"; then
     fail "the explicitly excluded containerImages entry should not run"
 fi
 
 rm "$FIXTURE_ROOT/Messaging/rabbitMQ/test/app.bicep"
 : >"$CALL_LOG"
-if FAIL_TYPE="" run_driver azure azure-ws azure-env; then
+if output=$(FAIL_TYPE="" run_driver azure azure-ws azure-env 2>&1); then
     fail "expected an unapproved missing test app to fail the driver"
 fi
-grep -q "test-recipe-pack-entry.sh Data/redisCaches" "$CALL_LOG" ||
+grep -q "Messaging/rabbitMQ from pack 'azure-aks' has no test/app.bicep" <<<"$output" ||
+    fail "expected the missing rabbitMQ test application to cause the failure"
+grep -q "test-recipe-pack-entry.sh Data/mySqlDatabases" "$CALL_LOG" ||
     fail "expected testing to continue after an unapproved missing test app"
 echo "param applicationName string" >"$FIXTURE_ROOT/Messaging/rabbitMQ/test/app.bicep"
 

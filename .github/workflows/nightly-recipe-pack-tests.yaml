@@ -170,7 +170,7 @@ jobs:
   nightly-azure-recipe-pack-tests:
     name: Nightly Recipe and Pack Tests (Azure)
     runs-on: ubuntu-24.04
-    timeout-minutes: 360
+    timeout-minutes: 330
     permissions:
       id-token: write
       contents: read
@@ -258,6 +258,7 @@ jobs:
       - name: Test Azure Bicep recipes
         id: azure_bicep
         continue-on-error: true
+        timeout-minutes: 75
         run: |
           set -euo pipefail
           pack_name="nightlyazurebiceprecipepack"
@@ -280,6 +281,7 @@ jobs:
       - name: Test Azure Terraform recipes
         id: azure_terraform
         continue-on-error: true
+        timeout-minutes: 75
         run: |
           set -euo pipefail
           pack_name="nightlyazureterraformrecipepack"
@@ -302,12 +304,13 @@ jobs:
       - name: Deploy checked-in Azure Recipe Packs
         id: azure_pack_deploy
         continue-on-error: true
+        timeout-minutes: 15
         run: .github/scripts/deploy-all-checked-in-recipe-packs.sh azure "$AZURE_ENVIRONMENT_NAME"
 
       - name: Test all runnable Recipe Pack entries
         id: azure_pack_entries
         continue-on-error: true
-        timeout-minutes: 180
+        timeout-minutes: 120
         run: make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
 
       - name: Report Azure test failures
@@ -364,6 +367,36 @@ jobs:
           path: radius-pod-logs
           if-no-files-found: warn
 
-      - name: Cleanup Azure Resources
-        if: always()
-        run: make cleanup-azure-resources
+  cleanup-azure-resources:
+    name: Cleanup Azure Resources
+    needs: nightly-azure-recipe-pack-tests
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Azure Login
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Delete Azure Resource Group
+        env:
+          AZURE_RESOURCE_GROUP: rrttest-nightly-${{ github.run_id }}-${{ github.run_attempt }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          if [[ "$(az group exists --name "$AZURE_RESOURCE_GROUP" --subscription "$AZURE_SUBSCRIPTION_ID")" != "true" ]]; then
+            echo "Azure resource group '$AZURE_RESOURCE_GROUP' does not exist."
+            exit 0
+          fi
+          az group delete \
+            --name "$AZURE_RESOURCE_GROUP" \
+            --subscription "$AZURE_SUBSCRIPTION_ID" \
+            --yes \
+            --no-wait
+          echo "Azure cleanup initiated for resource group '$AZURE_RESOURCE_GROUP'"
