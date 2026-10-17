@@ -107,6 +107,26 @@ for recipe_dir in "${RECIPE_DIRS[@]}"; do
         kind: '$RECIPE_KIND'
         source: '$TEMPLATE_PATH'
         plainHttp: true
+EOF
+
+    # The routes recipes require a Gateway. Use the Gateway that rad install creates with Contour.
+    if [[ "$RESOURCE_TYPE" == "Radius.Compute/routes" ]]; then
+        if [[ "$RECIPE_TYPE" == "bicep" ]]; then
+            GATEWAY_NAME_PARAM="gatewayName"
+            GATEWAY_NAMESPACE_PARAM="gatewayNamespace"
+        else
+            GATEWAY_NAME_PARAM="gateway_name"
+            GATEWAY_NAMESPACE_PARAM="gateway_namespace"
+        fi
+        cat >> "$OUTPUT_FILE" << EOF
+        parameters: {
+          ${GATEWAY_NAME_PARAM}: 'radius'
+          ${GATEWAY_NAMESPACE_PARAM}: 'radius-system'
+        }
+EOF
+    fi
+
+    cat >> "$OUTPUT_FILE" << EOF
       }
 EOF
 done
