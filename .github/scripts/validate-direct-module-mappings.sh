@@ -21,8 +21,9 @@ set -euo pipefail
 # Statically checks every "direct module" entry (see lib-recipe-packs.sh) in
 # every checked-in Recipe Pack, with no deployment and no cloud cost. This is
 # the "Layer 2" check from issue #312: real-infrastructure testing of these
-# same entries happens separately (nightly, see test-direct-module-recipe.sh)
-# because it costs real money. These checks run on every PR:
+# same entries happens separately (nightly, see
+# test-all-recipe-pack-entries.sh) because it costs real money. These checks
+# run on every PR:
 #
 #   1. Every `{{context.resource.properties.<name>}}` expression in the entry
 #      refers to a property that actually exists on that Resource Type.

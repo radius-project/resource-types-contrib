@@ -215,6 +215,19 @@ for failure in APP_DELETE_EXIT_CODE KUBECTL_EXIT_CODE; do
     fi
 done
 
+# A caller can mark application deletion as nonfatal when an external cleanup
+# boundary removes the deployed infrastructure. Kubernetes cleanup must still
+# succeed.
+: >"$CALL_LOG"
+output=$(APP_DELETE_EXIT_CODE=1 RTC_NONFATAL_APP_DELETE_REASON="tracked deletion defect" \
+    run_lib rtc_deploy_and_assert_test_app \
+    "$TEST_APP_BICEP" "Radius.Security/secrets" rtc-test /envs/myenv myws my-ns 2>&1) ||
+    fail "an explicitly nonfatal application deletion must not fail the deployment test"
+grep -q '^rad app delete' "$CALL_LOG" ||
+    fail "nonfatal cleanup handling must still attempt application deletion"
+grep -q 'Warning: Test app cleanup failed: tracked deletion defect' <<<"$output" ||
+    fail "nonfatal cleanup handling must report its reason"
+
 : >"$CALL_LOG"
 if POSTGRES_JSON='{"properties":{}}' run_lib rtc_deploy_and_assert_test_app \
     "$TEST_APP_BICEP" "Radius.Data/postgreSqlDatabases" rtc-test /envs/myenv myws my-ns >/dev/null; then

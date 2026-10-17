@@ -53,10 +53,8 @@ RECIPE_PATH="${RECIPE_PATH#./}"
 # Detect recipe type based on file presence
 if [[ -f "$RECIPE_PATH/main.tf" ]]; then
     RECIPE_TYPE="terraform"
-    TEMPLATE_KIND="terraform"
 elif ls "$RECIPE_PATH"/*.bicep &>/dev/null; then
     RECIPE_TYPE="bicep"
-    TEMPLATE_KIND="bicep"
 else
     echo "Error: Could not detect recipe type in $RECIPE_PATH"
     exit 1
@@ -135,6 +133,15 @@ TEST_FILE="$RESOURCE_TYPE_PATH/test/app.bicep"
 if [[ ! -f "$TEST_FILE" ]]; then
     echo "==> No test file found at $TEST_FILE, skipping deployment test"
     exit 0
+fi
+
+# Radius currently redacts sensitive values before Terraform destroy. The
+# Azure secrets recipe therefore deploys successfully but cannot pass provider
+# configuration validation during deletion. The disposable Azure resource
+# group remains the authoritative cleanup boundary until the Radius defect is
+# fixed. See radius-project/radius#13330.
+if [[ "$RESOURCE_TYPE" == "Radius.Security/secrets" && "$PLATFORM" == "azure" && "$RECIPE_TYPE" == "terraform" ]]; then
+    export RTC_NONFATAL_APP_DELETE_REASON="Radius redacts sensitive Terraform inputs during delete (radius-project/radius#13330); Azure resource-group cleanup will remove the deployed resources"
 fi
 
 if rtc_deploy_and_assert_test_app "$TEST_FILE" "$RESOURCE_TYPE" "testapp" "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE"; then
