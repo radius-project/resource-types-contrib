@@ -346,6 +346,13 @@ application fail unless they are explicitly excluded. The current temporary
 exclusion is `containerImages`; issue #398 tracks its enablement. A pack with
 no runnable entries also fails. The tests use the values in each Resource
 Type's test app; they do not test every enum value.
+
+The Azure Terraform secrets test currently treats Radius application deletion
+failure as nonfatal because Radius redacts sensitive recipe inputs before
+Terraform destroy. Deployment and result assertions must still pass, and the
+job's disposable Azure resource group removes the cloud resources. Track the
+runtime fix in radius-project/radius#13330.
+
 The static check validates Radius property references and enum comparison
 literals, not the target module's parameter contract.
 
