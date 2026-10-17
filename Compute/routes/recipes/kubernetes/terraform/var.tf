@@ -5,11 +5,13 @@ variable "context" {
 }
 
 variable "gateway_name" {
-  description = "Name of the Gateway resource to attach routes to. Must be provided by the user."
+  description = "Name of the Gateway resource to attach routes to."
   type        = string
+  default     = "radius"
 }
 
 variable "gateway_namespace" {
-  description = "Namespace where the Gateway resource is located. Must be provided by the user."
+  description = "Namespace where the Gateway resource is located."
   type        = string
+  default     = "radius-system"
 }
