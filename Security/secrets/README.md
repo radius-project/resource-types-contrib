@@ -57,8 +57,43 @@ The Azure ACI recipe (`azure-keyvault-secrets.bicep`) provisions an Azure Key Va
   - `azureWorkloadIdentity`: requires `clientId` and `tenantId`
   - `awsIRSA`: requires `roleARN`
 - **Encoding support**: If a secret entry specifies `encoding: 'base64'`, the value is base64-encoded before storage
-- **Secret storage**: A deployment script (`Microsoft.Resources/deploymentScripts`, Azure CLI) runs as the UAI and writes each secret to the Key Vault. The recipe does not declare `Microsoft.KeyVault/vaults/secrets` resources, because Azure Resource Manager does not support DELETE on them and the Radius resource delete would fail. The secrets are removed when Radius deletes the Key Vault. The deployment script runs on each deployment and needs permission to create a temporary storage account and container instance in the resource group.
 - **Parameters**: Accepts an optional `location` parameter (defaults to `resourceGroup().location`)
+
+### Azure Bicep application deletion
+
+The Bicep recipe keeps the existing Key Vault, secret resources, and output
+properties. No secret migration, vault replacement, or client URI change is
+required.
+
+Application deletion requires the Radius control-plane fix in
+[radius-project/radius#13342](https://github.com/radius-project/radius/pull/13342),
+commit `9eef84272ddd70130788a80488092df60f86cc45`, or a release that contains it.
+Updating only the CLI does not install this recipe-driver fix.
+
+Azure Resource Manager rejects direct DELETE requests for Key Vault secret child
+resources. The fixed driver lets deletion of the same Radius-managed parent vault
+remove those secrets, waits for the parent delete to finish, and propagates parent
+failures. It does not ignore arbitrary HTTP 405 responses. This applies when the
+vault and its secrets are deleted together; removing an individual key while
+retaining the vault is a separate, pre-existing limitation.
+
+### Azure Terraform delete validation
+
+The Terraform recipe uses an empty value only to let Terraform evaluate the
+configuration when Radius redacts secret values on delete. A resource lifecycle
+precondition rejects missing or null `data` and secret values on create and update.
+An empty `data` map remains valid. Destroy does not evaluate this precondition or
+write replacement values.
+
+This is a recipe-side workaround for
+[radius-project/radius#13330](https://github.com/radius-project/radius/issues/13330).
+It does not repair the sensitive-input handling in Radius. Run the input regression
+tests with Terraform 1.7 or later:
+
+```sh
+terraform -chdir=Security/secrets/recipes/azure/terraform init -backend=false
+terraform -chdir=Security/secrets/recipes/azure/terraform test
+```
 
 ## Non-developer Use Cases
 

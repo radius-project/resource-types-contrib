@@ -285,6 +285,15 @@ jobs:
       - name: Install Radius CLI
         run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
 
+      - name: Validate Azure Terraform secret inputs
+        if: matrix.recipe == 'terraform'
+        run: |
+          test_dir=$(mktemp -d "$RUNNER_TEMP/azure-secret-inputs-XXXXXX")
+          trap 'rm -rf "$test_dir"' EXIT
+          cp -R Security/secrets/recipes/azure/terraform/. "$test_dir/"
+          terraform -chdir="$test_dir" init -backend=false -input=false
+          terraform -chdir="$test_dir" test -no-color
+
       - name: Create Radius Cluster
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}

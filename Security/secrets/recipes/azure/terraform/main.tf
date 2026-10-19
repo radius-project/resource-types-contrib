@@ -44,6 +44,16 @@ resource "azurerm_key_vault" "vault" {
       "Recover",
     ]
   }
+
+  lifecycle {
+    # Resource preconditions apply to create/update plans, not destroy plans.
+    precondition {
+      condition = try(var.context.resource.properties.data, null) != null && alltrue([
+        for secret in local.secret_data : try(secret.value, null) != null
+      ])
+      error_message = "Secret data and every secret value must be present and non-null on create or update."
+    }
+  }
 }
 
 resource "azurerm_key_vault_secret" "secrets" {

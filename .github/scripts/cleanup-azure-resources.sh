@@ -22,7 +22,7 @@
 # 2. Best-effort sweep of resources that earlier test runs left behind:
 #    - Deletes stale "rrttest-*" resource groups whose creationTime tag is
 #      older than AZURE_CLEANUP_MAX_AGE_HOURS (default: 12).
-#    - Purges soft-deleted Key Vaults that were in "rrttest-*" resource groups.
+#    - Purges old soft-deleted Key Vaults from "rrttest-*" resource groups.
 #      Soft-deleted vaults keep their names reserved and stay in the
 #      subscription for the retention period (up to 90 days).
 # Set AZURE_CLEANUP_SWEEP=false to skip the sweep. Sweep errors do not fail
@@ -51,13 +51,18 @@ if [[ -n "${AZURE_SUBSCRIPTION_ID:-}" ]]; then
     SUB_ARGS+=(--subscription "$AZURE_SUBSCRIPTION_ID")
 fi
 
+cleanup_status=0
 echo "Deleting Azure resource group '$AZURE_RESOURCE_GROUP'"
-az group delete --name "$AZURE_RESOURCE_GROUP" --yes --no-wait "${SUB_ARGS[@]}"
-echo "Azure cleanup initiated for resource group '$AZURE_RESOURCE_GROUP'"
+if az group delete --name "$AZURE_RESOURCE_GROUP" --yes --no-wait "${SUB_ARGS[@]}"; then
+    echo "Azure cleanup initiated for resource group '$AZURE_RESOURCE_GROUP'"
+else
+    echo "Error: could not start cleanup for resource group '$AZURE_RESOURCE_GROUP'." >&2
+    cleanup_status=1
+fi
 
 # Prints the first line of an Azure CLI error message.
 first_error_line() {
-    printf '%s\n' "$1" | head -n 1
+    printf '%s\n' "${1%%$'\n'*}"
 }
 
 # Deletes test resource groups that are older than the maximum age.
@@ -76,10 +81,11 @@ sweep_stale_resource_groups() {
     while IFS=$'\t' read -r name created; do
         [[ -z "$name" || "$name" == "$AZURE_RESOURCE_GROUP" ]] && continue
         created="${created//$'\r'/}"
-        if [[ ! "$created" =~ ^[0-9]+$ ]]; then
+        if [[ ! "$created" =~ ^[0-9]{1,12}$ ]]; then
             echo "Skipping resource group '$name': no valid creationTime tag."
             continue
         fi
+        created=$((10#$created))
         if (( now - created < max_age_seconds )); then
             continue
         fi
@@ -88,41 +94,57 @@ sweep_stale_resource_groups() {
             echo "Warning: could not delete resource group '$name': $(first_error_line "$err")" >&2
         fi
     done <<< "$groups"
+    return 0
 }
 
 # Purges soft-deleted Key Vaults that were in test resource groups.
 purge_deleted_test_key_vaults() {
-    local vaults name location err
+    local vaults name location deleted deleted_at now max_age_seconds err
+    now=$(date +%s)
+    max_age_seconds=$((AZURE_CLEANUP_MAX_AGE_HOURS * 3600))
 
     if ! vaults=$(az keyvault list-deleted --resource-type vault "${SUB_ARGS[@]}" \
-        --query "[?contains(properties.vaultId, '/resourceGroups/${TEST_RG_PREFIX}')].[name, properties.location]" \
+        --query "[?contains(properties.vaultId, '/resourceGroups/${TEST_RG_PREFIX}')].[name, properties.location, properties.deletionDate]" \
         --output tsv); then
         echo "Warning: could not list soft-deleted Key Vaults; skipping purge." >&2
         return 0
     fi
 
-    while IFS=$'\t' read -r name location; do
+    while IFS=$'\t' read -r name location deleted; do
         [[ -z "$name" ]] && continue
-        location="${location//$'\r'/}"
+        deleted="${deleted//$'\r'/}"
+        if [[ -z "$deleted" ]] || ! deleted_at=$(date --date="$deleted" +%s 2>/dev/null); then
+            echo "Skipping Key Vault '$name': no valid deletionDate." >&2
+            continue
+        fi
+        if (( now - deleted_at < max_age_seconds )); then
+            continue
+        fi
         echo "Purging soft-deleted test Key Vault '$name' ($location)"
         if ! err=$(az keyvault purge --name "$name" --location "$location" --no-wait "${SUB_ARGS[@]}" 2>&1); then
-            # DeletedVaultNotFound means that a purge of the vault already started.
             echo "Warning: could not purge Key Vault '$name': $(first_error_line "$err")" >&2
         fi
     done <<< "$vaults"
+    return 0
 }
 
 if [[ "$AZURE_CLEANUP_SWEEP" != "true" ]]; then
     echo "Sweep of leftover test resources is disabled."
-    exit 0
+    exit "$cleanup_status"
 fi
 
-if [[ ! "$AZURE_CLEANUP_MAX_AGE_HOURS" =~ ^[0-9]+$ ]]; then
+if [[ ! "$AZURE_CLEANUP_MAX_AGE_HOURS" =~ ^[0-9]{1,6}$ ]]; then
     echo "Warning: AZURE_CLEANUP_MAX_AGE_HOURS must be a whole number; skipping sweep." >&2
-    exit 0
+    exit "$cleanup_status"
+fi
+AZURE_CLEANUP_MAX_AGE_HOURS=$((10#$AZURE_CLEANUP_MAX_AGE_HOURS))
+if (( AZURE_CLEANUP_MAX_AGE_HOURS < 4 )); then
+    echo "Warning: cleanup age must be at least 4 hours, longer than the Azure test job limit; skipping sweep." >&2
+    exit "$cleanup_status"
 fi
 
 echo "Sweeping leftover test resources from earlier runs"
-sweep_stale_resource_groups || true
-purge_deleted_test_key_vaults || true
-echo "Sweep of leftover test resources complete"
+sweep_stale_resource_groups
+purge_deleted_test_key_vaults
+echo "Sweep requests submitted. Completion is not verified."
+exit "$cleanup_status"
