@@ -55,9 +55,14 @@ echo "Deleting Azure resource group '$AZURE_RESOURCE_GROUP'"
 az group delete --name "$AZURE_RESOURCE_GROUP" --yes --no-wait "${SUB_ARGS[@]}"
 echo "Azure cleanup initiated for resource group '$AZURE_RESOURCE_GROUP'"
 
+# Prints the first line of an Azure CLI error message.
+first_error_line() {
+    printf '%s\n' "$1" | head -n 1
+}
+
 # Deletes test resource groups that are older than the maximum age.
 sweep_stale_resource_groups() {
-    local now max_age_seconds groups name created
+    local now max_age_seconds groups name created err
     now=$(date +%s)
     max_age_seconds=$((AZURE_CLEANUP_MAX_AGE_HOURS * 3600))
 
@@ -79,14 +84,15 @@ sweep_stale_resource_groups() {
             continue
         fi
         echo "Deleting stale test resource group '$name' (created $(( (now - created) / 3600 )) hours ago)"
-        az group delete --name "$name" --yes --no-wait "${SUB_ARGS[@]}" ||
-            echo "Warning: could not delete resource group '$name'." >&2
+        if ! err=$(az group delete --name "$name" --yes --no-wait "${SUB_ARGS[@]}" 2>&1); then
+            echo "Warning: could not delete resource group '$name': $(first_error_line "$err")" >&2
+        fi
     done <<< "$groups"
 }
 
 # Purges soft-deleted Key Vaults that were in test resource groups.
 purge_deleted_test_key_vaults() {
-    local vaults name location
+    local vaults name location err
 
     if ! vaults=$(az keyvault list-deleted --resource-type vault "${SUB_ARGS[@]}" \
         --query "[?contains(properties.vaultId, '/resourceGroups/${TEST_RG_PREFIX}')].[name, properties.location]" \
@@ -99,8 +105,10 @@ purge_deleted_test_key_vaults() {
         [[ -z "$name" ]] && continue
         location="${location//$'\r'/}"
         echo "Purging soft-deleted test Key Vault '$name' ($location)"
-        az keyvault purge --name "$name" --location "$location" --no-wait "${SUB_ARGS[@]}" ||
-            echo "Warning: could not purge Key Vault '$name'." >&2
+        if ! err=$(az keyvault purge --name "$name" --location "$location" --no-wait "${SUB_ARGS[@]}" 2>&1); then
+            # DeletedVaultNotFound means that a purge of the vault already started.
+            echo "Warning: could not purge Key Vault '$name': $(first_error_line "$err")" >&2
+        fi
     done <<< "$vaults"
 }
 
