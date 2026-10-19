@@ -87,8 +87,12 @@ write replacement values.
 
 This is a recipe-side workaround for
 [radius-project/radius#13330](https://github.com/radius-project/radius/issues/13330).
-It does not repair the sensitive-input handling in Radius. Run the input regression
-tests with Terraform 1.7 or later:
+It does not repair the sensitive-input handling in Radius. Keep this workaround
+for resources deployed before the root fix. Their older Terraform state does not
+contain saved inputs; they need a redeploy with valid values on the fixed runtime
+before deletion can use those saved inputs.
+
+Run the input regression tests with Terraform 1.7 or later:
 
 ```sh
 terraform -chdir=Security/secrets/recipes/azure/terraform init -backend=false

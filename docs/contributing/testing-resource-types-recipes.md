@@ -208,6 +208,15 @@ Run the cleanup regression tests without Azure access:
 make test-azure-cleanup
 ```
 
+To validate a recipe-driver fix before its Radius PR merges, dispatch the
+`Validate Azure Recipes` workflow on the recipe branch with `radius_image_tag`
+set to the exact test tag published by Radius functional-test CI. This replaces
+only the `dynamic-rp` image in the temporary test cluster, using
+`ghcr.io/radius-project/dev/dynamic-rp`. The workflow waits for that deployment
+to become ready before it tests recipes. An empty input keeps the default image;
+normal PR validation is unchanged. Do not infer a tag from a commit SHA: use the
+published image location in the Radius PR.
+
 ## Manual Testing (Advanced)
 
 If you prefer manual testing or need to test externally-published recipes:

@@ -33,6 +33,11 @@ on:
         required: false
         default: edge
         type: string
+      radius_image_tag:
+        description: "Optional dynamic-rp test image tag from ghcr.io/radius-project/dev."
+        required: false
+        default: ""
+        type: string
 
 permissions: {}
 
@@ -300,6 +305,22 @@ jobs:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           TEST_AZURE_OIDC_JSON: ${{ secrets.TEST_AZURE_OIDC_JSON }}
         run: make create-radius-cluster
+
+      - name: Use patched Radius recipe driver
+        if: github.event_name == 'workflow_dispatch' && inputs.radius_image_tag != ''
+        env:
+          RADIUS_IMAGE_TAG: ${{ inputs.radius_image_tag }}
+        run: |
+          if [[ ! "$RADIUS_IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "Error: invalid Radius test image tag." >&2
+            exit 1
+          fi
+          kubectl set image deployment/dynamic-rp \
+            "dynamic-rp=ghcr.io/radius-project/dev/dynamic-rp:$RADIUS_IMAGE_TAG" \
+            --namespace radius-system
+          kubectl rollout status deployment/dynamic-rp --namespace radius-system --timeout=180s
+          kubectl get deployment dynamic-rp --namespace radius-system \
+            -o jsonpath='{.spec.template.spec.containers[*].image}'
 
       - name: Configure Azure Provider
         env:
