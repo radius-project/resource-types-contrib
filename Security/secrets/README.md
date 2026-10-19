@@ -75,9 +75,11 @@ deletion can use saved inputs.
 Run the focused tests with Terraform 1.7 or later:
 
 ```sh
-terraform -chdir=Security/secrets/recipes/azure/terraform init -backend=false
-terraform -chdir=Security/secrets/recipes/azure/terraform test
+make test-azure-secret-inputs
 ```
+
+The target runs in a temporary copy, so provider downloads and lock files do not
+enter the recipe package. CI runs the same target without Azure credentials.
 
 ## Non-developer Use Cases
 
