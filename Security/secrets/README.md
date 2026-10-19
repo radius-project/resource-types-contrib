@@ -67,7 +67,7 @@ required.
 
 Application deletion requires the Radius control-plane fix in
 [radius-project/radius#13342](https://github.com/radius-project/radius/pull/13342),
-commit `9eef84272ddd70130788a80488092df60f86cc45`, or a release that contains it.
+commit `ac1e6ac79ede4a614033d6a1b28800a11b7d26ed`, or a release that contains it.
 Updating only the CLI does not install this recipe-driver fix.
 
 Azure Resource Manager rejects direct DELETE requests for Key Vault secret child
