@@ -9,6 +9,8 @@ on:
       - "**/kubernetes/**"
       - "**/test/app.bicep"
       - "Data/postgreSqlDatabases/test/**"
+      - "Security/secrets/test/**"
+      - "Security/secrets/recipes/azure/terraform/**"
       - "**/*.yaml"
       - "**/*.svg"
       - ".github/workflows/validate-resource-types.yaml"
@@ -117,6 +119,15 @@ jobs:
       - name: Validate containerImages local context resolver
         if: matrix.recipe == 'terraform'
         run: Compute/containerImages/test/resolve-local-context-test.sh
+
+      - name: Verify Azure Secret Terraform delete context
+        if: matrix.recipe == 'terraform'
+        run: |
+          docker run --rm \
+            --mount "type=bind,source=$GITHUB_WORKSPACE,target=/repo,readonly" \
+            --entrypoint sh \
+            hashicorp/terraform:1.9.8@sha256:18f9986038bbaf02cf49db9c09261c778161c51dcc7fb7e355ae8938459428cd \
+            /repo/Security/secrets/test/assert-azure-terraform-delete.sh
 
       # this setups a local k3d cluster for testing purposes, creates workspace, group and  env preview
       - name: Create Radius Cluster

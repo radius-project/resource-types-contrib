@@ -38,12 +38,14 @@ resource "azurerm_key_vault" "vault" {
       "List",
       "Set",
       "Delete",
+      "Purge",
     ]
   }
 }
 
 resource "azurerm_key_vault_secret" "secrets" {
-  for_each     = local.secret_data
+  # Radius redacts stored values; destroy removes existing instances from state.
+  for_each     = try(var.context.operation, "deploy") == "delete" ? {} : local.secret_data
   name         = each.key
   value        = each.value.value
   key_vault_id = azurerm_key_vault.vault.id

@@ -97,6 +97,15 @@ expressions remain literal until an application resource is deployed. The
 Azure workflow's subsequent application deployment is the live provisioning
 check.
 
+Run `make test-azure-secret-terraform` with Terraform 1.7 or later for the
+credential-free Azure Secret lifecycle regression. It downloads the AzureRM
+provider and uses its real schema with mocked Azure operations. The checks cover
+explicit delete context with redacted inputs, existing and partial inventories,
+repeated cleanup, and rejection of invalid create inputs. CI runs this target's
+script in a pinned Terraform container. These tests do not replace live Azure
+cleanup or verification that the installed Radius runtime supports
+`context.operation`. See the [Secret cleanup requirements](../../Security/secrets/README.md#azure-terraform-secret-cleanup).
+
 ### 5. Test All Recipes
 
 Run tests for all recipes in the repository:
