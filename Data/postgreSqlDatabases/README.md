@@ -38,6 +38,12 @@ Because `tls` defaults to `required`, configure your PostgreSQL client for TLS a
 
 The Azure wrapper rejects `disabled` before invoking the existing AVM. For `required` and `optional`, a platform engineer can still pin Azure's transport policy to `ON` or `OFF`; the connection variable reports the application's request. See [PostgreSQL transport policy](../../recipe-packs/azure-aks/README.md#postgresql-transport-policy) for precedence and public-network restrictions.
 
+The wrapper reads the created server's actual FQDN through an existing-resource
+reference with an explicit dependency on the AVM module. Keep that dependency:
+without it, the read can race server creation. This avoids a nested deployment
+output lookup without changing the engine or guessing a hostname. It adds an Azure
+read after the module completes; failures still fail the deployment.
+
 Use `optional` only when the server is not publicly reachable. Non-TLS connections can expose administrator credentials and query traffic in transit. Private reachability does not encrypt traffic, so TLS remains preferred; keep it required with the Azure pack as written.
 
 ## Kubernetes TLS prerequisites

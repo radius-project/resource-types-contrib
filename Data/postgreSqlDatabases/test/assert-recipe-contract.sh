@@ -22,8 +22,17 @@ jq -e '
   .parameters.tlsPolicy.allowedValues == ["required","optional"] and
   .parameters.administratorLoginPassword.type == "securestring" and
   (.outputs | keys) == ["fqdn"] and
-  (.resources[0].name | contains("uniqueString(parameters('\''name'\''))")) and
-  (.resources[0].properties.parameters.configurations.value ==
-    "[parameters('\''configurations'\'')]")
+  .languageVersion == "2.0" and
+  (.resources.server.name | contains("uniqueString(parameters('\''name'\''))")) and
+  (.resources.server.properties.parameters.configurations.value ==
+    "[parameters('\''configurations'\'')]") and
+  .resources.deployedServer.existing == true and
+  .resources.deployedServer.type == "Microsoft.DBforPostgreSQL/flexibleServers" and
+  .resources.deployedServer.name == "[parameters('\''name'\'')]" and
+  .resources.deployedServer.dependsOn == ["server"] and
+  (.resources.deployedServer.apiVersion ==
+    .resources.server.properties.template.resources.flexibleServer.apiVersion) and
+  .outputs.fqdn.value ==
+    "[tryGet(reference('\''deployedServer'\''), '\''fullyQualifiedDomainName'\'')]"
 ' "$TEMP/azure.json" >/dev/null
 echo "PostgreSQL compiled recipe contracts passed"

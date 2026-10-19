@@ -74,4 +74,12 @@ module server 'br/public:avm/res/db-for-postgre-sql/flexible-server:0.15.2' = {
   }
 }
 
-output fqdn string = server.outputs.fqdn!
+// An unordered existing-resource read can race the module on first deployment.
+resource deployedServer 'Microsoft.DBforPostgreSQL/flexibleServers@2025-06-01-preview' existing = {
+  name: name
+  dependsOn: [
+    server
+  ]
+}
+
+output fqdn string = deployedServer.properties.?fullyQualifiedDomainName!
