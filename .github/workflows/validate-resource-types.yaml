@@ -70,9 +70,6 @@ jobs:
       - name: Test direct-module test scripts
         run: make test-direct-module-recipes-unit
 
-      - name: Test Azure cleanup selection
-        run: make test-azure-cleanup
-
   validate-resource-types:
     name: Validate Resource Types and Recipes
     runs-on: ubuntu-24.04

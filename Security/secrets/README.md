@@ -59,40 +59,20 @@ The Azure ACI recipe (`azure-keyvault-secrets.bicep`) provisions an Azure Key Va
 - **Encoding support**: If a secret entry specifies `encoding: 'base64'`, the value is base64-encoded before storage
 - **Parameters**: Accepts an optional `location` parameter (defaults to `resourceGroup().location`)
 
-### Azure Bicep application deletion
+### Azure Terraform deletion
 
-The Bicep recipe keeps the existing Key Vault, secret resources, and output
-properties. No secret migration, vault replacement, or client URI change is
-required.
+Radius redacts secret values on delete. The recipe supplies an empty value so
+Terraform can evaluate the destroy configuration without writing replacement
+values. A lifecycle precondition rejects missing or null inputs on create/update.
+Purge and Recover permissions allow the Azure provider to remove soft-deleted
+secrets during destroy.
 
-Application deletion requires the Radius control-plane fix in
-[radius-project/radius#13342](https://github.com/radius-project/radius/pull/13342),
-commit `ac1e6ac79ede4a614033d6a1b28800a11b7d26ed`, or a release that contains it.
-Updating only the CLI does not install this recipe-driver fix.
-
-Azure Resource Manager rejects direct DELETE requests for Key Vault secret child
-resources. The fixed driver lets deletion of the same Radius-managed parent vault
-remove those secrets, waits for the parent delete to finish, and propagates parent
-failures. It does not ignore arbitrary HTTP 405 responses. This applies when the
-vault and its secrets are deleted together; removing an individual key while
-retaining the vault is a separate, pre-existing limitation.
-
-### Azure Terraform delete validation
-
-The Terraform recipe uses an empty value only to let Terraform evaluate the
-configuration when Radius redacts secret values on delete. A resource lifecycle
-precondition rejects missing or null `data` and secret values on create and update.
-An empty `data` map remains valid. Destroy does not evaluate this precondition or
-write replacement values.
-
-This is a recipe-side workaround for
+Keep this workaround for
 [radius-project/radius#13330](https://github.com/radius-project/radius/issues/13330).
-It does not repair the sensitive-input handling in Radius. Keep this workaround
-for resources deployed before the root fix. Their older Terraform state does not
-contain saved inputs; they need a redeploy with valid values on the fixed runtime
-before deletion can use those saved inputs.
+Older Terraform state needs a valid-input redeploy on the fixed runtime before
+deletion can use saved inputs.
 
-Run the input regression tests with Terraform 1.7 or later:
+Run the focused tests with Terraform 1.7 or later:
 
 ```sh
 terraform -chdir=Security/secrets/recipes/azure/terraform init -backend=false

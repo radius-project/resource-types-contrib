@@ -178,45 +178,6 @@ Delete your test cluster when done:
 make delete-radius-cluster
 ```
 
-### Azure cleanup
-
-The Azure workflows call `make cleanup-azure-resources` even after a test fails.
-The script starts deletion of the current `AZURE_RESOURCE_GROUP`. It also searches
-the selected Azure subscription for `rrttest-*` resource groups with a numeric
-`creationTime` tag older than 12 hours and soft-deleted test Key Vaults whose
-`deletionDate` is older than 12 hours. Recent groups and vaults are not swept.
-
-Set `AZURE_CLEANUP_SWEEP=false` to disable this subscription-wide sweep.
-`AZURE_CLEANUP_MAX_AGE_HOURS` changes the age threshold; it must be at least four
-hours, longer than the Azure test job limit. Only use the sweep in a subscription
-where the `rrttest-` prefix identifies disposable test resource groups.
-
-Deletion and purge use `--no-wait`. Success means the requests were submitted,
-not that Azure finished removing the resources. Sweep failures produce warnings
-without failing the job. A failed current-group delete still fails cleanup, but
-does not prevent the sweep. An identity with vault purge permission is required
-to purge soft-deleted vaults. Purge permanently removes the recovery copy.
-
-A soft-deleted vault is not proof of a leaked live resource: Azure retains it
-after normal deletion. Someone with subscription access must still inspect any
-suspected live leftovers and check asynchronous deletion results. The sweep
-does not inspect resources outside test resource groups.
-
-Run the cleanup regression tests without Azure access:
-
-```bash
-make test-azure-cleanup
-```
-
-To validate a recipe-driver fix before its Radius PR merges, dispatch the
-`Validate Azure Recipes` workflow on the recipe branch with `radius_image_tag`
-set to the exact test tag published by Radius functional-test CI. This replaces
-only the `dynamic-rp` image in the temporary test cluster, using
-`ghcr.io/radius-project/dev/dynamic-rp`. The workflow waits for that deployment
-to become ready before it tests recipes. An empty input keeps the default image;
-normal PR validation is unchanged. Do not infer a tag from a commit SHA: use the
-published image location in the Radius PR.
-
 ## Manual Testing (Advanced)
 
 If you prefer manual testing or need to test externally-published recipes:

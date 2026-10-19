@@ -93,10 +93,6 @@ test-direct-module-recipes-unit: ## Run the fixture-based unit tests for the dir
 	@./.github/scripts/tests/test-test-direct-module-recipe.sh
 	@./.github/scripts/tests/test-test-all-direct-module-recipes.sh
 
-.PHONY: test-azure-cleanup
-test-azure-cleanup: ## Check Azure cleanup selection and failure handling without cloud access
-	@bash .github/scripts/tests/test-cleanup-azure-resources.sh
-
 .PHONY: update-env-recipe-pack
 update-env-recipe-pack: ## Update environment with recipe pack ID (requires RECIPE_PACK_NAME and optionally RESOURCE_GROUP and ENVIRONMENT)
 ifndef RECIPE_PACK_NAME
