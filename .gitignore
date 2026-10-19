@@ -3,3 +3,5 @@
 
 # Local release bundle output (see .github/build/release.mk)
 /dist/
+
+.DS_Store
