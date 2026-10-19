@@ -18,12 +18,23 @@
 
 # =============================================================================
 # Cleanup script for Azure resources created during recipe validation.
-# Deletes the resource group recorded in the Azure test state file (if any).
+# 1. Deletes the resource group of the current test run (AZURE_RESOURCE_GROUP).
+# 2. Best-effort sweep of resources that earlier test runs left behind:
+#    - Deletes stale "rrttest-*" resource groups whose creationTime tag is
+#      older than AZURE_CLEANUP_MAX_AGE_HOURS (default: 12).
+#    - Purges soft-deleted Key Vaults that were in "rrttest-*" resource groups.
+#      Soft-deleted vaults keep their names reserved and stay in the
+#      subscription for the retention period (up to 90 days).
+# Set AZURE_CLEANUP_SWEEP=false to skip the sweep. Sweep errors do not fail
+# the script.
 # =============================================================================
 
 set -euo pipefail
 
 AZURE_RESOURCE_GROUP="${AZURE_RESOURCE_GROUP:-}"
+AZURE_CLEANUP_SWEEP="${AZURE_CLEANUP_SWEEP:-true}"
+AZURE_CLEANUP_MAX_AGE_HOURS="${AZURE_CLEANUP_MAX_AGE_HOURS:-12}"
+TEST_RG_PREFIX="rrttest-"
 
 if [[ -z "$AZURE_RESOURCE_GROUP" ]]; then
     echo "No Azure resource group provided, skipping cleanup."
@@ -35,12 +46,75 @@ if ! command -v az >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "Deleting Azure resource group '$AZURE_RESOURCE_GROUP'"
 SUB_ARGS=()
 if [[ -n "${AZURE_SUBSCRIPTION_ID:-}" ]]; then
     SUB_ARGS+=(--subscription "$AZURE_SUBSCRIPTION_ID")
 fi
 
+echo "Deleting Azure resource group '$AZURE_RESOURCE_GROUP'"
 az group delete --name "$AZURE_RESOURCE_GROUP" --yes --no-wait "${SUB_ARGS[@]}"
-
 echo "Azure cleanup initiated for resource group '$AZURE_RESOURCE_GROUP'"
+
+# Deletes test resource groups that are older than the maximum age.
+sweep_stale_resource_groups() {
+    local now max_age_seconds groups name created
+    now=$(date +%s)
+    max_age_seconds=$((AZURE_CLEANUP_MAX_AGE_HOURS * 3600))
+
+    if ! groups=$(az group list "${SUB_ARGS[@]}" \
+        --query "[?starts_with(name, '${TEST_RG_PREFIX}')].[name, tags.creationTime]" \
+        --output tsv); then
+        echo "Warning: could not list resource groups; skipping stale resource group sweep." >&2
+        return 0
+    fi
+
+    while IFS=$'\t' read -r name created; do
+        [[ -z "$name" || "$name" == "$AZURE_RESOURCE_GROUP" ]] && continue
+        created="${created//$'\r'/}"
+        if [[ ! "$created" =~ ^[0-9]+$ ]]; then
+            echo "Skipping resource group '$name': no valid creationTime tag."
+            continue
+        fi
+        if (( now - created < max_age_seconds )); then
+            continue
+        fi
+        echo "Deleting stale test resource group '$name' (created $(( (now - created) / 3600 )) hours ago)"
+        az group delete --name "$name" --yes --no-wait "${SUB_ARGS[@]}" ||
+            echo "Warning: could not delete resource group '$name'." >&2
+    done <<< "$groups"
+}
+
+# Purges soft-deleted Key Vaults that were in test resource groups.
+purge_deleted_test_key_vaults() {
+    local vaults name location
+
+    if ! vaults=$(az keyvault list-deleted --resource-type vault "${SUB_ARGS[@]}" \
+        --query "[?contains(properties.vaultId, '/resourceGroups/${TEST_RG_PREFIX}')].[name, properties.location]" \
+        --output tsv); then
+        echo "Warning: could not list soft-deleted Key Vaults; skipping purge." >&2
+        return 0
+    fi
+
+    while IFS=$'\t' read -r name location; do
+        [[ -z "$name" ]] && continue
+        location="${location//$'\r'/}"
+        echo "Purging soft-deleted test Key Vault '$name' ($location)"
+        az keyvault purge --name "$name" --location "$location" --no-wait "${SUB_ARGS[@]}" ||
+            echo "Warning: could not purge Key Vault '$name'." >&2
+    done <<< "$vaults"
+}
+
+if [[ "$AZURE_CLEANUP_SWEEP" != "true" ]]; then
+    echo "Sweep of leftover test resources is disabled."
+    exit 0
+fi
+
+if [[ ! "$AZURE_CLEANUP_MAX_AGE_HOURS" =~ ^[0-9]+$ ]]; then
+    echo "Warning: AZURE_CLEANUP_MAX_AGE_HOURS must be a whole number; skipping sweep." >&2
+    exit 0
+fi
+
+echo "Sweeping leftover test resources from earlier runs"
+sweep_stale_resource_groups || true
+purge_deleted_test_key_vaults || true
+echo "Sweep of leftover test resources complete"

@@ -13,6 +13,9 @@ param context object
 @description('Azure region for new resources. Defaults to the resource group location.')
 param location string = resourceGroup().location
 
+@description('Changes on each deployment so that the deployment script writes the current secret values to Key Vault. Do not set this parameter.')
+param scriptUpdateTag string = utcNow()
+
 // ---------------------------------------------------------------------------
 // Variables
 // ---------------------------------------------------------------------------
@@ -119,17 +122,78 @@ resource kvRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' =
 // ---------------------------------------------------------------------------
 // Write secrets into Key Vault
 // ---------------------------------------------------------------------------
-// Iterates over context.resource.properties.data and creates/updates a
-// Key Vault secret for each entry. 
+// A deployment script writes each entry of context.resource.properties.data
+// to the Key Vault. The recipe does not declare
+// 'Microsoft.KeyVault/vaults/secrets' resources, because Radius deletes each
+// resource that the recipe deploys, and Azure Resource Manager does not
+// support DELETE on Key Vault secrets (405 DeleteNotSupported). That made
+// the recipe delete fail. The secrets are removed when the Key Vault is
+// deleted.
+//
+// The script runs as the UAI, which has the Key Vault Administrator role on
+// the vault. The script retries because the role assignment can take some
+// minutes to propagate.
 
-resource kvSecrets 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = [for secret in secretItems: {
-  name: secret.name
-  parent: keyVault
-  properties: {
-    value: secret.value
-    contentType: 'text/plain'
+resource kvSecretsScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = if (length(secretItems) > 0) {
+  name: 'kv-secrets-${uniqueString(context.resource.id, resourceGroup().id)}'
+  location: location
+  kind: 'AzureCLI'
+  tags: {
+    'radius-resource': context.resource.name
+    'radius-application': context.application == null ? '' : context.application.name
   }
-}]
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${uai.id}': {}
+    }
+  }
+  dependsOn: [
+    kvRoleAssignment
+  ]
+  properties: {
+    azCliVersion: '2.63.0'
+    forceUpdateTag: scriptUpdateTag
+    retentionInterval: 'PT1H'
+    timeout: 'PT20M'
+    cleanupPreference: 'Always'
+    environmentVariables: [
+      {
+        name: 'KEY_VAULT_NAME'
+        value: keyVault.name
+      }
+      {
+        name: 'SECRET_ITEMS'
+        #disable-next-line use-secure-value-for-secure-inputs
+        secureValue: string(secretItems)
+      }
+    ]
+    scriptContent: '''
+#!/bin/bash
+set -euo pipefail
+
+max_attempts=30
+printf '%s' "$SECRET_ITEMS" | jq -r '.[] | "\(.name) \(.value | @base64)"' |
+  while read -r name encoded; do
+    # Keep trailing newlines in the value (for example, PEM certificates).
+    value="$(printf '%s' "$encoded" | base64 -d; printf x)"
+    value="${value%x}"
+    attempt=1
+    until az keyvault secret set --vault-name "$KEY_VAULT_NAME" --name "$name" \
+      --content-type text/plain --value="$value" --output none; do
+      if [ "$attempt" -ge "$max_attempts" ]; then
+        echo "Failed to set secret '$name' after $attempt attempts." >&2
+        exit 1
+      fi
+      echo "Could not set secret '$name' (attempt $attempt). The role assignment may not be active yet. Retrying in 20 seconds."
+      attempt=$((attempt + 1))
+      sleep 20
+    done
+    echo "Set secret '$name'."
+  done
+'''
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Outputs

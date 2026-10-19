@@ -57,6 +57,7 @@ The Azure ACI recipe (`azure-keyvault-secrets.bicep`) provisions an Azure Key Va
   - `azureWorkloadIdentity`: requires `clientId` and `tenantId`
   - `awsIRSA`: requires `roleARN`
 - **Encoding support**: If a secret entry specifies `encoding: 'base64'`, the value is base64-encoded before storage
+- **Secret storage**: A deployment script (`Microsoft.Resources/deploymentScripts`, Azure CLI) runs as the UAI and writes each secret to the Key Vault. The recipe does not declare `Microsoft.KeyVault/vaults/secrets` resources, because Azure Resource Manager does not support DELETE on them and the Radius resource delete would fail. The secrets are removed when Radius deletes the Key Vault. The deployment script runs on each deployment and needs permission to create a temporary storage account and container instance in the resource group.
 - **Parameters**: Accepts an optional `location` parameter (defaults to `resourceGroup().location`)
 
 ## Non-developer Use Cases
