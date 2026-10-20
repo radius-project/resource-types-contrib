@@ -15,8 +15,8 @@ Developer documentation is in the Resource Type definition YAML file. Use the `r
 
 The Kubernetes Recipes have two modes:
 
-- **Default mode.** If the resource does not set `type`, the Recipe deploys a single-replica, non-persistent Redis `Deployment` and `Service`. It then deploys a `state.redis` Dapr component that uses the Redis instance. This mode is the same as the legacy `local-dev` Recipe. Use it for development and test only.
-- **Bring-your-own mode.** If the resource sets `type`, the Recipe deploys only the Dapr component. It uses `type`, `version`, `metadata`, and `auth` from the resource. The platform engineer or the developer must supply all the metadata that the component type needs. This mode replaces `resourceProvisioning: 'manual'` in the legacy type.
+- **Default mode.** If the resource does not set `componentType`, the Recipe deploys a single-replica, non-persistent Redis `Deployment` and `Service`. It then deploys a `state.redis` Dapr component that uses the Redis instance. This mode is the same as the legacy `local-dev` Recipe. Use it for development and test only.
+- **Bring-your-own mode.** If the resource sets `componentType`, the Recipe deploys only the Dapr component. It uses `componentType`, `version`, `metadata`, and `auth` from the resource. The platform engineer or the developer must supply all the metadata that the component type needs. This mode replaces `resourceProvisioning: 'manual'` in the legacy type.
 
 The Dapr control plane must be installed on the cluster. The Dapr component name is the resource name.
 
@@ -25,7 +25,7 @@ The Dapr control plane must be installed on the cluster. The Dapr component name
 | Property | Type | Description |
 | --- | --- | --- |
 | `context.resource.name` | string | The name of the Dapr component. |
-| `context.resource.properties.type` | string | The Dapr component type. If not set, the Recipe uses the default mode. |
+| `context.resource.properties.componentType` | string | The Dapr component type. If not set, the Recipe uses the default mode. |
 | `context.resource.properties.version` | string | The Dapr component version. Defaults to `v1`. |
 | `context.resource.properties.metadata` | object | Map of component metadata names to `value` or `secretKeyRef`. In the default mode, these entries override the default entries. |
 | `context.resource.properties.auth.secretStore` | string | The Dapr secret store that resolves `secretKeyRef` values. |
@@ -46,16 +46,17 @@ The Dapr control plane must be installed on the cluster. The Dapr component name
 | `componentName` | string | The name of the Dapr component. |
 | `version` | string | The Dapr component version. |
 
-The Recipe does not return `type`. Radius writes output values back to the resource. If the Recipe returned the default type, a later update could switch the resource out of the default mode and delete the default Redis instance.
+The Recipe does not return `componentType`. Radius writes output values back to the resource. If the Recipe returned the default type, a later update could switch the resource out of the default mode and delete the default Redis instance.
 
 ## Migrate from Applications.Dapr/stateStores
 
 | Legacy property | New property |
 | --- | --- |
-| `resourceProvisioning: 'manual'` | Set `type`. The Recipe then deploys only the component. |
-| `resourceProvisioning: 'recipe'` | Do not set `type`. |
+| `resourceProvisioning: 'manual'` | Set `componentType`. The Recipe then deploys only the component. |
+| `resourceProvisioning: 'recipe'` | Do not set `componentType`. |
+| `type` | `componentType`. The new name prevents a conflict with the `type` of the resource in connection environment variables. |
 | `recipe` | Not used. Platform engineers register Recipes in the Environment. |
 | `resources` | Not used. |
-| `metadata`, `type`, `version`, `auth`, `componentName` | No change. |
+| `metadata`, `version`, `auth`, `componentName` | No change. |
 
 Do not put secret material in a `metadata` `value`. Use `secretKeyRef` with `auth.secretStore`. Use a `Radius.Dapr/secretStores` resource to deploy the secret store.

@@ -14,7 +14,7 @@ resource app 'Radius.Core/applications@2025-08-01-preview' = {
   }
 }
 
-// No type is set, so the Recipe deploys Redis and a pubsub.redis component.
+// No componentType is set, so the Recipe deploys Redis and a pubsub.redis component.
 resource pubSub 'Radius.Dapr/pubSubBrokers@2025-08-01-preview' = {
   name: 'pubsub'
   properties: {

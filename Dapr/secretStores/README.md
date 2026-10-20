@@ -15,8 +15,8 @@ Developer documentation is in the Resource Type definition YAML file. Use the `r
 
 The Kubernetes Recipes deploy only a Dapr component. They do not deploy a backing secret store.
 
-- **Default mode.** If the resource does not set `type`, the Recipe deploys a `secretstores.kubernetes` component. The component reads Kubernetes secrets in the namespace of the application. This mode is the same as the legacy `local-dev` Recipe.
-- **Bring-your-own mode.** If the resource sets `type`, the Recipe deploys the component with `type`, `version`, and `metadata` from the resource. This mode replaces `resourceProvisioning: 'manual'` in the legacy type.
+- **Default mode.** If the resource does not set `componentType`, the Recipe deploys a `secretstores.kubernetes` component. The component reads Kubernetes secrets in the namespace of the application. This mode is the same as the legacy `local-dev` Recipe.
+- **Bring-your-own mode.** If the resource sets `componentType`, the Recipe deploys the component with `componentType`, `version`, and `metadata` from the resource. This mode replaces `resourceProvisioning: 'manual'` in the legacy type.
 
 The Dapr control plane must be installed on the cluster. The Dapr component name is the resource name.
 
@@ -25,7 +25,7 @@ The Dapr control plane must be installed on the cluster. The Dapr component name
 | Property | Type | Description |
 | --- | --- | --- |
 | `context.resource.name` | string | The name of the Dapr component. |
-| `context.resource.properties.type` | string | The Dapr component type. Defaults to `secretstores.kubernetes`. |
+| `context.resource.properties.componentType` | string | The Dapr component type. Defaults to `secretstores.kubernetes`. |
 | `context.resource.properties.version` | string | The Dapr component version. Defaults to `v1`. |
 | `context.resource.properties.metadata` | object | Map of component metadata names to `value` or `secretKeyRef`. A `secretKeyRef` reads a Kubernetes secret. |
 
@@ -34,14 +34,14 @@ The Dapr control plane must be installed on the cluster. The Dapr component name
 | Property | Type | Description |
 | --- | --- | --- |
 | `componentName` | string | The name of the Dapr component. |
-| `type` | string | The Dapr component type. |
 | `version` | string | The Dapr component version. |
 
 ## Migrate from Applications.Dapr/secretStores
 
 | Legacy property | New property |
 | --- | --- |
-| `resourceProvisioning: 'manual'` | Set `type`. |
-| `resourceProvisioning: 'recipe'` | Do not set `type`. |
+| `resourceProvisioning: 'manual'` | Set `componentType`. |
+| `resourceProvisioning: 'recipe'` | Do not set `componentType`. |
+| `type` | `componentType`. The new name prevents a conflict with the `type` of the resource in connection environment variables. |
 | `recipe` | Not used. Platform engineers register Recipes in the Environment. |
-| `metadata`, `type`, `version`, `componentName` | No change. |
+| `metadata`, `version`, `componentName` | No change. |
