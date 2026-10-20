@@ -23,9 +23,9 @@
 # `test/app.bicep` against a live Radius environment. Originally written
 # inline in test-recipe.sh (which tests one `recipes/<platform>/<kind>/`
 # folder by registering it as a single recipe first); extracted here so
-# test-direct-module-recipe.sh can reuse the exact same deploy/assert/cleanup
-# behavior for a Resource Type whose only recipe is a pack entry already
-# active on the environment -- no single-recipe registration step needed.
+# test-recipe-pack-entry.sh can reuse the exact same deploy/assert/cleanup
+# behavior for a Resource Type whose recipe is supplied by the active pack.
+# No single-recipe registration step is needed.
 #
 # Usage:
 #   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
