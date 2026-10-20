@@ -360,13 +360,6 @@ literals, not the target module's parameter contract.
 
 Azure recipes require additional setup since they deploy resources to Azure.
 
-Both PR validation and nightly runs currently treat application deletion
-failure for the Azure Terraform secrets recipe as nonfatal because Radius
-redacts sensitive recipe inputs before Terraform destroy. Deployment and
-result assertions must still pass, and the disposable Azure resource group
-removes the cloud resources. Remove this exception when
-radius-project/radius#13330 is fixed.
-
 ### Prerequisites for Azure Recipes
 
 Before testing Azure recipes, ensure you have:

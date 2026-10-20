@@ -216,17 +216,7 @@ rtc_deploy_and_assert_test_app() {
 
         echo "==> Cleaning up test application"
         local cleanup_status=0
-        local delete_output=""
-        if ! delete_output="$(rad app delete "$app_name" --workspace "$workspace_name" --yes 2>&1)"; then
-            printf '%s\n' "$delete_output" >&2
-            if [[ -n "${RTC_NONFATAL_APP_DELETE_REASON:-}" &&
-                -n "${RTC_NONFATAL_APP_DELETE_PATTERN:-}" ]] &&
-                grep -Eq -- "$RTC_NONFATAL_APP_DELETE_PATTERN" <<<"$delete_output"; then
-                echo "Warning: Test app cleanup failed: $RTC_NONFATAL_APP_DELETE_REASON" >&2
-            else
-                cleanup_status=1
-            fi
-        fi
+        rad app delete "$app_name" --workspace "$workspace_name" --yes || cleanup_status=1
         rtc_cleanup_kubernetes_resources "$kubernetes_namespace" "$app_name" || cleanup_status=1
         if [[ "$cleanup_status" -ne 0 ]]; then
             echo "Error: Test app cleanup failed." >&2
