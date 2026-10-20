@@ -53,13 +53,15 @@ a default branch. The nightly deployment checks the values used by each test
 app, not every possible property value. A type used by two packs is tested
 once per pack, with that pack active.
 
-MySQL direct-module tests run both `tls: required` and `tls: optional`.
-They pass `verifyTransport` through `test/verify-transport.parameters.json`
-because Radius CLI `name=value` arguments are strings, not Booleans.
-The client readiness probe reads `@@GLOBAL.require_secure_transport` from
-the deployed server and requires `1` or `0`, respectively. CI waits for that
-probe before it reports success. Reversed mappings fail even when a database
-connection succeeds. Per-recipe MySQL tests keep their connection-only probe.
+MySQL pack entries that map `tls` to `require_secure_transport` run both
+`tls: required` and `tls: optional`. They pass `verifyTransport` through
+`test/verify-transport.parameters.json` because Radius CLI `name=value`
+arguments are strings, not Booleans. The client readiness probe reads
+`@@GLOBAL.require_secure_transport` from the deployed server and requires `1`
+or `0`, respectively. CI waits for that probe before it reports success.
+Reversed mappings fail even when a database connection succeeds. Pack entries
+that do not enforce transport policy, such as the Kubernetes MySQL recipe, use
+the connection-only probe.
 
 ### What to do when you add or change a pack
 
@@ -70,7 +72,7 @@ connection succeeds. Per-recipe MySQL tests keep their connection-only probe.
   platform group following the existing `kubernetes`/`azure` jobs as a
   template (see [`validate-resource-types.yaml`](../.github/workflows/validate-resource-types.yaml),
   [`validate-azure-recipes.yaml`](../.github/workflows/validate-azure-recipes.yaml),
-  and [`nightly-direct-module-recipe-tests.yaml`](../.github/workflows/nightly-direct-module-recipe-tests.yaml)).
+  and [`nightly-recipe-pack-tests.yaml`](../.github/workflows/nightly-recipe-pack-tests.yaml)).
 - **New direct-module entry in an existing pack:** add a `test/app.bicep`
   under that Resource Type's folder (see
   [Testing Resource Types and Recipes](../docs/contributing/testing-resource-types-recipes.md)
@@ -96,12 +98,14 @@ RECIPE_PLATFORM_FILTER=kubernetes make build
 # Layer 2: static check of every direct-module mapping (no cluster needed)
 make validate-direct-module-mappings
 
-# Layer 3: real deployment test of every direct-module entry for a platform group
-# Requires all packs for the group to be deployed. Activates each in turn.
-make test-direct-module-recipes PLATFORM_GROUP=kubernetes WORKSPACE=default ENVIRONMENT=default
+# Layer 3: real deployment test of every repository recipe and every
+# non-excluded entry in every checked-in pack. The entry command requires all
+# packs for the group to be deployed and activates each in turn. Issue #398
+# tracks the temporary containerImages skip.
+make test-recipe-pack-entries PLATFORM_GROUP=kubernetes WORKSPACE=default ENVIRONMENT=default
 
 # Test the shared library and test drivers without cloud resources (requires jq)
-make test-direct-module-recipes-unit
+make test-recipe-pack-entries-unit
 ```
 
 Use a dedicated test environment. The scripts replace its active pack list
