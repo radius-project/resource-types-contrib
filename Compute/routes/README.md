@@ -15,10 +15,10 @@ A list of available Recipes for this Resource Type, including links to the Bicep
 
 ## Recipe Input Properties
 
-The Kubernetes Bicep and Terraform recipes require the following parameters to be provided by the user (no defaults are set). It is expected that the user will have their desired Gateway controller set up before using a Radius.Compute/routes resource. 
+The Kubernetes Bicep and Terraform recipes accept the following parameters. They default to the Gateway installed by the standard Radius Kubernetes environment. Override them when using a different Gateway. The Gateway controller and Gateway resource must exist before deploying a Radius.Compute/routes resource.
 
-- `gatewayName`: Name of the Gateway resource the routes attach to.
-- `gatewayNamespace`: Namespace where that Gateway exists.
+- `gatewayName` / `gateway_name`: Name of the Gateway resource the routes attach to. Defaults to `radius`.
+- `gatewayNamespace` / `gateway_namespace`: Namespace where that Gateway exists. Defaults to `radius-system`.
 
 | Radius Property | Kubernetes Property |
 |---|---|
