@@ -59,6 +59,28 @@ The Azure ACI recipe (`azure-keyvault-secrets.bicep`) provisions an Azure Key Va
 - **Encoding support**: If a secret entry specifies `encoding: 'base64'`, the value is base64-encoded before storage
 - **Parameters**: Accepts an optional `location` parameter (defaults to `resourceGroup().location`)
 
+### Azure Terraform deletion
+
+Radius redacts secret values on delete. The recipe supplies an empty value so
+Terraform can evaluate the destroy configuration without writing replacement
+values. A lifecycle precondition rejects missing or null inputs on create/update.
+Purge and Recover permissions allow the Azure provider to remove soft-deleted
+secrets during destroy.
+
+Keep this workaround for
+[radius-project/radius#13330](https://github.com/radius-project/radius/issues/13330).
+Older Terraform state needs a valid-input redeploy on the fixed runtime before
+deletion can use saved inputs.
+
+Run the focused tests with Terraform 1.7 or later:
+
+```sh
+make test-azure-secret-inputs
+```
+
+The target runs in a temporary copy, so provider downloads and lock files do not
+enter the recipe package. CI runs the same target without Azure credentials.
+
 ## Non-developer Use Cases
 
 Secrets are also used by platform engineers to configure authentication for Radius to access Bicep templates stored in OCI registries and Terraform templates stored in Git repositories. This functionality uses the `basicAuthentication`, `awsIRSA`, and `azureWorkloadIdentity` kinds. These Secret kinds should only be used by platform engineers and may change in the future.

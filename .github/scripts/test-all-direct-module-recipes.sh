@@ -18,10 +18,11 @@
 
 # =============================================================================
 # Runs test-direct-module-recipe.sh for every direct-module Resource Type
-# across every checked-in Recipe Pack targeting a platform group. This is the
-# driver the nightly workflow (Layer 3 of issue #312) uses: it assumes
-# deploy-all-checked-in-recipe-packs.sh has already deployed that group's
-# packs. Each pack is activated before its mappings are tested.
+# across every checked-in Recipe Pack targeting a platform group. Retained as
+# a compatibility command for focused direct-module checks; the nightly
+# workflow uses test-all-recipe-pack-entries.sh. This script assumes
+# deploy-all-checked-in-recipe-packs.sh has already deployed the group's packs.
+# Each pack is activated before its mappings are tested.
 #
 # A type in two packs is tested twice: each pack can use a different mapping.
 #
@@ -73,10 +74,19 @@ for pack_id in "${packs[@]}"; do
         [[ -z "$resource_type_dir" ]] && continue
         tested=$((tested + 1))
 
+        test_args=("$resource_type_dir" "$workspace_name" "$environment_name")
+        if [[ "$resource_type_dir" == "Data/mySqlDatabases" ]]; then
+            mysql_test_mode="connection-only"
+            if rtc_recipe_pack_verifies_mysql_transport "$pack_id"; then
+                mysql_test_mode="verify-transport"
+            fi
+            test_args+=("$mysql_test_mode")
+        fi
+
         echo "=============================================================="
         echo "==> Direct-module test: $resource_type_dir (from pack '$pack_id')"
         echo "=============================================================="
-        if ! "$SCRIPT_DIR/test-direct-module-recipe.sh" "$resource_type_dir" "$workspace_name" "$environment_name"; then
+        if ! "$SCRIPT_DIR/test-direct-module-recipe.sh" "${test_args[@]}"; then
             echo "==> FAILED: $resource_type_dir" >&2
             failures=$((failures + 1))
         fi
