@@ -25,7 +25,7 @@ locals {
   tag            = "7.0"
   username       = "admin"
   database_input = try(var.context.resource.properties.database, null)
-  database       = local.database_input != null ? local.database_input : "mongo_db"
+  database       = local.database_input != null && local.database_input != "" ? local.database_input : "mongo_db"
 
   labels = {
     "radapp.io/resource"       = local.resource_name
@@ -200,7 +200,7 @@ output "result" {
       # string sets authSource=admin and selects `database` as the default
       # database. Radius materializes it into the managed Radius.Security/secrets
       # resource; it is never written onto the resource.
-      connectionString = "mongodb://${local.username}:${random_password.password.result}@${local.host}:${local.port}/${local.database}?authSource=admin"
+      connectionString = "mongodb://${local.username}:${random_password.password.result}@${local.host}:${local.port}/${replace(urlencode(local.database), "+", "%20")}?authSource=admin"
     }
   }
   sensitive = true
