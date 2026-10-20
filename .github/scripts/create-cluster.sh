@@ -181,16 +181,16 @@ if [[ "${AZURE_WORKLOAD_IDENTITY_ENABLED}" == "true" ]]; then
 fi
 
 echo "Installing Radius on Kubernetes..."
+# Contour is installed (no --skip-contour-install) because it provides the Gateway API
+# CRDs and the default Gateway (radius/radius-system) required by the routes recipes.
 if [[ "${AZURE_WORKLOAD_IDENTITY_ENABLED}" == "true" ]]; then
   rad install kubernetes \
       --set rp.publicEndpointOverride=localhost:8081 \
-      --skip-contour-install \
       --set dashboard.enabled=false \
       --set global.azureWorkloadIdentity.enabled=true
 else
   rad install kubernetes \
       --set rp.publicEndpointOverride=localhost:8081 \
-      --skip-contour-install \
       --set dashboard.enabled=false
 fi
 
