@@ -21,7 +21,7 @@
 # -----------------------------------------------------------------------------
 # Shared deploy/assert/cleanup logic for exercising a Resource Type's
 # `test/app.bicep` against a live Radius environment. Both test-recipe.sh and
-# test-direct-module-recipe.sh consume an already-active Recipe Pack; neither
+# test-recipe-pack-entry.sh consume an already-active Recipe Pack; neither
 # registers or unregisters a single recipe.
 #
 # Usage:
