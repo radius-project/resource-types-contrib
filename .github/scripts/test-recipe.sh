@@ -53,10 +53,8 @@ RECIPE_PATH="${RECIPE_PATH#./}"
 # Detect recipe type based on file presence
 if [[ -f "$RECIPE_PATH/main.tf" ]]; then
     RECIPE_TYPE="terraform"
-    TEMPLATE_KIND="terraform"
 elif ls "$RECIPE_PATH"/*.bicep &>/dev/null; then
     RECIPE_TYPE="bicep"
-    TEMPLATE_KIND="bicep"
 else
     echo "Error: Could not detect recipe type in $RECIPE_PATH"
     exit 1
