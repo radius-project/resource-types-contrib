@@ -72,14 +72,11 @@ var defaultMetadata = useDefault
 var mergedMetadata = union(defaultMetadata, resourceProperties.?metadata ?? {})
 var componentMetadata = map(items(mergedMetadata), entry => union({ name: entry.key }, entry.value))
 
-var componentSpec = union(
-  {
-    type: daprType
-    version: daprVersion
-    metadata: componentMetadata
-  },
-  empty(secretStoreName) ? {} : { auth: { secretStore: secretStoreName } }
-)
+var componentSpec = {
+  type: daprType
+  version: daprVersion
+  metadata: componentMetadata
+}
 
 //////////////////////////////////////////
 // Default Redis state store
@@ -160,14 +157,30 @@ resource svc 'core/Service@v1' = if (useDefault) {
 // Dapr component
 //////////////////////////////////////////
 
+// Dapr defines `auth` at the Component root, next to `spec`. When `auth` is
+// present, `auth.secretStore` is required. Bicep cannot add a root property
+// conditionally, so the Recipe declares two components and deploys only one.
 #disable-next-line BCP081
-resource daprComponent 'dapr.io/Component@v1alpha1' = {
+resource daprComponent 'dapr.io/Component@v1alpha1' = if (empty(secretStoreName)) {
   metadata: {
     name: resourceName
     namespace: namespace
     labels: labels
   }
   spec: componentSpec
+}
+
+#disable-next-line BCP081
+resource daprComponentWithAuth 'dapr.io/Component@v1alpha1' = if (!empty(secretStoreName)) {
+  metadata: {
+    name: resourceName
+    namespace: namespace
+    labels: labels
+  }
+  spec: componentSpec
+  auth: {
+    secretStore: secretStoreName
+  }
 }
 
 //////////////////////////////////////////
@@ -183,8 +196,7 @@ var redisResourceIds = [
 output result object = {
   resources: concat([componentResourceId], useDefault ? redisResourceIds : [])
   values: {
-    componentName: daprComponent.metadata.name
-    type: daprType
+    componentName: resourceName
     version: daprVersion
   }
 }

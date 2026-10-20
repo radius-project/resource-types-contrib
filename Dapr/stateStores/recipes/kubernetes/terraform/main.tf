@@ -51,19 +51,18 @@ locals {
     for name, entry in local.merged_metadata : merge({ name = name }, entry)
   ]
 
+  # Dapr defines `auth` at the Component root, next to `spec`. When `auth` is
+  # present, `auth.secretStore` is required, so omit `auth` when it is empty.
   component_auth = {
     for key, value in { auth = { secretStore = local.secret_store_name } } : key => value
     if local.secret_store_name != ""
   }
 
-  component_spec = merge(
-    {
-      type     = local.dapr_type
-      version  = local.dapr_version
-      metadata = local.component_metadata
-    },
-    local.component_auth
-  )
+  component_spec = {
+    type     = local.dapr_type
+    version  = local.dapr_version
+    metadata = local.component_metadata
+  }
 }
 
 # Default Redis state store. A single-replica, non-persistent Redis.
@@ -144,16 +143,19 @@ resource "kubernetes_service_v1" "redis" {
 }
 
 resource "kubernetes_manifest" "dapr_component" {
-  manifest = {
-    apiVersion = "dapr.io/v1alpha1"
-    kind       = "Component"
-    metadata = {
-      name      = local.resource_name
-      namespace = local.namespace
-      labels    = local.labels
-    }
-    spec = local.component_spec
-  }
+  manifest = merge(
+    {
+      apiVersion = "dapr.io/v1alpha1"
+      kind       = "Component"
+      metadata = {
+        name      = local.resource_name
+        namespace = local.namespace
+        labels    = local.labels
+      }
+      spec = local.component_spec
+    },
+    local.component_auth
+  )
 
   depends_on = [
     kubernetes_deployment_v1.redis,
@@ -172,7 +174,6 @@ output "result" {
     )
     values = {
       componentName = kubernetes_manifest.dapr_component.manifest.metadata.name
-      type          = local.dapr_type
       version       = local.dapr_version
     }
   }
