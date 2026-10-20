@@ -58,6 +58,14 @@ resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
       'Radius.Data/mySqlDatabases': {
         kind: 'bicep'
         source: 'mcr.microsoft.com/bicep/avm/res/db-for-my-sql/flexible-server:0.5.1'
+        parameters: {
+          configurations: [
+            {
+              name: 'require_secure_transport'
+              value: '{{context.resource.properties.tls == "optional" ? "OFF" : "ON"}}'
+            }
+          ]
+        }
       }
     }
   }
@@ -111,7 +119,7 @@ cp "$TEST_ROOT/bin/test-direct-module-recipe.sh" "$SCRIPTS_COPY/test-direct-modu
 
 run_driver() {
     (
-        RTC_REPO_ROOT="$FIXTURE_ROOT"
+        export RTC_REPO_ROOT="$FIXTURE_ROOT"
         export PATH="$TEST_ROOT/bin:$PATH"
         unset RTC_LIB_NAMESPACES_SOURCED RTC_LIB_RECIPE_PACKS_SOURCED
         cd "$FIXTURE_ROOT"
@@ -132,10 +140,10 @@ expected="rad env update azure-env --workspace azure-ws --recipe-packs azure-aci
 test-direct-module-recipe.sh Data/redisCaches azure-ws azure-env
 rad env update azure-env --workspace azure-ws --recipe-packs azure-aks
 test-direct-module-recipe.sh Data/redisCaches azure-ws azure-env
-test-direct-module-recipe.sh Data/mySqlDatabases azure-ws azure-env"
+test-direct-module-recipe.sh Data/mySqlDatabases azure-ws azure-env verify-transport"
 diff -u <(echo "$expected") "$CALL_LOG" || fail "each pack must be active for all its tests"
-grep -q "test-direct-module-recipe.sh Data/mySqlDatabases azure-ws azure-env" "$CALL_LOG" ||
-    fail "expected Data/mySqlDatabases to be tested with the given workspace/environment"
+grep -q "test-direct-module-recipe.sh Data/mySqlDatabases azure-ws azure-env verify-transport" "$CALL_LOG" ||
+    fail "expected the active MySQL mapping to select transport verification"
 
 # --- a failing gap makes the driver exit non-zero, but still runs the rest -
 : >"$CALL_LOG"
