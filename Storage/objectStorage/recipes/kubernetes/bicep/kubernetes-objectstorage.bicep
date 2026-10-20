@@ -56,13 +56,17 @@ var selectorLabels = {
   'app.kubernetes.io/instance': uniqueName
 }
 
-// Starts RustFS, then creates the bucket named by `containerName` through the
-// S3 API on 127.0.0.1, signing the request with the root credentials. The
-// readiness probe passes only once the bucket exists. SIGTERM is forwarded to
-// the server so it shuts down cleanly.
+// Starts RustFS, rejecting bucket names RustFS itself refuses (adjacent dots,
+// dot-dash pairs, IPv4-style names and the reserved name `rustfs`) so a bad
+// name fails fast instead of looping below. Then creates the bucket named by
+// `containerName` through the S3 API on 127.0.0.1, signing the request with the
+// root credentials. The readiness probe passes only once the bucket exists.
+// SIGTERM is forwarded to the server so it shuts down cleanly.
 var startScript = '''
 set -u
-if ! printf '%s' "$BUCKET_NAME" | grep -Eq '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'; then
+if ! printf '%s' "$BUCKET_NAME" | grep -Eq '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$' \
+  || printf '%s' "$BUCKET_NAME" | grep -Eq '\.\.|\.-|-\.|^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' \
+  || [ "$BUCKET_NAME" = rustfs ]; then
   echo "Invalid bucket name: $BUCKET_NAME" >&2
   exit 1
 fi
