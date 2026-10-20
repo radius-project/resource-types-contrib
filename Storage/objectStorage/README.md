@@ -34,7 +34,7 @@ The Kubernetes Recipe ([`recipes/kubernetes/terraform`](recipes/kubernetes/terra
 - The Deployment, Service, Secret and `PersistentVolumeClaim` are named `<resource-name>-<suffix>`, where the suffix is derived from the resource ID, so two resources with the same name never share objects or data.
 - Objects are stored on a 1 GiB `ReadWriteOnce` `PersistentVolumeClaim` from the cluster's default StorageClass, so they survive Pod restarts. The claim is deleted with the resource.
 - Clients connect over plain HTTP on port `9000`. There is no TLS. Use path-style requests (`<endpoint>/<bucket>`); any region name works, for example `us-east-1`.
-- When the server starts, the Recipe creates the bucket named by `containerName`. The Pod reports ready only after the bucket exists. The name must follow the S3 bucket naming rules: 3 to 63 lowercase letters, digits, dots and hyphens, starting and ending with a letter or digit.
+- When the server starts, the Recipe creates the bucket named by `containerName`. The Pod reports ready only after the bucket exists. The name must follow the S3 bucket naming rules: 3 to 63 lowercase letters, digits, dots and hyphens, starting and ending with a letter or digit, with no consecutive dots, no dot next to a hyphen, not shaped like an IP address, and not the reserved name `rustfs`.
 - The credentials are the server's root credentials. The Recipe generates the secret key with the `hashicorp/random` provider and keeps it in the Terraform state, so it stays the same when the Recipe runs again.
 
 | Output | Value |

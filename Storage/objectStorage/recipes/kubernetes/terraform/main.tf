@@ -15,8 +15,9 @@ terraform {
 locals {
   resource_name = var.context.resource.name
   # A unique per-resource name so two objectStorage resources that share a
-  # display name (or the same name across recreates) never collide on their
-  # Kubernetes objects, including the volume that holds the data. The name is
+  # display name never collide on their Kubernetes objects, including the
+  # volume that holds the data. The suffix is derived from the resource ID, so
+  # recreating a resource with the same ID reuses the same names. The name is
   # cut to 49 characters so the Service name and label value stay within 63.
   unique_name      = "${substr(var.context.resource.name, 0, 49)}-${substr(sha256(var.context.resource.id), 0, 13)}"
   application_name = var.context.application != null ? var.context.application.name : ""
@@ -57,7 +58,9 @@ locals {
   # the server so it shuts down cleanly.
   start_script = <<-EOT
     set -u
-    if ! printf '%s' "$BUCKET_NAME" | grep -Eq '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'; then
+    if ! printf '%s' "$BUCKET_NAME" | grep -Eq '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$' \
+      || printf '%s' "$BUCKET_NAME" | grep -Eq '\.\.|\.-|-\.|^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' \
+      || [ "$BUCKET_NAME" = rustfs ]; then
       echo "Invalid bucket name: $BUCKET_NAME" >&2
       exit 1
     fi
