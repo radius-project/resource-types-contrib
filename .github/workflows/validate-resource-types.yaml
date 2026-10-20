@@ -76,8 +76,8 @@ jobs:
       - name: Validate direct-module Recipe Pack mappings
         run: make validate-direct-module-mappings
 
-      - name: Test direct-module test scripts
-        run: make test-direct-module-recipes-unit
+      - name: Test Recipe Pack entry test scripts
+        run: make test-recipe-pack-entries-unit
 
   validate-resource-types:
     name: Validate Resource Types and Recipes
