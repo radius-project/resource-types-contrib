@@ -35,7 +35,7 @@ The Kubernetes Recipe ([`recipes/kubernetes/bicep/kubernetes-kafka.bicep`](recip
 
 | Output | Value |
 | --- | --- |
-| `host` | The DNS name of the broker `Service`, `<resource-name>.<namespace>.svc.cluster.local`. |
+| `host` | The DNS name of the broker `Service`, `<resource-name>-<unique-suffix>.<namespace>.svc.cluster.local`. |
 | `secrets.connectionString` | The bootstrap server, `<host>:9092`. Pass it to a Kafka client as `bootstrap.servers`. Delivered through the managed secret. |
 
 ## Using the resource type

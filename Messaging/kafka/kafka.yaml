@@ -79,7 +79,7 @@ types:
               description: "(Optional) The Kafka topic/Event Hub name to create. Defaults to `events`."
             host:
               type: string
-              description: The host name used to connect to the Kafka-compatible endpoint. For Azure Event Hubs this is the namespace name; the bootstrap server is `<host>.servicebus.windows.net:9093`. For the Kubernetes recipe this is the broker Service DNS name; the bootstrap server is `<host>:9092`.
+              description: (Read Only) The host name used to connect to the Kafka-compatible endpoint. For Azure Event Hubs this is the namespace name; the bootstrap server is `<host>.servicebus.windows.net:9093`. For the Kubernetes recipe this is the broker Service DNS name; the bootstrap server is `<host>:9092`.
               readOnly: true
             secrets:
               type: object
@@ -97,5 +97,5 @@ types:
                 connectionString:
                   type: string
                   readOnly: true
-                  description: The connection string used to connect to the Kafka-compatible endpoint. On Azure it is mapped from the recipe module's `primaryConnectionString` output. The Kubernetes recipe sets it to the plaintext bootstrap server `<host>:9092`. Delivered via the managed secret.
+                  description: (Read Only) The connection string used to connect to the Kafka-compatible endpoint. On Azure it is mapped from the recipe module's `primaryConnectionString` output. The Kubernetes recipe sets it to the plaintext bootstrap server `<host>:9092`. Delivered via the managed secret.
           required: [environment]
