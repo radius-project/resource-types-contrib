@@ -16,6 +16,9 @@ param context object
 param generatedPassword string = newGuid()
 
 var resourceName = context.resource.name
+// A unique per-resource name so two mongoDatabases resources that share a display
+// name never collide on their Kubernetes objects or selectors.
+var uniqueName = '${resourceName}-${uniqueString(context.resource.id)}'
 var applicationName = context.application != null ? context.application.name : ''
 var environmentName = context.environment != null ? context.environment.name : ''
 var resourceGroupName = split(context.resource.id, '/')[5]
@@ -32,10 +35,11 @@ var username = 'admin'
 // already run. 7.0 starts on every kernel.
 var tag string = '7.0'
 var port = 27017
-var host = '${resourceName}.${namespace}.svc.cluster.local'
+var host = '${uniqueName}.${namespace}.svc.cluster.local'
 
 var labels = {
   'radapp.io/resource':       resourceName
+  'radapp.io/resource-id':    uniqueName
   'radapp.io/application':    applicationName
   'radapp.io/environment':    environmentName
   'radapp.io/resource-type':  replace(context.resource.type, '/', '-')
@@ -54,7 +58,7 @@ var labels = {
 
 resource dbSecret 'core/Secret@v1' = {
   metadata: {
-    name: '${resourceName}-credentials'
+    name: '${uniqueName}-credentials'
     namespace: namespace
     labels: labels
   }
@@ -70,7 +74,7 @@ resource dbSecret 'core/Secret@v1' = {
 
 resource mongo 'apps/Deployment@v1' = {
   metadata: {
-    name: resourceName
+    name: uniqueName
     namespace: namespace
     labels: labels
   }
@@ -84,7 +88,7 @@ resource mongo 'apps/Deployment@v1' = {
     }
     selector: {
       matchLabels: {
-        'radapp.io/resource': resourceName
+        'radapp.io/resource-id': uniqueName
       }
     }
     template: {
@@ -174,14 +178,14 @@ resource mongo 'apps/Deployment@v1' = {
 
 resource svc 'core/Service@v1' = {
   metadata: {
-    name: resourceName
+    name: uniqueName
     namespace: namespace
     labels: labels
   }
   spec: {
     type: 'ClusterIP'
     selector: {
-      'radapp.io/resource': resourceName
+      'radapp.io/resource-id': uniqueName
     }
     ports: [
       {
@@ -211,6 +215,6 @@ output result object = {
     // database. Radius materializes it into the managed Radius.Security/secrets
     // resource; it is never written onto the resource.
     #disable-next-line outputs-should-not-contain-secrets
-    connectionString: 'mongodb://${username}:${generatedPassword}@${host}:${port}/${database}?authSource=admin'
+    connectionString: 'mongodb://${username}:${generatedPassword}@${host}:${port}/${uriComponent(database)}?authSource=admin'
   }
 }
