@@ -27,8 +27,8 @@ set -euo pipefail
 # This is the "Layer 1" check from issue #312: it proves every committed pack
 # at least deploys and activates. It says nothing about whether an
 # individual Resource Type mapping inside a pack is correct -- see
-# validate-direct-module-mappings.sh and test-direct-module-recipe.sh for
-# that.
+# validate-direct-module-mappings.sh and test-all-recipe-pack-entries.sh for
+# those checks.
 #
 # New pack added under an existing platform group? Nothing to do here -- it
 # is picked up automatically. New platform group? Add a CI job that calls
