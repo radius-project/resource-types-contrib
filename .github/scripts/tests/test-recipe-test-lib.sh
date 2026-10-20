@@ -73,6 +73,7 @@ case "$1 $2" in
         esac
         ;;
     "app delete")
+        [[ -n "${APP_DELETE_ERROR:-}" ]] && echo "$APP_DELETE_ERROR" >&2
         exit "${APP_DELETE_EXIT_CODE:-0}"
         ;;
 esac
@@ -219,7 +220,9 @@ done
 # boundary removes the deployed infrastructure. Kubernetes cleanup must still
 # succeed.
 : >"$CALL_LOG"
-output=$(APP_DELETE_EXIT_CODE=1 RTC_NONFATAL_APP_DELETE_REASON="tracked deletion defect" \
+output=$(APP_DELETE_EXIT_CODE=1 APP_DELETE_ERROR="Invalid combination of arguments" \
+    RTC_NONFATAL_APP_DELETE_REASON="tracked deletion defect" \
+    RTC_NONFATAL_APP_DELETE_PATTERN="Invalid combination of arguments" \
     run_lib rtc_deploy_and_assert_test_app \
     "$TEST_APP_BICEP" "Radius.Security/secrets" rtc-test /envs/myenv myws my-ns 2>&1) ||
     fail "an explicitly nonfatal application deletion must not fail the deployment test"
@@ -227,6 +230,15 @@ grep -q '^rad app delete' "$CALL_LOG" ||
     fail "nonfatal cleanup handling must still attempt application deletion"
 grep -q 'Warning: Test app cleanup failed: tracked deletion defect' <<<"$output" ||
     fail "nonfatal cleanup handling must report its reason"
+
+: >"$CALL_LOG"
+if APP_DELETE_EXIT_CODE=1 APP_DELETE_ERROR="unrelated deletion failure" \
+    RTC_NONFATAL_APP_DELETE_REASON="tracked deletion defect" \
+    RTC_NONFATAL_APP_DELETE_PATTERN="Invalid combination of arguments" \
+    run_lib rtc_deploy_and_assert_test_app \
+    "$TEST_APP_BICEP" "Radius.Security/secrets" rtc-test /envs/myenv myws my-ns >/dev/null 2>&1; then
+    fail "an unrelated application deletion failure must remain fatal"
+fi
 
 : >"$CALL_LOG"
 if POSTGRES_JSON='{"properties":{}}' run_lib rtc_deploy_and_assert_test_app \

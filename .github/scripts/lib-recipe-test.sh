@@ -216,8 +216,12 @@ rtc_deploy_and_assert_test_app() {
 
         echo "==> Cleaning up test application"
         local cleanup_status=0
-        if ! rad app delete "$app_name" --workspace "$workspace_name" --yes; then
-            if [[ -n "${RTC_NONFATAL_APP_DELETE_REASON:-}" ]]; then
+        local delete_output=""
+        if ! delete_output="$(rad app delete "$app_name" --workspace "$workspace_name" --yes 2>&1)"; then
+            printf '%s\n' "$delete_output" >&2
+            if [[ -n "${RTC_NONFATAL_APP_DELETE_REASON:-}" &&
+                -n "${RTC_NONFATAL_APP_DELETE_PATTERN:-}" ]] &&
+                grep -Eq -- "$RTC_NONFATAL_APP_DELETE_PATTERN" <<<"$delete_output"; then
                 echo "Warning: Test app cleanup failed: $RTC_NONFATAL_APP_DELETE_REASON" >&2
             else
                 cleanup_status=1

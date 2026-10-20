@@ -142,6 +142,7 @@ fi
 # fixed. See radius-project/radius#13330.
 if [[ "$RESOURCE_TYPE" == "Radius.Security/secrets" && "$PLATFORM" == "azure" && "$RECIPE_TYPE" == "terraform" ]]; then
     export RTC_NONFATAL_APP_DELETE_REASON="Radius redacts sensitive Terraform inputs during delete (radius-project/radius#13330); Azure resource-group cleanup will remove the deployed resources"
+    export RTC_NONFATAL_APP_DELETE_PATTERN="Invalid combination of arguments"
 fi
 
 if rtc_deploy_and_assert_test_app "$TEST_FILE" "$RESOURCE_TYPE" "testapp" "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE"; then
