@@ -49,6 +49,15 @@ jobs:
         with:
           node-version-file: .node-version
 
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: "1.16.6"
+          terraform_wrapper: false
+
+      - name: Test Azure secret inputs
+        run: make test-azure-secret-inputs
+
       - name: Run release automation tests
         run: make test-release-automation
 

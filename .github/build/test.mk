@@ -104,6 +104,15 @@ test-recipe-pack-entries-unit: ## Run fixture-based unit tests for all Recipe Pa
 	@./.github/scripts/tests/test-test-all-direct-module-recipes.sh
 	@./.github/scripts/tests/test-test-all-recipe-pack-entries.sh
 
+.PHONY: test-azure-secret-inputs
+test-azure-secret-inputs: ## Run Azure secret input tests in a temporary directory (requires Terraform 1.7+)
+	@set -eu; \
+	test_dir=$$(mktemp -d "$${TMPDIR:-/tmp}/rtc-azure-secret-inputs-XXXXXX"); \
+	trap 'rm -rf "$$test_dir"' EXIT; \
+	cp -R Security/secrets/recipes/azure/terraform/. "$$test_dir/"; \
+	terraform -chdir="$$test_dir" init -backend=false -input=false; \
+	terraform -chdir="$$test_dir" test -no-color
+
 .PHONY: update-env-recipe-pack
 update-env-recipe-pack: ## Update environment with recipe pack ID (requires RECIPE_PACK_NAME and optionally RESOURCE_GROUP and ENVIRONMENT)
 ifndef RECIPE_PACK_NAME
