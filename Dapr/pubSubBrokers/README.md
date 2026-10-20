@@ -43,8 +43,9 @@ The Dapr control plane must be installed on the cluster. The Dapr component name
 | Property | Type | Description |
 | --- | --- | --- |
 | `componentName` | string | The name of the Dapr component. |
-| `type` | string | The Dapr component type. |
 | `version` | string | The Dapr component version. |
+
+The Recipe does not return `type`. Radius writes output values back to the resource. If the Recipe returned the default type, a later update could switch the resource out of the default mode and delete the default Redis instance.
 
 ## Migrate from Applications.Dapr/pubSubBrokers
 
