@@ -33,7 +33,8 @@ locals {
   # (127.0.0.1:9094). The PLAINTEXT listener advertises the Service DNS name,
   # which has no endpoints until the Pod is ready, so the topic cannot be
   # created through it. The readiness probe passes only after the topic exists.
-  # SIGTERM is forwarded to the broker so it shuts down cleanly.
+  # SIGTERM stops the topic initialization and is forwarded to the broker so it
+  # shuts down cleanly.
   start_script = <<-EOT
     set -u
     if ! [[ "$TOPIC_NAME" =~ ^[A-Za-z0-9._-]{1,249}$ ]] || [[ "$TOPIC_NAME" == "." || "$TOPIC_NAME" == ".." ]]; then
@@ -42,18 +43,21 @@ locals {
     fi
     /etc/kafka/docker/run &
     broker=$!
-    trap 'kill -TERM "$broker" 2>/dev/null' TERM INT
-    until (exec 3<>/dev/tcp/127.0.0.1/9094) 2>/dev/null; do
-      kill -0 "$broker" 2>/dev/null || break
-      sleep 1
-    done
-    until KAFKA_HEAP_OPTS=-Xmx256m /opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:9094 --create --if-not-exists --topic "$TOPIC_NAME" --partitions 1 --replication-factor 1; do
-      kill -0 "$broker" 2>/dev/null || break
-      sleep 2
-    done
-    if kill -0 "$broker" 2>/dev/null; then
+    # Topic creation runs in the background so the main shell stays in `wait`,
+    # where a TERM trap runs immediately instead of after a stalled command.
+    (
+      until (exec 3<>/dev/tcp/127.0.0.1/9094) 2>/dev/null; do
+        kill -0 "$broker" 2>/dev/null || exit 0
+        sleep 1
+      done
+      until KAFKA_HEAP_OPTS=-Xmx256m /opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:9094 --create --if-not-exists --topic "$TOPIC_NAME" --partitions 1 --replication-factor 1; do
+        kill -0 "$broker" 2>/dev/null || exit 0
+        sleep 2
+      done
       touch /tmp/topic-ready
-    fi
+    ) &
+    init=$!
+    trap 'kill "$init" 2>/dev/null; kill -TERM "$broker" 2>/dev/null' TERM INT
     wait "$broker"
     status=$?
     while kill -0 "$broker" 2>/dev/null; do
