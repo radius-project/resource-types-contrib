@@ -2,6 +2,10 @@ appdb
 binfmt
 buildkitd
 Dapr
+daprconfigurationstores
+daprpubsubbrokers
+daprsecretstores
+daprstatestores
 Docsy
 gibibyte
 gibibytes
