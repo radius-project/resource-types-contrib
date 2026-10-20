@@ -27,7 +27,7 @@ locals {
   # When the resource does not set a component type, deploy a
   # secretstores.kubernetes component. It reads Kubernetes secrets and needs no
   # backing infrastructure.
-  requested_type = try(local.properties.type, null)
+  requested_type = try(local.properties.componentType, null)
   dapr_type      = local.requested_type == null || local.requested_type == "" ? "secretstores.kubernetes" : local.requested_type
   dapr_version   = try(local.properties.version, null) != null ? local.properties.version : "v1"
 
@@ -60,7 +60,6 @@ output "result" {
     ]
     values = {
       componentName = kubernetes_manifest.dapr_component.manifest.metadata.name
-      type          = local.dapr_type
       version       = local.dapr_version
     }
   }

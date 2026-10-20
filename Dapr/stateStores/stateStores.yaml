@@ -5,7 +5,7 @@ types:
       The Radius.Dapr/stateStores Resource Type deploys a Dapr state store
       component. It replaces the legacy `Applications.Dapr/stateStores` type.
 
-      If you do not set `type`, the default Recipe deploys a Redis instance and a
+      If you do not set `componentType`, the default Recipe deploys a Redis instance and a
       `state.redis` component that uses it:
       ```bicep
       resource stateStore 'Radius.Dapr/stateStores@2025-08-01-preview' = {
@@ -17,7 +17,7 @@ types:
       }
       ```
 
-      To use a different Dapr state store, set `type`, `version`, and `metadata`.
+      To use a different Dapr state store, set `componentType`, `version`, and `metadata`.
       The Recipe then deploys only the Dapr component and does not deploy a
       backing store. This replaces `resourceProvisioning: 'manual'` in the legacy
       type. Use `secretKeyRef` and `auth.secretStore` for secret values:
@@ -27,7 +27,7 @@ types:
         properties: {
           environment: environment
           application: myApplication.id
-          type: 'state.postgresql'
+          componentType: 'state.postgresql'
           version: 'v1'
           metadata: {
             connectionString: {
@@ -93,7 +93,7 @@ types:
             application:
               type: string
               description: "(Optional) The Radius Application ID. `myApplication.id` for example."
-            type:
+            componentType:
               type: string
               description: "(Optional) The Dapr component type, such as `state.redis` or `state.postgresql`. If not set, the Recipe deploys a default Redis state store. See https://docs.dapr.io/reference/components-reference/supported-state-stores/ for values."
             version:

@@ -5,7 +5,7 @@ variable "context" {
 }
 
 variable "actorStateStore" {
-  description = "Sets the default Redis state store as the Dapr actor state store. Only one state store in a namespace can be the actor state store. Applies only when the resource does not set type."
+  description = "Sets the default Redis state store as the Dapr actor state store. Only one state store in a namespace can be the actor state store. Applies only when the resource does not set componentType."
   type        = bool
   default     = false
 }

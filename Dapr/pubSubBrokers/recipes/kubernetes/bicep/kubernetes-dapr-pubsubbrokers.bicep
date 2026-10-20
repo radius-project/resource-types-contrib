@@ -41,7 +41,7 @@ var labels = {
 // When the resource does not set a component type, deploy a Redis instance and
 // a pubsub.redis component that uses it. When the resource sets a type, deploy
 // only the Dapr component from the given type, version, and metadata.
-var requestedType = resourceProperties.?type ?? ''
+var requestedType = resourceProperties.?componentType ?? ''
 var useDefault = empty(requestedType)
 var daprType = useDefault ? 'pubsub.redis' : requestedType
 var daprVersion = resourceProperties.?version ?? 'v1'

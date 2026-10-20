@@ -5,7 +5,7 @@ types:
       The Radius.Dapr/pubSubBrokers Resource Type deploys a Dapr pub/sub broker
       component. It replaces the legacy `Applications.Dapr/pubSubBrokers` type.
 
-      If you do not set `type`, the default Recipe deploys a Redis instance and a
+      If you do not set `componentType`, the default Recipe deploys a Redis instance and a
       `pubsub.redis` component that uses it:
       ```bicep
       resource pubSub 'Radius.Dapr/pubSubBrokers@2025-08-01-preview' = {
@@ -17,7 +17,7 @@ types:
       }
       ```
 
-      To use a different Dapr pub/sub broker, set `type`, `version`, and
+      To use a different Dapr pub/sub broker, set `componentType`, `version`, and
       `metadata`. The Recipe then deploys only the Dapr component and does not
       deploy a broker. This replaces `resourceProvisioning: 'manual'` in the
       legacy type. Use `secretKeyRef` and `auth.secretStore` for secret values:
@@ -27,7 +27,7 @@ types:
         properties: {
           environment: environment
           application: myApplication.id
-          type: 'pubsub.kafka'
+          componentType: 'pubsub.kafka'
           version: 'v1'
           metadata: {
             brokers: {
@@ -102,7 +102,7 @@ types:
             application:
               type: string
               description: "(Optional) The Radius Application ID. `myApplication.id` for example."
-            type:
+            componentType:
               type: string
               description: "(Optional) The Dapr component type, such as `pubsub.redis` or `pubsub.kafka`. If not set, the Recipe deploys a default Redis pub/sub broker. See https://docs.dapr.io/reference/components-reference/supported-pubsub/ for values."
             version:

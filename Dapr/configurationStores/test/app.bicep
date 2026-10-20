@@ -14,7 +14,7 @@ resource app 'Radius.Core/applications@2025-08-01-preview' = {
   }
 }
 
-// No type is set, so the Recipe deploys Redis and a configuration.redis component.
+// No componentType is set, so the Recipe deploys Redis and a configuration.redis component.
 resource configStore 'Radius.Dapr/configurationStores@2025-08-01-preview' = {
   name: 'configstore'
   properties: {

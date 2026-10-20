@@ -14,7 +14,7 @@ resource app 'Radius.Core/applications@2025-08-01-preview' = {
   }
 }
 
-// No type is set, so the Recipe deploys a secretstores.kubernetes component.
+// No componentType is set, so the Recipe deploys a secretstores.kubernetes component.
 resource secretStore 'Radius.Dapr/secretStores@2025-08-01-preview' = {
   name: 'secretstore'
   properties: {

@@ -27,7 +27,7 @@ locals {
   # When the resource does not set a component type, deploy a Redis instance
   # and a state.redis component that uses it. When the resource sets a type,
   # deploy only the Dapr component from the given type, version, and metadata.
-  requested_type    = try(local.properties.type, null)
+  requested_type    = try(local.properties.componentType, null)
   use_default       = local.requested_type == null || local.requested_type == ""
   dapr_type         = local.use_default ? "state.redis" : local.requested_type
   dapr_version      = try(local.properties.version, null) != null ? local.properties.version : "v1"

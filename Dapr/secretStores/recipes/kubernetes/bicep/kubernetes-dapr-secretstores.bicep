@@ -32,7 +32,7 @@ var labels = {
 // When the resource does not set a component type, deploy a
 // secretstores.kubernetes component. It reads Kubernetes secrets and needs no
 // backing infrastructure.
-var requestedType = resourceProperties.?type ?? ''
+var requestedType = resourceProperties.?componentType ?? ''
 var daprType = empty(requestedType) ? 'secretstores.kubernetes' : requestedType
 var daprVersion = resourceProperties.?version ?? 'v1'
 
@@ -66,7 +66,6 @@ output result object = {
   ]
   values: {
     componentName: daprComponent.metadata.name
-    type: daprType
     version: daprVersion
   }
 }
