@@ -17,7 +17,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `database` | string | Optional | The name of the database. Defaults to `postgres_db`. |
 | `size` | string (`S`, `M`, `L`) | Optional | The size of the PostgreSQL database. Defaults to `S`. The Recipe maps the size onto a concrete cloud SKU/tier. |
 | `initSql` | string | Optional | Optional SQL script executed on first initialization to create tables, indexes, and seed data. |
-| `tls` | string (`required`, `optional`, `disabled`) | Optional | Defaults to `required` (TLS only). Kubernetes `optional` supports TLS and plaintext; `disabled` is an explicit plaintext-only opt-out without certificates. Azure rejects `disabled`. See the certificate and migration requirements below. |
+| `tls` | string (`required`, `optional`, `disabled`) | Optional | Defaults to `required` (TLS only). Kubernetes `optional` supports TLS and plaintext; `disabled` is an explicit plaintext-only opt-out without certificates. The guarded Azure PostgreSQL recipe rejects `disabled`. See the certificate and migration requirements below. |
 | `host` | string | Read only | The host name used to connect to the database. Set from the Recipe module's output. |
 | `port` | integer | Optional | The TCP port used to connect to the database. Defaults to `5432`, the standard port every Recipe in this repository provisions. A Recipe that provisions the database on a different port overwrites this value from its own output. Setting it in an application definition changes only the value reported to connected containers, never the port the server listens on. |
 
@@ -36,7 +36,9 @@ Add a `postgreSqlDatabases` resource to your application and connect a container
 
 Because `tls` defaults to `required`, configure your PostgreSQL client for TLS and trusted server identity. Both Kubernetes recipes enable SSL for `required` and `optional`, and enforce the policy through ordered `pg_hba.conf` rules at every container startup. TCP connections, including IPv4/IPv6 loopback, retain SCRAM password authentication; local Unix-socket trust is preserved for entrypoint initialization.
 
-The Azure wrapper rejects `disabled` before invoking the existing AVM. For `required` and `optional`, a platform engineer can still pin Azure's transport policy to `ON` or `OFF`; the connection variable reports the application's request. See [PostgreSQL transport policy](../../recipe-packs/azure-aks/README.md#postgresql-transport-policy) for precedence and public-network restrictions.
+The guarded Azure PostgreSQL recipe rejects `disabled` before invoking the AVM. In this resource type, `disabled` means plaintext-only connections. Azure's `require_secure_transport=OFF` permits plaintext but continues to accept TLS, so it does not implement that policy. Calling the AVM directly bypasses the wrapper's validation.
+
+For `required` and `optional`, operator transport overrides retain precedence. The resource's `tls` value and `CONNECTION_POSTGRESQL_TLS` report the application's requested policy, not proof of the server's effective configuration. See [PostgreSQL transport policy](../../recipe-packs/azure-aks/README.md#postgresql-transport-policy) for recipe selection, precedence and public-network restrictions.
 
 The wrapper reads the created server's actual FQDN through an existing-resource
 reference with an explicit dependency on the AVM module. Keep that dependency:

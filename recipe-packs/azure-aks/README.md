@@ -70,6 +70,22 @@ transport override. It is never mapped to `ON` or `OFF` as a fallback.
 Existing mapped AVM parameter names, credentials, settings, and the `fqdn`
 output are preserved.
 
+Azure's `require_secure_transport=OFF` permits plaintext connections but continues
+to accept TLS. It does not implement the plaintext-only `disabled` policy.
+Calling the AVM directly bypasses the wrapper's validation.
+
+**Select the guarded recipe:** For `Radius.Data/postgreSqlDatabases`, use
+`ghcr.io/radius-project/azure-recipes/postgresqldatabases` at an approved published
+version or digest. Forward the resource's `tls` property to `tlsPolicy` and
+preserve the parameter and output mappings in the
+[canonical Azure AKS pack](azure-aks.bicep).
+
+Inspect the Recipe Packs assigned to the target Environment and confirm that
+the effective PostgreSQL mapping selects the wrapper. Registering a compatible
+pack does not guarantee that the Environment uses it; another assigned pack
+may take precedence. Existing packs that reference the AVM directly must update
+their mapping to obtain this validation.
+
 The pack exports `postgreSqlRecipeParameters` and `postgreSqlRecipeOutputs`
 as the canonical mapping. The Azure Bicep pack generator imports these exports
 for the locally built PostgreSQL wrapper, retaining its local registry source
