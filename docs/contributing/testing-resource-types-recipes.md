@@ -103,6 +103,12 @@ The `test-recipe` command:
 - Deploys the `test/app.bicep` file (if it exists)
 - Cleans up resources after testing
 
+If Azure reports `ResourceDeploymentFailure` with `Connection reset by peer`,
+the test runner retries the deployment up to three attempts, waiting 10 and 20
+seconds before retrying. Retries reuse the same application name and parameters;
+cleanup runs only after the final attempt. Other deployment errors, assertion
+failures, and cleanup failures still fail the test.
+
 ### 6. Test All Recipes
 
 Run tests for all recipes in the repository:

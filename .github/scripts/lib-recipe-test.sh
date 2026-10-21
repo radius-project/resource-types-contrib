@@ -164,6 +164,38 @@ rtc_assert_recipe_result() {
     esac
 }
 
+# Retry an Azure deployment-engine connection reset without deleting partially
+# deployed resources. Keep the same arguments so retries are idempotent.
+rtc_deploy_with_retry() (
+    local deploy_log attempt=1 max_attempts=3
+    local -a deploy_status
+    deploy_log=$(mktemp "${TMPDIR:-/tmp}/rtc-deploy-XXXXXX") || return 1
+    trap 'rm -f "$deploy_log"' EXIT
+    set -o pipefail
+
+    while true; do
+        if rad deploy "$@" 2>&1 | tee "$deploy_log"; then
+            return 0
+        else
+            deploy_status=("${PIPESTATUS[@]}")
+        fi
+
+        if [[ "${deploy_status[1]}" -ne 0 ]]; then
+            return 1
+        fi
+        if [[ "$attempt" -ge "$max_attempts" ]] ||
+            ! grep -Eq '"code"[[:space:]]*:[[:space:]]*"ResourceDeploymentFailure"' "$deploy_log" ||
+            ! grep -Fq 'Connection reset by peer' "$deploy_log" ||
+            ! grep -Eq '"target"[[:space:]]*:[[:space:]]*"/subscriptions/[^"]*/providers/Microsoft\.' "$deploy_log"; then
+            return "${deploy_status[0]}"
+        fi
+
+        echo "==> Azure deployment connection reset; retrying in $((attempt * 10)) seconds (attempt $((attempt + 1))/$max_attempts)"
+        sleep "$((attempt * 10))" || return 1
+        attempt=$((attempt + 1))
+    done
+)
+
 # Deploy a Resource Type's test/app.bicep against an already-ready
 # environment and run its post-deploy assertion, then clean up. The
 # environment must already be able to satisfy the type (either a
@@ -205,7 +237,7 @@ rtc_deploy_and_assert_test_app() {
     params+=(--parameters "applicationName=$app_name")
 
     echo "==> Deploying test application from $test_file"
-    if rad deploy "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
+    if rtc_deploy_with_retry "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
         echo "==> Test deployment successful"
 
         if ! rtc_assert_recipe_result "$resource_type" "$app_name" "$workspace_name" "$kubernetes_namespace"; then
