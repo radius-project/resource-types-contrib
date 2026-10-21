@@ -220,6 +220,91 @@ rtc_resource_type_dir_for_entry() {
     echo "${1#Radius.}"
 }
 
+# Resolve test-only sources; published packs continue to use their GHCR sources.
+# Resolve by resource type and source namespace, not the image's basename (ACI
+# and Kubernetes images can have the same name).
+rtc_recipe_pack_local_recipes() {
+    local template="$1" entries resource_type source platform type_dir image expected_image image_pattern recipe_dir files recipe_name local_source
+    entries="$(rtc_recipe_pack_entries "$template")" || return 1
+    while IFS=$'\t' read -r resource_type source; do
+        case "$source" in
+            ghcr.io/radius-project/kube-recipes/*) platform=kubernetes ;;
+            ghcr.io/radius-project/azure-aci-recipes/*) platform=azure ;;
+            ghcr.io/radius-project/*)
+                echo "Error: no local recipe platform mapping for '$source'." >&2
+                return 1
+                ;;
+            *) continue ;;
+        esac
+        type_dir="$(rtc_resource_type_dir_for_entry "$resource_type")"
+        image="${source#ghcr.io/radius-project/}"
+        image="${image#*/}"
+        expected_image="${type_dir##*/}"
+        expected_image="${expected_image,,}"
+        image_pattern="^${expected_image}(:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}|@sha256:[a-f0-9]{64})?$"
+        # Do not let local substitution hide a checked-in mapping to the wrong
+        # published image. The local recipe filename itself may differ.
+        if [[ ! "$image" =~ $image_pattern ]]; then
+            echo "Error: '$resource_type' source '$source' must reference image '$expected_image', with an optional tag or sha256 digest." >&2
+            return 1
+        fi
+        recipe_dir="$RTC_REPO_ROOT/$type_dir/recipes/$platform/bicep"
+        if [[ ! -d "$recipe_dir" ]]; then
+            echo "Error: local Bicep recipe directory does not exist: $recipe_dir." >&2
+            return 1
+        fi
+        files="$(find "$recipe_dir" -maxdepth 1 -type f -name '*.bicep' 2>/dev/null | sort)" || return 1
+        if [[ -z "$files" || "$files" == *$'\n'* ]]; then
+            echo "Error: '$resource_type' source '$source' requires exactly one Bicep recipe in $recipe_dir." >&2
+            return 1
+        fi
+        recipe_name="${files##*/}"
+        recipe_name="${recipe_name%.bicep}"
+        # Match build-bicep-recipe.sh's OCI path normalization.
+        recipe_name="$(printf '%s' "$recipe_name" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/-{2,}/-/g; s/^-+|-+$//g')"
+        if [[ -z "$recipe_name" ]]; then
+            echo "Error: invalid recipe filename '$files'." >&2
+            return 1
+        fi
+        local_source="reciperegistry:5000/radius-recipes/${type_dir,,}/$platform/bicep/$recipe_name:latest"
+        printf '%s\t%s\t%s\t%s\n' "$resource_type" "$source" "$local_source" "$files"
+    done <<<"$entries"
+}
+
+# Rendering emits only Bicep; publication and diagnostics belong to the caller.
+rtc_recipe_pack_with_local_recipes() {
+    local template="$1" recipes="$2"
+    awk -v replacements="$recipes" '
+        BEGIN {
+            count = split(replacements, entries, "\n")
+            for (i = 1; i <= count; i++) {
+                split(entries[i], pair, "\t")
+                sources[pair[1]] = pair[3]
+            }
+        }
+        /^[[:space:]]*'"'"'Radius\.[A-Za-z0-9]+\/[A-Za-z0-9]+'"'"':[[:space:]]*\{/ {
+            match($0, /Radius\.[A-Za-z0-9]+\/[A-Za-z0-9]+/)
+            current_type = substr($0, RSTART, RLENGTH)
+            rewritten = 0
+        }
+        current_type != "" && /^[[:space:]]*source:[[:space:]]*'"'"'[^'"'"']*'"'"'/ {
+            if (current_type in sources) {
+                match($0, /^[[:space:]]*/)
+                indent = substr($0, RSTART, RLENGTH)
+                sub(/source:[[:space:]]*'"'"'[^'"'"']*'"'"'/, "source: \047" sources[current_type] "\047")
+                print
+                print indent "plainHttp: true"
+                rewritten = 1
+                current_type = ""
+                next
+            }
+            current_type = ""
+        }
+        rewritten && index($0, indent "plainHttp:") == 1 { next }
+        { print }
+    ' "$template"
+}
+
 # Print every Resource Type directory in a pack, one per line, in file order.
 rtc_list_recipe_pack_types() {
     local pack_id="$1" bicep_file entries resource_type entry_source

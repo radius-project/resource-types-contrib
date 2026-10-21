@@ -58,9 +58,9 @@ case "$1 $2" in
         case "$3" in
             "Radius.Compute/containers")
                 if [[ "$4" == "myApp" ]]; then
-                    echo '{"properties":{"hosts":{"orderProcessor":"host-a"}}}'
+                    echo "{\"properties\":{\"hosts\":{\"orderProcessor\":\"${APP_HOST-host-a}\"}}}"
                 else
-                    echo "{\"properties\":{\"hosts\":{\"simple\":\"${PEER_HOST:-host-b}\"}}}"
+                    echo "{\"properties\":{\"hosts\":{\"simple\":\"${PEER_HOST-host-b}\"}}}"
                 fi
                 ;;
             "Radius.Data/postgreSqlDatabases")
@@ -151,6 +151,12 @@ run_lib rtc_assert_recipe_result "Radius.Data/postgreSqlDatabases" testapp myws 
 
 if PEER_HOST=host-a run_lib rtc_assert_recipe_result "Radius.Compute/containers" testapp myws >/dev/null; then
     fail "equal container hosts must fail"
+fi
+if APP_HOST='' run_lib rtc_assert_recipe_result "Radius.Compute/containers" testapp myws >/dev/null; then
+    fail "empty primary container host must fail"
+fi
+if PEER_HOST='' run_lib rtc_assert_recipe_result "Radius.Compute/containers" testapp myws >/dev/null; then
+    fail "empty peer container host must fail"
 fi
 for invalid_result in \
     '{"properties":{"host":"","port":5432,"database":"appdb"}}' \

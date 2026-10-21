@@ -127,6 +127,8 @@ jobs:
 
       - name: Deploy checked-in Kubernetes Recipe Pack
         if: matrix.recipe == 'bicep'
+        env:
+          RECIPE_PACK_USE_LOCAL_RECIPES: "true"
         run: .github/scripts/deploy-all-checked-in-recipe-packs.sh kubernetes "$RAD_ENVIRONMENT_NAME"
 
       # Generates the bicep definition for recipe pack in recipe-pack-{bicep|terraform}.bicep
