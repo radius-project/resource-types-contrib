@@ -61,9 +61,33 @@ make build-terraform-recipe RECIPE_PATH=Security/secrets/recipes/kubernetes/terr
 
 This packages the Terraform module and publishes it to an in-cluster HTTP server.
 
-### 4. Test Individual Recipes
+### 4. Add Your Recipes to a Recipe Pack
 
-Test a recipe by registering it and deploying a test application:
+The Environment gets its Recipes from a Recipe Pack. Generate a pack from the
+recipes you built, deploy it, and attach it to the Environment. The pack name
+sets the recipe kind: a name that contains `terraform` selects Terraform
+recipes. All other names select Bicep recipes.
+
+```bash
+# Bicep recipes
+RECIPE_PLATFORM_FILTER=kubernetes make generate-recipe-pack PACK_NAME=biceprecipepack OUTPUT_FILE=recipe-pack-bicep.bicep
+make deploy-recipe-pack BICEP_FILE=recipe-pack-bicep.bicep
+make update-env-recipe-pack RECIPE_PACK_NAME=biceprecipepack
+
+# Terraform recipes
+RECIPE_PLATFORM_FILTER=kubernetes make generate-recipe-pack PACK_NAME=terraformrecipepack OUTPUT_FILE=recipe-pack-terraform.bicep
+make deploy-recipe-pack BICEP_FILE=recipe-pack-terraform.bicep
+make update-env-recipe-pack RECIPE_PACK_NAME=terraformrecipepack
+```
+
+Attach the pack for the recipe kind that you want to test before you run the
+tests. Always set `RECIPE_PLATFORM_FILTER` to one platform (for example,
+`kubernetes`). Without the filter, the generator includes the recipes for all
+platforms. The pack then has duplicate resource type keys and does not compile.
+
+### 5. Test Individual Recipes
+
+Deploy a test application with the recipe from the active Recipe Pack:
 
 ```bash
 # Test a Bicep recipe
@@ -75,11 +99,11 @@ make test-recipe RECIPE_PATH=Security/secrets/recipes/kubernetes/terraform
 
 The `test-recipe` command:
 - Auto-detects whether the recipe is Bicep or Terraform
-- Registers the recipe as the default for its resource type
+- Uses the recipe from the Recipe Pack on the Environment
 - Deploys the `test/app.bicep` file (if it exists)
 - Cleans up resources after testing
 
-### 5. Test All Recipes
+### 6. Test All Recipes
 
 Run tests for all recipes in the repository:
 
@@ -182,27 +206,55 @@ make delete-radius-cluster
 
 If you prefer manual testing or need to test externally-published recipes:
 
-### Register a Recipe Manually
+### Add a Recipe to a Recipe Pack Manually
+
+Write a Recipe Pack that points to your recipe. Use this for a recipe that is
+published outside the test cluster.
 
 **Bicep Recipe:**
 
-```bash
-rad recipe register default \
-  --environment default \
-  --resource-type "Radius.Data/mySqlDatabases" \
-  --template-kind bicep \
-  --template-path "reciperegistry:5000/recipes/mysql/kubernetes:latest" \
-  --plain-http
+```bicep
+extension radius
+
+resource mypack 'Radius.Core/recipePacks@2025-08-01-preview' = {
+  name: 'mypack'
+  location: 'global'
+  properties: {
+    recipes: {
+      'Radius.Data/mySqlDatabases': {
+        kind: 'bicep'
+        source: 'reciperegistry:5000/recipes/mysql/kubernetes:latest'
+        plainHttp: true
+      }
+    }
+  }
+}
 ```
 
 **Terraform Recipe:**
 
+```bicep
+extension radius
+
+resource mypack 'Radius.Core/recipePacks@2025-08-01-preview' = {
+  name: 'mypack'
+  location: 'global'
+  properties: {
+    recipes: {
+      'Radius.Security/secrets': {
+        kind: 'terraform'
+        source: 'http://tf-module-server.radius-test-tf-module-server.svc.cluster.local/secrets-kubernetes.zip'
+      }
+    }
+  }
+}
+```
+
+Deploy the pack and attach it to the Environment:
+
 ```bash
-rad recipe register default \
-  --environment default \
-  --resource-type "Radius.Security/secrets" \
-  --template-kind terraform \
-  --template-path "http://tf-module-server.radius-test-tf-module-server.svc.cluster.local/secrets-kubernetes.zip"
+make deploy-recipe-pack BICEP_FILE=mypack.bicep
+make update-env-recipe-pack RECIPE_PACK_NAME=mypack
 ```
 
 ### Deploy and Test
@@ -215,7 +267,6 @@ rad deploy test/app.bicep -p environment=default
 
 ```bash
 rad app delete testapp --yes
-rad recipe unregister default --resource-type "Radius.Data/mySqlDatabases"
 ```
 
 ## Common Workflows
@@ -242,10 +293,15 @@ make build-bicep-recipe RECIPE_PATH=Data/newResource/recipes/kubernetes/bicep
 # 6. Create test application
 # Edit Data/newResource/test/app.bicep
 
-# 7. Test the recipe
+# 7. Add the recipes to a Recipe Pack and attach it to the Environment
+RECIPE_PLATFORM_FILTER=kubernetes make generate-recipe-pack PACK_NAME=biceprecipepack OUTPUT_FILE=recipe-pack-bicep.bicep
+make deploy-recipe-pack BICEP_FILE=recipe-pack-bicep.bicep
+make update-env-recipe-pack RECIPE_PACK_NAME=biceprecipepack
+
+# 8. Test the recipe
 make test-recipe RECIPE_PATH=Data/newResource/recipes/kubernetes/bicep
 
-# 8. Test all recipes (if you have multiple)
+# 9. Test all recipes (if you have multiple)
 make test
 ```
 
@@ -318,9 +374,9 @@ Make sure `bicepconfig.json` is updated:
 make build-resource-type TYPE_FOLDER=<folder>
 ```
 
-### Recipe registration fails
+### Recipe Pack deployment fails
 
-Ensure the recipe is built before testing:
+Ensure the recipe is built before you generate and deploy the Recipe Pack:
 - **Bicep**: `make build-bicep-recipe RECIPE_PATH=<path>`
 - **Terraform**: `make build-terraform-recipe RECIPE_PATH=<path>`
 
@@ -449,14 +505,18 @@ AZURE_ENVIRONMENT_NAME=default make configure-azure-provider
 # Build all Azure recipes
 make build-azure-recipes
 
-# Register Azure Bicep recipes
-RECIPE_PLATFORM_FILTER=azure make register ENVIRONMENT=default RECIPE_TYPE=bicep
+# Add Azure Bicep recipes to a Recipe Pack and attach it
+RECIPE_PLATFORM_FILTER=azure make generate-recipe-pack PACK_NAME=azurebiceprecipepack OUTPUT_FILE=recipe-pack-azure-bicep.bicep
+make deploy-recipe-pack BICEP_FILE=recipe-pack-azure-bicep.bicep
+make update-env-recipe-pack RECIPE_PACK_NAME=azurebiceprecipepack ENVIRONMENT=default
 
 # Test Azure Bicep recipes
 RECIPE_PLATFORM_FILTER=azure make test ENVIRONMENT=default RECIPE_TYPE=bicep
 
-# Register Azure Terraform recipes
-RECIPE_PLATFORM_FILTER=azure make register ENVIRONMENT=default RECIPE_TYPE=terraform
+# Add Azure Terraform recipes to a Recipe Pack and attach it
+RECIPE_PLATFORM_FILTER=azure make generate-recipe-pack PACK_NAME=azureterraformrecipepack OUTPUT_FILE=recipe-pack-azure-terraform.bicep
+make deploy-recipe-pack BICEP_FILE=recipe-pack-azure-terraform.bicep
+make update-env-recipe-pack RECIPE_PACK_NAME=azureterraformrecipepack ENVIRONMENT=default
 
 # Test Azure Terraform recipes
 RECIPE_PLATFORM_FILTER=azure make test ENVIRONMENT=default RECIPE_TYPE=terraform
