@@ -28,6 +28,32 @@ A **Recipe Pack** is a manifest of recipes by Resource Type referenced in a Radi
 
 For guidance on authoring the Recipes themselves, see [Contributing Resource Types and Radius Recipes](../docs/contributing/contributing-resource-types-recipes.md#recipes-and-recipe-packs).
 
+## Release readiness
+
+A successful source-resolution check proves anonymous pullability, not that a
+recipe contains the intended fixes. Before releasing a pack, inspect the
+referenced compiled modules as well as the source revision. The
+[ACI pack](azure-aci/README.md#recipe-revision-and-upgrades) pins a verified
+published revision so its initial release does not depend on a stale `latest`.
+
+Namespace releases publish Bicep recipes at their commit-SHA tags with
+`pin_only`; they deliberately do not update `latest`. Packs that still use
+`latest` receive fixes only when that alias advances through **Publish Bicep
+Recipes** with a stable, Radius-aligned `release_version`. Do not substitute a
+namespace or pack version for that release version. For example, releasing
+`Radius.Compute` alone does not deliver the new `radius` / `radius-system`
+Gateway defaults to a pack still referencing an older `kube-recipes/routes:latest`.
+An operator must either complete that publication lifecycle or explicitly
+select a verified published recipe revision in their pack.
+
+Before the first Azure AKS release, review the
+[migration from `azure-avm`](azure-aks/README.md#migrating-from-the-azure-pack).
+Namespace archives contain manifests and documentation, not Terraform modules;
+the [Azure secrets Terraform fix](../Security/secrets/README.md#azure-terraform-deletion)
+requires a separate consumer source/package update. These publication,
+environment migration, and Terraform delivery actions are not performed by
+creating a pack release.
+
 ## How Recipe Packs are tested in CI
 
 CI uses [`.github/scripts/lib-recipe-packs.sh`](../.github/scripts/lib-recipe-packs.sh)

@@ -18,6 +18,33 @@ The pack declares a single `Radius.Core/recipePacks` resource whose `recipes` ma
 
 `Radius.Compute/routes` and `Radius.Compute/containerImages` are not yet supported on ACI and are omitted. Data, messaging, storage, and AI Resource Types are not part of this pack.
 
+## Recipe revision and upgrades
+
+All three sources are pinned to the published commit
+[`31e17276ac5261b6c22a375edbc3122b9a09b6ea`](https://github.com/radius-project/resource-types-contrib/commit/31e17276ac5261b6c22a375edbc3122b9a09b6ea),
+not the floating `latest` alias. This revision includes the containers fix from
+[#356](https://github.com/radius-project/resource-types-contrib/issues/356):
+default Azure infrastructure names include both the resource-group ID and the
+Radius resource ID, and the recipe returns the Radius `result.resources` and
+`result.values` contract. A pullable older `latest` artifact is not sufficient.
+
+When updating the pins, use a full commit SHA already published by
+**Publish Bicep Recipes**, verify all three artifacts are public, and inspect
+the compiled containers module for those naming and output contracts. Update
+all three sources together and retain the referenced artifacts. A pack release
+bundles the source references, not the recipe modules; it does not publish them
+or advance `latest`.
+
+For an existing ACI deployment using the older containers recipe, the new
+default names can provision replacement infrastructure instead of reusing the
+old resources. Before updating the pack, inventory existing Azure resources
+and saved Radius deployment state, plan workload/data migration and cleanup,
+and verify the upgrade in a dedicated environment. Do not assume redeploying
+the pack migrates application resources or deletes old infrastructure. Consumers
+of the former flat infrastructure outputs must adapt: those fields were removed,
+tracked resource IDs are in `result.resources`, and connection hosts are in
+`result.values.hosts` when the container exposes a port.
+
 ## Deploying
 
 Create and configure an Environment with the Azure provider first:
