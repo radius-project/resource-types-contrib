@@ -18,22 +18,27 @@ The pack declares a single `Radius.Core/recipePacks` resource whose `recipes` ma
 
 `Radius.Compute/routes` and `Radius.Compute/containerImages` are not yet supported on ACI and are omitted. Data, messaging, storage, and AI Resource Types are not part of this pack.
 
-## Recipe revision and upgrades
+## Release prerequisites and upgrades
 
-All three sources are pinned to the published commit
-[`31e17276ac5261b6c22a375edbc3122b9a09b6ea`](https://github.com/radius-project/resource-types-contrib/commit/31e17276ac5261b6c22a375edbc3122b9a09b6ea),
-not the floating `latest` alias. This revision includes the containers fix from
-[#356](https://github.com/radius-project/resource-types-contrib/issues/356):
-default Azure infrastructure names include both the resource-group ID and the
-Radius resource ID, and the recipe returns the Radius `result.resources` and
-`result.values` contract. A pullable older `latest` artifact is not sufficient.
+All three sources use `:latest`, following the shared
+[recipe source versioning](../README.md#recipe-source-versioning) convention.
+Radius replaces recipe tags when creating its built-in Kubernetes default pack;
+deploying this Azure pack directly does not use that replacement.
 
-When updating the pins, use a full commit SHA already published by
-**Publish Bicep Recipes**, verify all three artifacts are public, and inspect
-the compiled containers module for those naming and output contracts. Update
-all three sources together and retain the referenced artifacts. A pack release
-bundles the source references, not the recipe modules; it does not publish them
-or advance `latest`.
+Before the initial release, verify that all three `:latest` artifacts are public
+and that the compiled containers module includes the fix from
+[#356](https://github.com/radius-project/resource-types-contrib/pull/356):
+default Azure infrastructure names must include both the resource-group ID and
+the Radius resource ID, and the recipe must return the Radius
+`result.resources` and `result.values` contract. A pullable older `latest`
+artifact is not sufficient.
+
+If the corrected recipe is available only at a commit-SHA tag, the release
+operator must complete the established stable recipe publication lifecycle
+before treating this pack as ready. A pack release bundles source references,
+not recipe modules; neither it nor a namespace's `pin_only` publication advances
+`latest`. Do not bypass that lifecycle by reusing an existing release version
+to force an update.
 
 For an existing ACI deployment using the older containers recipe, the new
 default names can provision replacement infrastructure instead of reusing the

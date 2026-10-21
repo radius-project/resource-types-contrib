@@ -431,25 +431,6 @@ EOF
         fail "recipe pack release rejected Recipe sources that resolve"
 }
 
-test_aci_recipe_sources_are_pinned() {
-    local checker="$TEST_ROOT/check-aci-pin.sh" checked="$TEST_ROOT/checked-aci-pins"
-    cat >"$checker" <<'EOF'
-#!/bin/bash
-set -euo pipefail
-reference="$1"
-[[ "$reference" =~ ^ghcr.io/radius-project/azure-aci-recipes/(containers|persistentvolumes|secrets):[a-f0-9]{40}$ ]] || exit 1
-echo "${reference##*:}" >>"$CHECKED_PINS"
-EOF
-    chmod +x "$checker"
-
-    : >"$checked"
-    REPO_ROOT="$REPO_ROOT" RECIPE_PACK=azure-aci CHECK_SOURCE_CMD="$checker" CHECKED_PINS="$checked" \
-        bash "$SOURCES_SCRIPT" >/dev/null 2>&1 ||
-        fail "ACI recipes must use published full commit-SHA tags, not floating aliases"
-    assert_eq "3" "$(wc -l <"$checked" | tr -d ' ')" "pinned ACI recipe count"
-    assert_eq "1" "$(sort -u "$checked" | wc -l | tr -d ' ')" "ACI recipe revision count"
-}
-
 test_recipe_pack_release_is_synced() {
     local repo="$TEST_ROOT/recipe-pack-sync" output="$TEST_ROOT/recipe-pack-sync.out" payload
     create_recipe_pack_repo "$repo" "kubernetes"
@@ -608,7 +589,6 @@ test_prerelease_labels
 test_recipe_pack_versioning
 test_recipe_pack_bundle
 test_recipe_pack_sources_must_resolve
-test_aci_recipe_sources_are_pinned
 test_recipe_pack_release_is_synced
 test_repo_wide_release_covers_all_units
 test_release_change_detection

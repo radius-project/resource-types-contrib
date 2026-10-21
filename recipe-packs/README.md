@@ -23,28 +23,49 @@ A **Recipe Pack** is a manifest of recipes by Resource Type referenced in a Radi
 2. **Declare the pack.** In the Bicep file, declare a single `Radius.Core/recipePacks` resource and nothing else (`make validate-recipe-packs` enforces this) whose `recipes` map has an entry keyed by each Resource Type (for example `Radius.Data/redisCaches`).
 3. **Wire each Recipe.** Point each entry at its module `source` and map `parameters` (using `{{context.*}}` expressions) and `outputs`. Reuse published modules such as Azure Verified Modules where possible, and reference in-repo Bicep recipes by their published OCI image.
 4. **Publish any in-repo Bicep recipes** the pack references by adding them to [`.github/workflows/publish-bicep-recipes.yaml`](../.github/workflows/publish-bicep-recipes.yaml) so the `source` images exist.
-5. **Enable releases.** Add the new folder name to the `recipe_pack` choice list in [`.github/workflows/release-recipe-pack.yaml`](../.github/workflows/release-recipe-pack.yaml). Packs are otherwise discovered automatically: any folder under `recipe-packs/` that holds at least one `.bicep` file is treated as a releasable pack. Before tagging, the release checks that every OCI Recipe `source` in the pack can be pulled anonymously, so a new registry's packages must be public and its referenced tags published first. `latest` is only created when **Publish Bicep Recipes** runs with a stable `release_version`.
+5. **Enable releases.** Add the new folder name to the `recipe_pack` choice list in [`.github/workflows/release-recipe-pack.yaml`](../.github/workflows/release-recipe-pack.yaml). Packs are otherwise discovered automatically: any folder under `recipe-packs/` that holds at least one `.bicep` file is treated as a releasable pack. Before tagging, the release checks that every OCI Recipe `source` in the pack can be pulled anonymously, so a new registry's packages must be public and its referenced tags published first. **Publish Bicep Recipes** creates or refreshes `latest` only with a stable `release_version`; for new images, follow the [Radius publication prerequisites](https://github.com/radius-project/radius/blob/main/docs/contributing/contributing-recipe-packs.md#3-publish-new-recipe-images).
 6. **Document it.** Give the pack a `README.md` following the existing packs, listing its parameters and the Recipes it wires.
 
 For guidance on authoring the Recipes themselves, see [Contributing Resource Types and Radius Recipes](../docs/contributing/contributing-resource-types-recipes.md#recipes-and-recipe-packs).
+
+## Recipe source versioning
+
+Checked-in packs follow the [Radius authoring convention](https://github.com/radius-project/radius/blob/main/docs/contributing/contributing-recipe-packs.md):
+use `:latest` for repository-owned Bicep recipes and version tags for external
+modules such as Azure Verified Modules.
+
+Radius chooses release-specific recipe tags when it creates its **built-in
+Kubernetes default pack**. Its
+[`NewDefaultRecipePackResource`](https://github.com/radius-project/radius/blob/main/pkg/cli/recipepack/recipepack.go)
+builder replaces each embedded recipe's tag with the corresponding namespace's
+`resourceTypes[].ref` commit SHA from `deploy/manifest/defaults.yaml` for release
+builds, or `edge` for development builds. The separate `recipePacks[].ref` pin
+selects the pack template revision, not those per-namespace recipe tags.
+
+This is not a blanket replacement performed by `rad deploy` for every pack.
+Direct deployments of the checked-in Azure packs, or the Kubernetes template,
+retain the authored source references. A pinned pack template therefore does
+not by itself pin its `:latest` recipe content. See the
+[Kubernetes README](kubernetes/README.md#recipes-in-this-pack) before overwriting
+Radius's built-in default pack.
 
 ## Release readiness
 
 A successful source-resolution check proves anonymous pullability, not that a
 recipe contains the intended fixes. Before releasing a pack, inspect the
-referenced compiled modules as well as the source revision. The
-[ACI pack](azure-aci/README.md#recipe-revision-and-upgrades) pins a verified
-published revision so its initial release does not depend on a stale `latest`.
+referenced compiled modules as well as the source revision. In particular,
+the [ACI release prerequisites](azure-aci/README.md#release-prerequisites-and-upgrades)
+require the corrected containers recipe to be available through `:latest`;
+keeping the shared authoring pattern does not remove that publication gate.
 
 Namespace releases publish Bicep recipes at their commit-SHA tags with
-`pin_only`; they deliberately do not update `latest`. Packs that still use
-`latest` receive fixes only when that alias advances through **Publish Bicep
-Recipes** with a stable, Radius-aligned `release_version`. Do not substitute a
-namespace or pack version for that release version. For example, releasing
-`Radius.Compute` alone does not deliver the new `radius` / `radius-system`
-Gateway defaults to a pack still referencing an older `kube-recipes/routes:latest`.
-An operator must either complete that publication lifecycle or explicitly
-select a verified published recipe revision in their pack.
+`pin_only`; they deliberately do not update `latest`. Consumers that retain
+literal `:latest` references receive fixes when that alias advances through
+**Publish Bicep Recipes** with a stable, Radius-aligned `release_version`.
+Do not substitute a namespace or pack version, or replay an existing Radius
+release version, to force an update. Follow the established publication
+lifecycle instead. Both checked-in Kubernetes and AKS packs pass their Gateway
+parameters explicitly, so they do not depend on the routes recipe's defaults.
 
 Before the first Azure AKS release, review the
 [migration from `azure-avm`](azure-aks/README.md#migrating-from-the-azure-pack).
