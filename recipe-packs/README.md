@@ -80,9 +80,9 @@ which:
   `publish-bicep-recipes.yaml` publishes it.
 
 The workflow checks that every pack source can be pulled, installs that Radius
-version, and runs the nightly steps unchanged. Packs pinned by older Radius
-releases still need a platform mapping in `lib-recipe-packs.sh` (for example,
-the earlier single `azure` pack).
+version, and runs the nightly steps unchanged. It supports only releases whose
+pinned packs all have a platform mapping in `lib-recipe-packs.sh`; older
+releases that pin a pack without one are not supported.
 
 ### What to do when you add or change a pack
 
