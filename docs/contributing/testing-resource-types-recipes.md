@@ -70,19 +70,20 @@ recipes. All other names select Bicep recipes.
 
 ```bash
 # Bicep recipes
-make generate-recipe-pack PACK_NAME=biceprecipepack OUTPUT_FILE=recipe-pack-bicep.bicep
+RECIPE_PLATFORM_FILTER=kubernetes make generate-recipe-pack PACK_NAME=biceprecipepack OUTPUT_FILE=recipe-pack-bicep.bicep
 make deploy-recipe-pack BICEP_FILE=recipe-pack-bicep.bicep
 make update-env-recipe-pack RECIPE_PACK_NAME=biceprecipepack
 
 # Terraform recipes
-make generate-recipe-pack PACK_NAME=terraformrecipepack OUTPUT_FILE=recipe-pack-terraform.bicep
+RECIPE_PLATFORM_FILTER=kubernetes make generate-recipe-pack PACK_NAME=terraformrecipepack OUTPUT_FILE=recipe-pack-terraform.bicep
 make deploy-recipe-pack BICEP_FILE=recipe-pack-terraform.bicep
 make update-env-recipe-pack RECIPE_PACK_NAME=terraformrecipepack
 ```
 
 Attach the pack for the recipe kind that you want to test before you run the
-tests. Set `RECIPE_PLATFORM_FILTER` (for example, `kubernetes`) to include only
-the recipes for one platform.
+tests. Always set `RECIPE_PLATFORM_FILTER` to one platform (for example,
+`kubernetes`). Without the filter, the generator includes the recipes for all
+platforms. The pack then has duplicate resource type keys and does not compile.
 
 ### 5. Test Individual Recipes
 
@@ -293,7 +294,7 @@ make build-bicep-recipe RECIPE_PATH=Data/newResource/recipes/kubernetes/bicep
 # Edit Data/newResource/test/app.bicep
 
 # 7. Add the recipes to a Recipe Pack and attach it to the Environment
-make generate-recipe-pack PACK_NAME=biceprecipepack OUTPUT_FILE=recipe-pack-bicep.bicep
+RECIPE_PLATFORM_FILTER=kubernetes make generate-recipe-pack PACK_NAME=biceprecipepack OUTPUT_FILE=recipe-pack-bicep.bicep
 make deploy-recipe-pack BICEP_FILE=recipe-pack-bicep.bicep
 make update-env-recipe-pack RECIPE_PACK_NAME=biceprecipepack
 

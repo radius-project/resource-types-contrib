@@ -158,7 +158,7 @@ make build-bicep-recipe RECIPE_PATH=<Category>/<resourceType>/recipes/<platform>
 make build-terraform-recipe RECIPE_PATH=<Category>/<resourceType>/recipes/<platform>/terraform
 
 # Add the recipes to a Recipe Pack and attach it to the Environment
-make generate-recipe-pack PACK_NAME=biceprecipepack OUTPUT_FILE=recipe-pack-bicep.bicep
+RECIPE_PLATFORM_FILTER=<platform> make generate-recipe-pack PACK_NAME=biceprecipepack OUTPUT_FILE=recipe-pack-bicep.bicep
 make deploy-recipe-pack BICEP_FILE=recipe-pack-bicep.bicep
 make update-env-recipe-pack RECIPE_PACK_NAME=biceprecipepack
 
