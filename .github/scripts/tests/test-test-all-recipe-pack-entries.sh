@@ -123,7 +123,7 @@ export FAIL_TYPE=""
 
 cat >"$TEST_ROOT/bin/test-recipe-pack-entry.sh" <<'EOF'
 #!/bin/bash
-echo "test-recipe-pack-entry.sh $*" >>"$CALL_LOG"
+echo "test-recipe-pack-entry.sh $* platform=${RTC_RECIPE_PACK_PLATFORM_GROUP:-}" >>"$CALL_LOG"
 [[ "$1" == "$FAIL_TYPE" ]] && exit 1
 exit 0
 EOF
@@ -159,13 +159,13 @@ fail() {
 output=$(FAIL_TYPE="" run_driver azure azure-ws azure-env) ||
     fail "expected all runnable pack entries to pass"
 expected="rad env update azure-env --workspace azure-ws --recipe-packs azure-aci
-test-recipe-pack-entry.sh Compute/containers azure-ws azure-env
+test-recipe-pack-entry.sh Compute/containers azure-ws azure-env platform=azure
 rad env update azure-env --workspace azure-ws --recipe-packs azure-aks
-test-recipe-pack-entry.sh Data/redisCaches azure-ws azure-env
-test-recipe-pack-entry.sh Messaging/rabbitMQ azure-ws azure-env
-test-recipe-pack-entry.sh Data/mySqlDatabases azure-ws azure-env verify-transport
-test-recipe-pack-entry.sh Compute/persistentVolumes azure-ws azure-env
-test-recipe-pack-entry.sh Compute/routes azure-ws azure-env"
+test-recipe-pack-entry.sh Data/redisCaches azure-ws azure-env platform=azure
+test-recipe-pack-entry.sh Messaging/rabbitMQ azure-ws azure-env platform=azure
+test-recipe-pack-entry.sh Data/mySqlDatabases azure-ws azure-env verify-transport platform=azure
+test-recipe-pack-entry.sh Compute/persistentVolumes azure-ws azure-env platform=azure
+test-recipe-pack-entry.sh Compute/routes azure-ws azure-env platform=azure"
 diff -u <(echo "$expected") "$CALL_LOG" ||
     fail "expected direct-module and repository-owned entries to run with their pack active"
 grep -q "6 tested, 1 skipped, 0 failed" <<<"$output" ||
@@ -195,7 +195,7 @@ grep -q "test-recipe-pack-entry.sh Messaging/rabbitMQ" "$CALL_LOG" ||
 : >"$CALL_LOG"
 run_driver kubernetes kubernetes-ws kubernetes-env >/dev/null ||
     fail "expected the Kubernetes MySQL connection probe to pass"
-grep -q "test-recipe-pack-entry.sh Data/mySqlDatabases kubernetes-ws kubernetes-env connection-only" "$CALL_LOG" ||
+grep -q "test-recipe-pack-entry.sh Data/mySqlDatabases kubernetes-ws kubernetes-env connection-only platform=kubernetes" "$CALL_LOG" ||
     fail "expected Kubernetes MySQL to use the connection-only probe"
 
 : >"$CALL_LOG"

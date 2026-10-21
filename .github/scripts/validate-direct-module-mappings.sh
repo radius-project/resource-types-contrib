@@ -31,6 +31,9 @@ set -euo pipefail
 #   2. For a property with a declared `enum` (e.g. `tls: [required, optional]`)
 #      that an expression compares with a string literal (`==`), the literal
 #      must be a declared enum value. Several values can share an else branch.
+#   3. Optional AVM lock parameters must be omitted when locks are disabled.
+#      An explicit `lock: { kind: 'None' }` mapping can create a management
+#      lock because of radius-project/radius#13374.
 # This does not validate target module parameter names, shapes, or results.
 #
 # New pack, new direct-module entry, or new enum value? Nothing to update
@@ -105,6 +108,11 @@ yaml_file_for_resource_type() {
     echo "$RTC_REPO_ROOT/$resource_type_dir/${type_name}.yaml"
 }
 
+entry_has_explicit_disabled_lock() {
+    tr '\n' ' ' |
+        grep -Eq "lock:[[:space:]]*\\{[^}]*kind:[[:space:]]*('None'|\"None\")"
+}
+
 check_entry() {
     local pack_id="$1" bicep_file="$2" resource_type="$3" resource_type_dir="$4"
     local yaml_file entry_body
@@ -117,6 +125,11 @@ check_entry() {
 
     mapfile -t schema_props < <(schema_property_names "$yaml_file")
     entry_body="$(rtc_recipe_pack_entry_body "$bicep_file" "$resource_type")"
+
+    if entry_has_explicit_disabled_lock <<<"$entry_body"; then
+        echo "ERROR: [$pack_id] $resource_type: omit the optional AVM lock parameter instead of mapping lock.kind to 'None' (radius-project/radius#13374)" >&2
+        exit_code=1
+    fi
 
     local expression property_names property_name compared_value
     while IFS= read -r expression; do

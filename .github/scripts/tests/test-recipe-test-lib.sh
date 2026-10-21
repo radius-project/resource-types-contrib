@@ -86,6 +86,30 @@ exit "${KUBECTL_EXIT_CODE:-0}"
 EOF
 chmod +x "$MOCK_BIN/kubectl"
 
+cat >"$MOCK_BIN/az" <<'EOF'
+#!/bin/bash
+echo "az $*" >>"$CALL_LOG"
+case "$1 $2" in
+    "lock list")
+        count=0
+        if [[ -f "$AZ_LOCK_LIST_COUNT_FILE" ]]; then
+            count="$(cat "$AZ_LOCK_LIST_COUNT_FILE")"
+        fi
+        count=$((count + 1))
+        echo "$count" >"$AZ_LOCK_LIST_COUNT_FILE"
+        if [[ "$count" -eq 1 ]]; then
+            printf '%s\n' "${AZ_LOCKS_BEFORE_JSON:-[]}"
+        else
+            printf '%s\n' "${AZ_LOCKS_AFTER_JSON:-[]}"
+        fi
+        ;;
+    "lock delete")
+        exit "${AZ_LOCK_DELETE_EXIT_CODE:-0}"
+        ;;
+esac
+EOF
+chmod +x "$MOCK_BIN/az"
+
 cat >"$MOCK_BIN/openssl" <<'EOF'
 #!/bin/bash
 echo "mock-generated-password"
@@ -96,6 +120,7 @@ run_lib() {
     (
         export PATH="$MOCK_BIN:$PATH"
         export CALL_LOG
+        export AZ_LOCK_LIST_COUNT_FILE="${AZ_LOCK_LIST_COUNT_FILE:-$TEST_ROOT/az-lock-list-count}"
         unset RTC_LIB_RECIPE_TEST_SOURCED
         # shellcheck source=/dev/null
         source "$REPO_ROOT/.github/scripts/lib-recipe-test.sh"
@@ -214,6 +239,57 @@ for failure in APP_DELETE_EXIT_CODE KUBECTL_EXIT_CODE; do
         fail "$failure must cause the test to fail"
     fi
 done
+
+# Azure Recipe Pack entry cleanup succeeds without lock-delete permission when
+# the deployment adds no lock. A pre-existing lock remains outside the test.
+: >"$CALL_LOG"
+rm -f "$TEST_ROOT/az-lock-list-count"
+preexisting_lock="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/shared/providers/Microsoft.Authorization/locks/preexisting"
+RTC_RECIPE_PACK_PLATFORM_GROUP=azure \
+    AZURE_RESOURCE_GROUP=rg \
+    AZ_LOCKS_BEFORE_JSON="[{\"id\":\"$preexisting_lock\"}]" \
+    AZ_LOCKS_AFTER_JSON="[{\"id\":\"$preexisting_lock\"}]" \
+    AZ_LOCK_DELETE_EXIT_CODE=1 \
+    run_lib rtc_deploy_and_assert_test_app \
+    "$TEST_APP_BICEP" "Radius.Data/somethingElse" rtc-test /envs/myenv myws my-ns >/dev/null ||
+    fail "an Azure deployment that adds no lock must clean up without lock-delete permission"
+grep -q '^rad app delete' "$CALL_LOG" ||
+    fail "an Azure deployment that adds no lock must use normal Radius cleanup"
+if grep -q '^az lock delete' "$CALL_LOG"; then
+    fail "pre-existing locks must not be deleted"
+fi
+
+# Azure Recipe Pack entry cleanup detects only locks introduced by the
+# current deployment. If the identity cannot delete one, it fails before the
+# slow Radius deletion path but still performs bounded Kubernetes cleanup.
+: >"$CALL_LOG"
+rm -f "$TEST_ROOT/az-lock-list-count"
+new_lock="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Cache/redisEnterprise/cache/providers/Microsoft.Authorization/locks/lock-cache"
+if output="$(
+    RTC_RECIPE_PACK_PLATFORM_GROUP=azure \
+        AZURE_RESOURCE_GROUP=rg \
+        AZ_LOCKS_BEFORE_JSON="[{\"id\":\"$preexisting_lock\"}]" \
+        AZ_LOCKS_AFTER_JSON="[{\"id\":\"$preexisting_lock\"},{\"id\":\"$new_lock\"}]" \
+        AZ_LOCK_DELETE_EXIT_CODE=1 \
+        run_lib rtc_deploy_and_assert_test_app \
+        "$TEST_APP_BICEP" "Radius.Data/somethingElse" rtc-test /envs/myenv myws my-ns 2>&1
+)"; then
+    fail "a newly introduced Azure lock must fail the entry"
+fi
+grep -Fq "Deployment introduced Azure management lock '$new_lock'" <<<"$output" ||
+    fail "lock failure must identify the new lock"
+grep -Fq "resource '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Cache/redisEnterprise/cache'" <<<"$output" ||
+    fail "lock failure must identify the locked resource"
+grep -Fq "Microsoft.Authorization/locks/delete is unavailable" <<<"$output" ||
+    fail "lock failure must explain the missing delete permission"
+if grep -q '^rad app delete' "$CALL_LOG"; then
+    fail "an undeletable lock must skip the slow Radius application deletion path"
+fi
+grep -q '^kubectl delete' "$CALL_LOG" ||
+    fail "an undeletable lock must still run bounded Kubernetes cleanup"
+if grep -Fq "$preexisting_lock" <<<"$output"; then
+    fail "pre-existing locks must not be attributed to the current entry"
+fi
 
 : >"$CALL_LOG"
 if POSTGRES_JSON='{"properties":{}}' run_lib rtc_deploy_and_assert_test_app \

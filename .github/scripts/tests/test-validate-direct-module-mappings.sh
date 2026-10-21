@@ -21,8 +21,8 @@
 # outcome the script needs to get right, with no dependency on real repo
 # content:
 #   Data/gadgets   - two enum values share an else branch -> OK
-#   Data/widgets   - enum property interpolated directly, no comparison
-#                    at all -> OK (nothing to check, not an error)
+#   Data/widgets   - enum property interpolated directly, but explicitly
+#                    maps a disabled AVM lock -> ERROR
 #   Data/sprockets - comparison with an undeclared enum value -> ERROR
 #   Data/doodads   - references a property that doesn't exist -> ERROR
 
@@ -94,6 +94,7 @@ resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
         source: 'mcr.microsoft.com/bicep/avm/res/some/widget-module:1.0.0'
         parameters: {
           shapeValue: '{{context.resource.properties.shape}}'
+          lock: { kind: "None" }
         }
       }
       'Radius.Data/sprockets': {
@@ -141,7 +142,7 @@ echo "$output" | grep -q "Data/doodads.*references undeclared property 'lable'" 
 echo "$output" | grep -q "Data/gadgets" &&
     fail "Data/gadgets is fully handled and should not have been flagged"
 
-echo "$output" | grep -q "Data/widgets" &&
-    fail "Data/widgets has no comparison at all and should not have been flagged"
+echo "$output" | grep -q "Data/widgets.*omit the optional AVM lock parameter" ||
+    fail "expected an explicit disabled-lock mapping error for Data/widgets"
 
 echo "validate-direct-module-mappings.sh test passed"

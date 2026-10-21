@@ -39,9 +39,6 @@ resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
           }
           publicNetworkAccess: 'Enabled'
           enableTelemetry: false
-          lock: {
-            kind: 'None'
-          }
         }
         outputs: {
           host: 'hostName'
@@ -77,9 +74,6 @@ resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
             }
           ]
           enableTelemetry: false
-          lock: {
-            kind: 'None'
-          }
         }
         outputs: {
           endpoint: 'endpoint'
@@ -98,9 +92,6 @@ resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
           replicaCount: 1
           partitionCount: 1
           enableTelemetry: false
-          lock: {
-            kind: 'None'
-          }
         }
         outputs: {
           endpoint: 'endpoint'
@@ -127,9 +118,6 @@ resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
             publicNetworkAccess: 'Enabled'
           }
           enableTelemetry: false
-          lock: {
-            kind: 'None'
-          }
         }
         outputs: {
           endpoint: 'endpoint'
@@ -173,9 +161,6 @@ resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
             }
           ]
           enableTelemetry: false
-          lock: {
-            kind: 'None'
-          }
         }
         outputs: {
           host: 'fqdn'
@@ -214,9 +199,6 @@ resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
           ]
           enableAdvancedThreatProtection: false
           enableTelemetry: false
-          lock: {
-            kind: 'None'
-          }
           configurations: concat(postgreSqlServerConfigurations, postgreSqlOperatorSetsSecureTransport ? [] : [
             {
               name: 'require_secure_transport'
@@ -257,9 +239,6 @@ resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
             }
           ]
           enableTelemetry: false
-          lock: {
-            kind: 'None'
-          }
         }
         outputs: {
           host: 'fullyQualifiedDomainName'
@@ -288,9 +267,6 @@ resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
             }
           ]
           enableTelemetry: false
-          lock: {
-            kind: 'None'
-          }
         }
         outputs: {
           host: 'name'
@@ -324,9 +300,6 @@ resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
             ]
           }
           enableTelemetry: false
-          lock: {
-            kind: 'None'
-          }
         }
         outputs: {
           endpoint: 'primaryBlobEndpoint'

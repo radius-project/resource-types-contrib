@@ -83,6 +83,61 @@ rtc_cleanup_kubernetes_resources() {
     return "$status"
 }
 
+rtc_list_azure_lock_ids() {
+    local -a subscription_args=()
+    if [[ -n "${AZURE_SUBSCRIPTION_ID:-}" ]]; then
+        subscription_args=(--subscription "$AZURE_SUBSCRIPTION_ID")
+    fi
+
+    az lock list \
+        --resource-group "$AZURE_RESOURCE_GROUP" \
+        "${subscription_args[@]}" \
+        --only-show-errors \
+        --output json |
+        jq -r '.[].id' |
+        sort -u
+}
+
+rtc_cleanup_test_app() {
+    local app_name="$1" workspace_name="$2" kubernetes_namespace="$3" azure_locks_before="${4:-}"
+    local cleanup_status=0 skip_radius_delete=0 lock_id resource_id
+    local azure_locks_after="" new_locks=""
+
+    if [[ "${RTC_RECIPE_PACK_PLATFORM_GROUP:-}" == "azure" ]]; then
+        if ! azure_locks_after="$(rtc_list_azure_lock_ids)"; then
+            echo "Error: Could not inspect Azure management locks before deleting '$app_name'; skipping Radius application deletion to avoid repeated retries." >&2
+            cleanup_status=1
+            skip_radius_delete=1
+        else
+            new_locks="$(comm -13 \
+                <(printf '%s\n' "$azure_locks_before" | sed '/^$/d' | sort -u) \
+                <(printf '%s\n' "$azure_locks_after" | sed '/^$/d' | sort -u))"
+        fi
+
+        while IFS= read -r lock_id; do
+            [[ -z "$lock_id" ]] && continue
+            cleanup_status=1
+            resource_id="${lock_id%/providers/Microsoft.Authorization/locks/*}"
+            if az lock delete --ids "$lock_id" --only-show-errors --output none; then
+                echo "Error: Deployment introduced Azure management lock '$lock_id' on resource '$resource_id'; the lock was removed for cleanup, but this entry is invalid." >&2
+            else
+                echo "Error: Deployment introduced Azure management lock '$lock_id' on resource '$resource_id'. The test identity cannot delete it because Microsoft.Authorization/locks/delete is unavailable; skipping Radius application deletion to avoid repeated retries." >&2
+                skip_radius_delete=1
+            fi
+        done <<<"$new_locks"
+    fi
+
+    if [[ "$skip_radius_delete" -eq 0 ]]; then
+        rad app delete "$app_name" --workspace "$workspace_name" --yes || cleanup_status=1
+    fi
+    rtc_cleanup_kubernetes_resources "$kubernetes_namespace" "$app_name" || cleanup_status=1
+
+    if [[ "$cleanup_status" -ne 0 ]]; then
+        echo "Error: Test app cleanup failed." >&2
+    fi
+    return "$cleanup_status"
+}
+
 # Radius.Compute/containers-specific assertion: the shared test app deploys
 # two containers resources that must each publish their own host, proving
 # they are not accidentally sharing the same underlying infrastructure.
@@ -180,7 +235,7 @@ rtc_assert_recipe_result() {
 #            <kubernetes-namespace> [additional rad deploy arguments...]
 rtc_deploy_and_assert_test_app() {
     local test_file="$1" resource_type="$2" app_name_prefix="$3" environment_path="$4" workspace_name="$5" kubernetes_namespace="$6"
-    local app_name
+    local app_name azure_locks_before=""
     local -a params=()
     shift 6
 
@@ -204,28 +259,32 @@ rtc_deploy_and_assert_test_app() {
     fi
     params+=(--parameters "applicationName=$app_name")
 
+    if [[ "${RTC_RECIPE_PACK_PLATFORM_GROUP:-}" == "azure" ]]; then
+        if [[ -z "${AZURE_RESOURCE_GROUP:-}" ]]; then
+            echo "Error: AZURE_RESOURCE_GROUP is required for Azure Recipe Pack entry lock validation." >&2
+            return 1
+        fi
+        if ! azure_locks_before="$(rtc_list_azure_lock_ids)"; then
+            echo "Error: Could not snapshot Azure management locks before deploying '$app_name'." >&2
+            return 1
+        fi
+    fi
+
     echo "==> Deploying test application from $test_file"
     if rad deploy "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
         echo "==> Test deployment successful"
 
         if ! rtc_assert_recipe_result "$resource_type" "$app_name" "$workspace_name" "$kubernetes_namespace"; then
-            rad app delete "$app_name" --workspace "$workspace_name" --yes || echo "Error: Test app cleanup failed." >&2
-            rtc_cleanup_kubernetes_resources "$kubernetes_namespace" "$app_name"
+            rtc_cleanup_test_app "$app_name" "$workspace_name" "$kubernetes_namespace" "$azure_locks_before" || true
             return 1
         fi
 
         echo "==> Cleaning up test application"
-        local cleanup_status=0
-        rad app delete "$app_name" --workspace "$workspace_name" --yes || cleanup_status=1
-        rtc_cleanup_kubernetes_resources "$kubernetes_namespace" "$app_name" || cleanup_status=1
-        if [[ "$cleanup_status" -ne 0 ]]; then
-            echo "Error: Test app cleanup failed." >&2
-        fi
-        return "$cleanup_status"
+        rtc_cleanup_test_app "$app_name" "$workspace_name" "$kubernetes_namespace" "$azure_locks_before"
+        return $?
     fi
 
     echo "==> Test deployment failed"
-    rad app delete "$app_name" --workspace "$workspace_name" --yes || echo "Error: Test app cleanup failed." >&2
-    rtc_cleanup_kubernetes_resources "$kubernetes_namespace" "$app_name"
+    rtc_cleanup_test_app "$app_name" "$workspace_name" "$kubernetes_namespace" "$azure_locks_before" || true
     return 1
 }
