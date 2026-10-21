@@ -247,7 +247,7 @@ Each recipe is tested independently using the same `test/app.bicep` file.
 - Check that `<resourceType>.yaml` is valid YAML
 - Ensure the folder structure matches the expected pattern
 
-### Recipe registration fails
+### Recipe Pack deployment fails
 
 - Verify recipe files exist in expected locations
 - For Bicep: Ensure `.bicep` files are valid

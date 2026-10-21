@@ -124,7 +124,7 @@ endif
 	rad env update "$$ENVIRONMENT" --recipe-packs $(RECIPE_PACK_NAME)
 
 .PHONY: test
-test: ## Run recipe tests (assumes already registered)
+test: ## Run recipe tests (assumes a Recipe Pack with the recipes is attached to the Environment)
 	@./.github/scripts/test-all-recipes.sh "$(RESOURCE_TYPE_ROOT)" "$(ENVIRONMENT)" "$(RECIPE_TYPE)"
 
 .PHONY: test-kubernetes-recipes

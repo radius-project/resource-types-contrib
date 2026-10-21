@@ -303,6 +303,9 @@ run_recipe >/dev/null || fail "existing per-recipe success path failed"
 if DEPLOY_EXIT_CODE=1 run_recipe >/dev/null; then
     fail "existing per-recipe deploy failure must fail"
 fi
-grep -q '^rad recipe unregister default' "$CALL_LOG" || fail "per-recipe failure must unregister"
+grep -q '^rad app delete' "$CALL_LOG" || fail "per-recipe failure must still delete the test app"
+if grep -q '^rad recipe ' "$CALL_LOG"; then
+    fail "per-recipe failure must not call the removed 'rad recipe' command"
+fi
 
 echo "Recipe test library test passed"
