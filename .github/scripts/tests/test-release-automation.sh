@@ -617,7 +617,9 @@ types:
     commit_file "$repo" "recipe-packs/current/pack.bicep" "extension radius" "rename pack"
     printf 'local change\n' >>"$repo/Data/widgets/widget.yaml"
 
-    cat >"$defaults" <<EOF
+    # Valid pins, so each negative case below fails only on its own guard.
+    write_valid_defaults() {
+        cat >"$defaults" <<EOF
 resourceTypes:
   - name: Radius.Data
     repo: github.com/radius-project/resource-types-contrib
@@ -627,6 +629,12 @@ recipePacks:
     repo: github.com/radius-project/resource-types-contrib
     ref: ${pinned}
 EOF
+    }
+    reset_rc_repo() {
+        git -C "$repo" checkout -q -- . && git -C "$repo" clean -q -fd
+    }
+
+    write_valid_defaults
     : >"$TEST_ROOT/rc.out"
     REPO_ROOT="$repo" RADIUS_VERSION=v0.62.0-rc1 DEFAULTS_FILE="$defaults" \
         GITHUB_OUTPUT="$TEST_ROOT/rc.out" bash "$RC_SOURCES_SCRIPT" >/dev/null 2>&1 ||
@@ -647,7 +655,7 @@ EOF
 
     # A released rad cannot resolve a repo-owned source whose namespace is not
     # pinned, so preparing the sources fails too.
-    git -C "$repo" checkout -q -- . && git -C "$repo" clean -q -fd
+    reset_rc_repo
     cat >"$defaults" <<EOF
 resourceTypes:
   - name: Radius.Extra
@@ -663,13 +671,25 @@ EOF
         fail "a repo-owned Recipe source with an unpinned namespace was accepted"
     fi
 
-    git -C "$repo" checkout -q -- . && git -C "$repo" clean -q -fd
-    sed -i 's#github.com/radius-project/resource-types-contrib#github.com/example/fork#' "$defaults"
+    # Control: the valid pins still succeed on the reset tree, so the negative
+    # cases below fail only because of the change each one makes.
+    reset_rc_repo
+    write_valid_defaults
+    REPO_ROOT="$repo" RADIUS_VERSION=0.62.0-rc1 DEFAULTS_FILE="$defaults" \
+        bash "$RC_SOURCES_SCRIPT" >/dev/null 2>&1 ||
+        fail "valid pins were rejected after reset"
+
+    # Only the Recipe Pack pin points at another repository.
+    reset_rc_repo
+    write_valid_defaults
+    sed -i '/^recipePacks:/,$ s#github.com/radius-project/resource-types-contrib#github.com/example/fork#' "$defaults"
     if REPO_ROOT="$repo" RADIUS_VERSION=0.62.0-rc1 DEFAULTS_FILE="$defaults" \
         bash "$RC_SOURCES_SCRIPT" >/dev/null 2>&1; then
         fail "a pin to another repository was accepted"
     fi
 
+    reset_rc_repo
+    write_valid_defaults
     for bad in edge latest 0.62 "0.62.0 rc1"; do
         if REPO_ROOT="$repo" RADIUS_VERSION="$bad" DEFAULTS_FILE="$defaults" \
             bash "$RC_SOURCES_SCRIPT" >/dev/null 2>&1; then

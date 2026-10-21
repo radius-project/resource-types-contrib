@@ -56,7 +56,9 @@ jobs:
         run: |
           set -euo pipefail
           source .github/scripts/lib-recipe-packs.sh
-          for pack in $(rtc_recipe_packs_for_platform_group kubernetes); do
+          # A separate assignment lets set -e stop the job when enumeration fails.
+          packs="$(rtc_recipe_packs_for_platform_group kubernetes)"
+          for pack in $packs; do
             RECIPE_PACK="$pack" ./.github/scripts/release/verify-recipe-pack-sources.sh
           done
 
@@ -216,7 +218,9 @@ jobs:
         run: |
           set -euo pipefail
           source .github/scripts/lib-recipe-packs.sh
-          for pack in $(rtc_recipe_packs_for_platform_group azure); do
+          # A separate assignment lets set -e stop the job when enumeration fails.
+          packs="$(rtc_recipe_packs_for_platform_group azure)"
+          for pack in $packs; do
             RECIPE_PACK="$pack" ./.github/scripts/release/verify-recipe-pack-sources.sh
           done
 
