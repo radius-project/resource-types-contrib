@@ -19,6 +19,7 @@
 set -euo pipefail
 
 SOURCE_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+AZURE_ACI_PACK="$SOURCE_REPO_ROOT/recipe-packs/azure-aci/azure-aci.bicep"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/rtc-recipe-pack-validation-XXXXXX")"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
@@ -59,6 +60,16 @@ resource environment 'Radius.Core/environments@2025-08-01-preview' = {}
 EOF
 if run_validator; then
     echo "Recipe Pack containing an Environment unexpectedly passed validation" >&2
+    exit 1
+fi
+
+expected_source="source: 'ghcr.io/radius-project/azure-aci-recipes/containers@sha256:4295fac3aded4a823e0de8394c5996833fedd35206614497ec3caa32b8cbc278'"
+grep -Fq "$expected_source" "$AZURE_ACI_PACK" || {
+    echo "Azure ACI containers must use the verified artifact that returns hosts" >&2
+    exit 1
+}
+if grep -Fq "source: 'ghcr.io/radius-project/azure-aci-recipes/containers:latest'" "$AZURE_ACI_PACK"; then
+    echo "Azure ACI containers must not use the floating latest tag" >&2
     exit 1
 fi
 

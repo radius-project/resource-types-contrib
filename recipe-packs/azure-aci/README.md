@@ -12,9 +12,11 @@ The pack declares a single `Radius.Core/recipePacks` resource whose `recipes` ma
 
 | Resource Type | Kind | Source |
 | --- | --- | --- |
-| `Radius.Compute/containers` | Bicep | `ghcr.io/radius-project/azure-aci-recipes/containers` |
+| `Radius.Compute/containers` | Bicep | `ghcr.io/radius-project/azure-aci-recipes/containers@sha256:4295fac3aded4a823e0de8394c5996833fedd35206614497ec3caa32b8cbc278` |
 | `Radius.Compute/persistentVolumes` | Bicep | `ghcr.io/radius-project/azure-aci-recipes/persistentvolumes` |
 | `Radius.Security/secrets` | Bicep | `ghcr.io/radius-project/azure-aci-recipes/secrets` |
+
+The containers Recipe uses an immutable digest. This artifact was published from commit `af8da9dd1167c823a73d18407c79d102a0cdfaa5` and returns the `hosts` result required by the current `Radius.Compute/containers` contract.
 
 `Radius.Compute/routes` and `Radius.Compute/containerImages` are not yet supported on ACI and are omitted. Data, messaging, storage, and AI Resource Types are not part of this pack.
 

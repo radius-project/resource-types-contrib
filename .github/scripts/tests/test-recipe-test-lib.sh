@@ -58,9 +58,9 @@ case "$1 $2" in
         case "$3" in
             "Radius.Compute/containers")
                 if [[ "$4" == "myApp" ]]; then
-                    echo '{"properties":{"hosts":{"orderProcessor":"host-a"}}}'
+                    echo "{\"properties\":{\"hosts\":{\"orderProcessor\":\"${APP_HOST-host-a}\"}}}"
                 else
-                    echo "{\"properties\":{\"hosts\":{\"simple\":\"${PEER_HOST:-host-b}\"}}}"
+                    echo "{\"properties\":{\"hosts\":{\"simple\":\"${PEER_HOST-host-b}\"}}}"
                 fi
                 ;;
             "Radius.Data/postgreSqlDatabases")
@@ -94,6 +94,7 @@ chmod +x "$MOCK_BIN/openssl"
 
 run_lib() {
     (
+        # shellcheck disable=SC2030
         export PATH="$MOCK_BIN:$PATH"
         export CALL_LOG
         unset RTC_LIB_RECIPE_TEST_SOURCED
@@ -151,6 +152,12 @@ run_lib rtc_assert_recipe_result "Radius.Data/postgreSqlDatabases" testapp myws 
 
 if PEER_HOST=host-a run_lib rtc_assert_recipe_result "Radius.Compute/containers" testapp myws >/dev/null; then
     fail "equal container hosts must fail"
+fi
+if APP_HOST='' run_lib rtc_assert_recipe_result "Radius.Compute/containers" testapp myws >/dev/null; then
+    fail "an empty primary container host must fail"
+fi
+if PEER_HOST='' run_lib rtc_assert_recipe_result "Radius.Compute/containers" testapp myws >/dev/null; then
+    fail "an empty peer container host must fail"
 fi
 for invalid_result in \
     '{"properties":{"host":"","port":5432,"database":"appdb"}}' \
@@ -285,6 +292,7 @@ cp "$TEST_APP_BICEP" "$TEST_ROOT/Data/widgets/test/app.bicep"
 run_recipe() {
     (
         cd "$TEST_ROOT"
+        # shellcheck disable=SC2031
         PATH="$MOCK_BIN:$PATH" CALL_LOG="$CALL_LOG" \
             bash "$REPO_ROOT/.github/scripts/test-recipe.sh" Data/widgets/recipes/kubernetes/bicep
     )
