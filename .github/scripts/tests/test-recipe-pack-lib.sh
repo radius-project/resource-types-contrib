@@ -48,13 +48,14 @@ mkdir -p "$FIXTURE_ROOT/Data/untested"
 mkdir -p "$FIXTURE_ROOT/recipe-packs/kubernetes" "$FIXTURE_ROOT/recipe-packs/azure-aks"
 
 cat >"$FIXTURE_ROOT/recipe-packs/kubernetes/default.bicep" <<'EOF'
+param recipeSource string = 'ghcr.io/radius-project/kube-recipes/widgets:latest'
 resource kubernetesRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
   name: 'kubernetes'
   properties: {
     recipes: {
       'Radius.Data/widgets': {
         kind: 'bicep'
-        source: 'ghcr.io/radius-project/kube-recipes/widgets:latest'
+        source: recipeSource
       }
     }
   }
@@ -92,7 +93,7 @@ run_in_fixture() {
     (
         # Disable GNU regex extensions so CI also catches non-portable awk patterns.
         awk() { POSIXLY_CORRECT=1 command awk "$@"; }
-        RTC_REPO_ROOT="$FIXTURE_ROOT"
+        export RTC_REPO_ROOT="$FIXTURE_ROOT"
         unset RTC_LIB_NAMESPACES_SOURCED RTC_LIB_RECIPE_PACKS_SOURCED
         cd "$FIXTURE_ROOT"
         # shellcheck source=/dev/null
@@ -141,6 +142,9 @@ assert_eq "azure,kubernetes," "$actual" "list of platform groups"
 expected="Radius.Data/widgets	ghcr.io/radius-project/kube-recipes/widgets:latest|Radius.Data/gadgets	mcr.microsoft.com/bicep/avm/res/some/gadget-module:1.0.0|Radius.Data/untested	mcr.microsoft.com/bicep/avm/res/some/untested-module:1.0.0|"
 actual="$(run_in_fixture rtc_recipe_pack_entries "$FIXTURE_ROOT/recipe-packs/azure-aks/azure-aks.bicep" | tr '\n' '|')"
 assert_eq "$expected" "$actual" "rtc_recipe_pack_entries for azure-aks"
+
+actual="$(run_in_fixture rtc_recipe_pack_entries "$FIXTURE_ROOT/recipe-packs/kubernetes/default.bicep")"
+assert_eq $'Radius.Data/widgets\tghcr.io/radius-project/kube-recipes/widgets:latest' "$actual" "parameterized source resolves to published default"
 
 actual="$(run_in_fixture rtc_recipe_pack_name "$FIXTURE_ROOT/recipe-packs/azure-aks/azure-aks.bicep")"
 assert_eq "azure-aks" "$actual" "space-indented recipe pack name"

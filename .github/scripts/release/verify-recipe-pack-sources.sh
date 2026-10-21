@@ -26,9 +26,8 @@
 # `latest`, which only a stable `release_version` publish creates) does not
 # exist yet, or while its GHCR package is still private.
 #
-# Only literal `source: '<registry>/<repository>:<tag>'` (or `@<digest>`)
-# values in the pack's top-level Bicep templates are checked; interpolated
-# values and non-OCI strings are skipped.
+# Literal sources and string parameter defaults in the pack's top-level Bicep
+# templates are checked; interpolated values and non-OCI strings are skipped.
 #
 # Inputs (environment variables):
 #   RECIPE_PACK         required, e.g. azure-aci
@@ -46,6 +45,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=.github/scripts/release/lib.sh
 source "$SCRIPT_DIR/lib.sh"
+# shellcheck source=.github/scripts/lib-recipe-packs.sh
+source "$SCRIPT_DIR/../lib-recipe-packs.sh"
 
 RECIPE_PACK="${RECIPE_PACK:-}"
 CHECK_SOURCE_CMD="${CHECK_SOURCE_CMD:-}"
@@ -101,8 +102,10 @@ sources=()
 while IFS= read -r source; do
     sources+=("$source")
 done < <(
-    find "$PACK_DIR_ABS" -mindepth 1 -maxdepth 1 -type f -name '*.bicep' -print0 |
-        xargs -0 sed -nE "s/^[[:space:]]*source:[[:space:]]*'([^']+)'.*/\1/p" |
+    while IFS= read -r template; do
+        rtc_recipe_pack_entries "$template"
+    done < <(find "$PACK_DIR_ABS" -mindepth 1 -maxdepth 1 -type f -name '*.bicep' | sort) |
+        cut -f2 |
         { grep -E "$OCI_REFERENCE" || true; } | sort -u
 )
 

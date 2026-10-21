@@ -386,13 +386,14 @@ test_recipe_pack_sources_must_resolve() {
     create_recipe_pack_repo "$repo" "widgets"
     cat >"$repo/recipe-packs/widgets/widgets.bicep" <<'EOF'
 extension radius
+param containerRecipeSource string = 'ghcr.io/example/recipes/containers:latest'
 resource pack 'Radius.Core/recipePacks@2025-08-01-preview' = {
   name: 'widgets'
   properties: {
     recipes: {
       'Radius.Compute/containers': {
         kind: 'bicep'
-        source: 'ghcr.io/example/recipes/containers:latest'
+        source: containerRecipeSource
       }
       'Radius.Data/postgreSqlDatabases': {
         kind: 'bicep'
@@ -422,6 +423,8 @@ EOF
         fail "recipe pack release accepted a Recipe source that does not resolve"
     fi
     assert_eq "3" "$(wc -l <"$checked" | tr -d ' ')" "checked OCI Recipe source count"
+    grep -Fxq 'ghcr.io/example/recipes/containers:latest' "$checked" ||
+        fail "parameterized Recipe source default was not checked"
     grep -q 'user-override' "$checked" && fail "non-OCI source value was checked"
 
     sed -i.bak '/missing:latest/d' "$repo/recipe-packs/widgets/widgets.bicep"

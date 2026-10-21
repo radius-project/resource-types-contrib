@@ -36,12 +36,6 @@ set -euo pipefail
 # rtc_recipe_pack_platform_group() (lib-recipe-packs.sh).
 #
 # Usage: deploy-all-checked-in-recipe-packs.sh <platform-group> [environment] [radius-group]
-# RECIPE_PACK_USE_LOCAL_RECIPES=true publishes and uses checkout recipes in
-# the test cluster registry, without changing the checked-in pack. GitHub Actions
-# defaults to this mode: pull_request_target runs the base workflow with checkout
-# scripts, so a new workflow opt-in alone would not test this PR's recipes.
-# Set RECIPE_PACK_USE_LOCAL_RECIPES=false explicitly to test published artifacts.
-# Outside GitHub Actions, local mode remains opt-in.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=.github/scripts/lib-recipe-packs.sh
@@ -55,12 +49,11 @@ fi
 platform_group="$1"
 environment="${2:-default}"
 radius_group="${3:-default}"
-use_local_recipes="${RECIPE_PACK_USE_LOCAL_RECIPES:-${GITHUB_ACTIONS:-false}}"
 
-local_pack_dir=""
+parameter_dir=""
 cleanup() {
-    if [[ -n "$local_pack_dir" ]]; then
-        rm -rf -- "$local_pack_dir"
+    if [[ -n "$parameter_dir" ]]; then
+        rm -rf -- "$parameter_dir"
     fi
 }
 trap cleanup EXIT
@@ -94,35 +87,28 @@ for pack_id in "${packs[@]}"; do
         parameters+=(--parameters "${param_name}=${param_value}")
     done <<<"$required_params"
 
-    if [[ "$use_local_recipes" == "true" ]]; then
-        local_recipes="$(rtc_recipe_pack_local_recipes "$template")"
-        # Publish every selected checkout recipe, including Kubernetes references
-        # omitted by the Azure-only build in a pull_request_target base workflow.
-        while IFS=$'\t' read -r resource_type original_source local_source recipe_file; do
-            [[ -z "$resource_type" ]] && continue
-            echo "==> Local recipe '$resource_type': '$original_source' -> '$local_source' (plainHttp: true)" >&2
-            make -s -C "$RTC_REPO_ROOT" build-bicep-recipe RECIPE_PATH="$recipe_file" >&2
-        done <<<"$local_recipes"
-        if [[ -z "$local_pack_dir" ]]; then
-            local_pack_dir="$(mktemp -d "${TMPDIR:-/tmp}/rtc-recipe-packs-XXXXXX")"
-            # A relocated Bicep config must retain remote references while
-            # resolving local extensions against the original config directory.
-            if [[ -f "$RTC_REPO_ROOT/bicepconfig.json" ]]; then
-                jq --arg root "$RTC_REPO_ROOT" '
-                    .extensions |= ((. // {}) | with_entries(
-                        if (.value | type) == "string" and
-                           (.value | test("^[A-Za-z][A-Za-z0-9+.-]*:|^/") | not)
-                        then .value = ($root + "/" + .value) else . end
-                    ))
-                ' "$RTC_REPO_ROOT/bicepconfig.json" >"$local_pack_dir/bicepconfig.json"
-            else
-                printf '%s\n' '{"extensions":{"radius":"br:biceptypes.azurecr.io/radius:latest"}}' \
-                    >"$local_pack_dir/bicepconfig.json"
-            fi
+    # The ACI host assertions must exercise the recipe built from this checkout.
+    if grep -Eq '^param aciContainerRecipeSource string[[:space:]]*=' "$template"; then
+        recipe_dir="$RTC_REPO_ROOT/Compute/containers/recipes/azure/bicep"
+        recipe_files="$(find "$recipe_dir" -maxdepth 1 -type f -name '*.bicep' | sort)"
+        if [[ -z "$recipe_files" || "$recipe_files" == *$'\n'* ]]; then
+            echo "Error: expected exactly one ACI container recipe in $recipe_dir." >&2
+            exit 1
         fi
-        local_template="$local_pack_dir/$pack_id.bicep"
-        rtc_recipe_pack_with_local_recipes "$template" "$local_recipes" >"$local_template"
-        template="$local_template"
+        recipe_name="${recipe_files##*/}"
+        recipe_name="${recipe_name%.bicep}"
+        # Match build-bicep-recipe.sh's OCI filename normalization.
+        recipe_name="$(printf '%s' "$recipe_name" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/-{2,}/-/g; s/^-+|-+$//g')"
+        if [[ -z "$parameter_dir" ]]; then
+            parameter_dir="$(mktemp -d "${TMPDIR:-/tmp}/rtc-aci-parameters-XXXXXX")"
+        fi
+        # CLI name=value parameters are strings; preserve the Bicep Boolean type.
+        jq -n --arg source "reciperegistry:5000/radius-recipes/compute/containers/azure/bicep/$recipe_name:latest" \
+            '{parameters: {
+                aciContainerRecipeSource: {value: $source},
+                aciContainerRecipePlainHttp: {value: true}
+            }}' >"$parameter_dir/parameters.json"
+        parameters+=(--parameters "@$parameter_dir/parameters.json")
     fi
 
     echo "==> Deploying checked-in recipe pack '$pack_id' ($template)"

@@ -304,8 +304,6 @@ jobs:
 
       - name: Deploy checked-in Azure Recipe Packs
         if: matrix.recipe == 'bicep'
-        env:
-          RECIPE_PACK_USE_LOCAL_RECIPES: "true"
         run: .github/scripts/deploy-all-checked-in-recipe-packs.sh azure
 
       - name: Generate Azure Recipe Pack
