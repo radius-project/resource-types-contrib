@@ -18,7 +18,7 @@ resource testapp 'Radius.Core/applications@2025-08-01-preview' = {
 }
 
 resource testsecret 'Radius.Security/secrets@2025-08-01-preview' = {
-  name: 'dbsecret'
+  name: 'dbsecret-${take(uniqueString(applicationName), 8)}'
   properties: {
     environment: environment
     application: testapp.id
