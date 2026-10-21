@@ -84,7 +84,9 @@ rtc_recipe_pack_platform_group() {
         kubernetes)
             echo "kubernetes"
             ;;
-        azure-aks | azure-aci)
+        # `azure` is the single Azure pack that older Radius releases still
+        # pin; release candidate tests restore it from that pin.
+        azure | azure-aks | azure-aci)
             echo "azure"
             ;;
         *)

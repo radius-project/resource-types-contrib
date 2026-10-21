@@ -63,6 +63,27 @@ Reversed mappings fail even when a database connection succeeds. Pack entries
 that do not enforce transport policy, such as the Kubernetes MySQL recipe, use
 the connection-only probe.
 
+### Testing a Radius release candidate
+
+[`release-candidate-recipe-pack-tests.yaml`](../.github/workflows/release-candidate-recipe-pack-tests.yaml)
+runs the same tests as the nightly workflow, but against what a Radius release
+candidate ships instead of `main`. Start it manually with the Radius version
+(for example, `0.62.0-rc1`). It reads `deploy/manifest/defaults.yaml` from that
+Radius tag and runs
+[`prepare-release-candidate-sources.sh`](../.github/scripts/release/prepare-release-candidate-sources.sh),
+which:
+
+- restores every pinned namespace folder and Recipe Pack folder from its pinned
+  commit, and removes namespaces and packs that the release does not pin;
+- changes each `ghcr.io/radius-project/...` Recipe source in those packs to the
+  pinned namespace commit SHA. A released `rad` uses the same tag, and
+  `publish-bicep-recipes.yaml` publishes it.
+
+The workflow checks that every pack source can be pulled, installs that Radius
+version, and runs the nightly steps unchanged. Packs pinned by older Radius
+releases still need a platform mapping in `lib-recipe-packs.sh` (for example,
+the earlier single `azure` pack).
+
 ### What to do when you add or change a pack
 
 - **New pack, same platform group (`kubernetes` or `azure`):** map the folder
@@ -72,7 +93,8 @@ the connection-only probe.
   platform group following the existing `kubernetes`/`azure` jobs as a
   template (see [`validate-resource-types.yaml`](../.github/workflows/validate-resource-types.yaml),
   [`validate-azure-recipes.yaml`](../.github/workflows/validate-azure-recipes.yaml),
-  and [`nightly-recipe-pack-tests.yaml`](../.github/workflows/nightly-recipe-pack-tests.yaml)).
+  [`nightly-recipe-pack-tests.yaml`](../.github/workflows/nightly-recipe-pack-tests.yaml),
+  and [`release-candidate-recipe-pack-tests.yaml`](../.github/workflows/release-candidate-recipe-pack-tests.yaml)).
 - **New direct-module entry in an existing pack:** add a `test/app.bicep`
   under that Resource Type's folder (see
   [Testing Resource Types and Recipes](../docs/contributing/testing-resource-types-recipes.md)
