@@ -170,12 +170,25 @@ function runAz(args, timeoutMs, command = "az", prefix = []) {
 }
 
 async function collect({ subscription, group, app, started, save, run = runAz, now = Date.now }) {
-  if (!UUID.test(subscription) || !/^[a-z0-9_-]{1,90}$/i.test(group) ||
+  const deadline = now() + LIMITS.totalMs;
+  let requests = 0;
+  if (!/^[a-z0-9_-]{1,90}$/i.test(group) ||
       !/^[a-z0-9_-]{1,128}$/i.test(app) || !TIME.test(started)) {
     throw new Error("invalid-diagnostic-context");
   }
+  // Older base workflows log in to Azure but do not export the subscription
+  // to the test step. Read only the selected account ID, never credentials.
+  if (subscription === "") {
+    requests++;
+    const result = await run(["account", "show", "--query", "id", "--only-show-errors", "--output", "json"],
+      LIMITS.requestMs);
+    if (result.error || typeof result.value !== "string" || !UUID.test(result.value)) {
+      throw new Error("azure-subscription-context-unavailable");
+    }
+    subscription = result.value;
+  }
+  if (!UUID.test(subscription)) throw new Error("invalid-diagnostic-context");
   const scope = `/subscriptions/${subscription}/resourceGroups/${group}`;
-  const deadline = now() + LIMITS.totalMs;
   const report = {
     schemaVersion: 1, app, scope, deploymentStarted: started,
     collectedAt: new Date(now()).toISOString(), limits: LIMITS,
@@ -184,7 +197,6 @@ async function collect({ subscription, group, app, started, save, run = runAz, n
     providerLimitations: "The 2024-11-01-preview API has no NGroups child-list or NGroup instanceView. Resource-group containerGroups may not expose managed children. Activity Log records can be delayed; original PUT/poll headers and registry responses are not available through these reads.",
     resources: [], activity: [], collections: [], errors: [], truncations: [],
   };
-  let requests = 0;
   save(report);
   async function get(label, url) {
     if (requests >= LIMITS.requests || now() >= deadline) {

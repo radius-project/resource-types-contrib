@@ -166,12 +166,18 @@ rtc_assert_recipe_result() {
 
 rtc_collect_azure_test_diagnostics() {
     local resource_type="$1" app_name="$2" started="$3" directory status script_dir dependency
+    local diagnostics_root="${RTC_AZURE_DIAGNOSTICS_DIR:-}"
+    # pull_request_target uses the base workflow, which may not yet set the
+    # diagnostic directory or have its dedicated upload step.
+    if [[ "${GITHUB_ACTIONS:-}" == true && ! -v RTC_AZURE_DIAGNOSTICS_DIR ]]; then
+        diagnostics_root="radius-pod-logs/azure-test-diagnostics"
+    fi
     if [[ "${RTC_TEST_PLATFORM:-}" != azure || "$resource_type" != Radius.Compute/containers ||
-          -z "${RTC_AZURE_DIAGNOSTICS_DIR:-}" ]]; then
+          -z "$diagnostics_root" ]]; then
         return 0
     fi
-    if ! mkdir -p "$RTC_AZURE_DIAGNOSTICS_DIR" ||
-       ! directory=$(mktemp -d "$RTC_AZURE_DIAGNOSTICS_DIR/failure-XXXXXXXX"); then
+    if ! mkdir -p "$diagnostics_root" ||
+       ! directory=$(mktemp -d "$diagnostics_root/failure-XXXXXXXX"); then
         echo "Error: Could not create Azure diagnostic directory." >&2
         return 1
     fi
@@ -210,11 +216,21 @@ rtc_collect_azure_test_diagnostics() {
 #            <kubernetes-namespace> [additional rad deploy arguments...]
 rtc_deploy_and_assert_test_app() {
     local test_file="$1" resource_type="$2" app_name_prefix="$3" environment_path="$4" workspace_name="$5" kubernetes_namespace="$6"
-    local app_name started
-    local -a params=()
+    local app_name started deploy_status
+    local -a params=() deploy_timeout=() cleanup_timeout=()
     shift 6
 
     app_name="${app_name_prefix}-$(date +%s)"
+
+    if [[ "${GITHUB_ACTIONS:-}" == true && "${RTC_TEST_PLATFORM:-}" == azure &&
+          "$resource_type" == Radius.Compute/containers ]]; then
+        if ! command -v timeout >/dev/null 2>&1; then
+            echo "Error: Azure container CI tests require GNU timeout." >&2
+            return 1
+        fi
+        deploy_timeout=(timeout --kill-after=5s 15m)
+        cleanup_timeout=(timeout --kill-after=5s 3m)
+    fi
 
     if ! grep -qE '^param applicationName string' "$test_file"; then
         echo "Error: Test template must declare an applicationName parameter for cleanup." >&2
@@ -236,31 +252,36 @@ rtc_deploy_and_assert_test_app() {
 
     echo "==> Deploying test application from $test_file"
     started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    if rad deploy "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
+    if "${deploy_timeout[@]}" rad deploy "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
         echo "==> Test deployment successful"
 
         if ! rtc_assert_recipe_result "$resource_type" "$app_name" "$workspace_name" "$kubernetes_namespace"; then
             rtc_collect_azure_test_diagnostics "$resource_type" "$app_name" "$started" ||
                 echo "Error: Azure diagnostic collection failed; continuing cleanup." >&2
-            rad app delete "$app_name" --workspace "$workspace_name" --yes || echo "Error: Test app cleanup failed." >&2
+            "${cleanup_timeout[@]}" rad app delete "$app_name" --workspace "$workspace_name" --yes || echo "Error: Test app cleanup failed." >&2
             rtc_cleanup_kubernetes_resources "$kubernetes_namespace" "$app_name"
             return 1
         fi
 
         echo "==> Cleaning up test application"
         local cleanup_status=0
-        rad app delete "$app_name" --workspace "$workspace_name" --yes || cleanup_status=1
+        "${cleanup_timeout[@]}" rad app delete "$app_name" --workspace "$workspace_name" --yes || cleanup_status=1
         rtc_cleanup_kubernetes_resources "$kubernetes_namespace" "$app_name" || cleanup_status=1
         if [[ "$cleanup_status" -ne 0 ]]; then
             echo "Error: Test app cleanup failed." >&2
         fi
         return "$cleanup_status"
+    else
+        deploy_status=$?
     fi
 
     echo "==> Test deployment failed"
+    if [[ ${#deploy_timeout[@]} -gt 0 && ( "$deploy_status" == 124 || "$deploy_status" == 137 ) ]]; then
+        echo "Error: Azure container test deployment exceeded its 15-minute limit." >&2
+    fi
     rtc_collect_azure_test_diagnostics "$resource_type" "$app_name" "$started" ||
         echo "Error: Azure diagnostic collection failed; continuing cleanup." >&2
-    rad app delete "$app_name" --workspace "$workspace_name" --yes || echo "Error: Test app cleanup failed." >&2
+    "${cleanup_timeout[@]}" rad app delete "$app_name" --workspace "$workspace_name" --yes || echo "Error: Test app cleanup failed." >&2
     rtc_cleanup_kubernetes_resources "$kubernetes_namespace" "$app_name"
     return 1
 }

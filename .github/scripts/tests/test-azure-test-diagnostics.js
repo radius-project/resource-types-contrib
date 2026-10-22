@@ -204,6 +204,40 @@ test("rejects invalid context before calling Azure", async () => {
   await assert.rejects(withMock(() => assert.fail("must not call"), { subscription: "not-a-subscription" }));
 });
 
+test("older base workflows can use the selected Azure account without listing other subscriptions", async () => {
+  const { report, calls } = await withMock(async (args, timeout) => {
+    assert.equal(timeout, LIMITS.requestMs);
+    if (args[0] === "account") {
+      assert.deepEqual(args, ["account", "show", "--query", "id", "--only-show-errors", "--output", "json"]);
+      return { value: subscription };
+    }
+    assert.ok(args[4].includes(`/subscriptions/${subscription}/`));
+    return { value: { value: [] } };
+  }, { subscription: "" });
+  assert.equal(calls.length, 9);
+  assert.equal(report.scope, scope);
+  assert.equal(report.errors.length, 0);
+});
+
+test("account lookup failure cannot fall back to an unscoped resource request", async () => {
+  for (const response of [{ error: "request-timeout" }, { error: "azure-cli-failed", exitCode: 3 },
+    { value: { id: subscription, credentials: secret } }, { value: secret }]) {
+    let calls = 0;
+    await assert.rejects(withMock(async () => { calls++; return response; }, { subscription: "" }));
+    assert.equal(calls, 1);
+  }
+});
+
+test("account lookup consumes the same collection time budget", async () => {
+  let clock = 0;
+  const { report, calls } = await withMock(async () => {
+    clock = LIMITS.totalMs + 1;
+    return { value: subscription };
+  }, { subscription: "", now: () => clock });
+  assert.equal(calls.length, 1);
+  assert.ok(report.errors.every((e) => e.reason === "collection-budget-exhausted"));
+});
+
 test("real CLI runner handles success, API failure, missing CLI and malformed JSON without stderr leakage", async () => {
   const execute = (script) => runAz([], 2000, process.execPath, ["-e", script]);
   assert.deepEqual(await execute('console.log(JSON.stringify({value:[]}))'), { value: { value: [] } });

@@ -20,6 +20,9 @@ export RTC_AZURE_DIAGNOSTICS_DIR="$TEST_ROOT/diagnostics"
 export AZURE_SUBSCRIPTION_ID=11111111-1111-1111-1111-111111111111
 export AZURE_RESOURCE_GROUP=rrttest-123-1-bicep
 export RTC_TEST_PLATFORM=azure
+export GITHUB_ACTIONS=false
+export REAL_TIMEOUT
+REAL_TIMEOUT="$(command -v timeout)"
 mkdir -p "$TEST_ROOT/bin" "$TEST_ROOT/Compute/containers/recipes/azure/bicep" "$TEST_ROOT/Compute/containers/test"
 export PATH="$TEST_ROOT/bin:$PATH"
 
@@ -27,8 +30,12 @@ cat >"$TEST_ROOT/bin/rad" <<'EOF'
 #!/bin/bash
 echo "rad $1 $2" >>"$CALL_LOG"
 case "$1 $2" in
-    "deploy "*) exit "${DEPLOY_STATUS:-37}" ;;
-    "app delete") exit "${CLEANUP_STATUS:-0}" ;;
+    "deploy "*)
+        if [[ "${DEPLOY_HANG:-0}" == 1 ]]; then exec sleep 30; fi
+        exit "${DEPLOY_STATUS:-37}" ;;
+    "app delete")
+        if [[ "${CLEANUP_HANG:-0}" == 1 ]]; then exec sleep 30; fi
+        exit "${CLEANUP_STATUS:-0}" ;;
     "env show") echo '{"id":"/envs/test","properties":{"providers":{"kubernetes":{"namespace":"test-ns"}}}}' ;;
     "resource show")
         if [[ "${ASSERT_FAIL:-0}" == 1 ]]; then echo '{}'
@@ -44,13 +51,23 @@ cat >"$TEST_ROOT/bin/node" <<'EOF'
 #!/bin/bash
 echo collector >>"$CALL_LOG"
 [[ "$1" == */collect-azure-test-diagnostics.js ]] || exit 99
-[[ "$3" == "$AZURE_SUBSCRIPTION_ID" && "$4" == "$AZURE_RESOURCE_GROUP" && "$6" == *T*Z ]] || exit 98
+[[ "$3" == "${AZURE_SUBSCRIPTION_ID:-}" && "$4" == "$AZURE_RESOURCE_GROUP" && "$6" == *T*Z ]] || exit 98
 echo '{"mock":"safe-evidence"}' >"$2/azure.json"
 exit "${COLLECTOR_STATUS:-0}"
 EOF
 cat >"$TEST_ROOT/bin/timeout" <<'EOF'
 #!/bin/bash
-[[ "$1" == --kill-after=5s && "$2" == 100s ]] || exit 97
+[[ "$1" == --kill-after=5s ]] || exit 97
+case "$2 $3 $4" in
+    "100s node "*) ;;
+    "15m rad deploy"|"3m rad app")
+        echo "bounded $2 $3 $4" >>"$CALL_LOG"
+        if [[ "${DEPLOY_HANG:-0}" == 1 || "${CLEANUP_HANG:-0}" == 1 ]]; then
+            shift 2
+            exec "$REAL_TIMEOUT" --kill-after=1s 1s "$@"
+        fi ;;
+    *) exit 97 ;;
+esac
 shift 2
 exec "$@"
 EOF
@@ -95,10 +112,29 @@ CLEANUP_STATUS=8 assert_failure_cleanup run_helper
 assert_before_cleanup
 DEPLOY_STATUS=0 ASSERT_FAIL=1 assert_failure_cleanup run_helper
 assert_before_cleanup
+for status in 124 137; do
+    GITHUB_ACTIONS=true DEPLOY_STATUS="$status" assert_failure_cleanup run_helper
+    assert_before_cleanup
+    grep -q '^bounded 15m rad deploy$' "$CALL_LOG" || fail "CI deployment must be bounded"
+    grep -q '^bounded 3m rad app$' "$CALL_LOG" || fail "CI cleanup must be bounded"
+    grep -q 'exceeded its 15-minute limit' "$TEST_ROOT/output" || fail "deployment timeout must be explicit"
+done
+GITHUB_ACTIONS=true DEPLOY_HANG=1 assert_failure_cleanup run_helper
+assert_before_cleanup
+grep -q 'exceeded its 15-minute limit' "$TEST_ROOT/output" || fail "a stalled process must reach diagnostics"
+GITHUB_ACTIONS=true CLEANUP_HANG=1 assert_failure_cleanup run_helper
+assert_before_cleanup
+GITHUB_ACTIONS=true CLEANUP_STATUS=124 assert_failure_cleanup run_helper
+assert_before_cleanup
+grep -q 'Test app cleanup failed' "$TEST_ROOT/output" || fail "cleanup timeout must be explicit"
+GITHUB_ACTIONS=true DEPLOY_STATUS=0 ASSERT_FAIL=1 assert_failure_cleanup run_helper
+assert_before_cleanup
+grep -q '^bounded 3m rad app$' "$CALL_LOG" || fail "assertion failure cleanup must be bounded"
 
 for platform in kubernetes aws ""; do
-    RTC_TEST_PLATFORM="$platform" assert_failure_cleanup run_helper
+    GITHUB_ACTIONS=true RTC_TEST_PLATFORM="$platform" assert_failure_cleanup run_helper
     if grep -q '^collector' "$CALL_LOG"; then fail "non-Azure tests must not collect"; fi
+    if grep -q '^bounded' "$CALL_LOG"; then fail "non-Azure tests must not acquire new time limits"; fi
 done
 RTC_AZURE_DIAGNOSTICS_DIR="" assert_failure_cleanup run_helper
 if grep -q '^collector' "$CALL_LOG"; then fail "disabled diagnostics must not collect"; fi
@@ -107,6 +143,10 @@ if grep -q '^collector' "$CALL_LOG"; then fail "unrelated tests must not collect
 : >"$CALL_LOG"
 DEPLOY_STATUS=0 run_helper >"$TEST_ROOT/output" 2>&1 || fail "successful test must remain successful"
 if grep -q '^collector' "$CALL_LOG"; then fail "success must not collect"; fi
+if grep -q '^bounded' "$CALL_LOG"; then fail "local runs must retain their existing time limits"; fi
+: >"$CALL_LOG"
+GITHUB_ACTIONS=true DEPLOY_STATUS=0 run_helper >"$TEST_ROOT/output" 2>&1 || fail "CI success must remain successful"
+grep -q '^bounded 3m rad app$' "$CALL_LOG" || fail "successful CI cleanup must be bounded"
 
 # Missing dependencies must produce a status artifact but cannot stop cleanup.
 (
@@ -134,6 +174,18 @@ RTC_TEST_PLATFORM=kubernetes assert_failure_cleanup run_recipe
 assert_before_cleanup
 assert_failure_cleanup run_pack_entry
 assert_before_cleanup
+# Match pull_request_target before the diagnostic workflow changes reach main.
+(
+    cd "$TEST_ROOT"
+    unset RTC_AZURE_DIAGNOSTICS_DIR AZURE_SUBSCRIPTION_ID
+    export GITHUB_ACTIONS=true
+    assert_failure_cleanup run_recipe
+    assert_before_cleanup
+    grep -Rq 'safe-evidence' radius-pod-logs/azure-test-diagnostics ||
+        fail "the base workflow's existing pod-log upload must include the evidence"
+)
+GITHUB_ACTIONS=true RTC_AZURE_DIAGNOSTICS_DIR="" assert_failure_cleanup run_helper
+if grep -q '^collector' "$CALL_LOG"; then fail "explicit empty directory must still disable collection"; fi
 grep -Rq 'collector exit 124' "$RTC_AZURE_DIAGNOSTICS_DIR" || fail "timeout status must persist"
 grep -Rq 'safe-evidence' "$RTC_AZURE_DIAGNOSTICS_DIR" || fail "evidence must persist after cleanup"
 echo "Azure diagnostics integration tests passed"

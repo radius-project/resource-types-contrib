@@ -207,7 +207,7 @@ make delete-radius-cluster
 Azure validation and nightly Azure tests save diagnostics **before** they delete
 a failed `Radius.Compute/containers` test app. This applies to deployment and
 assertion failures, for both per-recipe tests and checked-in Recipe Pack tests.
-The collector does not retry a deployment or change the test result or cleanup.
+The collector does not retry a deployment or turn a failed test into a pass.
 It does not run for successful tests, other resource types, or non-Azure tests.
 
 Download `azure-test-diagnostics-bicep` from Azure validation, or
@@ -215,6 +215,22 @@ Download `azure-test-diagnostics-bicep` from Azure validation, or
 separate directory with `azure.json` and `collector-status.txt`. There is no
 artifact when no applicable test fails. A Terraform artifact uses the suffix
 `-terraform` if a future Azure container Terraform test fails.
+
+`pull_request_target` runs the workflow from the base branch. Before that
+workflow has the dedicated diagnostic upload step, the checked-out test helper
+saves evidence under `radius-pod-logs/azure-test-diagnostics`. Download the
+existing `radius-pod-logs-bicep` artifact in that case. This CI default applies
+only when `RTC_AZURE_DIAGNOSTICS_DIR` is unset; an explicit empty value still
+disables collection.
+
+In GitHub Actions, the Azure container test limits `rad deploy` to 15 minutes
+and `rad app delete` to 3 minutes, with a further 5-second kill limit for each.
+This leaves time to collect evidence when provisioning stalls, instead of
+waiting for the 30-minute job limit. A timeout remains a test failure.
+Collection runs before app cleanup, and Kubernetes cleanup is still attempted.
+These limits do not apply to local runs, other resource types, or non-Azure
+tests. They do not cancel an Azure operation or fix the cause of a provider
+stall; the workflow still performs its final resource-group cleanup.
 
 The JSON file contains an allowlist of resource IDs, provisioning states,
 container image references, container states, event names/counts/timestamps,
@@ -239,8 +255,12 @@ and free-text image-pull detail remain unavailable. Use the saved resource IDs,
 timestamps, and correlation IDs for a provider investigation. These diagnostics
 do not establish or fix the cause of a registry failure.
 
-Collection uses only GET requests, scoped to the configured subscription and
-test resource group. Each request has a 10-second limit and a 2 MiB response
+Resource collection uses only GET requests, scoped to the configured
+subscription and test resource group. If the base workflow does not export
+`AZURE_SUBSCRIPTION_ID`, the collector first reads the selected account ID with
+`az account show --query id`. It does not list accounts or read credentials.
+That lookup uses the same time and request budget.
+Each request has a 10-second limit and a 2 MiB response
 limit. Each collection has a 90-second request budget and at most 24 requests.
 The shell stops the collector after 100 seconds, with a further 5-second kill
 limit. Only the first page and at most 20 items per list are kept; pagination
