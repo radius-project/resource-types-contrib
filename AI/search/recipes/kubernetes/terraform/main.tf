@@ -17,7 +17,8 @@ locals {
   # A unique per-resource name so two search resources that share a display
   # name (or the same name across recreates) never collide on their Kubernetes
   # objects.
-  unique_name      = "${local.resource_name}-${substr(sha256(var.context.resource.id), 0, 13)}"
+  id_hash          = substr(sha256(var.context.resource.id), 0, 13)
+  unique_name      = "${local.resource_name}-${local.id_hash}"
   application_name = var.context.application != null ? var.context.application.name : ""
   environment_name = var.context.environment != null ? var.context.environment.name : ""
   resource_group   = element(split("/", var.context.resource.id), 5)
@@ -31,9 +32,18 @@ locals {
     "radapp.io/environment"    = local.environment_name
     "radapp.io/resource-type"  = replace(var.context.resource.type, "/", "-")
     "radapp.io/resource-group" = local.resource_group
+    "radapp.io/resource-id"    = local.id_hash
   }
 
-  host = "${kubernetes_service.meilisearch.metadata[0].name}.${kubernetes_service.meilisearch.metadata[0].namespace}.svc.cluster.local"
+  # Matches only this resource's Pods; the name label alone is shared by any
+  # resource with the same name.
+  selector_labels = {
+    "radapp.io/resource-id" = local.id_hash
+  }
+
+  # <service>.<namespace> resolves through the Pod DNS search suffixes, so it
+  # does not assume the cluster domain is cluster.local.
+  host = "${kubernetes_service.meilisearch.metadata[0].name}.${kubernetes_service.meilisearch.metadata[0].namespace}"
 }
 
 # Radius.AI/search has no developer-authored credentials, so the Recipe
@@ -60,7 +70,7 @@ resource "kubernetes_secret" "master_key" {
 
 resource "kubernetes_deployment" "meilisearch" {
   metadata {
-    name      = local.resource_name
+    name      = local.unique_name
     namespace = local.namespace
     labels    = local.labels
   }
@@ -74,9 +84,7 @@ resource "kubernetes_deployment" "meilisearch" {
     }
 
     selector {
-      match_labels = {
-        "radapp.io/resource" = local.resource_name
-      }
+      match_labels = local.selector_labels
     }
 
     template {
@@ -156,7 +164,7 @@ resource "kubernetes_deployment" "meilisearch" {
 
 resource "kubernetes_service" "meilisearch" {
   metadata {
-    name      = local.resource_name
+    name      = local.unique_name
     namespace = local.namespace
     labels    = local.labels
   }
@@ -164,9 +172,7 @@ resource "kubernetes_service" "meilisearch" {
   spec {
     type = "ClusterIP"
 
-    selector = {
-      "radapp.io/resource" = local.resource_name
-    }
+    selector = local.selector_labels
 
     port {
       port = local.port

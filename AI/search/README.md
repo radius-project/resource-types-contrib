@@ -33,7 +33,7 @@ A Kubernetes Recipe for this resource type is available as a Terraform module, [
 
 | Output | Value |
 | --- | --- |
-| `endpoint` | The base URL of the Meilisearch REST API, `http://<resource-name>.<namespace>.svc.cluster.local:7700`. |
+| `endpoint` | The base URL of the Meilisearch REST API, `http://<resource-name>-<id-hash>.<namespace>:7700`, where `<id-hash>` is a short hash of the resource ID. |
 | `secrets.apiKey` | The generated master key. Delivered through the managed secret. |
 
 ## Using the resource type

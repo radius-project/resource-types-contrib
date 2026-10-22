@@ -2,7 +2,7 @@
 
 ## Recipe Description
 
-This Terraform module ([`main.tf`](main.tf), [`var.tf`](var.tf)) runs a [Meilisearch](https://www.meilisearch.com) server from the official `getmeili/meilisearch` image in the Environment's namespace. It creates a single-replica `Deployment` and a `ClusterIP` `Service`, both named after the resource, and a `Secret` that holds a generated master key. It is meant for development and testing.
+This Terraform module ([`main.tf`](main.tf), [`var.tf`](var.tf)) runs a [Meilisearch](https://www.meilisearch.com) server from the official `getmeili/meilisearch` image in the Environment's namespace. It creates a single-replica `Deployment` and a `ClusterIP` `Service`, and a `Secret` that holds a generated master key. All three are named after the resource plus a short hash of its resource ID, so same-named resources in one namespace do not collide. It is meant for development and testing.
 
 See the [resource type README](../../../README.md#kubernetes-terraform-recipe) for what the module provides, its limits, and the outputs.
 
