@@ -110,7 +110,7 @@ for pack_id in "${packs[@]}"; do
         echo "=============================================================="
         echo "==> Recipe Pack entry test: $resource_type_dir (from pack '$pack_id')"
         echo "=============================================================="
-        if ! "$SCRIPT_DIR/test-recipe-pack-entry.sh" "${test_args[@]}"; then
+        if ! RTC_TEST_PLATFORM="$platform_group" "$SCRIPT_DIR/test-recipe-pack-entry.sh" "${test_args[@]}"; then
             echo "==> FAILED: $resource_type_dir (from pack '$pack_id')" >&2
             failures=$((failures + 1))
         fi

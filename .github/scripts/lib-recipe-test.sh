@@ -164,6 +164,36 @@ rtc_assert_recipe_result() {
     esac
 }
 
+rtc_collect_azure_test_diagnostics() {
+    local resource_type="$1" app_name="$2" started="$3" directory status script_dir dependency
+    if [[ "${RTC_TEST_PLATFORM:-}" != azure || "$resource_type" != Radius.Compute/containers ||
+          -z "${RTC_AZURE_DIAGNOSTICS_DIR:-}" ]]; then
+        return 0
+    fi
+    if ! mkdir -p "$RTC_AZURE_DIAGNOSTICS_DIR" ||
+       ! directory=$(mktemp -d "$RTC_AZURE_DIAGNOSTICS_DIR/failure-XXXXXXXX"); then
+        echo "Error: Could not create Azure diagnostic directory." >&2
+        return 1
+    fi
+    for dependency in node timeout az; do
+        if ! command -v "$dependency" >/dev/null 2>&1; then
+            echo "Error: Azure diagnostics require $dependency." | tee "$directory/collector-status.txt" >&2
+            return 1
+        fi
+    done
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    echo "==> Collecting Azure failure diagnostics before test app cleanup"
+    if timeout --kill-after=5s 100s node "$script_dir/collect-azure-test-diagnostics.js" \
+        "$directory" "${AZURE_SUBSCRIPTION_ID:-}" "${AZURE_RESOURCE_GROUP:-}" "$app_name" "$started"; then
+        echo "Azure diagnostic collection completed." >"$directory/collector-status.txt"
+    else
+        status=$?
+        echo "Error: Azure diagnostics incomplete (collector exit $status); test failure and cleanup are unchanged." |
+            tee "$directory/collector-status.txt" >&2
+        return "$status"
+    fi
+}
+
 # Deploy a Resource Type's test/app.bicep against an already-ready
 # environment and run its post-deploy assertion, then clean up. The
 # environment must already be able to satisfy the type (either a
@@ -180,7 +210,7 @@ rtc_assert_recipe_result() {
 #            <kubernetes-namespace> [additional rad deploy arguments...]
 rtc_deploy_and_assert_test_app() {
     local test_file="$1" resource_type="$2" app_name_prefix="$3" environment_path="$4" workspace_name="$5" kubernetes_namespace="$6"
-    local app_name
+    local app_name started
     local -a params=()
     shift 6
 
@@ -205,10 +235,13 @@ rtc_deploy_and_assert_test_app() {
     params+=(--parameters "applicationName=$app_name")
 
     echo "==> Deploying test application from $test_file"
+    started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     if rad deploy "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
         echo "==> Test deployment successful"
 
         if ! rtc_assert_recipe_result "$resource_type" "$app_name" "$workspace_name" "$kubernetes_namespace"; then
+            rtc_collect_azure_test_diagnostics "$resource_type" "$app_name" "$started" ||
+                echo "Error: Azure diagnostic collection failed; continuing cleanup." >&2
             rad app delete "$app_name" --workspace "$workspace_name" --yes || echo "Error: Test app cleanup failed." >&2
             rtc_cleanup_kubernetes_resources "$kubernetes_namespace" "$app_name"
             return 1
@@ -225,6 +258,8 @@ rtc_deploy_and_assert_test_app() {
     fi
 
     echo "==> Test deployment failed"
+    rtc_collect_azure_test_diagnostics "$resource_type" "$app_name" "$started" ||
+        echo "Error: Azure diagnostic collection failed; continuing cleanup." >&2
     rad app delete "$app_name" --workspace "$workspace_name" --yes || echo "Error: Test app cleanup failed." >&2
     rtc_cleanup_kubernetes_resources "$kubernetes_namespace" "$app_name"
     return 1

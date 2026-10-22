@@ -202,6 +202,76 @@ Delete your test cluster when done:
 make delete-radius-cluster
 ```
 
+## Azure container failure diagnostics
+
+Azure validation and nightly Azure tests save diagnostics **before** they delete
+a failed `Radius.Compute/containers` test app. This applies to deployment and
+assertion failures, for both per-recipe tests and checked-in Recipe Pack tests.
+The collector does not retry a deployment or change the test result or cleanup.
+It does not run for successful tests, other resource types, or non-Azure tests.
+
+Download `azure-test-diagnostics-bicep` from Azure validation, or
+`azure-test-diagnostics-nightly-azure` from the nightly run. Each failure has a
+separate directory with `azure.json` and `collector-status.txt`. There is no
+artifact when no applicable test fails. A Terraform artifact uses the suffix
+`-terraform` if a future Azure container Terraform test fails.
+
+The JSON file contains an allowlist of resource IDs, provisioning states,
+container image references, container states, event names/counts/timestamps,
+subnet and NAT links, and Activity Log operation/status/correlation/request IDs
+when Azure returns them. This is a snapshot of the test's dedicated resource
+group, not proof that every resource belongs to the failed app. It includes
+NGroups, container group profiles, standard container groups, VNets, NAT
+gateways, load balancers, and public IP resource states.
+
+The `2024-11-01-preview` API has no NGroups child-list endpoint or NGroup
+instance view. Standard container-group reads can return instance-view events,
+but might not expose NGroups-managed children. The collector reports empty
+collections and missing instance views. Activity Log records can arrive late.
+Their absence does not prove that an operation did not occur. Direct provider
+operations do not require an Azure ARM deployment record.
+
+The collector does **not** save raw resource JSON, CLI stderr, free-text event
+messages, detailed status text, container commands or logs, environment values,
+tags, credentials, or deployment parameters/outputs. It does not enable CLI
+debug output. Thus original PUT/poll response headers, registry HTTP responses,
+and free-text image-pull detail remain unavailable. Use the saved resource IDs,
+timestamps, and correlation IDs for a provider investigation. These diagnostics
+do not establish or fix the cause of a registry failure.
+
+Collection uses only GET requests, scoped to the configured subscription and
+test resource group. Each request has a 10-second limit and a 2 MiB response
+limit. Each collection has a 90-second request budget and at most 24 requests.
+The shell stops the collector after 100 seconds, with a further 5-second kill
+limit. Only the first page and at most 20 items per list are kept; pagination
+URLs are never followed. Partial results are saved after each request.
+`errors`, `truncations`, and `collector-status.txt` report failed API calls,
+invalid responses, and bounds. Missing permissions and unsupported APIs produce
+a failed-call entry with the CLI exit code. Raw provider errors are withheld
+to prevent secret exposure, so the artifact cannot distinguish those two causes.
+
+For local Azure tests, set `RTC_AZURE_DIAGNOSTICS_DIR`, `AZURE_SUBSCRIPTION_ID`,
+and `AZURE_RESOURCE_GROUP` to an output directory and the dedicated test scope.
+The per-recipe runner derives the platform from the recipe path. The pack test
+driver derives it from `PLATFORM_GROUP`; for a direct invocation of
+`test-recipe-pack-entry.sh`, also set `RTC_TEST_PLATFORM=azure`.
+Collection requires Node.js, Azure CLI with an existing login, and GNU `timeout`.
+It does not change login or permissions. Missing tools are reported and cleanup
+still runs.
+
+Offline checks require Node.js, Bash, and `jq`; no Azure login is needed:
+
+```bash
+node --test .github/scripts/tests/test-azure-test-diagnostics.js
+bash .github/scripts/tests/test-azure-diagnostics-integration.sh
+make test-recipe-pack-entries-unit
+```
+
+The focused checks cover allowed fields, secret exclusion, read-only scope,
+API errors, time and size limits, collection before cleanup, unchanged failure
+status, and unchanged non-Azure behavior. Run them repeatedly to check the
+diagnostic code; this does not measure or validate an ACI flake fix.
+
 ## Manual Testing (Advanced)
 
 If you prefer manual testing or need to test externally-published recipes:
