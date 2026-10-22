@@ -73,6 +73,10 @@ fi
 IFS=$'\t' read -r ENVIRONMENT_PATH KUBERNETES_NAMESPACE <<<"$RESOLVED"
 echo "==> Environment path: $ENVIRONMENT_PATH"
 
+if [[ -n "${AZURE_RESOURCE_GROUP:-}" ]]; then
+    export RTC_AZURE_LOCK_GUARD=1
+fi
+
 if [[ "$RESOURCE_TYPE" == "Radius.Data/mySqlDatabases" && "$MYSQL_TEST_MODE" == "verify-transport" ]]; then
     for tls_policy in required optional; do
         echo "==> Testing MySQL transport policy: $tls_policy"

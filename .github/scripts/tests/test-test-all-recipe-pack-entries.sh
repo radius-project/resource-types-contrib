@@ -186,11 +186,13 @@ grep -q "test-recipe-pack-entry.sh Data/mySqlDatabases" "$CALL_LOG" ||
 echo "param applicationName string" >"$FIXTURE_ROOT/Messaging/rabbitMQ/test/app.bicep"
 
 : >"$CALL_LOG"
-if FAIL_TYPE="Data/redisCaches" run_driver azure azure-ws azure-env; then
+if output=$(FAIL_TYPE="Data/redisCaches" run_driver azure azure-ws azure-env 2>&1); then
     fail "expected a failing entry to fail the driver"
 fi
 grep -q "test-recipe-pack-entry.sh Messaging/rabbitMQ" "$CALL_LOG" ||
     fail "expected testing to continue after an entry failure"
+grep -q "Data/redisCaches (from pack 'azure-aks')" <<<"$output" ||
+    fail "expected the outer loop to record the failed entry"
 
 : >"$CALL_LOG"
 run_driver kubernetes kubernetes-ws kubernetes-env >/dev/null ||
