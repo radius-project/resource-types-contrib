@@ -29,6 +29,7 @@ mkdir -p \
     "$FIXTURE_ROOT/recipe-packs/kubernetes" \
     "$FIXTURE_ROOT/Data/redisCaches/test" \
     "$FIXTURE_ROOT/Data/mySqlDatabases/test" \
+    "$FIXTURE_ROOT/Data/postgreSqlDatabases/test" \
     "$FIXTURE_ROOT/Messaging/rabbitMQ/test" \
     "$FIXTURE_ROOT/Compute/containers/test" \
     "$FIXTURE_ROOT/Compute/persistentVolumes/test" \
@@ -65,6 +66,10 @@ resource pack 'Radius.Core/recipePacks@2025-08-01-preview' = {
         kind: 'bicep'
         source: 'ghcr.io/radius-project/kube-recipes/persistentvolumes:latest'
       }
+      'Radius.Data/postgreSqlDatabases': {
+        kind: 'bicep'
+        source: 'mcr.microsoft.com/bicep/avm/res/db-for-postgre-sql/flexible-server:0.14.0'
+      }
       'Radius.Compute/routes': {
         kind: 'bicep'
         source: 'ghcr.io/radius-project/kube-recipes/routes:latest'
@@ -86,6 +91,10 @@ resource pack 'Radius.Core/recipePacks@2025-08-01-preview' = {
       'Radius.Data/mySqlDatabases': {
         kind: 'bicep'
         source: 'ghcr.io/radius-project/kube-recipes/mysqldatabases:latest'
+      }
+      'Radius.Data/postgreSqlDatabases': {
+        kind: 'bicep'
+        source: 'ghcr.io/radius-project/kube-recipes/postgresqldatabases:latest'
       }
     }
   }
@@ -109,6 +118,7 @@ EOF
 for test_file in \
     "$FIXTURE_ROOT/Data/redisCaches/test/app.bicep" \
     "$FIXTURE_ROOT/Data/mySqlDatabases/test/app.bicep" \
+    "$FIXTURE_ROOT/Data/postgreSqlDatabases/test/app.bicep" \
     "$FIXTURE_ROOT/Messaging/rabbitMQ/test/app.bicep" \
     "$FIXTURE_ROOT/Compute/containers/test/app.bicep" \
     "$FIXTURE_ROOT/Compute/persistentVolumes/test/app.bicep" \
@@ -165,11 +175,12 @@ test-recipe-pack-entry.sh Data/redisCaches azure-ws azure-env
 test-recipe-pack-entry.sh Messaging/rabbitMQ azure-ws azure-env
 test-recipe-pack-entry.sh Data/mySqlDatabases azure-ws azure-env verify-transport
 test-recipe-pack-entry.sh Compute/persistentVolumes azure-ws azure-env
+test-recipe-pack-entry.sh Data/postgreSqlDatabases azure-ws azure-env
 test-recipe-pack-entry.sh Compute/routes azure-ws azure-env"
 diff -u <(echo "$expected") "$CALL_LOG" ||
     fail "expected direct-module and repository-owned entries to run with their pack active"
-grep -q "6 tested, 1 skipped, 0 failed" <<<"$output" ||
-    fail "expected six runnable entries and only the containerImages exclusion"
+grep -q "7 tested, 1 skipped, 0 failed" <<<"$output" ||
+    fail "expected seven runnable entries and only the containerImages exclusion"
 if grep -q 'test-recipe-pack-entry.sh Compute/containerImages' "$CALL_LOG"; then
     fail "the explicitly excluded containerImages entry should not run"
 fi
@@ -197,6 +208,8 @@ run_driver kubernetes kubernetes-ws kubernetes-env >/dev/null ||
     fail "expected the Kubernetes MySQL connection probe to pass"
 grep -q "test-recipe-pack-entry.sh Data/mySqlDatabases kubernetes-ws kubernetes-env connection-only" "$CALL_LOG" ||
     fail "expected Kubernetes MySQL to use the connection-only probe"
+grep -q "test-recipe-pack-entry.sh Data/postgreSqlDatabases kubernetes-ws kubernetes-env verify-postgresql-transport" "$CALL_LOG" ||
+    fail "expected Kubernetes PostgreSQL to run the transport lifecycle"
 
 : >"$CALL_LOG"
 if ACTIVATE_EXIT_CODE=1 run_driver azure azure-ws azure-env; then

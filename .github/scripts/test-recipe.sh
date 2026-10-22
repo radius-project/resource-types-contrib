@@ -128,6 +128,11 @@ fi
 IFS=$'\t' read -r ENVIRONMENT_PATH KUBERNETES_NAMESPACE <<<"$RESOLVED"
 echo "==> Environment path: $ENVIRONMENT_PATH"
 
+if [[ "$RESOURCE_TYPE" == "Radius.Data/postgreSqlDatabases" && "$PLATFORM" == kubernetes ]]; then
+    exec bash "$SCRIPT_DIR/../../Data/postgreSqlDatabases/test/test-kubernetes.sh" \
+        "$WORKSPACE_NAME" "$ENVIRONMENT_NAME" "$RECIPE_TYPE"
+fi
+
 # Check if test file exists
 TEST_FILE="$RESOURCE_TYPE_PATH/test/app.bicep"
 if [[ ! -f "$TEST_FILE" ]]; then

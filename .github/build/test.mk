@@ -99,6 +99,7 @@ test-direct-module-recipes-unit: test-recipe-pack-entries-unit ## Compatibility 
 .PHONY: test-recipe-pack-entries-unit
 test-recipe-pack-entries-unit: ## Run fixture-based unit tests for all Recipe Pack entry test scripts (no live environment needed)
 	@./.github/scripts/tests/test-mysql-transport.sh
+	@bash ./.github/scripts/tests/test-postgresql-transport.sh
 	@./.github/scripts/tests/test-recipe-test-lib.sh
 	@./.github/scripts/tests/test-test-direct-module-recipe.sh
 	@./.github/scripts/tests/test-test-all-direct-module-recipes.sh

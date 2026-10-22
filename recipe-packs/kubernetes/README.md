@@ -8,6 +8,8 @@ This folder contains the **Kubernetes Recipe Pack** — a collection of Recipes 
 
 The pack declares one `Radius.Core/recipePacks` resource whose `recipes` map contains an entry for every Resource Type. It does not create or modify a `Radius.Core/environments` resource.
 
+**PostgreSQL prerequisite:** Before deploying a PostgreSQL resource, create the operator-owned `<resource-name>-tls` Secret in the Environment's Kubernetes namespace and configure clients to trust its CA. Both required and optional policies need the certificate. See [Kubernetes TLS](../../Data/postgreSqlDatabases/README.md#kubernetes-tls) for setup, verification, migration, and manual rotation. The Recipe never deletes this Secret.
+
 ## Recipes in this pack
 
 Kube-recipes tagged `:edge` are rebuilt on every push to `main`. `:latest` and the version tags track stable releases, but `:latest` moves to a new digest each time a release publishes, so pin a version tag if you need a reproducible deployment.

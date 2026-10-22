@@ -105,6 +105,8 @@ for pack_id in "${packs[@]}"; do
                 mysql_test_mode="verify-transport"
             fi
             test_args+=("$mysql_test_mode")
+        elif [[ "$resource_type_dir" == "Data/postgreSqlDatabases" && "$platform_group" == kubernetes ]]; then
+            test_args+=("verify-postgresql-transport")
         fi
 
         echo "=============================================================="

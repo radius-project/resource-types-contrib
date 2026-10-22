@@ -66,7 +66,7 @@ rad env update default \
   --recipe-packs azure-aks
 ```
 
-For the zero-config Kubernetes default, create the Environment with `rad env create`, deploy `recipe-packs/kubernetes/default.bicep`, and associate the `default` pack in the same way. After association, every Resource Type the pack covers can be used in an application deployed to that Environment.
+For the Kubernetes default, create the Environment with `rad env create`, deploy `recipe-packs/kubernetes/default.bicep`, and associate the `default` pack in the same way. PostgreSQL additionally requires an operator-managed TLS Secret and client CA trust; follow [PostgreSQL Kubernetes TLS](../Data/postgreSqlDatabases/README.md#kubernetes-tls) before deploying it. After satisfying these prerequisites, the Resource Types the pack covers can be used in an application deployed to that Environment.
 
 ## Using a Resource Type in a Radius application
 

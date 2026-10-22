@@ -24,6 +24,7 @@ var username = context.resource.properties.username
 var password = context.resource.properties.password
 var database = context.resource.properties.?database ?? 'postgres_db'
 var sizeValue = context.resource.properties.?size ?? 'S'
+var tls = context.resource.properties.?tls ?? 'required'
 var initSql = context.resource.properties.?initSql ?? ''
 var hasInitSql = initSql != ''
 var tag string = '16-alpine'
@@ -97,6 +98,7 @@ resource postgresql 'apps/Deployment@v1' = {
     labels: labels
   }
   spec: {
+    progressDeadlineSeconds: 120
     selector: {
       matchLabels: {
         'radapp.io/resource': resourceName
@@ -112,6 +114,41 @@ resource postgresql 'apps/Deployment@v1' = {
             // This container is the running postgresql instance.
             name: 'postgres'
             image: 'postgres:${tag}'
+            command: [
+              '/bin/sh'
+              '-ec'
+              '''
+case "$RADIUS_TLS" in
+  required) plaintext_auth=reject ;;
+  optional) plaintext_auth=scram-sha-256 ;;
+  *) echo "Error: PostgreSQL tls must be required or optional." >&2; exit 1 ;;
+esac
+if [ ! -s /tls-source/tls.crt ] || [ ! -s /tls-source/tls.key ]; then
+  echo "Error: Create Kubernetes TLS Secret $RADIUS_TLS_SECRET with tls.crt and tls.key in this namespace." >&2
+  exit 1
+fi
+umask 077
+# Remove emptyDir's sticky mode so root can refresh postgres-owned files on restart.
+chmod 0755 /tls-runtime
+cp /tls-source/tls.crt /tls-runtime/server.crt
+cp /tls-source/tls.key /tls-runtime/server.key
+printf 'local all all trust\nhostnossl all all 0.0.0.0/0 %s\nhostnossl all all ::/0 %s\nhostssl all all 0.0.0.0/0 scram-sha-256\nhostssl all all ::/0 scram-sha-256\n' "$plaintext_auth" "$plaintext_auth" > /tls-runtime/pg_hba.conf
+chown postgres:postgres /tls-runtime/server.crt /tls-runtime/server.key /tls-runtime/pg_hba.conf
+chmod 0600 /tls-runtime/server.key
+exec docker-entrypoint.sh postgres -c ssl=on -c ssl_cert_file=/tls-runtime/server.crt -c ssl_key_file=/tls-runtime/server.key -c hba_file=/tls-runtime/pg_hba.conf
+'''
+            ]
+            readinessProbe: {
+              exec: {
+                command: [
+                  '/bin/sh'
+                  '-ec'
+                  'PGPASSWORD="$POSTGRES_PASSWORD" PGSSLMODE=require PGCONNECT_TIMEOUT=3 psql -X -w -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT 1"'
+                ]
+              }
+              timeoutSeconds: 5
+              periodSeconds: 5
+            }
             ports: [
               {
                 containerPort: port 
@@ -123,6 +160,14 @@ resource postgresql 'apps/Deployment@v1' = {
               }
             }
             env: [
+              {
+                name: 'RADIUS_TLS'
+                value: tls
+              }
+              {
+                name: 'RADIUS_TLS_SECRET'
+                value: '${resourceName}-tls'
+              }
               {
                 name: 'POSTGRES_USER'
                 valueFrom: {
@@ -146,23 +191,48 @@ resource postgresql 'apps/Deployment@v1' = {
                 value: database
               }
             ]
-            volumeMounts: hasInitSql ? [
+            volumeMounts: concat([
+              {
+                name: 'tls-source'
+                mountPath: '/tls-source'
+                readOnly: true
+              }
+              {
+                name: 'tls-runtime'
+                mountPath: '/tls-runtime'
+              }
+            ], hasInitSql ? [
               {
                 name: 'init-sql'
                 mountPath: '/docker-entrypoint-initdb.d'
                 readOnly: true
               }
-            ] : []
+            ] : [])
           }
         ]
-        volumes: hasInitSql ? [
+        volumes: concat([
+          {
+            name: 'tls-source'
+            secret: {
+              secretName: '${resourceName}-tls'
+              optional: true
+              defaultMode: 256
+            }
+          }
+          {
+            name: 'tls-runtime'
+            emptyDir: {
+              medium: 'Memory'
+            }
+          }
+        ], hasInitSql ? [
           {
             name: 'init-sql'
             configMap: {
               name: initSqlConfigMap!.metadata.name
             }
           }
-        ] : []
+        ] : [])
       }
     }
   }

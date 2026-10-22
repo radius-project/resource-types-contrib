@@ -125,6 +125,22 @@ make test RECIPE_TYPE=terraform ENVIRONMENT=my-terraform-env
 
 ## Build All Resources
 
+### PostgreSQL Kubernetes transport tests
+
+After publishing the updated Recipe and attaching its Recipe Pack, run:
+
+```bash
+.github/scripts/test-recipe.sh Data/postgreSqlDatabases/recipes/kubernetes/bicep
+# Switch to the generated Terraform Recipe Pack before running:
+.github/scripts/test-recipe.sh Data/postgreSqlDatabases/recipes/kubernetes/terraform
+```
+
+Use an isolated Environment/namespace without an existing `postgresql` Deployment or `postgresql-tls` Secret. Pass the Environment name as the second argument if it is not `default`. The runner creates a temporary test CA and operator TLS Secret, then uses one resource lifecycle (omitted policy, unchanged redeployment, optional, explicit required) for each Recipe language. It waits for explicit TCP `psql` results, tests verified server identity, checks connection properties, and rotates the certificate with an explicit restart. Cleanup deletes test-owned certificates, but application deletion must leave the operator Secret intact. Bicep tests also assert `initSql` execution.
+
+The ordinary Azure test path does not create Kubernetes database certificates. For manual database deployments outside this test runner, follow [PostgreSQL Kubernetes TLS](../../Data/postgreSqlDatabases/README.md#kubernetes-tls).
+
+The lifecycle also checks that missing and malformed certificates produce a failed Kubernetes rollout with no ready replicas and a certificate-specific server diagnostic. A timeout or unrelated API error does not satisfy this check. Terraform must additionally return a failed `rad deploy`. The Bicep runtime reports resource submission, not workload readiness, so the runner explicitly checks the Kubernetes deployment failure rather than treating CLI success as proof of a working server.
+
 Build all resource types and recipes at once:
 
 ```bash
