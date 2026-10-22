@@ -164,6 +164,44 @@ rtc_assert_recipe_result() {
     esac
 }
 
+# CLI progress text can surround JSON errors; inspect each decoded object separately.
+rtc_has_azure_connection_reset() {
+    python3 - "$1" <<'PY'
+import json
+import re
+import sys
+
+with open(sys.argv[1], encoding="utf-8", errors="replace") as log:
+    transcript = log.read()
+decoder = json.JSONDecoder()
+offset = 0
+while (offset := transcript.find("{", offset)) != -1:
+    try:
+        value, offset = decoder.raw_decode(transcript, offset)
+    except ValueError:
+        offset += 1
+        continue
+    pending = [value]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            message = value.get("message")
+            target = value.get("target")
+            if (
+                value.get("code") == "ResourceDeploymentFailure"
+                and isinstance(message, str)
+                and "Connection reset by peer" in message
+                and isinstance(target, str)
+                and re.match(r'/subscriptions/[^"]*/providers/Microsoft\.', target)
+            ):
+                sys.exit(0)
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+sys.exit(1)
+PY
+}
+
 # Retry an Azure deployment-engine connection reset without deleting partially
 # deployed resources. Keep the same arguments so retries are idempotent.
 rtc_deploy_with_retry() (
@@ -184,9 +222,7 @@ rtc_deploy_with_retry() (
             return 1
         fi
         if [[ "$attempt" -ge "$max_attempts" ]] ||
-            ! grep -Eq '"code"[[:space:]]*:[[:space:]]*"ResourceDeploymentFailure"' "$deploy_log" ||
-            ! grep -Fq 'Connection reset by peer' "$deploy_log" ||
-            ! grep -Eq '"target"[[:space:]]*:[[:space:]]*"/subscriptions/[^"]*/providers/Microsoft\.' "$deploy_log"; then
+            ! rtc_has_azure_connection_reset "$deploy_log"; then
             return "${deploy_status[0]}"
         fi
 

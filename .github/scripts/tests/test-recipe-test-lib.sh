@@ -287,9 +287,20 @@ for failures in 1 2 3; do
     [[ -z "$(find "$DEPLOY_LOG_DIR" -type f -print -quit)" ]] || fail "deployment transcripts must be removed"
 done
 
+# A successful Azure operation must not qualify an unrelated failure for retries.
+MIXED_DEPLOY_ERROR='Deployment operations:
+{"status":"Succeeded","target":"/subscriptions/test/resourceGroups/test/providers/Microsoft.ManagedIdentity/userAssignedIdentities/test"}
+Error: {
+  "code": "ResourceDeploymentFailure",
+  "message": "Connection reset by peer",
+  "target": "/planes/radius/local/resourceGroups/test/providers/Radius.Data/widgets/test"
+}'
+
 for deploy_error in \
     'InvalidTemplate: invalid property' \
     'AuthorizationFailed: access denied' \
+    "$MIXED_DEPLOY_ERROR" \
+    '{"code":"ResourceDeploymentFailure","message":"VaultAlreadyExists","target":"/subscriptions/test/resourceGroups/test/providers/Microsoft.KeyVault/vaults/test","details":[{"message":"Connection reset by peer"}]}' \
     '{"code":"ResourceDeploymentFailure","message":"VaultAlreadyExists","target":"/subscriptions/test/resourceGroups/test/providers/Microsoft.KeyVault/vaults/test"}' \
     'Connection reset by peer' \
     '{"code":"ResourceDeploymentFailure","message":"Connection reset by peer","target":"/planes/radius/local/resourceGroups/test/providers/Radius.Data/widgets/test"}'; do
@@ -302,6 +313,18 @@ for deploy_error in \
     grep -q '^sleep ' "$CALL_LOG" && fail "non-retryable errors must not back off"
     grep -q '^rad app delete ' "$CALL_LOG" || fail "non-retryable failures must still clean up"
 done
+
+: >"$CALL_LOG"
+DEPLOY_FAILURES=1 DEPLOY_ERROR='Deploying resources...
+Error: {"code":"DeploymentFailed","details":[{
+  "target": "/subscriptions/test/resourceGroups/test/providers/Microsoft.KeyVault/vaults/test",
+  "message": "System.IO.IOException: Connection reset by peer (\"{transport}\")",
+  "code": "ResourceDeploymentFailure",
+  "details": []
+}]}
+Deployment failed.' run_lib rtc_deploy_with_retry "$TEST_APP_BICEP" >/dev/null 2>&1 ||
+    fail "nested multiline Azure connection-reset errors must retry"
+assert_eq "2" "$(grep -c '^rad deploy ' "$CALL_LOG")" "nested Azure failure attempt count"
 
 : >"$CALL_LOG"
 if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$TRANSIENT_DEPLOY_ERROR" DEPLOY_ERROR_AFTER_FIRST='InvalidTemplate: invalid property' \
