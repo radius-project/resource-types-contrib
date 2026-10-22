@@ -403,6 +403,17 @@ exclusion is `containerImages`; issue #398 tracks its enablement. A pack with
 no runnable entries also fails. The tests use the values in each Resource
 Type's test app; they do not test every enum value.
 
+See [Recipe Pack source selection and format rules](../../recipe-packs/README.md#how-recipe-packs-are-tested-in-ci)
+for how nightly uses checkout-built recipes and which source declarations it accepts.
+
+To run the same pack tests locally after cluster and resource type setup:
+
+```bash
+RECIPE_PACK_USE_LOCAL_RECIPES=true \
+  .github/scripts/deploy-all-checked-in-recipe-packs.sh azure default
+make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE=default ENVIRONMENT=default
+```
+
 The static check validates Radius property references and enum comparison
 literals, not the target module's parameter contract.
 
