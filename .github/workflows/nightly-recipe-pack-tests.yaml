@@ -317,7 +317,8 @@ jobs:
       - name: Test all runnable Recipe Pack entries
         id: azure_pack_entries
         continue-on-error: true
-        timeout-minutes: 120
+        # Includes up to 30 minutes for PostgreSQL capacity probes.
+        timeout-minutes: 150
         run: make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
 
       - name: Report Azure test failures

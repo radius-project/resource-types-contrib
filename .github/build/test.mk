@@ -103,6 +103,7 @@ test-recipe-pack-entries-unit: ## Run fixture-based unit tests for all Recipe Pa
 	@./.github/scripts/tests/test-test-direct-module-recipe.sh
 	@./.github/scripts/tests/test-test-all-direct-module-recipes.sh
 	@./.github/scripts/tests/test-test-all-recipe-pack-entries.sh
+	@./.github/scripts/tests/test-probe-azure-postgres-capacity.sh
 
 .PHONY: test-azure-secret-inputs
 test-azure-secret-inputs: ## Run Azure secret input tests in a temporary directory (requires Terraform 1.7+)
