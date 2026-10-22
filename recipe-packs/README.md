@@ -57,6 +57,11 @@ Kubernetes recipes they reference. Missing or ambiguous recipe sources and
 build failures stop the test; there is no fallback to a published artifact.
 The checked-in files are not changed.
 
+Local preparation requires each entry's `source` to be a nonempty,
+single-quoted literal on its own line, indented two spaces below the entry key.
+Variables, interpolation, missing or duplicate sources, and inline entries fail
+before deployment. Nested parameter fields named `source` are not recipe sources.
+
 The static check does not validate target module parameter names, parameter
 shapes, or the meaning of conditional results. Several enum values can share
 a default branch. The nightly deployment checks the values used by each test

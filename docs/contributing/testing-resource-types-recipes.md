@@ -403,17 +403,8 @@ exclusion is `containerImages`; issue #398 tracks its enablement. A pack with
 no runnable entries also fails. The tests use the values in each Resource
 Type's test app; they do not test every enum value.
 
-For checked-in pack tests, nightly sets `RECIPE_PACK_USE_LOCAL_RECIPES=true`.
-Each repository-owned recipe is built from the checkout and published to the
-test cluster's local registry. The test deploys a temporary copy of the original
-pack with those local sources. Pack parameters and output mappings stay intact.
-External modules, such as AVM, keep their declared versions. Azure packs also
-build their Kubernetes recipe dependencies. A missing source or failed build
-fails the test instead of using a released recipe.
-Local preparation requires each entry's `source` to be a nonempty,
-single-quoted literal on its own line, indented two spaces below the entry key.
-Variables, interpolation, missing sources, and inline entries fail before
-deployment. Nested parameter fields named `source` are not recipe sources.
+See [Recipe Pack source selection and format rules](../../recipe-packs/README.md#how-recipe-packs-are-tested-in-ci)
+for how nightly uses checkout-built recipes and which source declarations it accepts.
 
 To run the same pack tests locally after cluster and resource type setup:
 
