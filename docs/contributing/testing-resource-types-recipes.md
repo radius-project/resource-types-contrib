@@ -410,6 +410,10 @@ pack with those local sources. Pack parameters and output mappings stay intact.
 External modules, such as AVM, keep their declared versions. Azure packs also
 build their Kubernetes recipe dependencies. A missing source or failed build
 fails the test instead of using a released recipe.
+Local preparation requires each entry's `source` to be a nonempty,
+single-quoted literal on its own line, indented two spaces below the entry key.
+Variables, interpolation, missing sources, and inline entries fail before
+deployment. Nested parameter fields named `source` are not recipe sources.
 
 To run the same pack tests locally after cluster and resource type setup:
 
@@ -421,6 +425,11 @@ make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE=default ENVIRONMENT
 
 The static check validates Radius property references and enum comparison
 literals, not the target module's parameter contract.
+
+The containers test uses digest-pinned Docker Official Images from Amazon ECR
+Public for nginx and BusyBox. This avoids anonymous Docker Hub pulls from cloud
+test infrastructure. When updating a digest, keep the nginx Alpine image and
+verify that the image index supports both Linux amd64 and arm64.
 
 ## Maturity Level Testing Requirements
 

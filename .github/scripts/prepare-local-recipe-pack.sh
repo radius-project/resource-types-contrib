@@ -31,7 +31,46 @@ template="$1"
 output="$2"
 mappings="$(mktemp "${TMPDIR:-/tmp}/rtc-local-recipes-XXXXXX")"
 trap 'rm -f -- "$mappings"' EXIT
-entries="$(rtc_recipe_pack_entries "$template")"
+# Only literal entry sources can be mapped to checkout files. Check each entry
+# independently so an unsupported expression cannot disappear from the list.
+entries="$(awk '
+    function fail(message) {
+        print "Error: " message " in " entry > "/dev/stderr"
+        failed = 1
+        exit 1
+    }
+    function finish() {
+        if (entry == "") return
+        if (sources != 1) fail("expected one literal recipe source")
+        print entry "\t" source
+        entry = ""
+    }
+    /^[[:space:]]*($|\/\/)/ { next }
+    {
+        match($0, /^[[:space:]]*/)
+        indent = RLENGTH
+        if (entry != "" && indent <= entry_indent) finish()
+    }
+    /^[[:space:]]*\047Radius\.[A-Za-z0-9]+\/[A-Za-z0-9]+\047:/ {
+        entry_indent = indent
+        match($0, /Radius\.[A-Za-z0-9]+\/[A-Za-z0-9]+/)
+        entry = substr($0, RSTART, RLENGTH)
+        sources = 0
+        if ($0 !~ /:[[:space:]]*\{[[:space:]]*(\/\/.*)?$/)
+            fail("unsupported recipe entry layout")
+        next
+    }
+    entry != "" && indent == entry_indent + 2 && /^[[:space:]]*source:/ {
+        if ($0 !~ /^[[:space:]]*source:[[:space:]]*\047[^\047]*\047[[:space:]]*(\/\/.*)?$/)
+            fail("recipe source must be a single-quoted literal")
+        match($0, /\047[^\047]*\047/)
+        source = substr($0, RSTART + 1, RLENGTH - 2)
+        if (source ~ /\$\{/ || source == "")
+            fail("recipe source must be a nonempty literal without interpolation")
+        sources++
+    }
+    END { if (!failed) finish() }
+' "$template")"
 
 while IFS=$'\t' read -r resource_type source; do
     [[ -z "$resource_type" ]] && continue

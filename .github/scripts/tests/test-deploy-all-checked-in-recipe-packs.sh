@@ -223,13 +223,19 @@ if grep -q '^rad bicep publish ' "$CALL_LOG"; then
     fail "a pack without owned recipes must not build anything"
 fi
 
-for failure in build deploy missing ambiguous source artifact; do
+for failure in build deploy missing ambiguous source artifact expression interpolation missing-source duplicate-source inline-entry; do
     : >"$CALL_LOG"
     case "$failure" in
         missing) mv "$FIXTURE_ROOT/Compute/containers/recipes/azure/bicep/azure-containers.bicep" "$TEST_ROOT/held.bicep" ;;
         ambiguous) touch "$FIXTURE_ROOT/Compute/containers/recipes/azure/bicep/second.bicep" ;;
         source) sed -i 's|azure-aci-recipes/containers:|unknown-recipes/containers:|' "$FIXTURE_ROOT/recipe-packs/azure-aci/azure-aci.bicep" ;;
         artifact) sed -i 's|azure-aci-recipes/containers:|azure-aci-recipes/wrong-type:|' "$FIXTURE_ROOT/recipe-packs/azure-aci/azure-aci.bicep" ;;
+        expression) sed -i "1a var containerRecipe = 'ghcr.io/radius-project/azure-aci-recipes/containers:latest'" "$FIXTURE_ROOT/recipe-packs/azure-aci/azure-aci.bicep"
+            sed -i "s|source: 'ghcr.io/radius-project/azure-aci-recipes/containers:latest'|source: containerRecipe|" "$FIXTURE_ROOT/recipe-packs/azure-aci/azure-aci.bicep" ;;
+        interpolation) sed -i 's|containers:latest|containers:${recipeTag}|' "$FIXTURE_ROOT/recipe-packs/azure-aci/azure-aci.bicep" ;;
+        missing-source) sed -i '/source:.*azure-aci-recipes/d' "$FIXTURE_ROOT/recipe-packs/azure-aci/azure-aci.bicep" ;;
+        duplicate-source) sed -i '/source:.*azure-aci-recipes/p' "$FIXTURE_ROOT/recipe-packs/azure-aci/azure-aci.bicep" ;;
+        inline-entry) sed -i "s|'Radius.Compute/containers': {|'Radius.Compute/containers': { source: containerRecipe|" "$FIXTURE_ROOT/recipe-packs/azure-aci/azure-aci.bicep" ;;
     esac
     build_status=0
     deploy_status=0
@@ -250,7 +256,8 @@ for failure in build deploy missing ambiguous source artifact; do
     case "$failure" in
         missing) mv "$TEST_ROOT/held.bicep" "$FIXTURE_ROOT/Compute/containers/recipes/azure/bicep/azure-containers.bicep" ;;
         ambiguous) rm "$FIXTURE_ROOT/Compute/containers/recipes/azure/bicep/second.bicep" ;;
-        source | artifact) cp "$TEST_ROOT/original-aci.bicep" "$FIXTURE_ROOT/recipe-packs/azure-aci/azure-aci.bicep" ;;
+        source | artifact | expression | interpolation | missing-source | duplicate-source | inline-entry)
+            cp "$TEST_ROOT/original-aci.bicep" "$FIXTURE_ROOT/recipe-packs/azure-aci/azure-aci.bicep" ;;
     esac
 done
 
