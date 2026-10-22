@@ -368,6 +368,15 @@ grep -qE '^[[:space:]]*value: base64\(password\)$' <<<"$container_password_entry
 grep -qE "^[[:space:]]*encoding: 'base64'$" <<<"$container_password_entry" ||
     fail "containers test must retain base64 Secret coverage"
 
+# Azure retains deleted Key Vault names, so each secrets test application must
+# derive a short, valid resource name from its unique application name.
+secrets_resource_name="$(awk '
+    /^resource .*Radius.Security\/secrets@/ { in_secret = 1; next }
+    in_secret && /^  name:/ { print; exit }
+' "$REPO_ROOT/Security/secrets/test/app.bicep")"
+[[ "$secrets_resource_name" == "  name: 'dbsecret-\${take(uniqueString(applicationName), 8)}'" ]] ||
+    fail "secrets test resource name must use an 8-character applicationName hash"
+
 echo 'param environment string' >"$TEST_ROOT/missing-application-name.bicep"
 : >"$CALL_LOG"
 if run_lib rtc_deploy_and_assert_test_app "$TEST_ROOT/missing-application-name.bicep" \
