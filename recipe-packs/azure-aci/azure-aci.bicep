@@ -6,7 +6,7 @@ resource azureAciRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
     recipes: {
       'Radius.Compute/containers': {
         kind: 'bicep'
-        source: 'ghcr.io/radius-project/azure-aci-recipes/containers:latest'
+        source: 'ghcr.io/radius-project/azure-aci-recipes/containers:0c3eaf14e7acc074420e78fda4d66c51541a8145'
       }
       'Radius.Compute/persistentVolumes': {
         kind: 'bicep'
