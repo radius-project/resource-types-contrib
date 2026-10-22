@@ -18,17 +18,6 @@ The pack declares a single `Radius.Core/recipePacks` resource whose `recipes` ma
 
 `Radius.Compute/routes` and `Radius.Compute/containerImages` are not yet supported on ACI and are omitted. Data, messaging, storage, and AI Resource Types are not part of this pack.
 
-The containers recipe uses the published commit tag
-`0c3eaf14e7acc074420e78fda4d66c51541a8145`. This version returns
-`result.resources` for cleanup and `result.values.hosts` for connections.
-The older `latest` artifact does not return these fields. Main branch
-publishes update `edge` and commit tags; only stable releases update `latest`.
-
-When you update the containers recipe, select a published commit tag with
-these outputs. Run the Azure pack-entry tests and check that both test
-container resources return distinct, nonempty hosts. A successful
-deployment alone does not prove that the recipe meets this contract.
-
 ## Deploying
 
 Create and configure an Environment with the Azure provider first:

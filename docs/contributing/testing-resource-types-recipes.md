@@ -403,6 +403,22 @@ exclusion is `containerImages`; issue #398 tracks its enablement. A pack with
 no runnable entries also fails. The tests use the values in each Resource
 Type's test app; they do not test every enum value.
 
+For checked-in pack tests, nightly sets `RECIPE_PACK_USE_LOCAL_RECIPES=true`.
+Each repository-owned recipe is built from the checkout and published to the
+test cluster's local registry. The test deploys a temporary copy of the original
+pack with those local sources. Pack parameters and output mappings stay intact.
+External modules, such as AVM, keep their declared versions. Azure packs also
+build their Kubernetes recipe dependencies. A missing source or failed build
+fails the test instead of using a released recipe.
+
+To run the same pack tests locally after cluster and resource type setup:
+
+```bash
+RECIPE_PACK_USE_LOCAL_RECIPES=true \
+  .github/scripts/deploy-all-checked-in-recipe-packs.sh azure default
+make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE=default ENVIRONMENT=default
+```
+
 The static check validates Radius property references and enum comparison
 literals, not the target module's parameter contract.
 
