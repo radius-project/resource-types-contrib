@@ -6,10 +6,6 @@ param environment string
 @description('Application name. CI supplies a unique name for deployment and cleanup.')
 param applicationName string = 'containers-testapp'
 
-// Use official image mirrors to avoid anonymous Docker Hub pulls in cloud tests.
-var nginxImage = 'public.ecr.aws/docker/library/nginx@sha256:a3554c0d0b48177b1413c26e01f695334428020d9df01243fbae3e11cfd17417'
-var busyboxImage = 'public.ecr.aws/docker/library/busybox@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e'
-
 // Secure parameters with test defaults 
 #disable-next-line secure-parameter-default @secure()
 param username string = 'admin'
@@ -43,7 +39,7 @@ resource myContainer 'containers:Radius.Compute/containers@2025-08-01-preview' =
     }
     containers: {
       orderProcessor: {
-        image: nginxImage
+        image: 'nginx:alpine'
         command: ['/bin/sh', '-c']
         args: ['nginx -g "daemon off;"']
         workingDir: '/usr/share/nginx/html'
@@ -133,7 +129,7 @@ resource myContainer 'containers:Radius.Compute/containers@2025-08-01-preview' =
       }
       dbMigration: {
         initContainer: true
-        image: busyboxImage
+        image: 'busybox:latest'
         command: ['sh', '-c']
         args: ['echo "Initializing..." && sleep 5']
         workingDir: '/tmp'
@@ -196,7 +192,7 @@ resource noConnectionsContainer 'containers:Radius.Compute/containers@2025-08-01
     application: app.id
     containers: {
       simple: {
-        image: nginxImage
+        image: 'nginx:alpine'
         ports: {
           http: {
             containerPort: 80

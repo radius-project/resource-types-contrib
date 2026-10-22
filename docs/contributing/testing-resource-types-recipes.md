@@ -417,11 +417,6 @@ make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE=default ENVIRONMENT
 The static check validates Radius property references and enum comparison
 literals, not the target module's parameter contract.
 
-The containers test uses digest-pinned Docker Official Images from Amazon ECR
-Public for nginx and BusyBox. This avoids anonymous Docker Hub pulls from cloud
-test infrastructure. When updating a digest, keep the nginx Alpine image and
-verify that the image index supports both Linux amd64 and arm64.
-
 ## Maturity Level Testing Requirements
 
 - **Alpha**: Manual testing using `make test-recipe` is sufficient
