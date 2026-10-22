@@ -89,17 +89,17 @@ servers="$(grep -oE -- '--name [^ ]+' "$CALL_LOG" | sort -u | wc -l)"
 [[ "$servers" -eq 3 ]] || fail "expected each probe to use a new server name"
 
 reset capacity capacity capacity
-if output=$(run_probe 2>&1); then
-    fail "expected persistent capacity errors to fail"
-fi
+status=0
+output=$(run_probe 2>&1) || status=$?
+[[ "$status" -eq 2 ]] || fail "expected persistent capacity errors to exit 2, got $status"
 [[ "$(count create)" == 3 ]] || fail "expected the default limit of three probes"
 grep -q "This is an Azure capacity limit, not a recipe failure" <<<"$output" ||
     fail "expected a clear capacity error"
 
 reset other ok
-if output=$(run_probe 2>&1); then
-    fail "expected a non-capacity error to fail"
-fi
+status=0
+output=$(run_probe 2>&1) || status=$?
+[[ "$status" -eq 1 ]] || fail "expected a non-capacity error to exit 1, got $status"
 [[ "$(count create)" == 1 ]] || fail "a non-capacity error must not be retried"
 grep -q "AuthorizationFailed" <<<"$output" || fail "expected the original error in the output"
 

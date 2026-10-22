@@ -78,6 +78,14 @@ default 600). If capacity stays unavailable, the entry fails with an Azure
 capacity error and the entry is not deployed. Keep the probe SKU in sync with
 the size `S` mapping in the `azure-aks` pack.
 
+Before the nightly creates its Azure resource group,
+[`select-azure-test-location.sh`](../.github/scripts/select-azure-test-location.sh)
+runs one probe in the preferred region (`AZURE_LOCATION` repository variable,
+default `westus3`) and, if it has no capacity, one in the fallback region
+(`AZURE_FALLBACK_LOCATION`, default `eastus2`). All Azure tests then use the
+first region with capacity. If neither region has capacity, the preferred
+region is used.
+
 MySQL pack entries that map `tls` to `require_secure_transport` run both
 `tls: required` and `tls: optional`. They pass `verifyTransport` through
 `test/verify-transport.parameters.json` because Radius CLI `name=value`

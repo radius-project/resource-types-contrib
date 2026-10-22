@@ -25,6 +25,9 @@
 # ServerIsBusy. This script creates a probe server, deletes it without waiting,
 # and retries only those capacity errors. Other errors fail immediately.
 #
+# Exit codes: 0 capacity available, 1 other error, 2 no capacity after all
+# attempts.
+#
 # Required environment: AZURE_RESOURCE_GROUP, AZURE_LOCATION
 # Optional environment: RTC_POSTGRES_PROBE_ATTEMPTS (default 3),
 #                       RTC_POSTGRES_PROBE_WAIT_SECONDS (default 600)
@@ -101,4 +104,4 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
 done
 
 echo "::error::Azure has no $sku_name ($tier) PostgreSQL capacity in $location after $attempts probes. This is an Azure capacity limit, not a recipe failure." >&2
-exit 1
+exit 2
