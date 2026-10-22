@@ -120,8 +120,37 @@ rtc_snapshot_azure_management_locks() {
         --output tsv | sort -u
 }
 
-rtc_delete_new_azure_management_locks() {
-    local locks_before="$1" locks_after lock_id affected_resource delete_output status=0
+rtc_snapshot_application_azure_lock_inventory() {
+    local app_name="$1" workspace_name="$2" resources_json
+    if ! resources_json=$(rad resource list \
+        --application "$app_name" \
+        --workspace "$workspace_name" \
+        --output json); then
+        echo "Error: Could not inspect the test application's Radius resource inventory." >&2
+        return 1
+    fi
+
+    jq -r '
+        .. | objects | .outputResources? // empty | arrays[]?
+        | select(type == "string")
+        | sub("^/planes/azure/azurecloud"; "")
+        | select(test("/providers/Microsoft.Authorization/locks/"; "i"))
+    ' <<<"$resources_json" | sort -u
+}
+
+rtc_report_azure_lock_failure() {
+    local lock_id="$1" detail="${2:-}" affected_resource
+    affected_resource="${lock_id%/providers/Microsoft.Authorization/locks/*}"
+    echo "Error: New Azure management lock could not be deleted: $lock_id" >&2
+    echo "Error: Affected Azure resource: $affected_resource" >&2
+    echo "Error: Grant the test identity Microsoft.Authorization/locks/delete on the affected resource, then retry." >&2
+    if [[ -n "$detail" ]]; then
+        echo "Error: Azure CLI output: $detail" >&2
+    fi
+}
+
+rtc_delete_owned_new_azure_management_locks() {
+    local locks_before="$1" inventory_locks="$2" locks_after lock_id delete_output status=0
     local -a subscription_args=()
     if [[ -n "${AZURE_SUBSCRIPTION_ID:-}" ]]; then
         subscription_args=(--subscription "$AZURE_SUBSCRIPTION_ID")
@@ -133,18 +162,19 @@ rtc_delete_new_azure_management_locks() {
 
     while IFS= read -r lock_id; do
         [[ -z "$lock_id" ]] && continue
-        affected_resource="${lock_id%/providers/Microsoft.Authorization/locks/*}"
+        if ! grep -Fxiq -- "$lock_id" <<<"$inventory_locks"; then
+            echo "==> Ignoring new Azure management lock outside the test application: $lock_id"
+            continue
+        fi
         if delete_output=$(az lock delete --ids "$lock_id" "${subscription_args[@]}" 2>&1); then
             echo "==> Deleted Azure management lock created by the Recipe Pack entry: $lock_id"
             continue
         fi
 
-        echo "Error: New Azure management lock could not be deleted: $lock_id" >&2
-        echo "Error: Affected Azure resource: $affected_resource" >&2
         if grep -qiE 'AuthorizationFailed|does not have authorization|Microsoft\.Authorization/locks/delete' <<<"$delete_output"; then
-            echo "Error: Grant the test identity Microsoft.Authorization/locks/delete on the affected resource, then retry." >&2
+            rtc_report_azure_lock_failure "$lock_id"
         else
-            echo "Error: Azure CLI output: $delete_output" >&2
+            rtc_report_azure_lock_failure "$lock_id" "$delete_output"
         fi
         status=1
     done < <(
@@ -153,7 +183,47 @@ rtc_delete_new_azure_management_locks() {
             <(printf '%s\n' "$locks_after" | sed '/^$/d' | sort -u)
     )
 
+    while IFS= read -r lock_id; do
+        [[ -z "$lock_id" ]] && continue
+        if grep -Fxiq -- "$lock_id" <<<"$locks_before" ||
+            grep -Fxiq -- "$lock_id" <<<"$locks_after"; then
+            continue
+        fi
+        echo "Error: Radius recorded an Azure management lock that Azure did not list." >&2
+        rtc_report_azure_lock_failure "$lock_id"
+        status=1
+    done < <(printf '%s\n' "$inventory_locks" | sed '/^$/d' | sort -u)
+
     return "$status"
+}
+
+rtc_delete_radius_test_application() {
+    local app_name="$1" workspace_name="$2"
+    if [[ "${RTC_AZURE_LOCK_GUARD:-0}" != "1" ]]; then
+        rad app delete "$app_name" --workspace "$workspace_name" --yes
+        return
+    fi
+
+    local timeout_seconds="${RTC_RADIUS_APP_DELETE_TIMEOUT_SECONDS:-30}"
+    local delete_output delete_status lock_id
+    if delete_output=$(timeout "${timeout_seconds}s" \
+        rad app delete "$app_name" --workspace "$workspace_name" --yes 2>&1); then
+        [[ -n "$delete_output" ]] && echo "$delete_output"
+        return 0
+    else
+        delete_status=$?
+    fi
+
+    [[ -n "$delete_output" ]] && echo "$delete_output" >&2
+    lock_id=$(grep -oEi '/subscriptions/[^[:space:]"]+/providers/Microsoft\.Authorization/locks/[^[:space:]"]+' \
+        <<<"$delete_output" | head -n 1 | sed -E 's/[]),.;]+$//') || true
+    if [[ -n "$lock_id" ]] &&
+        grep -qiE 'AuthorizationFailed|does not have authorization|Microsoft\.Authorization/locks/delete' <<<"$delete_output"; then
+        rtc_report_azure_lock_failure "$lock_id"
+    elif [[ "$delete_status" -eq 124 ]]; then
+        echo "Error: Radius application deletion exceeded ${timeout_seconds}s and was stopped." >&2
+    fi
+    return 1
 }
 
 # Radius.Compute/containers-specific assertion: the shared test app deploys
@@ -253,7 +323,7 @@ rtc_assert_recipe_result() {
 #            <kubernetes-namespace> [additional rad deploy arguments...]
 rtc_deploy_and_assert_test_app() {
     local test_file="$1" resource_type="$2" app_name_prefix="$3" environment_path="$4" workspace_name="$5" kubernetes_namespace="$6"
-    local app_name locks_before="" deploy_status=0
+    local app_name locks_before="" inventory_locks="" deploy_status=0
     local -a params=()
     shift 6
 
@@ -296,16 +366,21 @@ rtc_deploy_and_assert_test_app() {
         deploy_status=1
     fi
 
-    if [[ "${RTC_AZURE_LOCK_GUARD:-0}" == "1" ]] &&
-        ! rtc_delete_new_azure_management_locks "$locks_before"; then
-        echo "Error: Skipping Radius application deletion because a new Azure management lock remains." >&2
-        rtc_cleanup_kubernetes_resources_bounded "$kubernetes_namespace" "$app_name"
-        return 1
+    if [[ "${RTC_AZURE_LOCK_GUARD:-0}" == "1" ]]; then
+        if ! inventory_locks=$(rtc_snapshot_application_azure_lock_inventory "$app_name" "$workspace_name"); then
+            echo "Error: Continuing with bounded Radius application deletion without lock ownership data." >&2
+            inventory_locks=""
+        fi
+        if ! rtc_delete_owned_new_azure_management_locks "$locks_before" "$inventory_locks"; then
+            echo "Error: Skipping Radius application deletion because a test-owned Azure management lock remains." >&2
+            rtc_cleanup_kubernetes_resources_bounded "$kubernetes_namespace" "$app_name"
+            return 1
+        fi
     fi
 
     echo "==> Cleaning up test application"
     local cleanup_status=0
-    rad app delete "$app_name" --workspace "$workspace_name" --yes || cleanup_status=1
+    rtc_delete_radius_test_application "$app_name" "$workspace_name" || cleanup_status=1
     rtc_cleanup_kubernetes_resources "$kubernetes_namespace" "$app_name" || cleanup_status=1
     if [[ "$cleanup_status" -ne 0 ]]; then
         echo "Error: Test app cleanup failed." >&2

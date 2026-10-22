@@ -72,7 +72,11 @@ case "$1 $2" in
                 ;;
         esac
         ;;
+    "resource list")
+        printf '%s\n' "${RESOURCE_LIST_JSON:-[]}"
+        ;;
     "app delete")
+        [[ -n "${APP_DELETE_OUTPUT:-}" ]] && echo "$APP_DELETE_OUTPUT" >&2
         exit "${APP_DELETE_EXIT_CODE:-0}"
         ;;
 esac
@@ -111,6 +115,14 @@ case "$1 $2" in
 esac
 EOF
 chmod +x "$MOCK_BIN/az"
+
+cat >"$MOCK_BIN/timeout" <<'EOF'
+#!/bin/bash
+echo "timeout $*" >>"$CALL_LOG"
+shift
+"$@"
+EOF
+chmod +x "$MOCK_BIN/timeout"
 
 cat >"$MOCK_BIN/openssl" <<'EOF'
 #!/bin/bash
@@ -234,13 +246,16 @@ assert_app_name
 
 PREEXISTING_LOCK="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Authorization/locks/existing"
 NEW_LOCK="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Cache/redis/cache/providers/Microsoft.Authorization/locks/new"
+UNRELATED_LOCK="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/unrelated/providers/Microsoft.Authorization/locks/new"
+LOCK_INVENTORY_JSON="[{\"properties\":{\"status\":{\"outputResources\":[\"$NEW_LOCK\"]}}}]"
+PREEXISTING_LOCK_INVENTORY_JSON="[{\"properties\":{\"status\":{\"outputResources\":[\"$PREEXISTING_LOCK\"]}}}]"
 export AZ_LOCK_STATE_FILE="$TEST_ROOT/az-lock-state"
 
 # The Azure Recipe Pack guard ignores locks that existed before the entry.
 : >"$CALL_LOG"
 rm -f "$AZ_LOCK_STATE_FILE"
 AZURE_RESOURCE_GROUP=rg AZURE_SUBSCRIPTION_ID=sub RTC_AZURE_LOCK_GUARD=1 \
-    AZ_LOCKS_BEFORE="$PREEXISTING_LOCK" AZ_LOCKS_AFTER="$PREEXISTING_LOCK" \
+    AZ_LOCKS_BEFORE="$PREEXISTING_LOCK" AZ_LOCKS_AFTER="$PREEXISTING_LOCK" RESOURCE_LIST_JSON="$PREEXISTING_LOCK_INVENTORY_JSON" \
     run_lib rtc_deploy_and_assert_test_app \
     "$TEST_APP_BICEP" "Radius.Data/somethingElse" rtc-test /envs/myenv myws my-ns ||
     fail "pre-existing Azure locks must not fail the test"
@@ -253,6 +268,7 @@ fi
 rm -f "$AZ_LOCK_STATE_FILE"
 AZURE_RESOURCE_GROUP=rg AZURE_SUBSCRIPTION_ID=sub RTC_AZURE_LOCK_GUARD=1 \
     AZ_LOCKS_BEFORE="$PREEXISTING_LOCK" AZ_LOCKS_AFTER="$PREEXISTING_LOCK"$'\n'"$NEW_LOCK" \
+    RESOURCE_LIST_JSON="$LOCK_INVENTORY_JSON" \
     run_lib rtc_deploy_and_assert_test_app \
     "$TEST_APP_BICEP" "Radius.Data/somethingElse" rtc-test /envs/myenv myws my-ns ||
     fail "a deletable new Azure lock must not fail the test"
@@ -266,7 +282,7 @@ grep -q '^rad app delete' "$CALL_LOG" ||
 rm -f "$AZ_LOCK_STATE_FILE"
 if output=$(AZURE_RESOURCE_GROUP=rg AZURE_SUBSCRIPTION_ID=sub RTC_AZURE_LOCK_GUARD=1 \
     AZ_LOCKS_BEFORE="$PREEXISTING_LOCK" AZ_LOCKS_AFTER="$PREEXISTING_LOCK"$'\n'"$NEW_LOCK" \
-    AZ_LOCK_DELETE_EXIT_CODE=1 run_lib rtc_deploy_and_assert_test_app \
+    RESOURCE_LIST_JSON="$LOCK_INVENTORY_JSON" AZ_LOCK_DELETE_EXIT_CODE=1 run_lib rtc_deploy_and_assert_test_app \
     "$TEST_APP_BICEP" "Radius.Data/somethingElse" rtc-test /envs/myenv myws my-ns 2>&1); then
     fail "an undeletable new Azure lock must fail the test"
 fi
@@ -281,6 +297,55 @@ if grep -q '^rad app delete' "$CALL_LOG"; then
 fi
 bounded_cleanup_calls="$(grep -c '^kubectl delete .*--request-timeout=10s --wait=false$' "$CALL_LOG" || true)"
 assert_eq "3" "$bounded_cleanup_calls" "undeletable lock bounded Kubernetes cleanup call count"
+
+# A new lock outside the test application's Radius inventory remains untouched.
+: >"$CALL_LOG"
+rm -f "$AZ_LOCK_STATE_FILE"
+AZURE_RESOURCE_GROUP=rg AZURE_SUBSCRIPTION_ID=sub RTC_AZURE_LOCK_GUARD=1 \
+    AZ_LOCKS_BEFORE="" AZ_LOCKS_AFTER="$UNRELATED_LOCK" RESOURCE_LIST_JSON="[]" \
+    run_lib rtc_deploy_and_assert_test_app \
+    "$TEST_APP_BICEP" "Radius.Data/somethingElse" rtc-test /envs/myenv myws my-ns ||
+    fail "an unrelated new Azure lock must not fail the test"
+if grep -q '^az lock delete' "$CALL_LOG"; then
+    fail "an unrelated new Azure lock must not be deleted"
+fi
+grep -q '^rad app delete' "$CALL_LOG" ||
+    fail "normal Radius app cleanup must continue when an unrelated lock is ignored"
+
+# Radius can record a lock output even when Azure does not list the lock.
+: >"$CALL_LOG"
+rm -f "$AZ_LOCK_STATE_FILE"
+if output=$(AZURE_RESOURCE_GROUP=rg AZURE_SUBSCRIPTION_ID=sub RTC_AZURE_LOCK_GUARD=1 \
+    AZ_LOCKS_BEFORE="" AZ_LOCKS_AFTER="" RESOURCE_LIST_JSON="$LOCK_INVENTORY_JSON" \
+    run_lib rtc_deploy_and_assert_test_app \
+    "$TEST_APP_BICEP" "Radius.Data/somethingElse" rtc-test /envs/myenv myws my-ns 2>&1); then
+    fail "an inventory-only Azure lock must fail the test"
+fi
+grep -Fq "Radius recorded an Azure management lock that Azure did not list" <<<"$output" ||
+    fail "the inventory-only failure must explain the Azure mismatch"
+grep -Fq "New Azure management lock could not be deleted: $NEW_LOCK" <<<"$output" ||
+    fail "the inventory-only failure must identify the lock"
+if grep -q '^rad app delete' "$CALL_LOG"; then
+    fail "Radius app deletion must not run for an inventory-only lock"
+fi
+
+# If inventory detection misses a lock, Radius app deletion is still bounded
+# and reports an authorization failure with the lock ID.
+: >"$CALL_LOG"
+rm -f "$AZ_LOCK_STATE_FILE"
+if output=$(AZURE_RESOURCE_GROUP=rg AZURE_SUBSCRIPTION_ID=sub RTC_AZURE_LOCK_GUARD=1 \
+    AZ_LOCKS_BEFORE="" AZ_LOCKS_AFTER="" RESOURCE_LIST_JSON="[]" \
+    APP_DELETE_EXIT_CODE=1 APP_DELETE_OUTPUT="AuthorizationFailed for $NEW_LOCK: Microsoft.Authorization/locks/delete denied" \
+    run_lib rtc_deploy_and_assert_test_app \
+    "$TEST_APP_BICEP" "Radius.Data/somethingElse" rtc-test /envs/myenv myws my-ns 2>&1); then
+    fail "a Radius lock authorization failure must fail the test"
+fi
+grep -q '^timeout 30s rad app delete' "$CALL_LOG" ||
+    fail "Azure Recipe Pack app deletion must use the bounded timeout"
+grep -Fq "New Azure management lock could not be deleted: $NEW_LOCK" <<<"$output" ||
+    fail "the bounded Radius cleanup failure must identify the lock"
+grep -Fq "Microsoft.Authorization/locks/delete" <<<"$output" ||
+    fail "the bounded Radius cleanup failure must name the required permission"
 
 for failure in APP_DELETE_EXIT_CODE KUBECTL_EXIT_CODE; do
     if (
