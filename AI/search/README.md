@@ -30,11 +30,12 @@ The Kubernetes Recipe ([`recipes/kubernetes/bicep/kubernetes-meilisearch.bicep`]
 
 - Meilisearch has its own REST API. It is not compatible with the Azure AI Search API, so the Kubernetes Recipe makes the resource and its connection (`endpoint` and `apiKey`) portable, not application code written against a particular search service.
 - The Recipe generates a random master key on every deployment and returns it as `apiKey`. Every request except `GET /health` must send it as `Authorization: Bearer <apiKey>`. The server runs in production mode, which requires the key and turns off the built-in search preview UI, and with telemetry turned off.
-- Indexes are stored in an `emptyDir` volume, so they are lost whenever the Pod is replaced, including on each redeployment, because a new master key restarts the server.
+- Indexes are stored on a 1Gi `PersistentVolumeClaim`, so they survive Pod replacement. The claim uses the cluster's default StorageClass.
+- The master key is regenerated on every deployment and the server restarts to pick it up. Consumers that read `apiKey` through an environment variable keep the old value until their Pods restart, so redeploy or restart them after redeploying the search resource.
 
 | Output | Value |
 | --- | --- |
-| `endpoint` | The base URL of the Meilisearch REST API, `http://<resource-name>.<namespace>.svc.cluster.local:7700`. |
+| `endpoint` | The base URL of the Meilisearch REST API, `http://<resource-name>-<hash>.<namespace>.svc.cluster.local:7700`, where `<hash>` is derived from the resource ID. Read it from the `endpoint` property rather than building it. |
 | `secrets.apiKey` | The generated master key. Delivered through the managed secret. |
 
 ## Using the resource type

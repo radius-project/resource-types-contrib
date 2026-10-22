@@ -32,13 +32,19 @@ var tag string = 'v1.54.3'
 var port = 7700
 var keySecretName = '${uniqueName}-master-key'
 
-var labels = {
+// Selector label derived from the resource ID. Pods and the Service match on it
+// so another workload with the same display name is never selected.
+var selectorLabels = {
+  'radapp.io/resource-id': uniqueString(context.resource.id)
+}
+
+var labels = union(selectorLabels, {
   'radapp.io/resource':       resourceName
   'radapp.io/application':    applicationName
   'radapp.io/environment':    environmentName
   'radapp.io/resource-type':  replace(context.resource.type, '/', '-')
   'radapp.io/resource-group': resourceGroupName
-}
+})
 
 //////////////////////////////////////////
 // Master key
@@ -63,23 +69,39 @@ resource masterKey 'core/Secret@v1' = {
 // Meilisearch Deployment
 //////////////////////////////////////////
 
-resource meilisearch 'apps/Deployment@v1' = {
+resource dataClaim 'core/PersistentVolumeClaim@v1' = {
   metadata: {
-    name: resourceName
+    name: '${uniqueName}-data'
     namespace: namespace
     labels: labels
   }
   spec: {
-    // A single-replica, non-persistent server. Meilisearch locks its database
+    accessModes: [
+      'ReadWriteOnce'
+    ]
+    resources: {
+      requests: {
+        storage: '1Gi'
+      }
+    }
+  }
+}
+
+resource meilisearch 'apps/Deployment@v1' = {
+  metadata: {
+    name: uniqueName
+    namespace: namespace
+    labels: labels
+  }
+  spec: {
+    // A single-replica server. Meilisearch locks its database
     // directory, so Recreate tears the old Pod down before the new one starts
     // instead of briefly running two (the default RollingUpdate).
     strategy: {
       type: 'Recreate'
     }
     selector: {
-      matchLabels: {
-        'radapp.io/resource': resourceName
-      }
+      matchLabels: selectorLabels
     }
     template: {
       metadata: {
@@ -149,7 +171,9 @@ resource meilisearch 'apps/Deployment@v1' = {
         volumes: [
           {
             name: 'data'
-            emptyDir: {}
+            persistentVolumeClaim: {
+              claimName: dataClaim.metadata.name
+            }
           }
         ]
       }
@@ -159,15 +183,13 @@ resource meilisearch 'apps/Deployment@v1' = {
 
 resource svc 'core/Service@v1' = {
   metadata: {
-    name: resourceName
+    name: uniqueName
     namespace: namespace
     labels: labels
   }
   spec: {
     type: 'ClusterIP'
-    selector: {
-      'radapp.io/resource': resourceName
-    }
+    selector: selectorLabels
     ports: [
       {
         port: port
@@ -185,6 +207,7 @@ var host = '${svc.metadata.name}.${svc.metadata.namespace}.svc.cluster.local'
 output result object = {
   resources: [
     '/planes/kubernetes/local/namespaces/${namespace}/providers/core/Secret/${keySecretName}'
+    '/planes/kubernetes/local/namespaces/${namespace}/providers/core/PersistentVolumeClaim/${dataClaim.metadata.name}'
     '/planes/kubernetes/local/namespaces/${svc.metadata.namespace}/providers/core/Service/${svc.metadata.name}'
     '/planes/kubernetes/local/namespaces/${meilisearch.metadata.namespace}/providers/apps/Deployment/${meilisearch.metadata.name}'
   ]
