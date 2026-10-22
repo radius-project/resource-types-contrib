@@ -103,6 +103,13 @@ The `test-recipe` command:
 - Deploys the `test/app.bicep` file (if it exists)
 - Cleans up resources after testing
 
+The containers test uses versioned NGINX and BusyBox images from
+`mirror.gcr.io`. This avoids direct anonymous Docker Hub pulls from shared
+Azure egress addresses. Keep both regular and init container images on the
+mirror when you update the test. The test requires distinct, nonempty
+`hosts` values from both Kubernetes and ACI recipes; a successful deployment
+alone is not sufficient.
+
 ### 6. Test All Recipes
 
 Run tests for all recipes in the repository:

@@ -57,6 +57,10 @@ case "$1 $2" in
         # Used by the containers/postgresql assertion helpers.
         case "$3" in
             "Radius.Compute/containers")
+                if [[ -n "${CONTAINERS_JSON:-}" ]]; then
+                    echo "$CONTAINERS_JSON"
+                    exit 0
+                fi
                 if [[ "$4" == "myApp" ]]; then
                     echo '{"properties":{"hosts":{"orderProcessor":"host-a"}}}'
                 else
@@ -152,6 +156,11 @@ run_lib rtc_assert_recipe_result "Radius.Data/postgreSqlDatabases" testapp myws 
 if PEER_HOST=host-a run_lib rtc_assert_recipe_result "Radius.Compute/containers" testapp myws >/dev/null; then
     fail "equal container hosts must fail"
 fi
+for invalid_result in '{"properties":{}}' '{"properties":{"hosts":{}}}'; do
+    if CONTAINERS_JSON="$invalid_result" run_lib rtc_assert_recipe_result "Radius.Compute/containers" testapp myws >/dev/null; then
+        fail "missing container hosts must fail, including for old published ACI recipes"
+    fi
+done
 for invalid_result in \
     '{"properties":{"host":"","port":5432,"database":"appdb"}}' \
     '{"properties":{"host":"pg","port":"5432","database":"appdb"}}' \
@@ -258,6 +267,14 @@ grep -qE '^[[:space:]]*value: base64\(password\)$' <<<"$container_password_entry
     fail "containers test must base64-encode the generated password"
 grep -qE "^[[:space:]]*encoding: 'base64'$" <<<"$container_password_entry" ||
     fail "containers test must retain base64 Secret coverage"
+
+# ACI pulls from shared Azure egress; avoid direct anonymous Docker Hub pulls.
+container_images="$(sed -nE "s/^[[:space:]]*image: '([^']+)'.*/\1/p" "$REPO_ROOT/Compute/containers/test/app.bicep")"
+assert_eq "3" "$(wc -l <<<"$container_images" | tr -d ' ')" "containers test image count"
+while IFS= read -r image; do
+    [[ "$image" == mirror.gcr.io/library/*:* && "$image" != *:latest ]] ||
+        fail "containers test images must use versioned mirror references: $image"
+done <<<"$container_images"
 
 # Azure retains deleted Key Vault names, so each secrets test application must
 # derive a short, valid resource name from its unique application name.

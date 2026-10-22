@@ -39,7 +39,7 @@ resource myContainer 'containers:Radius.Compute/containers@2025-08-01-preview' =
     }
     containers: {
       orderProcessor: {
-        image: 'nginx:alpine'
+        image: 'mirror.gcr.io/library/nginx:1.28.0-alpine'
         command: ['/bin/sh', '-c']
         args: ['nginx -g "daemon off;"']
         workingDir: '/usr/share/nginx/html'
@@ -75,9 +75,8 @@ resource myContainer 'containers:Radius.Compute/containers@2025-08-01-preview' =
             }
           }
           // Exercise the read-only `hosts` map of a peer container: it maps each
-          // port-exposing container name to its Kubernetes Service DNS host. Populated
-          // by the Kubernetes recipe; safe-navigated so the reference is an empty string
-          // on platforms that do not emit it.
+          // port-exposing container name to its Kubernetes Service DNS host or ACI
+          // load balancer IP. The post-deploy assertion rejects missing hosts.
           PEER_HOST: {
             value: noConnectionsContainer.properties.?hosts.?simple ?? ''
           }
@@ -129,7 +128,7 @@ resource myContainer 'containers:Radius.Compute/containers@2025-08-01-preview' =
       }
       dbMigration: {
         initContainer: true
-        image: 'busybox:latest'
+        image: 'mirror.gcr.io/library/busybox:1.37.0'
         command: ['sh', '-c']
         args: ['echo "Initializing..." && sleep 5']
         workingDir: '/tmp'
@@ -192,7 +191,7 @@ resource noConnectionsContainer 'containers:Radius.Compute/containers@2025-08-01
     application: app.id
     containers: {
       simple: {
-        image: 'nginx:alpine'
+        image: 'mirror.gcr.io/library/nginx:1.28.0-alpine'
         ports: {
           http: {
             containerPort: 80

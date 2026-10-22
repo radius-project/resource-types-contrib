@@ -18,6 +18,16 @@ The pack declares a single `Radius.Core/recipePacks` resource whose `recipes` ma
 
 `Radius.Compute/routes` and `Radius.Compute/containerImages` are not yet supported on ACI and are omitted. Data, messaging, storage, and AI Resource Types are not part of this pack.
 
+The containers recipe is pinned to commit
+`0c3eaf14e7acc074420e78fda4d66c51541a8145`. This version returns the
+`resources` list for cleanup and `values.hosts` for peer connections. The
+older `latest` image does not return these fields. Main branch publishes
+update `edge` and commit tags, but do not update `latest`.
+
+When you update this pin, use a published commit tag and run the Azure
+Recipe Pack entry tests. Do not replace the pin with `latest` unless that
+image includes the same output contract.
+
 ## Deploying
 
 Create and configure an Environment with the Azure provider first:
