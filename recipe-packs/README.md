@@ -75,8 +75,12 @@ The probe creates and deletes a `Standard_B1ms` (Burstable) flexible server in
 the test resource group. It retries only on `SkuNotAvailable` or `ServerIsBusy`
 (`RTC_POSTGRES_PROBE_ATTEMPTS`, default 3; `RTC_POSTGRES_PROBE_WAIT_SECONDS`,
 default 600). If capacity stays unavailable, the entry fails with an Azure
-capacity error and the entry is not deployed. Keep the probe SKU in sync with
-the size `S` mapping in the `azure-aks` pack.
+capacity error and the entry is not deployed. After a successful create, the
+probe waits for the delete (`RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS`,
+default 900), so the probe does not hold capacity that the entry needs. If
+that delete fails, the preflight fails. The probe uses `AZURE_SUBSCRIPTION_ID`
+when it is set, and the Azure CLI default subscription otherwise. Keep the
+probe SKU in sync with the size `S` mapping in the `azure-aks` pack.
 
 Before the nightly creates its Azure resource group,
 [`select-azure-test-location.sh`](../.github/scripts/select-azure-test-location.sh)

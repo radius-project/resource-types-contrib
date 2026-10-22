@@ -31,7 +31,7 @@ export CREATE_RESULTS="$TEST_ROOT/create-results"
 cat >"$TEST_ROOT/bin/az" <<'EOF'
 #!/bin/bash
 echo "az $*" >>"$CALL_LOG"
-[[ "$3" == "delete" ]] && exit 0
+[[ "$3" == "delete" ]] && { [[ -n "${DELETE_FAILS:-}" ]] && echo '(Conflict) delete rejected' >&2 && exit 1; exit 0; }
 result="$(head -n 1 "$CREATE_RESULTS")"
 sed -i '1d' "$CREATE_RESULTS"
 case "$result" in
@@ -54,6 +54,7 @@ run_probe() {
         export PATH="$TEST_ROOT/bin:$PATH"
         export AZURE_RESOURCE_GROUP="${PROBE_RG-rg}"
         export AZURE_LOCATION="${PROBE_LOCATION-westus3}"
+        export AZURE_SUBSCRIPTION_ID="${PROBE_SUBSCRIPTION-}"
         export RTC_POSTGRES_PROBE_WAIT_SECONDS=0
         "$PROBE"
     )
@@ -75,7 +76,8 @@ output=$(run_probe 2>&1) || fail "expected available capacity to pass"
 grep -q -- '--sku-name Standard_B1ms' "$CALL_LOG" || fail "expected the Standard_B1ms SKU"
 grep -q -- '--tier Burstable' "$CALL_LOG" || fail "expected the Burstable tier"
 grep -q -- '--location westus3' "$CALL_LOG" || fail "expected the configured location"
-grep -q -- '--no-wait' "$CALL_LOG" || fail "expected the probe server delete not to wait"
+grep -q -- '--no-wait' "$CALL_LOG" && fail "a successful probe must wait for its delete"
+! grep -q -- '--subscription' "$CALL_LOG" || fail "expected the Azure CLI default subscription"
 password="$(grep -oE -- '--admin-password [^ ]+' "$CALL_LOG" | head -n 1 | cut -d' ' -f2)"
 if grep -qF -- "$password" <<<"$output"; then
     fail "the probe must not print the server password"
@@ -87,6 +89,19 @@ run_probe >/dev/null 2>&1 || fail "expected capacity errors to be retried"
     fail "expected three probes and a delete after each"
 servers="$(grep -oE -- '--name [^ ]+' "$CALL_LOG" | sort -u | wc -l)"
 [[ "$servers" -eq 3 ]] || fail "expected each probe to use a new server name"
+[[ "$(grep -c -- 'delete .*--no-wait' "$CALL_LOG")" == 2 ]] ||
+    fail "expected failed-create cleanup not to wait and the successful delete to wait"
+
+reset ok
+status=0
+output=$(DELETE_FAILS=1 run_probe 2>&1) || status=$?
+[[ "$status" -eq 1 ]] || fail "expected a failed probe delete to fail preflight, got $status"
+grep -q "was not deleted" <<<"$output" || fail "expected a delete failure message"
+
+reset ok
+PROBE_SUBSCRIPTION=sub-123 run_probe >/dev/null 2>&1 || fail "expected the probe to pass with a subscription"
+[[ "$(grep -c -- '--subscription sub-123' "$CALL_LOG")" == 2 ]] ||
+    fail "expected the configured subscription on the create and the delete"
 
 reset capacity capacity capacity
 status=0

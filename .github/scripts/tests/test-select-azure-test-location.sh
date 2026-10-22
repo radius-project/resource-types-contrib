@@ -50,7 +50,8 @@ fail() {
 }
 
 select_location() {
-    PATH="$TEST_ROOT/bin:$PATH" "$TEST_ROOT/scripts/select-azure-test-location.sh" probe-rg "$@" 2>/dev/null
+    AZURE_SUBSCRIPTION_ID="${SELECT_SUBSCRIPTION-}" PATH="$TEST_ROOT/bin:$PATH" \
+        "$TEST_ROOT/scripts/select-azure-test-location.sh" probe-rg "$@" 2>/dev/null
 }
 
 reset() {
@@ -67,6 +68,15 @@ grep -q '^az group delete --name probe-rg' "$CALL_LOG" || fail "expected the pro
 reset 2 0
 [[ "$(select_location westus3 eastus2)" == "eastus2" ]] || fail "expected the fallback region"
 [[ "$(grep -c '^probe' "$CALL_LOG")" == 2 ]] || fail "expected a probe in each region"
+! grep -q -- '--subscription' "$CALL_LOG" || fail "expected the Azure CLI default subscription"
+
+reset 0
+[[ "$(SELECT_SUBSCRIPTION=sub-123 select_location westus3 eastus2)" == "westus3" ]] ||
+    fail "expected selection with a configured subscription"
+grep -q -- '^az group create --subscription sub-123 ' "$CALL_LOG" ||
+    fail "expected the configured subscription for the probe group create"
+grep -q -- '^az group delete --subscription sub-123 ' "$CALL_LOG" ||
+    fail "expected the configured subscription for the probe group delete"
 
 reset 2 2
 [[ "$(select_location westus3 eastus2)" == "westus3" ]] || fail "expected the first region when none has capacity"

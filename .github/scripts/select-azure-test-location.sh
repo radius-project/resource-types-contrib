@@ -42,6 +42,10 @@ probe_rg="$1"
 shift
 candidates=("$@")
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+subscription_args=()
+if [[ -n "${AZURE_SUBSCRIPTION_ID:-}" ]]; then
+    subscription_args=(--subscription "$AZURE_SUBSCRIPTION_ID")
+fi
 
 if [[ $# -eq 1 ]]; then
     echo "==> One candidate region; no capacity selection needed" >&2
@@ -50,11 +54,11 @@ if [[ $# -eq 1 ]]; then
 fi
 
 cleanup() {
-    az group delete --name "$probe_rg" --yes --no-wait --only-show-errors --output none >/dev/null 2>&1 || true
+    az group delete "${subscription_args[@]}" --name "$probe_rg" --yes --no-wait --only-show-errors --output none >/dev/null 2>&1 || true
 }
 
 # The probe group's own region does not limit the regions it can probe.
-if ! az group create --name "$probe_rg" --location "${candidates[0]}" \
+if ! az group create "${subscription_args[@]}" --name "$probe_rg" --location "${candidates[0]}" \
     --tags "creationTime=$(date +%s)" --only-show-errors --output none >&2; then
     echo "::warning::Could not create probe resource group '$probe_rg'; using ${candidates[0]}." >&2
     echo "${candidates[0]}"

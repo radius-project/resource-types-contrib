@@ -218,6 +218,7 @@ jobs:
         env:
           DEFAULT_AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
           AZURE_FALLBACK_LOCATION: ${{ vars.AZURE_FALLBACK_LOCATION }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Create Azure Resource Group
         env:
@@ -327,8 +328,10 @@ jobs:
       - name: Test all runnable Recipe Pack entries
         id: azure_pack_entries
         continue-on-error: true
-        # Includes up to 30 minutes for PostgreSQL capacity probes.
+        # Allows extra time for PostgreSQL capacity probes and retries.
         timeout-minutes: 150
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
 
       - name: Report Azure test failures
