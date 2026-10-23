@@ -33,6 +33,7 @@
 # =============================================================================
 
 if [[ -n "${RTC_LIB_RECIPE_TEST_SOURCED:-}" ]]; then
+    # shellcheck disable=SC2317 # The function-like sourced-file guard is intentional.
     return 0 2>/dev/null || exit 0
 fi
 RTC_LIB_RECIPE_TEST_SOURCED=1
@@ -80,6 +81,121 @@ rtc_cleanup_kubernetes_resources() {
             status=1
         fi
     done
+    return "$status"
+}
+
+# Best-effort cleanup for fast-fail paths. The request timeout and non-blocking
+# delete keep cleanup bounded when the cluster or resource controllers are unhealthy.
+rtc_cleanup_kubernetes_resources_bounded() {
+    local kubernetes_namespace="$1" app_name="$2" kind
+    if [[ -z "$kubernetes_namespace" ]]; then
+        return
+    fi
+
+    echo "==> Cleaning up leftover K8s resources for $app_name in $kubernetes_namespace (bounded)"
+    for kind in secrets deployments services; do
+        kubectl delete "$kind" \
+            -l "radapp.io/application=$app_name" \
+            -n "$kubernetes_namespace" \
+            --request-timeout=10s \
+            --wait=false ||
+            echo "Error: Could not clean up $kind for '$app_name'." >&2
+    done
+}
+
+rtc_snapshot_azure_management_locks() {
+    local -a subscription_args=()
+    if [[ -z "${AZURE_RESOURCE_GROUP:-}" ]]; then
+        echo "Error: AZURE_RESOURCE_GROUP is required for the Azure management lock guard." >&2
+        return 1
+    fi
+    if [[ -n "${AZURE_SUBSCRIPTION_ID:-}" ]]; then
+        subscription_args=(--subscription "$AZURE_SUBSCRIPTION_ID")
+    fi
+
+    az lock list \
+        --resource-group "$AZURE_RESOURCE_GROUP" \
+        "${subscription_args[@]}" \
+        --query '[].id' \
+        --output tsv | sort -u
+}
+
+rtc_snapshot_application_azure_lock_inventory() {
+    local app_name="$1" workspace_name="$2" resources_json
+    if ! resources_json=$(rad resource list \
+        --application "$app_name" \
+        --workspace "$workspace_name" \
+        --output json); then
+        echo "Error: Could not inspect the test application's Radius resource inventory." >&2
+        return 1
+    fi
+
+    jq -r '
+        .. | objects | .outputResources? // empty | arrays[]?
+        | select(type == "object")
+        | .id? // empty
+        | select(type == "string")
+        | sub("^/planes/azure/azurecloud"; "")
+        | select(test("/providers/Microsoft.Authorization/locks/"; "i"))
+    ' <<<"$resources_json" | sort -u
+}
+
+rtc_report_azure_lock_failure() {
+    local lock_id="$1" detail="${2:-}" affected_resource
+    affected_resource="${lock_id%/providers/Microsoft.Authorization/locks/*}"
+    echo "Error: New Azure management lock could not be deleted: $lock_id" >&2
+    echo "Error: Affected Azure resource: $affected_resource" >&2
+    echo "Error: Grant the test identity Microsoft.Authorization/locks/delete on the affected resource, then retry." >&2
+    if [[ -n "$detail" ]]; then
+        echo "Error: Azure CLI output: $detail" >&2
+    fi
+}
+
+rtc_delete_owned_new_azure_management_locks() {
+    local locks_before="$1" inventory_locks="$2" locks_after lock_id delete_output status=0
+    local -a subscription_args=()
+    if [[ -n "${AZURE_SUBSCRIPTION_ID:-}" ]]; then
+        subscription_args=(--subscription "$AZURE_SUBSCRIPTION_ID")
+    fi
+    if ! locks_after=$(rtc_snapshot_azure_management_locks); then
+        echo "Error: Could not inspect Azure management locks after the Recipe Pack entry test." >&2
+        return 1
+    fi
+
+    while IFS= read -r lock_id; do
+        [[ -z "$lock_id" ]] && continue
+        if ! grep -Fxiq -- "$lock_id" <<<"$inventory_locks"; then
+            echo "==> Ignoring new Azure management lock outside the test application: $lock_id"
+            continue
+        fi
+        if delete_output=$(az lock delete --ids "$lock_id" "${subscription_args[@]}" 2>&1); then
+            echo "==> Deleted Azure management lock created by the Recipe Pack entry: $lock_id"
+            continue
+        fi
+
+        if grep -qiE 'AuthorizationFailed|does not have authorization|Microsoft\.Authorization/locks/delete' <<<"$delete_output"; then
+            rtc_report_azure_lock_failure "$lock_id"
+        else
+            rtc_report_azure_lock_failure "$lock_id" "$delete_output"
+        fi
+        status=1
+    done < <(
+        comm -13 \
+            <(printf '%s\n' "$locks_before" | sed '/^$/d' | sort -u) \
+            <(printf '%s\n' "$locks_after" | sed '/^$/d' | sort -u)
+    )
+
+    while IFS= read -r lock_id; do
+        [[ -z "$lock_id" ]] && continue
+        if grep -Fxiq -- "$lock_id" <<<"$locks_before" ||
+            grep -Fxiq -- "$lock_id" <<<"$locks_after"; then
+            continue
+        fi
+        echo "Error: Radius recorded an Azure management lock that Azure did not list." >&2
+        rtc_report_azure_lock_failure "$lock_id"
+        status=1
+    done < <(printf '%s\n' "$inventory_locks" | sed '/^$/d' | sort -u)
+
     return "$status"
 }
 
@@ -248,7 +364,7 @@ rtc_deploy_with_retry() (
 #            <kubernetes-namespace> [additional rad deploy arguments...]
 rtc_deploy_and_assert_test_app() {
     local test_file="$1" resource_type="$2" app_name_prefix="$3" environment_path="$4" workspace_name="$5" kubernetes_namespace="$6"
-    local app_name
+    local app_name locks_before="" inventory_locks="" deploy_status=0
     local -a params=()
     shift 6
 
@@ -272,28 +388,46 @@ rtc_deploy_and_assert_test_app() {
     fi
     params+=(--parameters "applicationName=$app_name")
 
+    if [[ "${RTC_AZURE_LOCK_GUARD:-0}" == "1" ]]; then
+        if ! locks_before=$(rtc_snapshot_azure_management_locks); then
+            echo "Error: Could not inspect Azure management locks before the Recipe Pack entry test." >&2
+            return 1
+        fi
+    fi
+
     echo "==> Deploying test application from $test_file"
     if rtc_deploy_with_retry "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
         echo "==> Test deployment successful"
 
         if ! rtc_assert_recipe_result "$resource_type" "$app_name" "$workspace_name" "$kubernetes_namespace"; then
-            rad app delete "$app_name" --workspace "$workspace_name" --yes || echo "Error: Test app cleanup failed." >&2
-            rtc_cleanup_kubernetes_resources "$kubernetes_namespace" "$app_name"
-            return 1
+            deploy_status=1
         fi
-
-        echo "==> Cleaning up test application"
-        local cleanup_status=0
-        rad app delete "$app_name" --workspace "$workspace_name" --yes || cleanup_status=1
-        rtc_cleanup_kubernetes_resources "$kubernetes_namespace" "$app_name" || cleanup_status=1
-        if [[ "$cleanup_status" -ne 0 ]]; then
-            echo "Error: Test app cleanup failed." >&2
-        fi
-        return "$cleanup_status"
+    else
+        echo "==> Test deployment failed"
+        deploy_status=1
     fi
 
-    echo "==> Test deployment failed"
-    rad app delete "$app_name" --workspace "$workspace_name" --yes || echo "Error: Test app cleanup failed." >&2
-    rtc_cleanup_kubernetes_resources "$kubernetes_namespace" "$app_name"
-    return 1
+    if [[ "${RTC_AZURE_LOCK_GUARD:-0}" == "1" ]]; then
+        if ! inventory_locks=$(rtc_snapshot_application_azure_lock_inventory "$app_name" "$workspace_name"); then
+            echo "Error: Continuing with bounded Radius application deletion without lock ownership data." >&2
+            inventory_locks=""
+        fi
+        if ! rtc_delete_owned_new_azure_management_locks "$locks_before" "$inventory_locks"; then
+            echo "Error: Skipping Radius application deletion because a test-owned Azure management lock remains." >&2
+            rtc_cleanup_kubernetes_resources_bounded "$kubernetes_namespace" "$app_name"
+            return 1
+        fi
+    fi
+
+    echo "==> Cleaning up test application"
+    local cleanup_status=0
+    rad app delete "$app_name" --workspace "$workspace_name" --yes || cleanup_status=1
+    rtc_cleanup_kubernetes_resources "$kubernetes_namespace" "$app_name" || cleanup_status=1
+    if [[ "$cleanup_status" -ne 0 ]]; then
+        echo "Error: Test app cleanup failed." >&2
+    fi
+    if [[ "$deploy_status" -ne 0 ]]; then
+        return "$deploy_status"
+    fi
+    return "$cleanup_status"
 }
