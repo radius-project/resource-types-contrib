@@ -62,13 +62,13 @@ resource pack 'Radius.Core/recipePacks@2025-08-01-preview' = {
           ]
         }
       }
+      'Radius.Data/postgreSqlDatabases': {
+        kind: 'bicep'
+        source: 'mcr.microsoft.com/bicep/avm/res/db-for-postgre-sql/flexible-server:0.15.2'
+      }
       'Radius.Compute/persistentVolumes': {
         kind: 'bicep'
         source: 'ghcr.io/radius-project/kube-recipes/persistentvolumes:latest'
-      }
-      'Radius.Data/postgreSqlDatabases': {
-        kind: 'bicep'
-        source: 'mcr.microsoft.com/bicep/avm/res/db-for-postgre-sql/flexible-server:0.14.0'
       }
       'Radius.Compute/routes': {
         kind: 'bicep'
@@ -149,6 +149,12 @@ chmod +x "$TEST_ROOT/bin/rad"
 SCRIPTS_COPY="$TEST_ROOT/scripts"
 cp -r "$REPO_ROOT/.github/scripts" "$SCRIPTS_COPY"
 cp "$TEST_ROOT/bin/test-recipe-pack-entry.sh" "$SCRIPTS_COPY/test-recipe-pack-entry.sh"
+cat >"$SCRIPTS_COPY/probe-azure-postgres-capacity.sh" <<'EOF'
+#!/bin/bash
+echo "probe-azure-postgres-capacity.sh" >>"$CALL_LOG"
+exit "${PROBE_EXIT_CODE:-0}"
+EOF
+chmod +x "$SCRIPTS_COPY/probe-azure-postgres-capacity.sh"
 
 run_driver() {
     (
@@ -174,8 +180,9 @@ rad env update azure-env --workspace azure-ws --recipe-packs azure-aks
 test-recipe-pack-entry.sh Data/redisCaches azure-ws azure-env
 test-recipe-pack-entry.sh Messaging/rabbitMQ azure-ws azure-env
 test-recipe-pack-entry.sh Data/mySqlDatabases azure-ws azure-env verify-transport
-test-recipe-pack-entry.sh Compute/persistentVolumes azure-ws azure-env
+probe-azure-postgres-capacity.sh
 test-recipe-pack-entry.sh Data/postgreSqlDatabases azure-ws azure-env
+test-recipe-pack-entry.sh Compute/persistentVolumes azure-ws azure-env
 test-recipe-pack-entry.sh Compute/routes azure-ws azure-env"
 diff -u <(echo "$expected") "$CALL_LOG" ||
     fail "expected direct-module and repository-owned entries to run with their pack active"
@@ -210,6 +217,21 @@ grep -q "test-recipe-pack-entry.sh Data/mySqlDatabases kubernetes-ws kubernetes-
     fail "expected Kubernetes MySQL to use the connection-only probe"
 grep -q "test-recipe-pack-entry.sh Data/postgreSqlDatabases kubernetes-ws kubernetes-env verify-postgresql-transport" "$CALL_LOG" ||
     fail "expected Kubernetes PostgreSQL to run the transport lifecycle"
+if grep -q '^probe-azure-postgres-capacity.sh' "$CALL_LOG"; then
+    fail "the Azure PostgreSQL capacity probe must not run for Kubernetes"
+fi
+
+: >"$CALL_LOG"
+if output=$(PROBE_EXIT_CODE=1 run_driver azure azure-ws azure-env 2>&1); then
+    fail "expected a failed capacity probe to fail the driver"
+fi
+grep -q "Data/postgreSqlDatabases (from pack 'azure-aks'): preflight check failed" <<<"$output" ||
+    fail "expected the capacity probe failure to be reported for PostgreSQL"
+if grep -q '^test-recipe-pack-entry.sh Data/postgreSqlDatabases' "$CALL_LOG"; then
+    fail "PostgreSQL must not deploy after a failed capacity probe"
+fi
+grep -q '^test-recipe-pack-entry.sh Compute/persistentVolumes' "$CALL_LOG" ||
+    fail "expected testing to continue after a failed capacity probe"
 
 : >"$CALL_LOG"
 if ACTIVATE_EXIT_CODE=1 run_driver azure azure-ws azure-env; then

@@ -69,6 +69,16 @@ skip_reason() {
     esac
 }
 
+# Checks a cloud dependency immediately before its entry deploys, so a known
+# provider capacity limit is reported as such instead of as a recipe failure.
+preflight() {
+    case "$platform_group:$1" in
+        azure:Data/postgreSqlDatabases)
+            "$SCRIPT_DIR/probe-azure-postgres-capacity.sh"
+            ;;
+    esac
+}
+
 for pack_id in "${packs[@]}"; do
     resource_types="$(rtc_list_recipe_pack_types "$pack_id")"
     template="$(rtc_recipe_pack_template "$pack_id")"
@@ -112,6 +122,11 @@ for pack_id in "${packs[@]}"; do
         echo "=============================================================="
         echo "==> Recipe Pack entry test: $resource_type_dir (from pack '$pack_id')"
         echo "=============================================================="
+        if ! preflight "$resource_type_dir"; then
+            echo "==> FAILED: $resource_type_dir (from pack '$pack_id'): preflight check failed" >&2
+            failures=$((failures + 1))
+            continue
+        fi
         if ! "$SCRIPT_DIR/test-recipe-pack-entry.sh" "${test_args[@]}"; then
             echo "==> FAILED: $resource_type_dir (from pack '$pack_id')" >&2
             failures=$((failures + 1))

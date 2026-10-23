@@ -4,8 +4,8 @@ name: Nightly Recipe and Pack Tests
 
 # Test every repository recipe through generated Bicep and Terraform packs.
 # Then deploy every checked-in Recipe Pack and exercise every entry that has
-# a test/app.bicep. This covers source recipes, repository-owned published
-# recipes, and direct modules.
+# a test/app.bicep. Repository-owned entries use recipes built from this
+# checkout; external modules retain the versions declared in each pack.
 #
 # Runs nightly rather than per-PR because the Azure job creates and deletes
 # real cloud infrastructure for every runnable Recipe Pack entry.
@@ -106,6 +106,8 @@ jobs:
       - name: Deploy checked-in Kubernetes Recipe Pack
         id: kubernetes_pack_deploy
         continue-on-error: true
+        env:
+          RECIPE_PACK_USE_LOCAL_RECIPES: "true"
         run: .github/scripts/deploy-all-checked-in-recipe-packs.sh kubernetes "$RAD_ENVIRONMENT_NAME"
 
       - name: Test all runnable Recipe Pack entries
@@ -192,11 +194,20 @@ jobs:
       - name: Set Azure Test Context
         id: set-context
         run: |
+          set -euo pipefail
           LOCATION="${AZURE_LOCATION:-$DEFAULT_AZURE_LOCATION}"
           if [ -z "$LOCATION" ]; then
             LOCATION="westus3"
           fi
           RG="rrttest-nightly-${{ github.run_id }}-${{ github.run_attempt }}"
+          # Recipes use the resource group's region. Fall back when the
+          # preferred region has no Burstable PostgreSQL capacity.
+          FALLBACK="${AZURE_FALLBACK_LOCATION:-eastus2}"
+          CANDIDATES=("$LOCATION")
+          if [[ -n "$FALLBACK" && "$FALLBACK" != "$LOCATION" ]]; then
+            CANDIDATES+=("$FALLBACK")
+          fi
+          LOCATION="$(.github/scripts/select-azure-test-location.sh "${RG}-probe" "${CANDIDATES[@]}")"
           {
             echo "AZURE_LOCATION=$LOCATION"
             echo "AZURE_RESOURCE_GROUP=$RG"
@@ -206,6 +217,8 @@ jobs:
           echo "resource_group=$RG" >> "$GITHUB_OUTPUT"
         env:
           DEFAULT_AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+          AZURE_FALLBACK_LOCATION: ${{ vars.AZURE_FALLBACK_LOCATION }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Create Azure Resource Group
         env:
@@ -308,12 +321,17 @@ jobs:
         id: azure_pack_deploy
         continue-on-error: true
         timeout-minutes: 15
+        env:
+          RECIPE_PACK_USE_LOCAL_RECIPES: "true"
         run: .github/scripts/deploy-all-checked-in-recipe-packs.sh azure "$AZURE_ENVIRONMENT_NAME"
 
       - name: Test all runnable Recipe Pack entries
         id: azure_pack_entries
         continue-on-error: true
-        timeout-minutes: 120
+        # Allows extra time for PostgreSQL capacity probes and retries.
+        timeout-minutes: 150
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
 
       - name: Report Azure test failures
