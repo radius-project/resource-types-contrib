@@ -283,11 +283,6 @@ rtc_assert_recipe_result() {
 rtc_collect_azure_test_diagnostics() {
     local resource_type="$1" app_name="$2" started="$3" directory status script_dir dependency
     local diagnostics_root="${RTC_AZURE_DIAGNOSTICS_DIR:-}"
-    # pull_request_target uses the base workflow, which may not yet set the
-    # diagnostic directory or have its dedicated upload step.
-    if [[ "${GITHUB_ACTIONS:-}" == true && -z "${RTC_AZURE_DIAGNOSTICS_DIR+x}" ]]; then
-        diagnostics_root="radius-pod-logs/azure-test-diagnostics"
-    fi
     if [[ "${RTC_TEST_PLATFORM:-}" != azure || "$resource_type" != Radius.Compute/containers ||
           -z "$diagnostics_root" ]]; then
         return 0
