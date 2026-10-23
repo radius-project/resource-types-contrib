@@ -224,7 +224,9 @@ only when `RTC_AZURE_DIAGNOSTICS_DIR` is unset; an explicit empty value still
 disables collection.
 
 In GitHub Actions, the Azure container test limits `rad deploy` to 15 minutes
-and `rad app delete` to 3 minutes, with a further 5-second kill limit for each.
+and `rad app delete` to 3 minutes after a deployment or assertion failure,
+with a further 5-second kill limit for each. App cleanup after a successful
+test has no timeout.
 This leaves time to collect evidence when provisioning stalls, instead of
 waiting for the 30-minute job limit. A timeout remains a test failure.
 Collection runs before app cleanup, and Kubernetes cleanup is still attempted.
@@ -279,7 +281,7 @@ Collection requires Node.js, Azure CLI with an existing login, and GNU `timeout`
 It does not change login or permissions. Missing tools are reported and cleanup
 still runs.
 
-Offline checks require Node.js, Bash, and `jq`; no Azure login is needed:
+Offline checks require Node.js, Bash, `jq`, and GNU `timeout`; no Azure login is needed:
 
 ```bash
 node --test .github/scripts/tests/test-azure-test-diagnostics.js

@@ -22,7 +22,10 @@ export AZURE_RESOURCE_GROUP=rrttest-123-1-bicep
 export RTC_TEST_PLATFORM=azure
 export GITHUB_ACTIONS=false
 export REAL_TIMEOUT
-REAL_TIMEOUT="$(command -v timeout)"
+if ! REAL_TIMEOUT="$(command -v timeout)"; then
+    echo "Error: GNU timeout is required for Azure diagnostics integration tests." >&2
+    exit 1
+fi
 mkdir -p "$TEST_ROOT/bin" "$TEST_ROOT/Compute/containers/recipes/azure/bicep" "$TEST_ROOT/Compute/containers/test"
 export PATH="$TEST_ROOT/bin:$PATH"
 
@@ -40,11 +43,13 @@ case "$1 $2" in
     "resource show")
         if [[ "${ASSERT_FAIL:-0}" == 1 ]]; then echo '{}'
         else echo '{"properties":{"hosts":{"orderProcessor":"a","simple":"b"}}}'; fi ;;
+    "resource list")
+        echo "${RESOURCE_LIST_JSON:-[]}" ;;
 esac
 EOF
 cat >"$TEST_ROOT/bin/kubectl" <<'EOF'
 #!/bin/bash
-echo "kubectl $1 $2" >>"$CALL_LOG"
+echo "kubectl $*" >>"$CALL_LOG"
 exit "${CLEANUP_STATUS:-0}"
 EOF
 cat >"$TEST_ROOT/bin/node" <<'EOF'
@@ -73,6 +78,7 @@ exec "$@"
 EOF
 cat >"$TEST_ROOT/bin/az" <<'EOF'
 #!/bin/bash
+if [[ "$1 $2" == "lock list" ]]; then exit 0; fi
 echo "Unexpected Azure CLI call outside collector" >&2
 exit 99
 EOF
@@ -146,7 +152,10 @@ if grep -q '^collector' "$CALL_LOG"; then fail "success must not collect"; fi
 if grep -q '^bounded' "$CALL_LOG"; then fail "local runs must retain their existing time limits"; fi
 : >"$CALL_LOG"
 GITHUB_ACTIONS=true DEPLOY_STATUS=0 run_helper >"$TEST_ROOT/output" 2>&1 || fail "CI success must remain successful"
-grep -q '^bounded 3m rad app$' "$CALL_LOG" || fail "successful CI cleanup must be bounded"
+if grep -q '^bounded 3m rad app$' "$CALL_LOG"; then
+    fail "successful CI cleanup must not have a timeout"
+fi
+grep -q '^bounded 15m rad deploy$' "$CALL_LOG" || fail "CI deployment must remain bounded"
 
 # Missing dependencies must produce a status artifact but cannot stop cleanup.
 (
@@ -174,6 +183,29 @@ RTC_TEST_PLATFORM=kubernetes assert_failure_cleanup run_recipe
 assert_before_cleanup
 assert_failure_cleanup run_pack_entry
 assert_before_cleanup
+DEPLOY_STATUS=0 ASSERT_FAIL=1 assert_failure_cleanup run_pack_entry
+assert_before_cleanup
+# Lock guard failures must retain diagnostics and use bounded Kubernetes cleanup.
+for deploy_status in 0 37; do
+    : >"$CALL_LOG"
+    if DEPLOY_STATUS="$deploy_status" ASSERT_FAIL=1 \
+        RESOURCE_LIST_JSON='[{"outputResources":[{"id":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Authorization/locks/test"}]}]' \
+        run_pack_entry >"$TEST_ROOT/output" 2>&1; then
+        fail "a test-owned lock missing from Azure must fail the entry"
+    fi
+    grep -q 'Skipping Radius application deletion' "$TEST_ROOT/output" ||
+        fail "the lock guard must block application deletion"
+    if grep -q '^rad app delete$' "$CALL_LOG"; then
+        fail "a lock guard failure must skip application deletion"
+    fi
+    [[ "$(grep -c '^kubectl delete .*--request-timeout=10s --wait=false$' "$CALL_LOG")" == 3 ]] ||
+        fail "lock guard failures must retain bounded Kubernetes cleanup"
+    awk '
+        /^collector$/ { collected++; if (cleaned) exit 1 }
+        /^kubectl delete / { cleaned++; if (collected != 1) exit 1 }
+        END { if (collected != 1 || cleaned != 3) exit 1 }
+    ' "$CALL_LOG" || fail "diagnostics must run once before lock guard cleanup"
+done
 # Match pull_request_target before the diagnostic workflow changes reach main.
 (
     cd "$TEST_ROOT"

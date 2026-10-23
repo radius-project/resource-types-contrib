@@ -76,7 +76,14 @@ case "$1 $2" in
                 ;;
         esac
         ;;
+    "resource list")
+        printf '%s\n' "${RESOURCE_LIST_JSON:-[]}"
+        ;;
     "app delete")
+        if [[ -n "${APP_DELETE_DELAY_SECONDS:-}" ]]; then
+            sleep "$APP_DELETE_DELAY_SECONDS"
+        fi
+        [[ -n "${APP_DELETE_OUTPUT:-}" ]] && echo "$APP_DELETE_OUTPUT" >&2
         exit "${APP_DELETE_EXIT_CODE:-0}"
         ;;
 esac
@@ -90,6 +97,32 @@ exit "${KUBECTL_EXIT_CODE:-0}"
 EOF
 chmod +x "$MOCK_BIN/kubectl"
 
+cat >"$MOCK_BIN/az" <<'EOF'
+#!/bin/bash
+echo "az $*" >>"$CALL_LOG"
+case "$1 $2" in
+    "lock list")
+        lock_list_calls=0
+        if [[ -f "$AZ_LOCK_STATE_FILE" ]]; then
+            lock_list_calls="$(cat "$AZ_LOCK_STATE_FILE")"
+        fi
+        if [[ "$lock_list_calls" -eq 0 ]]; then
+            printf '%s\n' "${AZ_LOCKS_BEFORE:-}"
+        else
+            printf '%s\n' "${AZ_LOCKS_AFTER:-}"
+        fi
+        echo $((lock_list_calls + 1)) >"$AZ_LOCK_STATE_FILE"
+        ;;
+    "lock delete")
+        if [[ "${AZ_LOCK_DELETE_EXIT_CODE:-0}" -ne 0 ]]; then
+            echo "AuthorizationFailed: Microsoft.Authorization/locks/delete is not allowed." >&2
+            exit "$AZ_LOCK_DELETE_EXIT_CODE"
+        fi
+        ;;
+esac
+EOF
+chmod +x "$MOCK_BIN/az"
+
 cat >"$MOCK_BIN/openssl" <<'EOF'
 #!/bin/bash
 echo "mock-generated-password"
@@ -98,6 +131,7 @@ chmod +x "$MOCK_BIN/openssl"
 
 run_lib() {
     (
+        # shellcheck disable=SC2030 # PATH is intentionally scoped to this fixture subshell.
         export PATH="$MOCK_BIN:$PATH"
         export CALL_LOG
         unset RTC_LIB_RECIPE_TEST_SOURCED
@@ -217,6 +251,110 @@ fi
 grep -q '^rad app delete' "$CALL_LOG" || fail "rtc_deploy_and_assert_test_app should still attempt app cleanup after a failed deploy"
 assert_app_name
 
+PREEXISTING_LOCK="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Authorization/locks/existing"
+NEW_LOCK="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Cache/redis/cache/providers/Microsoft.Authorization/locks/new"
+UNRELATED_LOCK="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/unrelated/providers/Microsoft.Authorization/locks/new"
+LOCK_INVENTORY_JSON="[{\"properties\":{\"status\":{\"outputResources\":[{\"id\":\"/planes/azure/azurecloud$NEW_LOCK\",\"localID\":\"lock\",\"radiusManaged\":true}]}}}]"
+PREEXISTING_LOCK_INVENTORY_JSON="[{\"properties\":{\"status\":{\"outputResources\":[{\"id\":\"/planes/azure/azurecloud$PREEXISTING_LOCK\",\"localID\":\"lock\",\"radiusManaged\":true}]}}}]"
+export AZ_LOCK_STATE_FILE="$TEST_ROOT/az-lock-state"
+
+# The Azure Recipe Pack guard ignores locks that existed before the entry.
+: >"$CALL_LOG"
+rm -f "$AZ_LOCK_STATE_FILE"
+AZURE_RESOURCE_GROUP=rg AZURE_SUBSCRIPTION_ID=sub RTC_AZURE_LOCK_GUARD=1 \
+    AZ_LOCKS_BEFORE="$PREEXISTING_LOCK" AZ_LOCKS_AFTER="$PREEXISTING_LOCK" RESOURCE_LIST_JSON="$PREEXISTING_LOCK_INVENTORY_JSON" \
+    run_lib rtc_deploy_and_assert_test_app \
+    "$TEST_APP_BICEP" "Radius.Data/somethingElse" rtc-test /envs/myenv myws my-ns ||
+    fail "pre-existing Azure locks must not fail the test"
+if grep -q '^az lock delete' "$CALL_LOG"; then
+    fail "pre-existing Azure locks must not be deleted"
+fi
+
+# A newly created lock that the test identity can delete does not cause a false failure.
+: >"$CALL_LOG"
+rm -f "$AZ_LOCK_STATE_FILE"
+AZURE_RESOURCE_GROUP=rg AZURE_SUBSCRIPTION_ID=sub RTC_AZURE_LOCK_GUARD=1 \
+    AZ_LOCKS_BEFORE="$PREEXISTING_LOCK" AZ_LOCKS_AFTER="$PREEXISTING_LOCK"$'\n'"$NEW_LOCK" \
+    RESOURCE_LIST_JSON="$LOCK_INVENTORY_JSON" \
+    run_lib rtc_deploy_and_assert_test_app \
+    "$TEST_APP_BICEP" "Radius.Data/somethingElse" rtc-test /envs/myenv myws my-ns ||
+    fail "a deletable new Azure lock must not fail the test"
+grep -Fq "az lock delete --ids $NEW_LOCK --subscription sub" "$CALL_LOG" ||
+    fail "the new Azure lock must be deleted"
+grep -q '^rad app delete' "$CALL_LOG" ||
+    fail "normal Radius app cleanup must continue after deleting the new lock"
+
+# An undeletable new lock fails before the slow Radius app deletion path.
+: >"$CALL_LOG"
+rm -f "$AZ_LOCK_STATE_FILE"
+if output=$(AZURE_RESOURCE_GROUP=rg AZURE_SUBSCRIPTION_ID=sub RTC_AZURE_LOCK_GUARD=1 \
+    AZ_LOCKS_BEFORE="$PREEXISTING_LOCK" AZ_LOCKS_AFTER="$PREEXISTING_LOCK"$'\n'"$NEW_LOCK" \
+    RESOURCE_LIST_JSON="$LOCK_INVENTORY_JSON" AZ_LOCK_DELETE_EXIT_CODE=1 run_lib rtc_deploy_and_assert_test_app \
+    "$TEST_APP_BICEP" "Radius.Data/somethingElse" rtc-test /envs/myenv myws my-ns 2>&1); then
+    fail "an undeletable new Azure lock must fail the test"
+fi
+grep -Fq "New Azure management lock could not be deleted: $NEW_LOCK" <<<"$output" ||
+    fail "the failure must identify the new Azure lock"
+grep -Fq "Affected Azure resource: ${NEW_LOCK%/providers/Microsoft.Authorization/locks/*}" <<<"$output" ||
+    fail "the failure must identify the affected Azure resource"
+grep -Fq "Microsoft.Authorization/locks/delete" <<<"$output" ||
+    fail "the failure must name the required Azure permission"
+if grep -q '^rad app delete' "$CALL_LOG"; then
+    fail "the slow Radius app deletion path must not run while a new lock remains"
+fi
+bounded_cleanup_calls="$(grep -c '^kubectl delete .*--request-timeout=10s --wait=false$' "$CALL_LOG" || true)"
+assert_eq "3" "$bounded_cleanup_calls" "undeletable lock bounded Kubernetes cleanup call count"
+
+# A new lock outside the test application's Radius inventory remains untouched.
+: >"$CALL_LOG"
+rm -f "$AZ_LOCK_STATE_FILE"
+AZURE_RESOURCE_GROUP=rg AZURE_SUBSCRIPTION_ID=sub RTC_AZURE_LOCK_GUARD=1 \
+    AZ_LOCKS_BEFORE="" AZ_LOCKS_AFTER="$UNRELATED_LOCK" RESOURCE_LIST_JSON="[]" \
+    run_lib rtc_deploy_and_assert_test_app \
+    "$TEST_APP_BICEP" "Radius.Data/somethingElse" rtc-test /envs/myenv myws my-ns ||
+    fail "an unrelated new Azure lock must not fail the test"
+if grep -q '^az lock delete' "$CALL_LOG"; then
+    fail "an unrelated new Azure lock must not be deleted"
+fi
+grep -q '^rad app delete' "$CALL_LOG" ||
+    fail "normal Radius app cleanup must continue when an unrelated lock is ignored"
+
+# Radius can record a lock output even when Azure does not list the lock.
+: >"$CALL_LOG"
+rm -f "$AZ_LOCK_STATE_FILE"
+if output=$(AZURE_RESOURCE_GROUP=rg AZURE_SUBSCRIPTION_ID=sub RTC_AZURE_LOCK_GUARD=1 \
+    AZ_LOCKS_BEFORE="" AZ_LOCKS_AFTER="" RESOURCE_LIST_JSON="$LOCK_INVENTORY_JSON" \
+    run_lib rtc_deploy_and_assert_test_app \
+    "$TEST_APP_BICEP" "Radius.Data/somethingElse" rtc-test /envs/myenv myws my-ns 2>&1); then
+    fail "an inventory-only Azure lock must fail the test"
+fi
+grep -Fq "Radius recorded an Azure management lock that Azure did not list" <<<"$output" ||
+    fail "the inventory-only failure must explain the Azure mismatch"
+grep -Fq "New Azure management lock could not be deleted: $NEW_LOCK" <<<"$output" ||
+    fail "the inventory-only failure must identify the lock"
+if grep -q '^rad app delete' "$CALL_LOG"; then
+    fail "Radius app deletion must not run for an inventory-only lock"
+fi
+
+# Healthy Azure cleanup is not subject to a short harness timeout.
+: >"$CALL_LOG"
+rm -f "$AZ_LOCK_STATE_FILE"
+started_at="$(date +%s)"
+AZURE_RESOURCE_GROUP=rg AZURE_SUBSCRIPTION_ID=sub RTC_AZURE_LOCK_GUARD=1 \
+    AZ_LOCKS_BEFORE="" AZ_LOCKS_AFTER="" RESOURCE_LIST_JSON="[]" \
+    APP_DELETE_DELAY_SECONDS=1 \
+    run_lib rtc_deploy_and_assert_test_app \
+    "$TEST_APP_BICEP" "Radius.Data/somethingElse" rtc-test /envs/myenv myws my-ns ||
+    fail "a healthy delayed Azure cleanup must succeed"
+elapsed=$(( $(date +%s) - started_at ))
+[[ "$elapsed" -ge 1 ]] ||
+    fail "the fixture must wait for the delayed Radius application deletion"
+grep -q '^rad app delete' "$CALL_LOG" ||
+    fail "healthy Azure cleanup must call Radius application deletion directly"
+if grep -q '^timeout ' "$CALL_LOG"; then
+    fail "healthy Azure cleanup must not use a short timeout"
+fi
+
 for failure in APP_DELETE_EXIT_CODE KUBECTL_EXIT_CODE; do
     if (
         export "$failure=1"
@@ -315,6 +453,7 @@ cp "$TEST_APP_BICEP" "$TEST_ROOT/Data/widgets/test/app.bicep"
 run_recipe() {
     (
         cd "$TEST_ROOT"
+        # shellcheck disable=SC2031 # This fixture creates a new subshell with the mock PATH.
         PATH="$MOCK_BIN:$PATH" CALL_LOG="$CALL_LOG" \
             bash "$REPO_ROOT/.github/scripts/test-recipe.sh" Data/widgets/recipes/kubernetes/bicep
     )
