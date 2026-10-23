@@ -134,6 +134,10 @@ export FAIL_TYPE=""
 cat >"$TEST_ROOT/bin/test-recipe-pack-entry.sh" <<'EOF'
 #!/bin/bash
 echo "test-recipe-pack-entry.sh $*" >>"$CALL_LOG"
+case "$2" in
+    azure-ws) [[ "${RTC_TEST_PLATFORM:-}" == azure ]] || exit 97 ;;
+    kubernetes-ws) [[ "${RTC_TEST_PLATFORM:-}" == kubernetes ]] || exit 98 ;;
+esac
 [[ "$1" == "$FAIL_TYPE" ]] && exit 1
 exit 0
 EOF
