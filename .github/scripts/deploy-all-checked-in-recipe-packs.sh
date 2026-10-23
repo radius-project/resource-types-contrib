@@ -49,6 +49,13 @@ fi
 platform_group="$1"
 environment="${2:-default}"
 radius_group="${3:-default}"
+use_local_recipes="${RECIPE_PACK_USE_LOCAL_RECIPES:-false}"
+if [[ "$use_local_recipes" != true && "$use_local_recipes" != false ]]; then
+    echo "Error: RECIPE_PACK_USE_LOCAL_RECIPES must be true or false." >&2
+    exit 1
+fi
+local_template=""
+trap 'if [[ -n "$local_template" ]]; then rm -f -- "$local_template"; fi' EXIT
 
 pack_list="$(rtc_recipe_packs_for_platform_group "$platform_group")"
 packs=()
@@ -77,11 +84,23 @@ for pack_id in "${packs[@]}"; do
         parameters+=(--parameters "${param_name}=${param_value}")
     done <<<"$required_params"
 
-    echo "==> Deploying checked-in recipe pack '$pack_id' ($template)"
-    rad deploy "$template" \
+    deploy_template="$template"
+    if [[ "$use_local_recipes" == true ]]; then
+        local_template="$(mktemp "${template%.bicep}.local-XXXXXX.bicep")"
+        bash "$SCRIPT_DIR/prepare-local-recipe-pack.sh" "$template" "$local_template"
+        deploy_template="$local_template"
+    fi
+
+    echo "==> Deploying checked-in recipe pack '$pack_id' ($deploy_template)"
+    rad deploy "$deploy_template" \
         --group "$radius_group" \
         --environment "$environment" \
         ${parameters[@]+"${parameters[@]}"}
+
+    if [[ -n "$local_template" ]]; then
+        rm -f -- "$local_template"
+        local_template=""
+    fi
 
     echo "==> Activating recipe pack '$pack_name' on environment '$environment'"
     rad env update "$environment" --recipe-packs "$pack_name"

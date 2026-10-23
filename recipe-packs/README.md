@@ -39,13 +39,28 @@ and multiple templates fail the checks.
 | --- | --- | --- | --- |
 | 1. Deploy the pack | Each committed pack file deploys and attaches to an Environment without error | Every PR | Free (Kubernetes); real cloud resources (Azure) |
 | 2. Validate direct-module mappings | Referenced Radius properties exist in the schema; string literals compared with enum properties are declared enum values | Every PR | Free (static check, no deployment) |
-| 3. Test direct-module recipes | Activate each deployed pack, deploy its entries' `test/app.bicep`, check results, and clean up | Nightly and manual dispatch | Real cloud resources (Azure) |
+| 3. Test pack entries | Build repository recipes from the checkout, activate each pack, deploy its entries' `test/app.bicep`, check results, and clean up | Nightly and manual dispatch | Real cloud resources (Azure) |
 
 A "direct-module" entry has a module source outside `ghcr.io/radius-project/`
 and a `test/app.bicep` in its Resource Type directory. Sources within that
-prefix are treated as repository-owned recipes, covered by the existing
-per-recipe tests. This rule checks the source, not the presence of a recipe
-folder. Entries without test apps are excluded from layers 2 and 3.
+prefix are treated as repository-owned recipes. Nightly tests cover these
+recipes both on their own and through the checked-in packs. Entries without
+test apps fail layer 3 unless explicitly excluded; issue #398 tracks the
+temporary `containerImages` exclusion.
+
+Nightly pack deployment sets `RECIPE_PACK_USE_LOCAL_RECIPES=true`. It builds
+each repository-owned Bicep recipe from the checked-out commit and uses a
+temporary copy of the pack with local registry sources and `plainHttp: true`.
+The copy retains the pack name, parameters, output mappings, and external
+module versions, including AVM versions. Azure packs also build the
+Kubernetes recipes they reference. Missing or ambiguous recipe sources and
+build failures stop the test; there is no fallback to a published artifact.
+The checked-in files are not changed.
+
+Local preparation requires each entry's `source` to be a nonempty,
+single-quoted literal on its own line, indented two spaces below the entry key.
+Variables, interpolation, missing or duplicate sources, and inline entries fail
+before deployment. Nested parameter fields named `source` are not recipe sources.
 
 The static check does not validate target module parameter names, parameter
 shapes, or the meaning of conditional results. Several enum values can share
@@ -98,7 +113,7 @@ releases that pin a pack without one are not supported.
 - **New direct-module entry in an existing pack:** add a `test/app.bicep`
   under that Resource Type's folder (see
   [Testing Resource Types and Recipes](../docs/contributing/testing-resource-types-recipes.md)
-  for the expected shape). Without it, Layer 3 skips the entry.
+  for the expected shape). Without it, Layer 3 fails the entry.
 - **New required pack parameter:** add a test value to
   `rtc_recipe_pack_param_value` in `lib-recipe-packs.sh`.
 
@@ -116,6 +131,10 @@ RECIPE_PLATFORM_FILTER=kubernetes make build
 # Layer 1: deploy every checked-in pack for a platform group.
 # The optional third argument is a Radius group, not an Azure resource group.
 .github/scripts/deploy-all-checked-in-recipe-packs.sh kubernetes default
+
+# Before layer 3, use the current checkout rather than published repository recipes.
+RECIPE_PACK_USE_LOCAL_RECIPES=true \
+  .github/scripts/deploy-all-checked-in-recipe-packs.sh kubernetes default
 
 # Layer 2: static check of every direct-module mapping (no cluster needed)
 make validate-direct-module-mappings
