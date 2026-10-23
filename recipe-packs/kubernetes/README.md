@@ -22,6 +22,7 @@ Kube-recipes tagged `:edge` are rebuilt on every push to `main`. `:latest` and t
 | `Radius.Data/postgreSqlDatabases` | Bicep | `ghcr.io/radius-project/kube-recipes/postgresqldatabases:latest` |
 | `Radius.Data/redisCaches` | Bicep | `ghcr.io/radius-project/kube-recipes/rediscaches:latest` |
 | `Radius.Messaging/rabbitMQ` | Bicep | `ghcr.io/radius-project/kube-recipes/rabbitmq:latest` |
+| `Radius.Storage/objectStorage` | Bicep | `ghcr.io/radius-project/kube-recipes/objectstorage:latest` |
 
 `rad init` and `rad env create` (without `--recipe-packs`) link Radius's built-in default pack, `/planes/radius/local/resourceGroups/default/providers/Radius.Core/recipePacks/default`. Radius does not read this file. The `rad` CLI defines the same recipes and pins each source to the resource-types-contrib commit for that Radius release (`:edge` for edge builds). **Deploying this file to the same pack ID overwrites the built-in pack for every Environment that references it and switches all of its sources to `:latest`.** To get the built-in pack back, see [Restoring Radius's default pack](#restoring-radiuss-default-pack).
 
