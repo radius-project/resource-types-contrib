@@ -305,7 +305,7 @@ while IFS= read -r template; do
         app && /^  name:/ { if ($0 != "  name: applicationName") exit 1; found++; app = 0 }
         END { if (found != 1) exit 1 }
     ' "$template" || fail "$template must use applicationName for its application"
-done < <(find "$REPO_ROOT/AI" "$REPO_ROOT/Compute" "$REPO_ROOT/Data" "$REPO_ROOT/Messaging" \
+done < <(find "$REPO_ROOT/AI" "$REPO_ROOT/Compute" "$REPO_ROOT/Dapr" "$REPO_ROOT/Data" "$REPO_ROOT/Messaging" \
     "$REPO_ROOT/Security" "$REPO_ROOT/Storage" -path '*/test/app.bicep' -type f)
 
 # The existing per-recipe caller must preserve failure and cleanup behavior.

@@ -1,0 +1,138 @@
+namespace: Radius.Dapr
+types:
+  configurationStores:
+    description: |
+      The Radius.Dapr/configurationStores Resource Type deploys a Dapr
+      configuration store component. It replaces the legacy
+      `Applications.Dapr/configurationStores` type.
+
+      If you do not set `componentType`, the default Recipe deploys a Redis instance and a
+      `configuration.redis` component that uses it:
+      ```bicep
+      resource configStore 'Radius.Dapr/configurationStores@2025-08-01-preview' = {
+        name: 'configstore'
+        properties: {
+          environment: environment
+          application: myApplication.id
+        }
+      }
+      ```
+
+      To use a different Dapr configuration store, set `componentType`, `version`, and
+      `metadata`. The Recipe then deploys only the Dapr component and does not
+      deploy a backing store. This replaces `resourceProvisioning: 'manual'` in
+      the legacy type. Use `secretKeyRef` and `auth.secretStore` for secret
+      values:
+      ```bicep
+      resource configStore 'Radius.Dapr/configurationStores@2025-08-01-preview' = {
+        name: 'configstore'
+        properties: {
+          environment: environment
+          application: myApplication.id
+          componentType: 'configuration.postgresql'
+          version: 'v1'
+          metadata: {
+            connectionString: {
+              secretKeyRef: {
+                name: 'pg-credentials'
+                key: 'connectionString'
+              }
+            }
+            table: {
+              value: 'configtable'
+            }
+          }
+          auth: {
+            secretStore: secretStore.properties.componentName
+          }
+        }
+      }
+      ```
+
+      To use the configuration store, enable the Dapr sidecar on a container and
+      connect the container to the configuration store:
+      ```bicep
+      resource backend 'Radius.Compute/containers@2025-08-01-preview' = {
+        name: 'backend'
+        properties: {
+          environment: environment
+          application: myApplication.id
+          containers: {
+            backend: {
+              image: 'myregistry/backend:latest'
+              ports: {
+                web: {
+                  containerPort: 3000
+                }
+              }
+            }
+          }
+          connections: {
+            config: {
+              source: configStore.id
+            }
+          }
+          extensions: {
+            daprSidecar: {
+              appId: 'backend'
+              appPort: 3000
+            }
+          }
+        }
+      }
+      ```
+
+      The Dapr component name is the resource name. On compatible Kubernetes
+      Container Recipes, the connection injects environment variables named
+      `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>`. In this example, the
+      application reads the component name from `CONNECTION_CONFIG_COMPONENTNAME`.
+
+    apiVersions:
+      '2025-08-01-preview':
+        schema:
+          type: object
+          properties:
+            environment:
+              type: string
+              description: "(Required) The Radius Environment ID. Typically set by the rad CLI. Typically value should be `environment`."
+            application:
+              type: string
+              description: "(Optional) The Radius Application ID. `myApplication.id` for example."
+            componentType:
+              type: string
+              description: "(Optional) The Dapr component type, such as `configuration.redis` or `configuration.postgresql`. If not set, the Recipe deploys a default Redis configuration store. See https://docs.dapr.io/reference/components-reference/supported-configuration-stores/ for values."
+            version:
+              type: string
+              description: "(Optional) The Dapr component version. Defaults to `v1`."
+            metadata:
+              type: object
+              description: "(Optional) Map of Dapr component metadata names to values. Each entry must set `value` or `secretKeyRef`. Do not put secret material in `value`; use `secretKeyRef`. When the Recipe deploys the default configuration store, these entries override the default metadata."
+              additionalProperties:
+                type: object
+                properties:
+                  value:
+                    type: string
+                    description: "(Optional) The plain text value of the metadata entry."
+                  secretKeyRef:
+                    type: object
+                    description: "(Optional) A reference to a value in the Dapr secret store set in `auth.secretStore`."
+                    properties:
+                      name:
+                        type: string
+                        description: "(Required) The secret name in the Dapr secret store."
+                      key:
+                        type: string
+                        description: "(Required) The key to select in the secret. If the secret value is a string, use the secret name."
+                    required: [name, key]
+            auth:
+              type: object
+              description: "(Optional) Authentication settings for the Dapr component."
+              properties:
+                secretStore:
+                  type: string
+                  description: "(Optional) The name of the Dapr secret store component that resolves `secretKeyRef` values. Defaults to the Kubernetes secret store."
+            componentName:
+              type: string
+              readOnly: true
+              description: "(Read Only) The name of the Dapr component. Use this value with the Dapr client."
+          required: [environment]
