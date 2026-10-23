@@ -52,7 +52,7 @@ Developers can discover the Resource Types in this repository and use them in a 
 
 Every Resource Type in this repository can be registered via `rad resource-type create`. A subset is also registered as defaults in Radius, so they are available out of the box without any user action. The default resource types are paired with the default Recipe Pack under `recipe-packs/kubernetes/`, a zero-config, in-cluster Kubernetes pack that ships out of the box, so they can be deployed without any cloud provider configuration. The list of default resource types is managed in the [Radius repository](https://github.com/radius-project/radius) via [`deploy/manifest/defaults.yaml`](https://github.com/radius-project/radius/blob/main/deploy/manifest/defaults.yaml).
 
-The Kubernetes PostgreSQL Recipes additionally require an operator-managed TLS Secret and client CA trust. See [PostgreSQL Kubernetes TLS](Data/postgreSqlDatabases/README.md#kubernetes-tls); this type is not zero-config.
+Kubernetes PostgreSQL enables TLS with a generated self-signed development certificate by default. Use an operator-managed TLS Secret and client CA trust for verified identity; see [PostgreSQL Kubernetes TLS](Data/postgreSqlDatabases/README.md#kubernetes-tls).
 
 ## Contributing
 

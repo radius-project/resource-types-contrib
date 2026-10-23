@@ -75,7 +75,6 @@ resource "kubernetes_deployment" "postgresql" {
   }
 
   spec {
-    progress_deadline_seconds = 120
     selector {
       match_labels = {
         "radapp.io/resource" = local.resource_name
@@ -88,6 +87,78 @@ resource "kubernetes_deployment" "postgresql" {
       }
 
       spec {
+        init_container {
+          name  = "prepare-tls"
+          image = "python:3.13-slim-bookworm@sha256:e32be0e55814a08977501ca863271d9bd02443710db8f2afaf8372e2c4508530"
+          command = ["/bin/sh", "-ec", <<-EOT
+            umask 077
+            chmod 0755 /tls-runtime
+            work=$(mktemp -d /tls-runtime/prepare.XXXXXX)
+            trap 'rm -rf "$work"' EXIT
+            # Pin one Secret projection revision; never combine a rotated key and certificate.
+            source=/tls-source
+            if [ -L /tls-source/..data ]; then
+              source=$(readlink -f /tls-source/..data)
+            fi
+            material=$(find -L "$source" -type f -print -quit)
+            if [ -n "$material" ]; then
+              if [ ! -s "$source/tls.crt" ] || [ ! -s "$source/tls.key" ]; then
+                echo "Error: PostgreSQL TLS Secret $RADIUS_TLS_SECRET must contain nonempty tls.crt and tls.key." >&2
+                exit 1
+              fi
+              cp "$source/tls.crt" "$work/server.crt"
+              cp "$source/tls.key" "$work/server.key"
+              echo "Using operator PostgreSQL TLS Secret $RADIUS_TLS_SECRET."
+            else
+              echo "Generating a self-signed PostgreSQL certificate; no operator TLS material was supplied."
+              openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 365 \
+                -subj /CN=postgresql \
+                -addext "subjectAltName=DNS:$RADIUS_TLS_HOST,DNS:$RADIUS_RESOURCE_NAME,DNS:$RADIUS_RESOURCE_NAME.$RADIUS_NAMESPACE.svc" \
+                -addext extendedKeyUsage=serverAuth -addext basicConstraints=critical,CA:FALSE \
+                -keyout "$work/server.key" -out "$work/server.crt" 2>"$work/openssl.log" || {
+                  echo "Error: Could not generate PostgreSQL TLS material." >&2
+                  exit 1
+                }
+            fi
+            if grep -qi ENCRYPTED "$work/server.key" ||
+               ! openssl x509 -in "$work/server.crt" -pubkey -noout >"$work/cert.pub" 2>/dev/null ||
+               ! openssl pkey -in "$work/server.key" -passin pass: -pubout >"$work/key.pub" 2>/dev/null ||
+               ! cmp -s "$work/cert.pub" "$work/key.pub"; then
+              echo "Error: PostgreSQL TLS Secret $RADIUS_TLS_SECRET contains an invalid certificate/key pair or an encrypted key." >&2
+              exit 1
+            fi
+            chmod 0600 "$work/server.key"
+            mv "$work/server.crt" /tls-runtime/server.crt
+            mv "$work/server.key" /tls-runtime/server.key
+          EOT
+          ]
+          env {
+            name  = "RADIUS_TLS_SECRET"
+            value = "${local.resource_name}-tls"
+          }
+          env {
+            name  = "RADIUS_TLS_HOST"
+            value = "${local.resource_name}.${local.namespace}.svc.cluster.local"
+          }
+          env {
+            name  = "RADIUS_RESOURCE_NAME"
+            value = local.resource_name
+          }
+          env {
+            name  = "RADIUS_NAMESPACE"
+            value = local.namespace
+          }
+          volume_mount {
+            name       = "tls-source"
+            mount_path = "/tls-source"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "tls-runtime"
+            mount_path = "/tls-runtime"
+          }
+        }
+
         container {
           name  = "postgres"
           image = "postgres:${local.tag}"
@@ -97,15 +168,13 @@ resource "kubernetes_deployment" "postgresql" {
               optional) plaintext_auth=scram-sha-256 ;;
               *) echo "Error: PostgreSQL tls must be required or optional." >&2; exit 1 ;;
             esac
-            if [ ! -s /tls-source/tls.crt ] || [ ! -s /tls-source/tls.key ]; then
-              echo "Error: Create Kubernetes TLS Secret $RADIUS_TLS_SECRET with tls.crt and tls.key in this namespace." >&2
+            if [ ! -s /tls-runtime/server.crt ] || [ ! -s /tls-runtime/server.key ]; then
+              echo "Error: PostgreSQL TLS initialization did not produce a certificate and key." >&2
               exit 1
             fi
             umask 077
             # Remove emptyDir's sticky mode so root can refresh postgres-owned files on restart.
             chmod 0755 /tls-runtime
-            cp /tls-source/tls.crt /tls-runtime/server.crt
-            cp /tls-source/tls.key /tls-runtime/server.key
             printf 'local all all trust\nhostnossl all all 0.0.0.0/0 %s\nhostnossl all all ::/0 %s\nhostssl all all 0.0.0.0/0 scram-sha-256\nhostssl all all ::/0 scram-sha-256\n' "$plaintext_auth" "$plaintext_auth" > /tls-runtime/pg_hba.conf
             chown postgres:postgres /tls-runtime/server.crt /tls-runtime/server.key /tls-runtime/pg_hba.conf
             chmod 0600 /tls-runtime/server.key
@@ -124,11 +193,6 @@ resource "kubernetes_deployment" "postgresql" {
           env {
             name  = "RADIUS_TLS"
             value = local.tls
-          }
-
-          env {
-            name  = "RADIUS_TLS_SECRET"
-            value = "${local.resource_name}-tls"
           }
 
           port {
@@ -167,12 +231,6 @@ resource "kubernetes_deployment" "postgresql" {
           }
 
           volume_mount {
-            name       = "tls-source"
-            mount_path = "/tls-source"
-            read_only  = true
-          }
-
-          volume_mount {
             name       = "tls-runtime"
             mount_path = "/tls-runtime"
           }
@@ -198,10 +256,6 @@ resource "kubernetes_deployment" "postgresql" {
     }
   }
 
-  timeouts {
-    create = "3m"
-    update = "3m"
-  }
 }
 
 resource "kubernetes_service" "postgres" {

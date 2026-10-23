@@ -87,7 +87,7 @@ types:
               type: string
               enum: ['required', 'optional']
               default: 'required'
-              description: "(Optional) The requested transport policy for database connections. Defaults to `required`, rejecting plaintext TCP connections in the Kubernetes Recipes. `optional` permits plaintext but keeps TLS available. Both Kubernetes Recipes require an operator-owned `<resource-name>-tls` Secret in the database namespace. Configure clients using `CONNECTION_POSTGRESQL_TLS` and separately trust the server CA and verify its hostname; this property does not configure client trust. Use `optional` only when the server is not publicly reachable. Azure operator overrides are documented in the Recipe Pack."
+              description: "(Optional) The requested transport policy for database connections. Defaults to `required`, rejecting plaintext TCP connections in the Kubernetes Recipes. `optional` permits plaintext but keeps TLS available. Kubernetes Recipes generate a self-signed development certificate when `<resource-name>-tls` is absent or empty; a supplied operator certificate takes precedence and invalid material fails initialization. Configure clients using `CONNECTION_POSTGRESQL_TLS` and separately trust the server CA and verify its hostname; generated certificates are not trusted automatically. Use `optional` only when the server is not publicly reachable. Azure operator overrides are documented in the Recipe Pack."
             host:
               type: string
               description: "(Read Only) The host name used to connect to the database. Mapped from the recipe module's output."

@@ -129,8 +129,11 @@ IFS=$'\t' read -r ENVIRONMENT_PATH KUBERNETES_NAMESPACE <<<"$RESOLVED"
 echo "==> Environment path: $ENVIRONMENT_PATH"
 
 if [[ "$RESOURCE_TYPE" == "Radius.Data/postgreSqlDatabases" && "$PLATFORM" == kubernetes ]]; then
-    exec bash "$SCRIPT_DIR/../../Data/postgreSqlDatabases/test/test-kubernetes.sh" \
-        "$WORKSPACE_NAME" "$ENVIRONMENT_NAME" "$RECIPE_TYPE"
+    if [[ -f "$RESOURCE_TYPE_PATH/test/test-kubernetes.sh" ]]; then
+        exec "$RESOURCE_TYPE_PATH/test/test-kubernetes.sh" \
+            "$WORKSPACE_NAME" "$ENVIRONMENT_NAME" "$RECIPE_TYPE"
+    fi
+    echo "==> Pinned PostgreSQL sources have no transport lifecycle; running the legacy application test."
 fi
 
 # Check if test file exists

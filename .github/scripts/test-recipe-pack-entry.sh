@@ -78,7 +78,11 @@ if [[ -n "${AZURE_RESOURCE_GROUP:-}" ]]; then
 fi
 
 if [[ "$RESOURCE_TYPE" == "Radius.Data/postgreSqlDatabases" && "$TEST_MODE" == "verify-postgresql-transport" ]]; then
-    exec bash "$SCRIPT_DIR/../../Data/postgreSqlDatabases/test/test-kubernetes.sh" \
+    if [[ ! -f "$RESOURCE_TYPE_PATH/test/test-kubernetes.sh" ]]; then
+        echo "Error: Requested PostgreSQL transport lifecycle is not available in these pinned sources." >&2
+        exit 1
+    fi
+    exec "$RESOURCE_TYPE_PATH/test/test-kubernetes.sh" \
         "$WORKSPACE_NAME" "$ENVIRONMENT_NAME" bicep
 elif [[ "$RESOURCE_TYPE" == "Radius.Data/mySqlDatabases" && "$TEST_MODE" == "verify-transport" ]]; then
     for tls_policy in required optional; do

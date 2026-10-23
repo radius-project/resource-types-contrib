@@ -4,6 +4,7 @@ error_file="$(mktemp)"
 trap 'rm -f "$error_file"' EXIT
 
 expected="${1:?expected TLS policy is required}"
+certificate_source="${2:-operator}"
 test "$CONNECTION_POSTGRESQL_TLS" = "$expected" || {
     echo "Error: CONNECTION_POSTGRESQL_TLS does not match the deployed policy." >&2
     exit 1
@@ -27,6 +28,18 @@ until result=$(timeout 10 psql -X -w -Atc "$query" 2>"$error_file"); do
     sleep 2
 done
 test "$result" = t
+if [ "$certificate_source" = generated ]; then
+    # Prove encryption works without trust enrollment, then verify using only
+    # the public certificate explicitly copied by the test harness.
+    test ! -e /tmp/postgresql-no-ca.crt
+    test "$(PGSSLROOTCERT=/tmp/postgresql-no-ca.crt timeout 10 psql -X -w -Atc "$query")" = t
+    if PGSSLROOTCERT=/tmp/postgresql-no-ca.crt PGSSLMODE=verify-full \
+        timeout 10 psql -X -w -Atc "$query" 2>"$error_file"; then
+        echo "Error: Generated certificate was trusted without explicit enrollment." >&2
+        exit 1
+    fi
+    grep -q 'root certificate file' "$error_file"
+fi
 test "$(PGSSLMODE=verify-full timeout 10 psql -X -w -Atc "$query")" = t
 
 if result=$(PGSSLMODE=disable timeout 10 psql -X -w -Atc "$query" 2>"$error_file"); then
