@@ -73,6 +73,10 @@ fi
 IFS=$'\t' read -r ENVIRONMENT_PATH KUBERNETES_NAMESPACE <<<"$RESOLVED"
 echo "==> Environment path: $ENVIRONMENT_PATH"
 
+if [[ -n "${AZURE_RESOURCE_GROUP:-}" ]]; then
+    export RTC_AZURE_LOCK_GUARD=1
+fi
+
 if [[ "$RESOURCE_TYPE" == "Radius.Data/postgreSqlDatabases" && "$TEST_MODE" == "verify-postgresql-transport" ]]; then
     exec bash "$SCRIPT_DIR/../../Data/postgreSqlDatabases/test/test-kubernetes.sh" \
         "$WORKSPACE_NAME" "$ENVIRONMENT_NAME" bicep
