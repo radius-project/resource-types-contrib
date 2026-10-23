@@ -8,6 +8,8 @@ This folder contains the **Kubernetes Recipe Pack** — a collection of Recipes 
 
 The pack declares one `Radius.Core/recipePacks` resource whose `recipes` map contains an entry for every Resource Type. It does not create or modify a `Radius.Core/environments` resource.
 
+**PostgreSQL TLS:** Both transport policies enable TLS. An absent or empty `<resource-name>-tls` Secret selects a generated self-signed development certificate. For verified identity, supply an operator certificate and configure clients to trust its CA. Invalid supplied material fails initialization, and the Recipe never deletes the operator Secret. See [Kubernetes TLS](../../Data/postgreSqlDatabases/README.md#kubernetes-tls) for setup, verification, migration, and manual rotation.
+
 ## Recipes in this pack
 
 Kube-recipes tagged `:edge` are rebuilt on every push to `main`. `:latest` and the version tags track stable releases, but `:latest` moves to a new digest each time a release publishes, so pin a version tag if you need a reproducible deployment.

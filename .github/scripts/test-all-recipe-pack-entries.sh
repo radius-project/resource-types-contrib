@@ -115,6 +115,12 @@ for pack_id in "${packs[@]}"; do
                 mysql_test_mode="verify-transport"
             fi
             test_args+=("$mysql_test_mode")
+        elif [[ "$resource_type_dir" == "Data/postgreSqlDatabases" && "$platform_group" == kubernetes ]]; then
+            if [[ -f "$resource_type_dir/test/test-kubernetes.sh" ]]; then
+                test_args+=("verify-postgresql-transport")
+            else
+                echo "==> Pinned PostgreSQL sources have no transport lifecycle; running the legacy application test."
+            fi
         fi
 
         echo "=============================================================="

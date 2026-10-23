@@ -217,13 +217,22 @@ grep -q "Data/redisCaches (from pack 'azure-aks')" <<<"$output" ||
     fail "expected the outer loop to record the failed entry"
 
 : >"$CALL_LOG"
+touch "$FIXTURE_ROOT/Data/postgreSqlDatabases/test/test-kubernetes.sh"
 run_driver kubernetes kubernetes-ws kubernetes-env >/dev/null ||
     fail "expected the Kubernetes MySQL connection probe to pass"
 grep -q "test-recipe-pack-entry.sh Data/mySqlDatabases kubernetes-ws kubernetes-env connection-only" "$CALL_LOG" ||
     fail "expected Kubernetes MySQL to use the connection-only probe"
+grep -q "test-recipe-pack-entry.sh Data/postgreSqlDatabases kubernetes-ws kubernetes-env verify-postgresql-transport" "$CALL_LOG" ||
+    fail "expected Kubernetes PostgreSQL to run the transport lifecycle"
 if grep -q '^probe-azure-postgres-capacity.sh' "$CALL_LOG"; then
     fail "the Azure PostgreSQL capacity probe must not run for Kubernetes"
 fi
+rm "$FIXTURE_ROOT/Data/postgreSqlDatabases/test/test-kubernetes.sh"
+: >"$CALL_LOG"
+run_driver kubernetes kubernetes-ws kubernetes-env >/dev/null ||
+    fail "expected legacy pinned PostgreSQL sources to retain the generic test"
+grep -q '^test-recipe-pack-entry.sh Data/postgreSqlDatabases kubernetes-ws kubernetes-env$' "$CALL_LOG" ||
+    fail "expected no transport mode for pinned sources without a lifecycle"
 
 : >"$CALL_LOG"
 if output=$(PROBE_EXIT_CODE=1 run_driver azure azure-ws azure-env 2>&1); then
