@@ -68,6 +68,28 @@ a default branch. The nightly deployment checks the values used by each test
 app, not every possible property value. A type used by two packs is tested
 once per pack, with that pack active.
 
+Azure has no API that reports live regional capacity. Before the nightly
+deploys an Azure PostgreSQL pack entry, it runs
+[`probe-azure-postgres-capacity.sh`](../.github/scripts/probe-azure-postgres-capacity.sh).
+The probe creates and deletes a `Standard_B1ms` (Burstable) flexible server in
+the test resource group. It retries only on `SkuNotAvailable` or `ServerIsBusy`
+(`RTC_POSTGRES_PROBE_ATTEMPTS`, default 3; `RTC_POSTGRES_PROBE_WAIT_SECONDS`,
+default 600). If capacity stays unavailable, the entry fails with an Azure
+capacity error and the entry is not deployed. After a successful create, the
+probe waits for the delete (`RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS`,
+default 900), so the probe does not hold capacity that the entry needs. If
+that delete fails, the preflight fails. The probe uses `AZURE_SUBSCRIPTION_ID`
+when it is set, and the Azure CLI default subscription otherwise. Keep the
+probe SKU in sync with the size `S` mapping in the `azure-aks` pack.
+
+Before the nightly creates its Azure resource group,
+[`select-azure-test-location.sh`](../.github/scripts/select-azure-test-location.sh)
+runs one probe in the preferred region (`AZURE_LOCATION` repository variable,
+default `westus3`) and, if it has no capacity, one in the fallback region
+(`AZURE_FALLBACK_LOCATION`, default `eastus2`). All Azure tests then use the
+first region with capacity. If neither region has capacity, the preferred
+region is used.
+
 MySQL pack entries that map `tls` to `require_secure_transport` run both
 `tls: required` and `tls: optional`. They pass `verifyTransport` through
 `test/verify-transport.parameters.json` because Radius CLI `name=value`
