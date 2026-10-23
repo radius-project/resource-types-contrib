@@ -80,6 +80,9 @@ case "$1 $2" in
         printf '%s\n' "${RESOURCE_LIST_JSON:-[]}"
         ;;
     "app delete")
+        if [[ -n "${APP_DELETE_DELAY_SECONDS:-}" ]]; then
+            sleep "$APP_DELETE_DELAY_SECONDS"
+        fi
         [[ -n "${APP_DELETE_OUTPUT:-}" ]] && echo "$APP_DELETE_OUTPUT" >&2
         exit "${APP_DELETE_EXIT_CODE:-0}"
         ;;
@@ -119,14 +122,6 @@ case "$1 $2" in
 esac
 EOF
 chmod +x "$MOCK_BIN/az"
-
-cat >"$MOCK_BIN/timeout" <<'EOF'
-#!/bin/bash
-echo "timeout $*" >>"$CALL_LOG"
-shift
-"$@"
-EOF
-chmod +x "$MOCK_BIN/timeout"
 
 cat >"$MOCK_BIN/openssl" <<'EOF'
 #!/bin/bash
@@ -259,8 +254,8 @@ assert_app_name
 PREEXISTING_LOCK="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Authorization/locks/existing"
 NEW_LOCK="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Cache/redis/cache/providers/Microsoft.Authorization/locks/new"
 UNRELATED_LOCK="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/unrelated/providers/Microsoft.Authorization/locks/new"
-LOCK_INVENTORY_JSON="[{\"properties\":{\"status\":{\"outputResources\":[\"$NEW_LOCK\"]}}}]"
-PREEXISTING_LOCK_INVENTORY_JSON="[{\"properties\":{\"status\":{\"outputResources\":[\"$PREEXISTING_LOCK\"]}}}]"
+LOCK_INVENTORY_JSON="[{\"properties\":{\"status\":{\"outputResources\":[{\"id\":\"/planes/azure/azurecloud$NEW_LOCK\",\"localID\":\"lock\",\"radiusManaged\":true}]}}}]"
+PREEXISTING_LOCK_INVENTORY_JSON="[{\"properties\":{\"status\":{\"outputResources\":[{\"id\":\"/planes/azure/azurecloud$PREEXISTING_LOCK\",\"localID\":\"lock\",\"radiusManaged\":true}]}}}]"
 export AZ_LOCK_STATE_FILE="$TEST_ROOT/az-lock-state"
 
 # The Azure Recipe Pack guard ignores locks that existed before the entry.
@@ -341,23 +336,24 @@ if grep -q '^rad app delete' "$CALL_LOG"; then
     fail "Radius app deletion must not run for an inventory-only lock"
 fi
 
-# If inventory detection misses a lock, Radius app deletion is still bounded
-# and reports an authorization failure with the lock ID.
+# Healthy Azure cleanup is not subject to a short harness timeout.
 : >"$CALL_LOG"
 rm -f "$AZ_LOCK_STATE_FILE"
-if output=$(AZURE_RESOURCE_GROUP=rg AZURE_SUBSCRIPTION_ID=sub RTC_AZURE_LOCK_GUARD=1 \
+started_at="$(date +%s)"
+AZURE_RESOURCE_GROUP=rg AZURE_SUBSCRIPTION_ID=sub RTC_AZURE_LOCK_GUARD=1 \
     AZ_LOCKS_BEFORE="" AZ_LOCKS_AFTER="" RESOURCE_LIST_JSON="[]" \
-    APP_DELETE_EXIT_CODE=1 APP_DELETE_OUTPUT="AuthorizationFailed for $NEW_LOCK: Microsoft.Authorization/locks/delete denied" \
+    APP_DELETE_DELAY_SECONDS=1 \
     run_lib rtc_deploy_and_assert_test_app \
-    "$TEST_APP_BICEP" "Radius.Data/somethingElse" rtc-test /envs/myenv myws my-ns 2>&1); then
-    fail "a Radius lock authorization failure must fail the test"
+    "$TEST_APP_BICEP" "Radius.Data/somethingElse" rtc-test /envs/myenv myws my-ns ||
+    fail "a healthy delayed Azure cleanup must succeed"
+elapsed=$(( $(date +%s) - started_at ))
+[[ "$elapsed" -ge 1 ]] ||
+    fail "the fixture must wait for the delayed Radius application deletion"
+grep -q '^rad app delete' "$CALL_LOG" ||
+    fail "healthy Azure cleanup must call Radius application deletion directly"
+if grep -q '^timeout ' "$CALL_LOG"; then
+    fail "healthy Azure cleanup must not use a short timeout"
 fi
-grep -q '^timeout 30s rad app delete' "$CALL_LOG" ||
-    fail "Azure Recipe Pack app deletion must use the bounded timeout"
-grep -Fq "New Azure management lock could not be deleted: $NEW_LOCK" <<<"$output" ||
-    fail "the bounded Radius cleanup failure must identify the lock"
-grep -Fq "Microsoft.Authorization/locks/delete" <<<"$output" ||
-    fail "the bounded Radius cleanup failure must name the required permission"
 
 for failure in APP_DELETE_EXIT_CODE KUBECTL_EXIT_CODE; do
     if (

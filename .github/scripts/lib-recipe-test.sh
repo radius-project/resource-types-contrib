@@ -132,6 +132,8 @@ rtc_snapshot_application_azure_lock_inventory() {
 
     jq -r '
         .. | objects | .outputResources? // empty | arrays[]?
+        | select(type == "object")
+        | .id? // empty
         | select(type == "string")
         | sub("^/planes/azure/azurecloud"; "")
         | select(test("/providers/Microsoft.Authorization/locks/"; "i"))
@@ -195,35 +197,6 @@ rtc_delete_owned_new_azure_management_locks() {
     done < <(printf '%s\n' "$inventory_locks" | sed '/^$/d' | sort -u)
 
     return "$status"
-}
-
-rtc_delete_radius_test_application() {
-    local app_name="$1" workspace_name="$2"
-    if [[ "${RTC_AZURE_LOCK_GUARD:-0}" != "1" ]]; then
-        rad app delete "$app_name" --workspace "$workspace_name" --yes
-        return
-    fi
-
-    local timeout_seconds="${RTC_RADIUS_APP_DELETE_TIMEOUT_SECONDS:-30}"
-    local delete_output delete_status lock_id
-    if delete_output=$(timeout "${timeout_seconds}s" \
-        rad app delete "$app_name" --workspace "$workspace_name" --yes 2>&1); then
-        [[ -n "$delete_output" ]] && echo "$delete_output"
-        return 0
-    else
-        delete_status=$?
-    fi
-
-    [[ -n "$delete_output" ]] && echo "$delete_output" >&2
-    lock_id=$(grep -oEi '/subscriptions/[^[:space:]"]+/providers/Microsoft\.Authorization/locks/[^[:space:]"]+' \
-        <<<"$delete_output" | head -n 1 | sed -E 's/[]),.;]+$//') || true
-    if [[ -n "$lock_id" ]] &&
-        grep -qiE 'AuthorizationFailed|does not have authorization|Microsoft\.Authorization/locks/delete' <<<"$delete_output"; then
-        rtc_report_azure_lock_failure "$lock_id"
-    elif [[ "$delete_status" -eq 124 ]]; then
-        echo "Error: Radius application deletion exceeded ${timeout_seconds}s and was stopped." >&2
-    fi
-    return 1
 }
 
 # Radius.Compute/containers-specific assertion: the shared test app deploys
@@ -380,7 +353,7 @@ rtc_deploy_and_assert_test_app() {
 
     echo "==> Cleaning up test application"
     local cleanup_status=0
-    rtc_delete_radius_test_application "$app_name" "$workspace_name" || cleanup_status=1
+    rad app delete "$app_name" --workspace "$workspace_name" --yes || cleanup_status=1
     rtc_cleanup_kubernetes_resources "$kubernetes_namespace" "$app_name" || cleanup_status=1
     if [[ "$cleanup_status" -ne 0 ]]; then
         echo "Error: Test app cleanup failed." >&2
