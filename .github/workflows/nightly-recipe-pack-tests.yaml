@@ -4,8 +4,8 @@ name: Nightly Recipe and Pack Tests
 
 # Test every repository recipe through generated Bicep and Terraform packs.
 # Then deploy every checked-in Recipe Pack and exercise every entry that has
-# a test/app.bicep. This covers source recipes, repository-owned published
-# recipes, and direct modules.
+# a test/app.bicep. Repository-owned entries use recipes built from this
+# checkout; external modules retain the versions declared in each pack.
 #
 # Runs nightly rather than per-PR because the Azure job creates and deletes
 # real cloud infrastructure for every runnable Recipe Pack entry.
@@ -106,6 +106,8 @@ jobs:
       - name: Deploy checked-in Kubernetes Recipe Pack
         id: kubernetes_pack_deploy
         continue-on-error: true
+        env:
+          RECIPE_PACK_USE_LOCAL_RECIPES: "true"
         run: .github/scripts/deploy-all-checked-in-recipe-packs.sh kubernetes "$RAD_ENVIRONMENT_NAME"
 
       - name: Test all runnable Recipe Pack entries
@@ -308,6 +310,8 @@ jobs:
         id: azure_pack_deploy
         continue-on-error: true
         timeout-minutes: 15
+        env:
+          RECIPE_PACK_USE_LOCAL_RECIPES: "true"
         run: .github/scripts/deploy-all-checked-in-recipe-packs.sh azure "$AZURE_ENVIRONMENT_NAME"
 
       - name: Test all runnable Recipe Pack entries

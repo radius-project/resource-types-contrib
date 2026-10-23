@@ -57,6 +57,10 @@ case "$1 $2" in
         # Used by the containers/postgresql assertion helpers.
         case "$3" in
             "Radius.Compute/containers")
+                if [[ -n "${CONTAINERS_JSON:-}" ]]; then
+                    echo "$CONTAINERS_JSON"
+                    exit 0
+                fi
                 if [[ "$4" == "myApp" ]]; then
                     echo '{"properties":{"hosts":{"orderProcessor":"host-a"}}}'
                 else
@@ -191,6 +195,14 @@ run_lib rtc_assert_recipe_result "Radius.Data/postgreSqlDatabases" testapp myws 
 if PEER_HOST=host-a run_lib rtc_assert_recipe_result "Radius.Compute/containers" testapp myws >/dev/null; then
     fail "equal container hosts must fail"
 fi
+for invalid_result in \
+    '{"properties":{}}' \
+    '{"properties":{"hosts":{}}}' \
+    '{"properties":{"hosts":{"orderProcessor":"","simple":""}}}'; do
+    if CONTAINERS_JSON="$invalid_result" run_lib rtc_assert_recipe_result "Radius.Compute/containers" testapp myws >/dev/null; then
+        fail "missing or empty container hosts must fail"
+    fi
+done
 for invalid_result in \
     '{"properties":{"host":"","port":5432,"database":"appdb"}}' \
     '{"properties":{"host":"pg","port":"5432","database":"appdb"}}' \
@@ -363,6 +375,15 @@ if POSTGRES_JSON='{"properties":{}}' run_lib rtc_deploy_and_assert_test_app \
     fail "post-deploy assertion failure must fail the test"
 fi
 grep -q '^rad app delete' "$CALL_LOG" || fail "assertion failure must still clean up"
+
+: >"$CALL_LOG"
+if CONTAINERS_JSON='{"properties":{}}' run_lib rtc_deploy_and_assert_test_app \
+    "$TEST_APP_BICEP" Radius.Compute/containers rtc-test /envs/myenv myws my-ns >/dev/null; then
+    fail "a deployed ACI recipe without hosts must fail the test"
+fi
+assert_eq "1" "$(grep -c '^rad deploy ' "$CALL_LOG")" "missing hosts must not retry deployment"
+assert_eq "1" "$(grep -c '^rad app delete ' "$CALL_LOG")" "missing hosts must clean up the application"
+assert_app_name
 
 # ... a template with a `password` parameter auto-generates one instead of
 # passing a literal "password" placeholder through to `rad deploy`.
