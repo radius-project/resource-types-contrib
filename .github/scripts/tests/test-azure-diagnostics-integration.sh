@@ -142,8 +142,6 @@ for platform in kubernetes aws ""; do
     if grep -q '^collector' "$CALL_LOG"; then fail "non-Azure tests must not collect"; fi
     if grep -q '^bounded' "$CALL_LOG"; then fail "non-Azure tests must not acquire new time limits"; fi
 done
-RTC_AZURE_DIAGNOSTICS_DIR="" assert_failure_cleanup run_helper
-if grep -q '^collector' "$CALL_LOG"; then fail "disabled diagnostics must not collect"; fi
 RESOURCE_TYPE=Radius.Data/widgets assert_failure_cleanup run_helper
 if grep -q '^collector' "$CALL_LOG"; then fail "unrelated tests must not collect"; fi
 : >"$CALL_LOG"
@@ -206,18 +204,19 @@ for deploy_status in 0 37; do
         END { if (collected != 1 || cleaned != 3) exit 1 }
     ' "$CALL_LOG" || fail "diagnostics must run once before lock guard cleanup"
 done
-# Match pull_request_target before the diagnostic workflow changes reach main.
-(
-    cd "$TEST_ROOT"
-    unset RTC_AZURE_DIAGNOSTICS_DIR AZURE_SUBSCRIPTION_ID
-    export GITHUB_ACTIONS=true
-    assert_failure_cleanup run_recipe
-    assert_before_cleanup
-    grep -Rq 'safe-evidence' radius-pod-logs/azure-test-diagnostics ||
-        fail "the base workflow's existing pod-log upload must include the evidence"
-)
-GITHUB_ACTIONS=true RTC_AZURE_DIAGNOSTICS_DIR="" assert_failure_cleanup run_helper
-if grep -q '^collector' "$CALL_LOG"; then fail "explicit empty directory must still disable collection"; fi
+# An output directory is required in both CI and local runs.
+for github_actions in true false; do
+    (
+        cd "$TEST_ROOT"
+        unset RTC_AZURE_DIAGNOSTICS_DIR
+        export GITHUB_ACTIONS="$github_actions"
+        assert_failure_cleanup run_recipe
+        if grep -q '^collector' "$CALL_LOG"; then fail "unset directory must disable collection"; fi
+        [[ ! -e radius-pod-logs ]] || fail "unset directory must not create a default output path"
+    )
+    GITHUB_ACTIONS="$github_actions" RTC_AZURE_DIAGNOSTICS_DIR="" assert_failure_cleanup run_recipe
+    if grep -q '^collector' "$CALL_LOG"; then fail "explicit empty directory must disable collection"; fi
+done
 grep -Rq 'collector exit 124' "$RTC_AZURE_DIAGNOSTICS_DIR" || fail "timeout status must persist"
 grep -Rq 'safe-evidence' "$RTC_AZURE_DIAGNOSTICS_DIR" || fail "evidence must persist after cleanup"
 echo "Azure diagnostics integration tests passed"

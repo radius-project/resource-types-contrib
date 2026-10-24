@@ -254,12 +254,9 @@ artifact when no applicable test fails. A Terraform artifact uses the suffix
 `-terraform` if a future Azure container Terraform test fails.
 Release candidate tests use `azure-test-diagnostics-rc-azure`.
 
-`pull_request_target` runs the workflow from the base branch. Before that
-workflow has the dedicated diagnostic upload step, the checked-out test helper
-saves evidence under `radius-pod-logs/azure-test-diagnostics`. Download the
-existing `radius-pod-logs-bicep` artifact in that case. This CI default applies
-only when `RTC_AZURE_DIAGNOSTICS_DIR` is unset; an explicit empty value still
-disables collection.
+Azure validation and all three nightly Azure test steps set
+`RTC_AZURE_DIAGNOSTICS_DIR` to `azure-test-diagnostics`. An unset or empty value
+disables collection in both CI and local runs.
 
 In GitHub Actions, the Azure container test limits `rad deploy` to 15 minutes
 and `rad app delete` to 3 minutes after a deployment or assertion failure,
@@ -296,7 +293,7 @@ timestamps, and correlation IDs for a provider investigation. These diagnostics
 do not establish or fix the cause of a registry failure.
 
 Resource collection uses only GET requests, scoped to the configured
-subscription and test resource group. If the base workflow does not export
+subscription and test resource group. For local runs without
 `AZURE_SUBSCRIPTION_ID`, the collector first reads the selected account ID with
 `az account show --query id`. It does not list accounts or read credentials.
 That lookup uses the same time and request budget.
@@ -310,8 +307,9 @@ invalid responses, and bounds. Missing permissions and unsupported APIs produce
 a failed-call entry with the CLI exit code. Raw provider errors are withheld
 to prevent secret exposure, so the artifact cannot distinguish those two causes.
 
-For local Azure tests, set `RTC_AZURE_DIAGNOSTICS_DIR`, `AZURE_SUBSCRIPTION_ID`,
-and `AZURE_RESOURCE_GROUP` to an output directory and the dedicated test scope.
+For local Azure tests, set `RTC_AZURE_DIAGNOSTICS_DIR` and `AZURE_RESOURCE_GROUP`
+to an output directory and the dedicated test resource group. Set
+`AZURE_SUBSCRIPTION_ID` to use a subscription other than the selected account's.
 The per-recipe runner derives the platform from the recipe path. The pack test
 driver derives it from `PLATFORM_GROUP`; for a direct invocation of
 `test-recipe-pack-entry.sh`, also set `RTC_TEST_PLATFORM=azure`.
