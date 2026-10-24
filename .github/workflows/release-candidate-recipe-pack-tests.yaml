@@ -21,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Radius release candidate version to test (e.g. 0.62.0-rc1)."
+        description: "Radius release candidate version to test (e.g. 0.62.0-rc.1)."
         required: true
         type: string
 
@@ -172,6 +172,12 @@ jobs:
           else
             echo "applications-rp pod not found" > radius-pod-logs/applications-rp.log
           fi
+          DE_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | test("^(deployment-engine|bicep-de)-")) | .metadata.name' | head -n1)
+          if [ -n "$DE_POD" ]; then
+            kubectl logs "$DE_POD" -n radius-system --all-containers > radius-pod-logs/deployment-engine.log || true
+          else
+            echo "deployment engine pod not found" > radius-pod-logs/deployment-engine.log
+          fi
           UCP_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | startswith("ucp-")) | .metadata.name' | head -n1)
           if [ -n "$UCP_POD" ]; then
             kubectl logs "$UCP_POD" -n radius-system --all-containers > radius-pod-logs/ucp.log || true
@@ -230,6 +236,13 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Enable Azure CLI token renewal
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: bash .github/scripts/azure-cli-with-refresh.sh --install
 
       - name: Set Azure Test Context
         id: set-context
@@ -306,6 +319,8 @@ jobs:
         id: azure_bicep
         continue-on-error: true
         timeout-minutes: 75
+        env:
+          RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
         run: |
           set -euo pipefail
           pack_name="candidateazurebiceprecipepack"
@@ -329,6 +344,8 @@ jobs:
         id: azure_terraform
         continue-on-error: true
         timeout-minutes: 75
+        env:
+          RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
         run: |
           set -euo pipefail
           pack_name="candidateazureterraformrecipepack"
@@ -358,7 +375,17 @@ jobs:
         id: azure_pack_entries
         continue-on-error: true
         timeout-minutes: 120
+        env:
+          RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
         run: make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+
+      - name: Upload pre-cleanup Azure diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: azure-test-diagnostics-rc-azure
+          path: azure-test-diagnostics
+          if-no-files-found: ignore
 
       - name: Report Azure test failures
         if: ${{ !cancelled() }}
@@ -392,6 +419,12 @@ jobs:
             kubectl logs "$APP_POD" -n radius-system --all-containers > radius-pod-logs/applications-rp.log || true
           else
             echo "applications-rp pod not found" > radius-pod-logs/applications-rp.log
+          fi
+          DE_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | test("^(deployment-engine|bicep-de)-")) | .metadata.name' | head -n1)
+          if [ -n "$DE_POD" ]; then
+            kubectl logs "$DE_POD" -n radius-system --all-containers > radius-pod-logs/deployment-engine.log || true
+          else
+            echo "deployment engine pod not found" > radius-pod-logs/deployment-engine.log
           fi
           UCP_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | startswith("ucp-")) | .metadata.name' | head -n1)
           if [ -n "$UCP_POD" ]; then
