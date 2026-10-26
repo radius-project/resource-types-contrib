@@ -38,7 +38,8 @@ cat >"$TEST_ROOT/bin/curl" <<'EOF'
 echo curl >>"$CALL_LOG"
 [[ "$*" == *'audience=api%3A%2F%2FAzureADTokenExchange'* ]] || exit 99
 [[ "$*" == *'Authorization: bearer test-request-token'* ]] || exit 99
-printf '%s\n' "${TOKEN_RESPONSE:-{\"value\":\"test-assertion\"}}"
+default_response='{"value":"test-assertion"}'
+printf '%s\n' "${TOKEN_RESPONSE:-$default_response}"
 exit "${CURL_STATUS:-0}"
 EOF
 cat >"$TEST_ROOT/bin/date" <<'EOF'
@@ -55,6 +56,15 @@ export RTC_AZURE_LOGIN_STAMP="$RUNNER_TEMP/rtc-azure-cli/login-stamp"
 wrapper="$RUNNER_TEMP/rtc-azure-cli/az"
 grep -Fxq "RTC_AZURE_CLI=$RTC_AZURE_CLI" "$GITHUB_ENV" || fail "must preserve real CLI path"
 grep -Fxq "$RUNNER_TEMP/rtc-azure-cli" "$GITHUB_PATH" || fail "must install on later steps' PATH"
+
+# Verify the mock preserves valid response shapes before testing rejection.
+for response in '{}' '{"value":""}' '{"value":1}' '{"value":"custom-assertion"}' 'invalid-json'; do
+    actual="$(TOKEN_RESPONSE="$response" curl \
+        -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+        "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=api%3A%2F%2FAzureADTokenExchange")"
+    [[ "$actual" == "$response" ]] || fail "mock must return TOKEN_RESPONSE unchanged"
+done
+: >"$CALL_LOG"
 
 run_cli() { "$wrapper" lock list --output json >"$TEST_ROOT/out" 2>"$TEST_ROOT/err"; }
 run_cli || fail "first command must succeed"
@@ -82,6 +92,8 @@ done
 for response in '{}' '{"value":""}' '{"value":1}' 'invalid-json'; do
     : >"$CALL_LOG"
     if TOKEN_RESPONSE="$response" run_cli; then fail "invalid OIDC response must fail"; fi
+    grep -q 'Error: GitHub returned no OIDC assertion.' "$TEST_ROOT/err" ||
+        fail "invalid OIDC response must report the missing assertion"
     if grep -q '^login ' "$CALL_LOG"; then fail "invalid OIDC response must not reach login"; fi
 done
 for stamp in '' 'not-a-timestamp'; do
