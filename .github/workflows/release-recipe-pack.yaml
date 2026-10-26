@@ -51,6 +51,7 @@ on:
         type: choice
         required: true
         options:
+          - aws-eks
           - azure-aks
           - azure-aci
           - kubernetes

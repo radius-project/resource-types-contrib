@@ -122,6 +122,8 @@ actual="$(run_in_fixture rtc_recipe_pack_platform_group kubernetes)"
 assert_eq "kubernetes" "$actual" "platform group for kubernetes"
 actual="$(run_in_fixture rtc_recipe_pack_platform_group azure-aks)"
 assert_eq "azure" "$actual" "platform group for azure-aks"
+actual="$(run_in_fixture rtc_recipe_pack_platform_group aws-eks)"
+assert_eq "aws" "$actual" "platform group for aws-eks"
 if run_in_fixture rtc_recipe_pack_platform_group not-a-real-pack >/dev/null 2>&1; then
     fail "rtc_recipe_pack_platform_group should fail for an unmapped pack id"
 fi
