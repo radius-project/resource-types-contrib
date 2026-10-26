@@ -14,27 +14,47 @@ resource app 'Radius.Core/applications@2025-08-01-preview' = {
   }
 }
 
-// No componentType is set, so the Recipe deploys Redis and a state.redis component.
+// No componentType is set, so the Recipe deploys Redis and a state.redis
+// component. Only the client app ID can load the component.
 resource stateStore 'Radius.Dapr/stateStores@2025-08-01-preview' = {
   name: 'statestore'
   properties: {
     environment: environment
     application: app.id
+    scopes: [
+      'dapr-state-client'
+    ]
   }
 }
 
-resource backend 'Radius.Compute/containers@2025-08-01-preview' = {
-  name: 'backend'
+// The client becomes ready only after it writes and reads a value through Dapr.
+resource stateClient 'Radius.Compute/containers@2025-08-01-preview' = {
+  name: 'daprstateclient'
   properties: {
     environment: environment
     application: app.id
     containers: {
-      backend: {
-        image: 'ghcr.io/radius-project/samples/demo:latest'
-        ports: {
-          web: {
-            containerPort: 3000
+      client: {
+        image: 'python:3.13-alpine'
+        command: [
+          'python'
+          '-u'
+          '-c'
+        ]
+        args: [
+          loadTextContent('dapr-client.py')
+        ]
+        readinessProbe: {
+          exec: {
+            command: [
+              '/bin/sh'
+              '-c'
+              'test -f /tmp/dapr-ready'
+            ]
           }
+          periodSeconds: 2
+          timeoutSeconds: 5
+          failureThreshold: 150
         }
       }
     }
@@ -45,8 +65,7 @@ resource backend 'Radius.Compute/containers@2025-08-01-preview' = {
     }
     extensions: {
       daprSidecar: {
-        appId: 'backend'
-        appPort: 3000
+        appId: 'dapr-state-client'
       }
     }
   }

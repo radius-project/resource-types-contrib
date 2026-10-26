@@ -14,27 +14,58 @@ resource app 'Radius.Core/applications@2025-08-01-preview' = {
   }
 }
 
-// No componentType is set, so the Recipe deploys Redis and a pubsub.redis component.
+// No componentType is set, so the Recipe deploys Redis and a pubsub.redis
+// component. Only the client app ID can load the component.
 resource pubSub 'Radius.Dapr/pubSubBrokers@2025-08-01-preview' = {
   name: 'pubsub'
   properties: {
     environment: environment
     application: app.id
+    scopes: [
+      'dapr-pubsub-client'
+    ]
   }
 }
 
-resource backend 'Radius.Compute/containers@2025-08-01-preview' = {
-  name: 'backend'
+// The client subscribes to a topic and becomes ready only after it receives
+// the message that it publishes through Dapr.
+resource pubSubClient 'Radius.Compute/containers@2025-08-01-preview' = {
+  name: 'daprpubsubclient'
   properties: {
     environment: environment
     application: app.id
     containers: {
-      backend: {
-        image: 'ghcr.io/radius-project/samples/demo:latest'
+      client: {
+        image: 'python:3.13-alpine'
+        command: [
+          'python'
+          '-u'
+          '-c'
+        ]
+        args: [
+          loadTextContent('dapr-client.py')
+        ]
+        env: {
+          APP_PORT: {
+            value: '3000'
+          }
+        }
         ports: {
           web: {
             containerPort: 3000
           }
+        }
+        readinessProbe: {
+          exec: {
+            command: [
+              '/bin/sh'
+              '-c'
+              'test -f /tmp/dapr-ready'
+            ]
+          }
+          periodSeconds: 2
+          timeoutSeconds: 5
+          failureThreshold: 150
         }
       }
     }
@@ -45,7 +76,7 @@ resource backend 'Radius.Compute/containers@2025-08-01-preview' = {
     }
     extensions: {
       daprSidecar: {
-        appId: 'backend'
+        appId: 'dapr-pubsub-client'
         appPort: 3000
       }
     }

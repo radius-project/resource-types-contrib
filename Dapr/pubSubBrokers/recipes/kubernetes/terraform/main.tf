@@ -33,6 +33,15 @@ locals {
   dapr_version      = try(local.properties.version, null) != null ? local.properties.version : "v1"
   secret_store_name = try(local.properties.auth.secretStore, null) != null ? local.properties.auth.secretStore : ""
 
+  # Dapr loads the component only into the listed app IDs. Without `scopes`,
+  # every Dapr app in the namespace can load the component, so omit the field
+  # when the list is empty.
+  scope_list = try(local.properties.scopes, null) != null ? tolist(local.properties.scopes) : []
+  component_scopes = {
+    for key, value in { scopes = local.scope_list } : key => value
+    if length(local.scope_list) > 0
+  }
+
   redis_name = "daprpubsub-${substr(sha1(var.context.resource.id), 0, 13)}"
   redis_port = 6379
   redis_host = "${local.redis_name}.${local.namespace}.svc.cluster.local:${local.redis_port}"
@@ -153,7 +162,8 @@ resource "kubernetes_manifest" "dapr_component" {
       }
       spec = local.component_spec
     },
-    local.component_auth
+    local.component_auth,
+    local.component_scopes
   )
 
   depends_on = [

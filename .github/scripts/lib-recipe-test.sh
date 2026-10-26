@@ -246,6 +246,41 @@ rtc_assert_postgresql_result() {
     echo "==> PostgreSQL result properties validated"
 }
 
+# Dapr test apps run clients that become ready only after they use the
+# component through the Dapr sidecar. The configuration API is read-only, so
+# this function first writes the expected value to the Recipe-owned Redis.
+rtc_assert_dapr_result() {
+    local resource_type="$1" app_name="$2" kubernetes_namespace="$3" redis_deployment
+    if [[ -z "$kubernetes_namespace" ]]; then
+        echo "Error: Dapr runtime assertion requires the environment Kubernetes namespace." >&2
+        return 1
+    fi
+    if [[ "$resource_type" == Radius.Dapr/configurationStores ]]; then
+        local redis_selector="radapp.io/application=$app_name,radapp.io/resource-type=Radius.Dapr-configurationStores"
+        if ! kubectl wait deployment -n "$kubernetes_namespace" -l "$redis_selector" \
+                --for=condition=Available --timeout=180s; then
+            echo "Error: Dapr configuration store Redis is not available." >&2
+            return 1
+        fi
+        redis_deployment="$(kubectl get deployment -n "$kubernetes_namespace" -l "$redis_selector" \
+            -o jsonpath='{.items[0].metadata.name}')" || return 1
+        if [[ -z "$redis_deployment" ]] ||
+           ! kubectl exec -n "$kubernetes_namespace" "deployment/$redis_deployment" -- \
+                redis-cli SET radius-test-key 'dapr-config-ok||1'; then
+            echo "Error: Could not write the Dapr configuration test value." >&2
+            return 1
+        fi
+    fi
+    if ! kubectl wait deployment -n "$kubernetes_namespace" -l "radapp.io/application=$app_name" \
+            --for=condition=Available --timeout=300s; then
+        echo "Error: Dapr runtime assertion failed for $resource_type." >&2
+        kubectl logs -n "$kubernetes_namespace" -l "radapp.io/application=$app_name" \
+            --all-containers --tail=50 --prefix >&2 || true
+        return 1
+    fi
+    echo "==> Dapr runtime checks passed for $resource_type"
+}
+
 # Resource-Type-specific post-deploy assertion dispatcher. A no-op (success)
 # for every Resource Type without a dedicated assertion above -- for those,
 # `rad deploy` succeeding (the test app's own readiness probes/waits included)
@@ -267,6 +302,9 @@ rtc_assert_recipe_result() {
                 echo "Error: MySQL client readiness assertion failed." >&2
                 return 1
             fi
+            ;;
+        Radius.Dapr/*)
+            rtc_assert_dapr_result "$resource_type" "$app_name" "${4:-}"
             ;;
         Radius.Compute/containers)
             rtc_assert_containers_result "$app_name" "$workspace_name"

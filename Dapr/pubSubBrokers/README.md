@@ -28,6 +28,7 @@ The Dapr control plane must be installed on the cluster. The Dapr component name
 | `context.resource.properties.componentType` | string | The Dapr component type. If not set, the Recipe uses the default mode. |
 | `context.resource.properties.version` | string | The Dapr component version. Defaults to `v1`. |
 | `context.resource.properties.metadata` | object | Map of component metadata names to `value` or `secretKeyRef`. In the default mode, these entries override the default entries. |
+| `context.resource.properties.scopes` | array | Dapr app IDs that can load the component. The Recipe writes this list to the root `scopes` field of the component. If the list is empty or not set, every Dapr app in the namespace can load the component. |
 | `context.resource.properties.auth.secretStore` | string | The Dapr secret store that resolves `secretKeyRef` values. |
 
 ## Recipe Parameters
@@ -47,6 +48,12 @@ The Dapr control plane must be installed on the cluster. The Dapr component name
 
 The Recipe does not return `componentType`. Radius writes output values back to the resource. If the Recipe returned the default type, a later update could switch the resource out of the default mode and delete the default Redis instance.
 
+## Consumer Access
+
+A connection from a container to this resource does not limit which Dapr apps can use the component. Set `scopes` to the Dapr app IDs of the intended consumers. The Dapr app ID is `extensions.daprSidecar.appId` on the container. If `appId` is not set, the app ID is the container resource name. It is not the application name.
+
+The Recipe does not set `scopes` from connections, because the Recipe context does not include the connected containers. If `scopes` is not set, the component is open to all Dapr apps in the namespace. This is the same as the legacy behavior.
+
 ## Migrate from Applications.Dapr/pubSubBrokers
 
 | Legacy property | New property |
@@ -57,5 +64,6 @@ The Recipe does not return `componentType`. Radius writes output values back to 
 | `recipe` | Not used. Platform engineers register Recipes in the Environment. |
 | `resources` | Not used. |
 | `metadata`, `version`, `auth`, `componentName` | No change. |
+| Not available | `scopes`. Limits the Dapr apps that can load the component. |
 
 Do not put secret material in a `metadata` `value`. Use `secretKeyRef` with `auth.secretStore`. Use a `Radius.Dapr/secretStores` resource to deploy the secret store.

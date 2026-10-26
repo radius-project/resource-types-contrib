@@ -47,6 +47,10 @@ var daprType = useDefault ? 'pubsub.redis' : requestedType
 var daprVersion = resourceProperties.?version ?? 'v1'
 var secretStoreName = resourceProperties.?auth.?secretStore ?? ''
 
+// Dapr loads the component only into the listed app IDs. An empty list lets
+// every Dapr app in the namespace load the component.
+var componentScopes = resourceProperties.?scopes ?? []
+
 var redisName = 'daprpubsub-${uniqueString(context.resource.id)}'
 var redisPort = 6379
 var redisHost = '${redisName}.${namespace}.svc.cluster.local:${redisPort}'
@@ -162,6 +166,7 @@ resource daprComponent 'dapr.io/Component@v1alpha1' = if (empty(secretStoreName)
     labels: labels
   }
   spec: componentSpec
+  scopes: componentScopes
 }
 
 #disable-next-line BCP081
@@ -172,6 +177,7 @@ resource daprComponentWithAuth 'dapr.io/Component@v1alpha1' = if (!empty(secretS
     labels: labels
   }
   spec: componentSpec
+  scopes: componentScopes
   auth: {
     secretStore: secretStoreName
   }

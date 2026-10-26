@@ -82,6 +82,22 @@ types:
       }
       ```
 
+      A connection gives the container the component name, but it does not
+      limit access. To limit the component to its consumers, set `scopes` to
+      the Dapr app IDs of the consumer containers:
+      ```bicep
+      resource configStore 'Radius.Dapr/configurationStores@2025-08-01-preview' = {
+        name: 'configstore'
+        properties: {
+          environment: environment
+          application: myApplication.id
+          scopes: [
+            'backend'
+          ]
+        }
+      }
+      ```
+
       The Dapr component name is the resource name. On compatible Kubernetes
       Container Recipes, the connection injects environment variables named
       `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>`. In this example, the
@@ -131,6 +147,11 @@ types:
                 secretStore:
                   type: string
                   description: "(Optional) The name of the Dapr secret store component that resolves `secretKeyRef` values. Defaults to the Kubernetes secret store."
+            scopes:
+              type: array
+              description: "(Optional) The Dapr app IDs that can use this component. Set each value to the `daprSidecar.appId` of a consumer container. A Radius connection does not limit access by itself. If not set, every Dapr app in the namespace can use the component."
+              items:
+                type: string
             componentName:
               type: string
               readOnly: true
