@@ -53,7 +53,11 @@ The Recipe maps the resource's `tls` property to the parameter group's `require_
 - The `password` must meet the RDS rules: 8 to 41 printable ASCII characters, without `/`, `"`, `@`, or spaces.
 - `version` maps to the RDS engine version and the `mysql<version>` parameter group family. `5.7` runs on RDS Extended Support, which AWS bills separately. Changing `version` after the database exists is not supported.
 - The credentials Radius uses for AWS need permission to manage RDS instances, subnet groups, and parameter groups, and to describe the EKS cluster.
-- RDS doesn't return `MasterUserPassword` when Radius reads the instance, so every redeploy sends the password to RDS again as an update.
+- Redeploying an unchanged app still sends two updates to AWS. Both apply the same values, and nothing else changes:
+  - `ModifyDBInstance`, because RDS never returns `MasterUserPassword` and returns the full engine version (for example `8.4.11`) instead of the major version the Recipe sets. RDS logs a "Reset master credentials" event.
+  - `ModifyDBSubnetGroup`, because AWS returns the subnet IDs in its own order.
+
+  These need Radius to compare against the last deployed template instead of the state AWS returns ([radius-project/radius#13455](https://github.com/radius-project/radius/issues/13455)).
 
 ## Deploying
 
@@ -89,3 +93,5 @@ rad env update default \
 ## Testing
 
 Every pull request deploys and activates this pack on a local cluster, and checks that the pack passes exactly the parameters the MySQL Recipe declares. CI has no AWS account yet, so the nightly tests don't deploy the AWS Recipes.
+
+The MySQL Recipe was tested by hand against an EKS cluster's subnets and security group: create, unchanged redeploy, and delete through Radius. Delete removes the instance, subnet group, and parameter group, and keeps no final snapshot or automated backups.
