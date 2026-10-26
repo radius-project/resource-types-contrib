@@ -29,13 +29,6 @@ The Dapr control plane must be installed on the cluster. The Dapr component name
 | `context.resource.properties.version` | string | The Dapr component version. Defaults to `v1`. |
 | `context.resource.properties.metadata` | object | Map of component metadata names to `value` or `secretKeyRef`. A `secretKeyRef` reads a Kubernetes secret. |
 | `context.resource.properties.scopes` | array | Dapr app IDs that can load the component. The Recipe writes this list to the root `scopes` field of the component. If the list is empty or not set, every Dapr app in the namespace can load the component. |
-| `context.resource.properties.allowedSecrets` | array | Names of the Kubernetes secrets that the Dapr apps can read. Applies only to `secretstores.kubernetes`. The Recipe fails if you set it with another component type. |
-
-## Recipe Parameters
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| `daprServiceAccountName` | string | `default` | The Kubernetes ServiceAccount of the Dapr apps that read secrets. The Recipe binds the secret-read Role to this ServiceAccount. |
 
 ## Recipe Output Properties
 
@@ -43,8 +36,6 @@ The Dapr control plane must be installed on the cluster. The Dapr component name
 | --- | --- | --- |
 | `componentName` | string | The name of the Dapr component. |
 | `version` | string | The Dapr component version. |
-
-When `allowedSecrets` is set, the Recipe also creates a Role and a RoleBinding. The `resources` output includes them, so Radius deletes them with the resource.
 
 ## Consumer Access
 
@@ -56,17 +47,41 @@ The Recipe does not set `scopes` from connections, because the Recipe context do
 
 The Dapr sidecar reads Kubernetes secrets with the ServiceAccount of its Pod. The Dapr Helm chart gives the `default` ServiceAccount read access to secrets only in the `default` namespace. In other namespaces, the sidecar cannot read secrets until you give access.
 
-Set `allowedSecrets` to the names of the secrets that the consumers can read. The Recipe then creates:
+The Recipe does not give this access. Radius runs Recipes with an identity that cannot create or delete Kubernetes Roles. Before you deploy an application that reads secrets, create a Role with `get` on only the secrets that the consumers can read. Then bind it to the ServiceAccount of the consumer Pods. The Kubernetes Container Recipes in this repository use the `default` ServiceAccount. Replace `<namespace>` with the namespace of the environment:
 
-- A Role with `get` on only the secrets in `allowedSecrets`.
-- A RoleBinding from the Role to the `daprServiceAccountName` ServiceAccount in the namespace of the environment.
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dapr-secret-reader
+  namespace: <namespace>
+rules:
+  - apiGroups: ['']
+    resources: ['secrets']
+    resourceNames: ['backend-api-key']
+    verbs: ['get']
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dapr-secret-reader
+  namespace: <namespace>
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: dapr-secret-reader
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: <namespace>
+```
 
-Kubernetes denies reads of all other secrets. If `allowedSecrets` is not set, the Recipe does not give access. Do not give a namespace-wide secret read Role to the ServiceAccount.
+Kubernetes denies reads of all other secrets. Do not give a namespace-wide secret read Role to the ServiceAccount. The automated test creates the same Role for its allowed secret, and then makes sure that a read of a different secret fails.
 
 Limits:
 
-- The Kubernetes Container Recipes in this repository use the `default` ServiceAccount. Every Pod in the namespace that uses this ServiceAccount can read the allowed secrets. This includes reads through the Kubernetes API and through the built-in `kubernetes` Dapr secret store. `scopes` does not limit the built-in store. To limit reads to one workload, run that workload with its own ServiceAccount and set `daprServiceAccountName` to that ServiceAccount.
-- For other component types, such as Azure Key Vault, control access in the secret store. `allowedSecrets` does not apply.
+- Every Pod in the namespace that uses the `default` ServiceAccount can read the allowed secrets. This includes reads through the Kubernetes API and through the built-in `kubernetes` Dapr secret store. `scopes` does not limit the built-in store. The Kubernetes Container Recipes in this repository do not support a ServiceAccount for each workload.
+- For other component types, such as Azure Key Vault, control access in the secret store.
 
 ## Migrate from Applications.Dapr/secretStores
 
@@ -78,4 +93,3 @@ Limits:
 | `recipe` | Not used. Platform engineers register Recipes in the Environment. |
 | `metadata`, `version`, `componentName` | No change. |
 | Not available | `scopes`. Limits the Dapr apps that can load the component. |
-| Not available | `allowedSecrets`. Gives read access to the named Kubernetes secrets only. |

@@ -34,8 +34,8 @@ def mark_ready(message):
 
 
 # ROLE=allowed: the app ID is in the component scopes. Read the permitted
-# secret, then confirm that Kubernetes RBAC denies a secret that is not in
-# allowedSecrets.
+# secret, then confirm that Kubernetes RBAC denies a secret that the
+# ServiceAccount cannot read.
 # ROLE=denied: the app ID is not in the component scopes. Confirm that the
 # connection alone does not let the app use the secret store.
 STORE = os.environ['CONNECTION_SECRETSTORE_COMPONENTNAME']

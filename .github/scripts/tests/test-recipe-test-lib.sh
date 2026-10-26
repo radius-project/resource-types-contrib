@@ -241,6 +241,24 @@ if KUBECTL_WAIT_EXIT_CODE=1 run_lib rtc_assert_recipe_result "Radius.Dapr/secret
     fail "Dapr assertion must fail when a client does not become ready"
 fi
 
+# The secret store assertion gives get access to the allowed secret only, and
+# deletes the access after the clients finish.
+: >"$CALL_LOG"
+run_lib rtc_assert_recipe_result "Radius.Dapr/secretStores" testapp myws my-ns >/dev/null \
+    || fail "Dapr secret store assertion should pass"
+grep -q -- 'kubectl create role dapr-secret-reader-testapp -n my-ns --verb=get --resource=secrets --resource-name=dapr-allowed-secret' "$CALL_LOG" ||
+    fail "secret store assertion must give get access to the allowed secret only"
+grep -q -- 'kubectl create rolebinding dapr-secret-reader-testapp -n my-ns --role=dapr-secret-reader-testapp --serviceaccount=my-ns:default' "$CALL_LOG" ||
+    fail "secret store assertion must bind the Role to the default ServiceAccount"
+tail -n 1 "$CALL_LOG" | grep -q -- 'kubectl delete rolebinding,role dapr-secret-reader-testapp -n my-ns' ||
+    fail "secret store assertion must delete the Role and RoleBinding last"
+: >"$CALL_LOG"
+if KUBECTL_WAIT_EXIT_CODE=1 run_lib rtc_assert_recipe_result "Radius.Dapr/secretStores" testapp myws my-ns >/dev/null 2>&1; then
+    fail "Dapr secret store assertion must fail when a client does not become ready"
+fi
+grep -q -- 'kubectl delete rolebinding,role dapr-secret-reader-testapp' "$CALL_LOG" ||
+    fail "secret store assertion must delete the Role and RoleBinding after a failure"
+
 # The configuration store assertion writes the expected value to Redis first.
 : >"$CALL_LOG"
 KUBECTL_GET_OUTPUT=daprconfig-abc run_lib rtc_assert_recipe_result "Radius.Dapr/configurationStores" testapp myws my-ns >/dev/null \

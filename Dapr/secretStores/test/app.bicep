@@ -42,8 +42,8 @@ resource deniedSecret 'Radius.Security/secrets@2025-08-01-preview' = {
 }
 
 // No componentType is set, so the Recipe deploys a secretstores.kubernetes
-// component. Only the allowed client app ID can load the component, and the
-// Recipe gives read access to the allowed secret only.
+// component. Only the allowed client app ID can load the component. The test
+// runner gives the default ServiceAccount read access to the allowed secret only.
 resource secretStore 'Radius.Dapr/secretStores@2025-08-01-preview' = {
   name: 'secretstore'
   properties: {
@@ -51,9 +51,6 @@ resource secretStore 'Radius.Dapr/secretStores@2025-08-01-preview' = {
     application: app.id
     scopes: [
       'dapr-secret-client'
-    ]
-    allowedSecrets: [
-      allowedSecret.name
     ]
   }
 }
