@@ -47,6 +47,14 @@ jq -e '
   ([.. | objects | keys[]] | index("password") == null)
 ' <<<"$AWS_TEMPLATE" >/dev/null
 
+# Radius resource IDs repeat across installations, so AWS names must also hash
+# the cluster and the Environment's Kubernetes namespace.
+jq -e '
+  (.variables.namespace | contains("runtime") and contains("kubernetes") and contains("namespace")) and
+  (.variables.name | contains("eksClusterName") and contains("variables('"'"'namespace'"'"')") and contains(".resource.id"))
+' <<<"$AWS_TEMPLATE" >/dev/null ||
+    { echo "AWS MySQL Recipe names must hash the cluster, namespace, and resource ID" >&2; exit 1; }
+
 # The aws-eks pack must pass every required Recipe parameter and nothing the
 # Recipe does not declare: a deployment rejects undeclared parameters.
 # shellcheck source=.github/scripts/lib-recipe-packs.sh

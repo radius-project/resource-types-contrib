@@ -36,10 +36,13 @@ var subnetIdList = filter(
   id => !empty(id)
 )
 
-// RDS names are unique per account and region, so the hash includes the
-// cluster name: two Radius installations that share an account still get
-// distinct names. RDS stores names in lowercase; uniqueString is lowercase.
-var name = 'mysql-${uniqueString(eksClusterName, context.resource.id)}'
+// RDS names are unique per account and region, but Radius resource IDs are
+// not: every installation uses the `local` plane, and a control plane can be
+// recreated for each deploy. The hash adds the cluster and the Environment's
+// Kubernetes namespace, which identify where the app runs and stay the same
+// across installations. RDS stores names in lowercase; uniqueString is lowercase.
+var namespace = context.runtime.?kubernetes.?namespace ?? ''
+var name = 'mysql-${uniqueString(eksClusterName, namespace, context.resource.id)}'
 
 var tags = [
   {

@@ -36,7 +36,7 @@ The AWS region and account come from the Environment's AWS provider, not from th
 
 The `Radius.Data/mySqlDatabases` Recipe creates a DB subnet group from `subnetIds`, a DB parameter group, and a single-AZ, encrypted, non-public `db.t3.micro` RDS for MySQL instance with 20 GiB of `gp3` storage. It returns `host`, `port` (`3306`), and `database`, the same values as the Kubernetes Recipe, so one application definition works on every platform.
 
-Resource names are `mysql-<hash>`, where the hash covers the EKS cluster name and the Radius resource ID. Names stay the same across redeploys, and two Radius installations in the same account and region don't collide.
+Resource names are `mysql-<hash>`, where the hash covers the EKS cluster name, the Environment's Kubernetes namespace, and the Radius resource ID. Radius resource IDs repeat across installations, so the namespace keeps apps in different namespaces on the same cluster apart. Names stay the same across redeploys, including from a new Radius installation that targets the same namespace. Two Environments that share a cluster, a namespace, and resource IDs share one database, the same way their Kubernetes resources would collide.
 
 ### Network access
 
@@ -53,11 +53,14 @@ The Recipe maps the resource's `tls` property to the parameter group's `require_
 - The `password` must meet the RDS rules: 8 to 41 printable ASCII characters, without `/`, `"`, `@`, or spaces.
 - `version` maps to the RDS engine version and the `mysql<version>` parameter group family. `5.7` runs on RDS Extended Support, which AWS bills separately. Changing `version` after the database exists is not supported.
 - The credentials Radius uses for AWS need permission to manage RDS instances, subnet groups, and parameter groups, and to describe the EKS cluster.
-- Redeploying an unchanged app still sends two updates to AWS. Both apply the same values, and nothing else changes:
+- Redeploying an unchanged app still sends two updates to AWS. In a live test, both applied the same values and nothing else changed:
   - `ModifyDBInstance`, because RDS never returns `MasterUserPassword` and returns the full engine version (for example `8.4.11`) instead of the major version the Recipe sets. RDS logs a "Reset master credentials" event.
   - `ModifyDBSubnetGroup`, because AWS returns the subnet IDs in its own order.
 
+  The instance update sends only the major version, and RDS then [upgrades an instance to the default minor version](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_ModifyDBInstance.html) if it runs an older one. Once AWS makes a newer minor version the default, a redeploy can upgrade and restart the database immediately, outside its maintenance window.
+
   These need Radius to compare against the last deployed template instead of the state AWS returns ([radius-project/radius#13455](https://github.com/radius-project/radius/issues/13455)).
+- Radius versions without the fix for [radius-project/radius#13457](https://github.com/radius-project/radius/issues/13457) copy the `password` into the AWS deployment responses they return, which appear in deployment operation results. The Recipe can't avoid this: RDS needs the password, and the Recipe can only send it through that API.
 
 ## Deploying
 
