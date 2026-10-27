@@ -98,11 +98,16 @@ test-direct-module-recipes-unit: test-recipe-pack-entries-unit ## Compatibility 
 
 .PHONY: test-recipe-pack-entries-unit
 test-recipe-pack-entries-unit: ## Run fixture-based unit tests for all Recipe Pack entry test scripts (no live environment needed)
+	@bash ./.github/scripts/tests/test-azure-cli-with-refresh.sh
+	@node --test ./.github/scripts/tests/test-azure-test-diagnostics.js
+	@bash ./.github/scripts/tests/test-azure-diagnostics-integration.sh
 	@./.github/scripts/tests/test-mysql-transport.sh
 	@./.github/scripts/tests/test-recipe-test-lib.sh
 	@./.github/scripts/tests/test-test-direct-module-recipe.sh
 	@./.github/scripts/tests/test-test-all-direct-module-recipes.sh
 	@./.github/scripts/tests/test-test-all-recipe-pack-entries.sh
+	@./.github/scripts/tests/test-probe-azure-postgres-capacity.sh
+	@./.github/scripts/tests/test-select-azure-test-location.sh
 
 .PHONY: test-azure-secret-inputs
 test-azure-secret-inputs: ## Run Azure secret input tests in a temporary directory (requires Terraform 1.7+)
@@ -124,7 +129,7 @@ endif
 	rad env update "$$ENVIRONMENT" --recipe-packs $(RECIPE_PACK_NAME)
 
 .PHONY: test
-test: ## Run recipe tests (assumes already registered)
+test: ## Run recipe tests (assumes a Recipe Pack with the recipes is attached to the Environment)
 	@./.github/scripts/test-all-recipes.sh "$(RESOURCE_TYPE_ROOT)" "$(ENVIRONMENT)" "$(RECIPE_TYPE)"
 
 .PHONY: test-kubernetes-recipes

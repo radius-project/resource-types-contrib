@@ -1,0 +1,476 @@
+# yaml-language-server: $schema=https://www.schemastore.org/github-workflow.json
+---
+name: Release Candidate Recipe and Pack Tests
+
+# Runs the nightly Recipe and Pack tests (nightly-recipe-pack-tests.yaml)
+# against what a Radius release candidate actually ships, instead of `main`.
+#
+# The Radius release's deploy/manifest/defaults.yaml (at tag v<version>) pins
+# every resource type namespace and Recipe Pack to a commit of this repository.
+# prepare-release-candidate-sources.sh restores those released revisions into
+# the checkout and points each Recipe Pack's repository-owned recipes at the
+# OCI tags published for the pinned commit -- the same tags the released `rad`
+# resolves. The test scripts then run unchanged:
+#   * Bicep and Terraform recipes built from the released namespace sources.
+#   * The released Recipe Packs, deployed with the published recipes.
+#   * Every runnable entry of those packs.
+#
+# Run it after a Radius release candidate is cut and before the final release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Radius release candidate version to test (e.g. 0.62.0-rc.1)."
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: release-candidate-recipe-pack-tests-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  rc-kubernetes-recipe-pack-tests:
+    name: Release Candidate Recipe and Pack Tests (Kubernetes)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      RAD_ENVIRONMENT_NAME: default
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Use sources released with Radius ${{ inputs.version }}
+        id: rc
+        env:
+          RADIUS_VERSION: ${{ inputs.version }}
+        run: ./.github/scripts/release/prepare-release-candidate-sources.sh
+
+      - name: Verify published Recipe sources resolve
+        run: |
+          set -euo pipefail
+          source .github/scripts/lib-recipe-packs.sh
+          # A separate assignment lets set -e stop the job when enumeration fails.
+          packs="$(rtc_recipe_packs_for_platform_group kubernetes)"
+          for pack in $packs; do
+            RECIPE_PACK="$pack" ./.github/scripts/release/verify-recipe-pack-sources.sh
+          done
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
+        with:
+          version: "1.2.0"
+
+      - name: Install Radius CLI
+        env:
+          RAD_VERSION: ${{ steps.rc.outputs.radius_version }}
+        run: make install-radius-cli RAD_VERSION="$RAD_VERSION"
+
+      # This sets up a local k3d cluster for testing purposes and creates a
+      # workspace, group, and default environment.
+      - name: Create Radius Cluster
+        run: make create-radius-cluster
+
+      - name: Build released Resource Types and Kubernetes Recipes
+        run: RECIPE_PLATFORM_FILTER=kubernetes make build
+
+      - name: Test released Kubernetes Bicep recipes
+        id: kubernetes_bicep
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          pack_name="candidatebiceprecipepack"
+          pack_file="recipe-pack-rc-bicep.bicep"
+          RECIPE_PLATFORM_FILTER=kubernetes make generate-recipe-pack \
+            PACK_NAME="$pack_name" \
+            OUTPUT_FILE="$pack_file"
+          if [[ ! -f "$pack_file" ]]; then
+            echo "No Kubernetes bicep recipes found."
+            exit 0
+          fi
+          make deploy-recipe-pack BICEP_FILE="$pack_file"
+          make update-env-recipe-pack \
+            RECIPE_PACK_NAME="$pack_name" \
+            ENVIRONMENT="$RAD_ENVIRONMENT_NAME"
+          RECIPE_PLATFORM_FILTER=kubernetes make test \
+            ENVIRONMENT="$RAD_ENVIRONMENT_NAME" \
+            RECIPE_TYPE=bicep
+
+      - name: Test released Kubernetes Terraform recipes
+        id: kubernetes_terraform
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          pack_name="candidateterraformrecipepack"
+          pack_file="recipe-pack-rc-terraform.bicep"
+          RECIPE_PLATFORM_FILTER=kubernetes make generate-recipe-pack \
+            PACK_NAME="$pack_name" \
+            OUTPUT_FILE="$pack_file"
+          if [[ ! -f "$pack_file" ]]; then
+            echo "No Kubernetes terraform recipes found."
+            exit 0
+          fi
+          make deploy-recipe-pack BICEP_FILE="$pack_file"
+          make update-env-recipe-pack \
+            RECIPE_PACK_NAME="$pack_name" \
+            ENVIRONMENT="$RAD_ENVIRONMENT_NAME"
+          RECIPE_PLATFORM_FILTER=kubernetes make test \
+            ENVIRONMENT="$RAD_ENVIRONMENT_NAME" \
+            RECIPE_TYPE=terraform
+
+      - name: Deploy released Kubernetes Recipe Packs
+        id: kubernetes_pack_deploy
+        continue-on-error: true
+        run: .github/scripts/deploy-all-checked-in-recipe-packs.sh kubernetes "$RAD_ENVIRONMENT_NAME"
+
+      - name: Test all runnable released Recipe Pack entries
+        id: kubernetes_pack_entries
+        continue-on-error: true
+        run: make test-recipe-pack-entries PLATFORM_GROUP=kubernetes WORKSPACE=default ENVIRONMENT="$RAD_ENVIRONMENT_NAME"
+
+      - name: Report Kubernetes test failures
+        if: ${{ !cancelled() }}
+        env:
+          BICEP_OUTCOME: ${{ steps.kubernetes_bicep.outcome }}
+          TERRAFORM_OUTCOME: ${{ steps.kubernetes_terraform.outcome }}
+          PACK_DEPLOY_OUTCOME: ${{ steps.kubernetes_pack_deploy.outcome }}
+          PACK_ENTRIES_OUTCOME: ${{ steps.kubernetes_pack_entries.outcome }}
+        run: |
+          failures=0
+          for result in \
+            "Bicep recipes:$BICEP_OUTCOME" \
+            "Terraform recipes:$TERRAFORM_OUTCOME" \
+            "released pack deployment:$PACK_DEPLOY_OUTCOME" \
+            "released pack entries:$PACK_ENTRIES_OUTCOME"; do
+            name="${result%%:*}"
+            outcome="${result#*:}"
+            if [[ "$outcome" != "success" ]]; then
+              echo "::error::$name finished with outcome '$outcome'"
+              failures=1
+            fi
+          done
+          exit "$failures"
+
+      - name: Collect Radius pod logs
+        if: always()
+        run: |
+          mkdir -p radius-pod-logs
+          APP_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | startswith("applications-rp-")) | .metadata.name' | head -n1)
+          if [ -n "$APP_POD" ]; then
+            kubectl logs "$APP_POD" -n radius-system --all-containers > radius-pod-logs/applications-rp.log || true
+          else
+            echo "applications-rp pod not found" > radius-pod-logs/applications-rp.log
+          fi
+          DE_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | test("^(deployment-engine|bicep-de)-")) | .metadata.name' | head -n1)
+          if [ -n "$DE_POD" ]; then
+            kubectl logs "$DE_POD" -n radius-system --all-containers > radius-pod-logs/deployment-engine.log || true
+          else
+            echo "deployment engine pod not found" > radius-pod-logs/deployment-engine.log
+          fi
+          UCP_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | startswith("ucp-")) | .metadata.name' | head -n1)
+          if [ -n "$UCP_POD" ]; then
+            kubectl logs "$UCP_POD" -n radius-system --all-containers > radius-pod-logs/ucp.log || true
+          else
+            echo "ucp pod not found" > radius-pod-logs/ucp.log
+          fi
+          DRP_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | startswith("dynamic-rp-")) | .metadata.name' | head -n1)
+          if [ -n "$DRP_POD" ]; then
+            kubectl logs "$DRP_POD" -n radius-system --all-containers > radius-pod-logs/dynamic-rp.log || true
+          else
+            echo "dynamic-rp pod not found" > radius-pod-logs/dynamic-rp.log
+          fi
+
+      - name: Upload Radius pod logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: radius-pod-logs-rc-kubernetes
+          path: radius-pod-logs
+          if-no-files-found: warn
+
+  rc-azure-recipe-pack-tests:
+    name: Release Candidate Recipe and Pack Tests (Azure)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      resource_group: ${{ steps.set-context.outputs.resource_group }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Use sources released with Radius ${{ inputs.version }}
+        id: rc
+        env:
+          RADIUS_VERSION: ${{ inputs.version }}
+        run: ./.github/scripts/release/prepare-release-candidate-sources.sh
+
+      - name: Verify published Recipe sources resolve
+        run: |
+          set -euo pipefail
+          source .github/scripts/lib-recipe-packs.sh
+          # A separate assignment lets set -e stop the job when enumeration fails.
+          packs="$(rtc_recipe_packs_for_platform_group azure)"
+          for pack in $packs; do
+            RECIPE_PACK="$pack" ./.github/scripts/release/verify-recipe-pack-sources.sh
+          done
+
+      - name: Azure Login
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Enable Azure CLI token renewal
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: bash .github/scripts/azure-cli-with-refresh.sh --install
+
+      - name: Set Azure Test Context
+        id: set-context
+        run: |
+          LOCATION="${AZURE_LOCATION:-$DEFAULT_AZURE_LOCATION}"
+          if [ -z "$LOCATION" ]; then
+            LOCATION="westus3"
+          fi
+          RG="rrttest-rc-${{ github.run_id }}-${{ github.run_attempt }}"
+          {
+            echo "AZURE_LOCATION=$LOCATION"
+            echo "AZURE_RESOURCE_GROUP=$RG"
+            echo "AZURE_WORKSPACE_NAME=default"
+            echo "AZURE_ENVIRONMENT_NAME=default"
+          } >> "$GITHUB_ENV"
+          echo "resource_group=$RG" >> "$GITHUB_OUTPUT"
+        env:
+          DEFAULT_AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+
+      - name: Create Azure Resource Group
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          RG="$AZURE_RESOURCE_GROUP"
+          LOCATION="$AZURE_LOCATION"
+          current_time=$(date +%s)
+          az group create \
+            --only-show-errors \
+            --output none \
+            --location "$LOCATION" \
+            --name "$RG" \
+            --subscription "$AZURE_SUBSCRIPTION_ID" \
+            --tags "creationTime=$current_time" > /dev/null
+          while [[ "$(az group exists --name "$RG" --subscription "$AZURE_SUBSCRIPTION_ID")" != "true" ]]; do
+            echo "Waiting for resource group '$RG' to be available..."
+            sleep 5
+          done
+          echo "Resource group '$RG' is ready"
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
+        with:
+          version: "1.2.0"
+
+      - name: Install Radius CLI
+        env:
+          RAD_VERSION: ${{ steps.rc.outputs.radius_version }}
+        run: make install-radius-cli RAD_VERSION="$RAD_VERSION"
+
+      - name: Create Radius Cluster
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          TEST_AZURE_OIDC_JSON: ${{ secrets.TEST_AZURE_OIDC_JSON }}
+        run: make create-radius-cluster
+
+      - name: Configure Azure Provider
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: make configure-azure-provider
+
+      - name: Build released Azure Recipes
+        run: make build-azure-recipes
+
+      - name: Test released Azure Bicep recipes
+        id: azure_bicep
+        continue-on-error: true
+        timeout-minutes: 75
+        env:
+          RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
+        run: |
+          set -euo pipefail
+          pack_name="candidateazurebiceprecipepack"
+          pack_file="recipe-pack-rc-azure-bicep.bicep"
+          RECIPE_PLATFORM_FILTER=azure make generate-recipe-pack \
+            PACK_NAME="$pack_name" \
+            OUTPUT_FILE="$pack_file"
+          if [[ ! -f "$pack_file" ]]; then
+            echo "No Azure bicep recipes found."
+            exit 0
+          fi
+          make deploy-recipe-pack BICEP_FILE="$pack_file" RESOURCE_GROUP=default
+          make update-env-recipe-pack \
+            RECIPE_PACK_NAME="$pack_name" \
+            ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+          RECIPE_PLATFORM_FILTER=azure make test \
+            ENVIRONMENT="$AZURE_ENVIRONMENT_NAME" \
+            RECIPE_TYPE=bicep
+
+      - name: Test released Azure Terraform recipes
+        id: azure_terraform
+        continue-on-error: true
+        timeout-minutes: 75
+        env:
+          RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
+        run: |
+          set -euo pipefail
+          pack_name="candidateazureterraformrecipepack"
+          pack_file="recipe-pack-rc-azure-terraform.bicep"
+          RECIPE_PLATFORM_FILTER=azure make generate-recipe-pack \
+            PACK_NAME="$pack_name" \
+            OUTPUT_FILE="$pack_file"
+          if [[ ! -f "$pack_file" ]]; then
+            echo "No Azure terraform recipes found."
+            exit 0
+          fi
+          make deploy-recipe-pack BICEP_FILE="$pack_file" RESOURCE_GROUP=default
+          make update-env-recipe-pack \
+            RECIPE_PACK_NAME="$pack_name" \
+            ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+          RECIPE_PLATFORM_FILTER=azure make test \
+            ENVIRONMENT="$AZURE_ENVIRONMENT_NAME" \
+            RECIPE_TYPE=terraform
+
+      - name: Deploy released Azure Recipe Packs
+        id: azure_pack_deploy
+        continue-on-error: true
+        timeout-minutes: 15
+        run: .github/scripts/deploy-all-checked-in-recipe-packs.sh azure "$AZURE_ENVIRONMENT_NAME"
+
+      - name: Test all runnable released Recipe Pack entries
+        id: azure_pack_entries
+        continue-on-error: true
+        timeout-minutes: 120
+        env:
+          RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
+        run: make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+
+      - name: Upload pre-cleanup Azure diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: azure-test-diagnostics-rc-azure
+          path: azure-test-diagnostics
+          if-no-files-found: ignore
+
+      - name: Report Azure test failures
+        if: ${{ !cancelled() }}
+        env:
+          BICEP_OUTCOME: ${{ steps.azure_bicep.outcome }}
+          TERRAFORM_OUTCOME: ${{ steps.azure_terraform.outcome }}
+          PACK_DEPLOY_OUTCOME: ${{ steps.azure_pack_deploy.outcome }}
+          PACK_ENTRIES_OUTCOME: ${{ steps.azure_pack_entries.outcome }}
+        run: |
+          failures=0
+          for result in \
+            "Bicep recipes:$BICEP_OUTCOME" \
+            "Terraform recipes:$TERRAFORM_OUTCOME" \
+            "released pack deployment:$PACK_DEPLOY_OUTCOME" \
+            "released pack entries:$PACK_ENTRIES_OUTCOME"; do
+            name="${result%%:*}"
+            outcome="${result#*:}"
+            if [[ "$outcome" != "success" ]]; then
+              echo "::error::$name finished with outcome '$outcome'"
+              failures=1
+            fi
+          done
+          exit "$failures"
+
+      - name: Collect Radius pod logs
+        if: always()
+        run: |
+          mkdir -p radius-pod-logs
+          APP_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | startswith("applications-rp-")) | .metadata.name' | head -n1)
+          if [ -n "$APP_POD" ]; then
+            kubectl logs "$APP_POD" -n radius-system --all-containers > radius-pod-logs/applications-rp.log || true
+          else
+            echo "applications-rp pod not found" > radius-pod-logs/applications-rp.log
+          fi
+          DE_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | test("^(deployment-engine|bicep-de)-")) | .metadata.name' | head -n1)
+          if [ -n "$DE_POD" ]; then
+            kubectl logs "$DE_POD" -n radius-system --all-containers > radius-pod-logs/deployment-engine.log || true
+          else
+            echo "deployment engine pod not found" > radius-pod-logs/deployment-engine.log
+          fi
+          UCP_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | startswith("ucp-")) | .metadata.name' | head -n1)
+          if [ -n "$UCP_POD" ]; then
+            kubectl logs "$UCP_POD" -n radius-system --all-containers > radius-pod-logs/ucp.log || true
+          else
+            echo "ucp pod not found" > radius-pod-logs/ucp.log
+          fi
+          DRP_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | startswith("dynamic-rp-")) | .metadata.name' | head -n1)
+          if [ -n "$DRP_POD" ]; then
+            kubectl logs "$DRP_POD" -n radius-system --all-containers > radius-pod-logs/dynamic-rp.log || true
+          else
+            echo "dynamic-rp pod not found" > radius-pod-logs/dynamic-rp.log
+          fi
+
+      - name: Upload Radius pod logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: radius-pod-logs-rc-azure
+          path: radius-pod-logs
+          if-no-files-found: warn
+
+  cleanup-azure-resources:
+    name: Cleanup Azure Resources
+    needs: rc-azure-recipe-pack-tests
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Azure Login
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Cleanup Azure Resources
+        env:
+          AZURE_RESOURCE_GROUP: ${{ needs.rc-azure-recipe-pack-tests.outputs.resource_group }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: make cleanup-azure-resources

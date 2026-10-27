@@ -29,6 +29,7 @@ mkdir -p \
     "$FIXTURE_ROOT/recipe-packs/kubernetes" \
     "$FIXTURE_ROOT/Data/redisCaches/test" \
     "$FIXTURE_ROOT/Data/mySqlDatabases/test" \
+    "$FIXTURE_ROOT/Data/postgreSqlDatabases/test" \
     "$FIXTURE_ROOT/Messaging/rabbitMQ/test" \
     "$FIXTURE_ROOT/Compute/containers/test" \
     "$FIXTURE_ROOT/Compute/persistentVolumes/test" \
@@ -61,6 +62,10 @@ resource pack 'Radius.Core/recipePacks@2025-08-01-preview' = {
           ]
         }
       }
+      'Radius.Data/postgreSqlDatabases': {
+        kind: 'bicep'
+        source: 'mcr.microsoft.com/bicep/avm/res/db-for-postgre-sql/flexible-server:0.15.2'
+      }
       'Radius.Compute/persistentVolumes': {
         kind: 'bicep'
         source: 'ghcr.io/radius-project/kube-recipes/persistentvolumes:latest'
@@ -87,6 +92,10 @@ resource pack 'Radius.Core/recipePacks@2025-08-01-preview' = {
         kind: 'bicep'
         source: 'ghcr.io/radius-project/kube-recipes/mysqldatabases:latest'
       }
+      'Radius.Data/postgreSqlDatabases': {
+        kind: 'bicep'
+        source: 'ghcr.io/radius-project/kube-recipes/postgresqldatabases:latest'
+      }
     }
   }
 }
@@ -109,6 +118,7 @@ EOF
 for test_file in \
     "$FIXTURE_ROOT/Data/redisCaches/test/app.bicep" \
     "$FIXTURE_ROOT/Data/mySqlDatabases/test/app.bicep" \
+    "$FIXTURE_ROOT/Data/postgreSqlDatabases/test/app.bicep" \
     "$FIXTURE_ROOT/Messaging/rabbitMQ/test/app.bicep" \
     "$FIXTURE_ROOT/Compute/containers/test/app.bicep" \
     "$FIXTURE_ROOT/Compute/persistentVolumes/test/app.bicep" \
@@ -124,6 +134,10 @@ export FAIL_TYPE=""
 cat >"$TEST_ROOT/bin/test-recipe-pack-entry.sh" <<'EOF'
 #!/bin/bash
 echo "test-recipe-pack-entry.sh $*" >>"$CALL_LOG"
+case "$2" in
+    azure-ws) [[ "${RTC_TEST_PLATFORM:-}" == azure ]] || exit 97 ;;
+    kubernetes-ws) [[ "${RTC_TEST_PLATFORM:-}" == kubernetes ]] || exit 98 ;;
+esac
 [[ "$1" == "$FAIL_TYPE" ]] && exit 1
 exit 0
 EOF
@@ -139,6 +153,12 @@ chmod +x "$TEST_ROOT/bin/rad"
 SCRIPTS_COPY="$TEST_ROOT/scripts"
 cp -r "$REPO_ROOT/.github/scripts" "$SCRIPTS_COPY"
 cp "$TEST_ROOT/bin/test-recipe-pack-entry.sh" "$SCRIPTS_COPY/test-recipe-pack-entry.sh"
+cat >"$SCRIPTS_COPY/probe-azure-postgres-capacity.sh" <<'EOF'
+#!/bin/bash
+echo "probe-azure-postgres-capacity.sh" >>"$CALL_LOG"
+exit "${PROBE_EXIT_CODE:-0}"
+EOF
+chmod +x "$SCRIPTS_COPY/probe-azure-postgres-capacity.sh"
 
 run_driver() {
     (
@@ -164,12 +184,14 @@ rad env update azure-env --workspace azure-ws --recipe-packs azure-aks
 test-recipe-pack-entry.sh Data/redisCaches azure-ws azure-env
 test-recipe-pack-entry.sh Messaging/rabbitMQ azure-ws azure-env
 test-recipe-pack-entry.sh Data/mySqlDatabases azure-ws azure-env verify-transport
+probe-azure-postgres-capacity.sh
+test-recipe-pack-entry.sh Data/postgreSqlDatabases azure-ws azure-env
 test-recipe-pack-entry.sh Compute/persistentVolumes azure-ws azure-env
 test-recipe-pack-entry.sh Compute/routes azure-ws azure-env"
 diff -u <(echo "$expected") "$CALL_LOG" ||
     fail "expected direct-module and repository-owned entries to run with their pack active"
-grep -q "6 tested, 1 skipped, 0 failed" <<<"$output" ||
-    fail "expected six runnable entries and only the containerImages exclusion"
+grep -q "7 tested, 1 skipped, 0 failed" <<<"$output" ||
+    fail "expected seven runnable entries and only the containerImages exclusion"
 if grep -q 'test-recipe-pack-entry.sh Compute/containerImages' "$CALL_LOG"; then
     fail "the explicitly excluded containerImages entry should not run"
 fi
@@ -186,17 +208,34 @@ grep -q "test-recipe-pack-entry.sh Data/mySqlDatabases" "$CALL_LOG" ||
 echo "param applicationName string" >"$FIXTURE_ROOT/Messaging/rabbitMQ/test/app.bicep"
 
 : >"$CALL_LOG"
-if FAIL_TYPE="Data/redisCaches" run_driver azure azure-ws azure-env; then
+if output=$(FAIL_TYPE="Data/redisCaches" run_driver azure azure-ws azure-env 2>&1); then
     fail "expected a failing entry to fail the driver"
 fi
 grep -q "test-recipe-pack-entry.sh Messaging/rabbitMQ" "$CALL_LOG" ||
     fail "expected testing to continue after an entry failure"
+grep -q "Data/redisCaches (from pack 'azure-aks')" <<<"$output" ||
+    fail "expected the outer loop to record the failed entry"
 
 : >"$CALL_LOG"
 run_driver kubernetes kubernetes-ws kubernetes-env >/dev/null ||
     fail "expected the Kubernetes MySQL connection probe to pass"
 grep -q "test-recipe-pack-entry.sh Data/mySqlDatabases kubernetes-ws kubernetes-env connection-only" "$CALL_LOG" ||
     fail "expected Kubernetes MySQL to use the connection-only probe"
+if grep -q '^probe-azure-postgres-capacity.sh' "$CALL_LOG"; then
+    fail "the Azure PostgreSQL capacity probe must not run for Kubernetes"
+fi
+
+: >"$CALL_LOG"
+if output=$(PROBE_EXIT_CODE=1 run_driver azure azure-ws azure-env 2>&1); then
+    fail "expected a failed capacity probe to fail the driver"
+fi
+grep -q "Data/postgreSqlDatabases (from pack 'azure-aks'): preflight check failed" <<<"$output" ||
+    fail "expected the capacity probe failure to be reported for PostgreSQL"
+if grep -q '^test-recipe-pack-entry.sh Data/postgreSqlDatabases' "$CALL_LOG"; then
+    fail "PostgreSQL must not deploy after a failed capacity probe"
+fi
+grep -q '^test-recipe-pack-entry.sh Compute/persistentVolumes' "$CALL_LOG" ||
+    fail "expected testing to continue after a failed capacity probe"
 
 : >"$CALL_LOG"
 if ACTIVATE_EXIT_CODE=1 run_driver azure azure-ws azure-env; then

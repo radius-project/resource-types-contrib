@@ -4,8 +4,8 @@ name: Nightly Recipe and Pack Tests
 
 # Test every repository recipe through generated Bicep and Terraform packs.
 # Then deploy every checked-in Recipe Pack and exercise every entry that has
-# a test/app.bicep. This covers source recipes, repository-owned published
-# recipes, and direct modules.
+# a test/app.bicep. Repository-owned entries use recipes built from this
+# checkout; external modules retain the versions declared in each pack.
 #
 # Runs nightly rather than per-PR because the Azure job creates and deletes
 # real cloud infrastructure for every runnable Recipe Pack entry.
@@ -106,6 +106,8 @@ jobs:
       - name: Deploy checked-in Kubernetes Recipe Pack
         id: kubernetes_pack_deploy
         continue-on-error: true
+        env:
+          RECIPE_PACK_USE_LOCAL_RECIPES: "true"
         run: .github/scripts/deploy-all-checked-in-recipe-packs.sh kubernetes "$RAD_ENVIRONMENT_NAME"
 
       - name: Test all runnable Recipe Pack entries
@@ -145,6 +147,12 @@ jobs:
             kubectl logs "$APP_POD" -n radius-system --all-containers > radius-pod-logs/applications-rp.log || true
           else
             echo "applications-rp pod not found" > radius-pod-logs/applications-rp.log
+          fi
+          DE_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | test("^(deployment-engine|bicep-de)-")) | .metadata.name' | head -n1)
+          if [ -n "$DE_POD" ]; then
+            kubectl logs "$DE_POD" -n radius-system --all-containers > radius-pod-logs/deployment-engine.log || true
+          else
+            echo "deployment engine pod not found" > radius-pod-logs/deployment-engine.log
           fi
           UCP_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | startswith("ucp-")) | .metadata.name' | head -n1)
           if [ -n "$UCP_POD" ]; then
@@ -189,14 +197,30 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Enable Azure CLI token renewal
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: bash .github/scripts/azure-cli-with-refresh.sh --install
+
       - name: Set Azure Test Context
         id: set-context
         run: |
+          set -euo pipefail
           LOCATION="${AZURE_LOCATION:-$DEFAULT_AZURE_LOCATION}"
           if [ -z "$LOCATION" ]; then
             LOCATION="westus3"
           fi
           RG="rrttest-nightly-${{ github.run_id }}-${{ github.run_attempt }}"
+          # Recipes use the resource group's region. Fall back when the
+          # preferred region has no Burstable PostgreSQL capacity.
+          FALLBACK="${AZURE_FALLBACK_LOCATION:-eastus2}"
+          CANDIDATES=("$LOCATION")
+          if [[ -n "$FALLBACK" && "$FALLBACK" != "$LOCATION" ]]; then
+            CANDIDATES+=("$FALLBACK")
+          fi
+          LOCATION="$(.github/scripts/select-azure-test-location.sh "${RG}-probe" "${CANDIDATES[@]}")"
           {
             echo "AZURE_LOCATION=$LOCATION"
             echo "AZURE_RESOURCE_GROUP=$RG"
@@ -206,6 +230,8 @@ jobs:
           echo "resource_group=$RG" >> "$GITHUB_OUTPUT"
         env:
           DEFAULT_AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+          AZURE_FALLBACK_LOCATION: ${{ vars.AZURE_FALLBACK_LOCATION }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Create Azure Resource Group
         env:
@@ -262,6 +288,9 @@ jobs:
         id: azure_bicep
         continue-on-error: true
         timeout-minutes: 75
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
         run: |
           set -euo pipefail
           pack_name="nightlyazurebiceprecipepack"
@@ -285,6 +314,9 @@ jobs:
         id: azure_terraform
         continue-on-error: true
         timeout-minutes: 75
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
         run: |
           set -euo pipefail
           pack_name="nightlyazureterraformrecipepack"
@@ -308,13 +340,27 @@ jobs:
         id: azure_pack_deploy
         continue-on-error: true
         timeout-minutes: 15
+        env:
+          RECIPE_PACK_USE_LOCAL_RECIPES: "true"
         run: .github/scripts/deploy-all-checked-in-recipe-packs.sh azure "$AZURE_ENVIRONMENT_NAME"
 
       - name: Test all runnable Recipe Pack entries
         id: azure_pack_entries
         continue-on-error: true
-        timeout-minutes: 120
+        # Allows extra time for PostgreSQL capacity probes and retries.
+        timeout-minutes: 150
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
         run: make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+
+      - name: Upload pre-cleanup Azure diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: azure-test-diagnostics-nightly-azure
+          path: azure-test-diagnostics
+          if-no-files-found: ignore
 
       - name: Report Azure test failures
         if: ${{ !cancelled() }}
@@ -348,6 +394,12 @@ jobs:
             kubectl logs "$APP_POD" -n radius-system --all-containers > radius-pod-logs/applications-rp.log || true
           else
             echo "applications-rp pod not found" > radius-pod-logs/applications-rp.log
+          fi
+          DE_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | test("^(deployment-engine|bicep-de)-")) | .metadata.name' | head -n1)
+          if [ -n "$DE_POD" ]; then
+            kubectl logs "$DE_POD" -n radius-system --all-containers > radius-pod-logs/deployment-engine.log || true
+          else
+            echo "deployment engine pod not found" > radius-pod-logs/deployment-engine.log
           fi
           UCP_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | startswith("ucp-")) | .metadata.name' | head -n1)
           if [ -n "$UCP_POD" ]; then

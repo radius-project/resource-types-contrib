@@ -23,7 +23,9 @@ Kube-recipes tagged `:edge` are rebuilt on every push to `main`. `:latest` and t
 | `Radius.Data/redisCaches` | Bicep | `ghcr.io/radius-project/kube-recipes/rediscaches:latest` |
 | `Radius.Messaging/rabbitMQ` | Bicep | `ghcr.io/radius-project/kube-recipes/rabbitmq:latest` |
 
-`rad init --preview` and `rad env create` (without `--recipe-packs`) link Radius's built-in default pack, `/planes/radius/local/resourceGroups/default/providers/Radius.Core/recipePacks/default`. Radius does not read this file. The `rad` CLI defines the same recipes and pins each source to the resource-types-contrib commit for that Radius release (`:edge` for edge builds). **Deploying this file to the same pack ID overwrites the built-in pack for every Environment that references it and switches all of its sources to `:latest`.** To get the built-in pack back, see [Restoring Radius's default pack](#restoring-radiuss-default-pack).
+`rad init` and `rad env create` (without `--recipe-packs`) link Radius's built-in default pack, `/planes/radius/local/resourceGroups/default/providers/Radius.Core/recipePacks/default`. Radius does not read this file. The `rad` CLI defines the same recipes and pins each source to the resource-types-contrib commit for that Radius release (`:edge` for edge builds). **Deploying this file to the same pack ID overwrites the built-in pack for every Environment that references it and switches all of its sources to `:latest`.** To get the built-in pack back, see [Restoring Radius's default pack](#restoring-radiuss-default-pack).
+
+In Radius 0.61 and earlier, `rad init` and `rad env create` target `Radius.Core` only with `--preview`. Add `--preview` to the `rad init` and `rad env create` commands in this README when you use those versions.
 
 ## Prerequisite: `bicepconfig.json`
 
@@ -37,7 +39,7 @@ Kube-recipes tagged `:edge` are rebuilt on every push to `main`. `:latest` and t
 }
 ```
 
-Replace `<rad-release-channel>` with the major and minor version of your `rad` CLI (for example `0.61` for `rad` 0.61.1), or `latest` for edge builds. A full version such as `0.61.1` is not a valid tag. `rad init --preview` scaffolds a similar file that also registers the `aws` extension.
+Replace `<rad-release-channel>` with the major and minor version of your `rad` CLI (for example `0.61` for `rad` 0.61.1), or `latest` for edge builds. A full version such as `0.61.1` is not a valid tag. `rad init` writes a similar file that also registers the `aws` extension.
 
 ## Deploying
 
@@ -78,7 +80,7 @@ After the association is confirmed, every Resource Type the pack covers can be u
 
 Deploying this file cannot restore the exact pack Radius creates, because its sources are always `:latest`. Use `rad` instead:
 
-- `rad init --preview` always rewrites the default pack from the pack built into that `rad` version. It also creates or updates the Environment you choose during init.
+- `rad init` always rewrites the default pack from the pack built into that `rad` version. It also creates or updates the Environment you choose during init.
 - `rad env create` without `--recipe-packs`, and `rad deploy` of a template whose Environment sets no `recipePacks`, create the default pack only when it is missing; they never update an existing pack. To use one of them, delete the pack first.
 
   `rad recipe-pack delete` removes the pack from each Environment in the pack's `referencedBy` list. Before you delete the pack, record the Environments in that list:
@@ -87,7 +89,7 @@ Deploying this file cannot restore the exact pack Radius creates, because its so
   rad recipe-pack show default --group default -o json
   ```
 
-  `rad env create` and `rad env update` add an Environment to `referencedBy` only when you link the pack with `--recipe-packs`. A full write of the pack, such as `rad deploy` of this file or `rad init --preview`, clears the list. Thus, after you deploy this file, the list is usually empty.
+  `rad env create` and `rad env update` add an Environment to `referencedBy` only when you link the pack with `--recipe-packs`. A full write of the pack, such as `rad deploy` of this file or `rad init`, clears the list. Thus, after you deploy this file, the list is usually empty.
 
   Delete the pack, then recreate it, for example by creating a new Environment:
 

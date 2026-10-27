@@ -3,6 +3,7 @@ binfmt
 buildkitd
 Dapr
 Docsy
+eastus
 gibibyte
 gibibytes
 gomod
@@ -16,3 +17,4 @@ SLSA
 tmpfs
 vnet
 westus
+ededed

@@ -25,6 +25,7 @@ CHANGES_SCRIPT="${REPO_ROOT}/.github/scripts/release/detect-changes.sh"
 BUNDLE_SCRIPT="${REPO_ROOT}/.github/scripts/release/build-recipe-pack-bundle.sh"
 SOURCES_SCRIPT="${REPO_ROOT}/.github/scripts/release/verify-recipe-pack-sources.sh"
 TAGS_SCRIPT="${REPO_ROOT}/.github/scripts/resolve-recipe-tags.sh"
+RC_SOURCES_SCRIPT="${REPO_ROOT}/.github/scripts/release/prepare-release-candidate-sources.sh"
 LIST_NAMESPACES_SCRIPT="${REPO_ROOT}/.github/scripts/release/list-namespaces.sh"
 NOTIFY_WORKFLOW="${REPO_ROOT}/.github/workflows/notify-radius.yaml"
 NAMESPACE_WORKFLOW="${REPO_ROOT}/.github/workflows/release-namespace.yaml"
@@ -579,6 +580,124 @@ test_recipe_tags() {
     done
 }
 
+# A Radius release pins each namespace and Recipe Pack to a commit. The release
+# candidate tests restore exactly those revisions, drop anything unpinned, and
+# point repo-owned Recipe sources at the published commit-SHA tag.
+test_release_candidate_sources() {
+    local repo="$TEST_ROOT/rc-sources" defaults="$TEST_ROOT/rc-defaults.yaml" pinned pack bad
+    create_repo "$repo" "Data"
+    mkdir -p "$repo/recipe-packs/legacy"
+    cat >"$repo/recipe-packs/legacy/pack.bicep" <<'EOF'
+resource pack 'Radius.Core/recipePacks@2025-08-01-preview' = {
+  name: 'legacy'
+  properties: {
+    recipes: {
+      'Radius.Data/widgets': {
+        kind: 'bicep'
+        source: 'ghcr.io/radius-project/kube-recipes/widgets:latest'
+      }
+      'Radius.Data/gadgets': {
+        kind: 'bicep'
+        source: 'mcr.microsoft.com/bicep/avm/res/gadget:0.1.0'
+      }
+    }
+  }
+}
+EOF
+    git -C "$repo" add -A
+    git -C "$repo" commit -q -m "add legacy pack"
+    pinned="$(git -C "$repo" rev-parse HEAD)"
+
+    # Unreleased work on top of the pinned commit.
+    commit_file "$repo" "Data/widgets/unreleased.txt" "new" "add unreleased file"
+    commit_file "$repo" "Extra/things/things.yaml" "namespace: Radius.Extra
+types:
+  things: {}" "add unreleased namespace"
+    git -C "$repo" rm -q -r recipe-packs/legacy
+    commit_file "$repo" "recipe-packs/current/pack.bicep" "extension radius" "rename pack"
+    printf 'local change\n' >>"$repo/Data/widgets/widget.yaml"
+
+    # Valid pins, so each negative case below fails only on its own guard.
+    write_valid_defaults() {
+        cat >"$defaults" <<EOF
+resourceTypes:
+  - name: Radius.Data
+    repo: github.com/radius-project/resource-types-contrib
+    ref: ${pinned}
+recipePacks:
+  - name: legacy
+    repo: github.com/radius-project/resource-types-contrib
+    ref: ${pinned}
+EOF
+    }
+    reset_rc_repo() {
+        git -C "$repo" checkout -q -- . && git -C "$repo" clean -q -fd
+    }
+
+    write_valid_defaults
+    : >"$TEST_ROOT/rc.out"
+    REPO_ROOT="$repo" RADIUS_VERSION=v0.62.0-rc1 DEFAULTS_FILE="$defaults" \
+        GITHUB_OUTPUT="$TEST_ROOT/rc.out" bash "$RC_SOURCES_SCRIPT" >/dev/null 2>&1 ||
+        fail "release candidate sources could not be prepared"
+
+    assert_eq "0.62.0-rc1" "$(output_value "$TEST_ROOT/rc.out" radius_version)" "normalized Radius version"
+    assert_eq "v0.62.0-rc1" "$(output_value "$TEST_ROOT/rc.out" radius_tag)" "Radius tag"
+    git -C "$repo" show "${pinned}:Data/widgets/widget.yaml" | cmp -s - "$repo/Data/widgets/widget.yaml" ||
+        fail "pinned namespace manifest was not restored"
+    [[ ! -e "$repo/Data/widgets/unreleased.txt" ]] || fail "unreleased namespace file was kept"
+    [[ ! -e "$repo/Extra" ]] || fail "unpinned namespace was kept"
+    [[ ! -e "$repo/recipe-packs/current" ]] || fail "unpinned Recipe Pack was kept"
+    pack="$repo/recipe-packs/legacy/pack.bicep"
+    grep -Fq "source: 'ghcr.io/radius-project/kube-recipes/widgets:${pinned}'" "$pack" ||
+        fail "repo-owned Recipe source was not pinned to the namespace commit"
+    grep -Fq "source: 'mcr.microsoft.com/bicep/avm/res/gadget:0.1.0'" "$pack" ||
+        fail "external Recipe source was changed"
+
+    # A released rad cannot resolve a repo-owned source whose namespace is not
+    # pinned, so preparing the sources fails too.
+    reset_rc_repo
+    cat >"$defaults" <<EOF
+resourceTypes:
+  - name: Radius.Extra
+    repo: github.com/radius-project/resource-types-contrib
+    ref: $(git -C "$repo" rev-parse HEAD)
+recipePacks:
+  - name: legacy
+    repo: github.com/radius-project/resource-types-contrib
+    ref: ${pinned}
+EOF
+    if REPO_ROOT="$repo" RADIUS_VERSION=0.62.0-rc1 DEFAULTS_FILE="$defaults" \
+        bash "$RC_SOURCES_SCRIPT" >/dev/null 2>&1; then
+        fail "a repo-owned Recipe source with an unpinned namespace was accepted"
+    fi
+
+    # Control: the valid pins still succeed on the reset tree, so the negative
+    # cases below fail only because of the change each one makes.
+    reset_rc_repo
+    write_valid_defaults
+    REPO_ROOT="$repo" RADIUS_VERSION=0.62.0-rc1 DEFAULTS_FILE="$defaults" \
+        bash "$RC_SOURCES_SCRIPT" >/dev/null 2>&1 ||
+        fail "valid pins were rejected after reset"
+
+    # Only the Recipe Pack pin points at another repository.
+    reset_rc_repo
+    write_valid_defaults
+    sed -i '/^recipePacks:/,$ s#github.com/radius-project/resource-types-contrib#github.com/example/fork#' "$defaults"
+    if REPO_ROOT="$repo" RADIUS_VERSION=0.62.0-rc1 DEFAULTS_FILE="$defaults" \
+        bash "$RC_SOURCES_SCRIPT" >/dev/null 2>&1; then
+        fail "a pin to another repository was accepted"
+    fi
+
+    reset_rc_repo
+    write_valid_defaults
+    for bad in edge latest 0.62 "0.62.0 rc1"; do
+        if REPO_ROOT="$repo" RADIUS_VERSION="$bad" DEFAULTS_FILE="$defaults" \
+            bash "$RC_SOURCES_SCRIPT" >/dev/null 2>&1; then
+            fail "invalid Radius version '$bad' was accepted"
+        fi
+    done
+}
+
 command -v jq >/dev/null 2>&1 || fail "jq is required"
 test_release_notification_guards
 test_edge_fallback_until_stable_release
@@ -593,4 +712,5 @@ test_recipe_pack_release_is_synced
 test_repo_wide_release_covers_all_units
 test_release_change_detection
 test_recipe_tags
+test_release_candidate_sources
 echo "Release automation tests passed"

@@ -135,13 +135,9 @@ if [[ ! -f "$TEST_FILE" ]]; then
     exit 0
 fi
 
-if rtc_deploy_and_assert_test_app "$TEST_FILE" "$RESOURCE_TYPE" "testapp" "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE"; then
-    : # Falls through to the shared success message below.
-else
-    rad recipe unregister default \
-        --workspace "$WORKSPACE_NAME" \
-        --environment "$ENVIRONMENT_PATH" \
-        --resource-type "$RESOURCE_TYPE"
+# Recipes come from the Recipe Pack bound to the Environment, so a failed test
+# has no per-type registration to undo.
+if ! RTC_TEST_PLATFORM="$PLATFORM" rtc_deploy_and_assert_test_app "$TEST_FILE" "$RESOURCE_TYPE" "testapp" "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE"; then
     exit 1
 fi
 

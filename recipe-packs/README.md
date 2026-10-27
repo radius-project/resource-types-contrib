@@ -39,19 +39,56 @@ and multiple templates fail the checks.
 | --- | --- | --- | --- |
 | 1. Deploy the pack | Each committed pack file deploys and attaches to an Environment without error | Every PR | Free (Kubernetes); real cloud resources (Azure) |
 | 2. Validate direct-module mappings | Referenced Radius properties exist in the schema; string literals compared with enum properties are declared enum values | Every PR | Free (static check, no deployment) |
-| 3. Test direct-module recipes | Activate each deployed pack, deploy its entries' `test/app.bicep`, check results, and clean up | Nightly and manual dispatch | Real cloud resources (Azure) |
+| 3. Test pack entries | Build repository recipes from the checkout, activate each pack, deploy its entries' `test/app.bicep`, check results, and clean up | Nightly and manual dispatch | Real cloud resources (Azure) |
 
 A "direct-module" entry has a module source outside `ghcr.io/radius-project/`
 and a `test/app.bicep` in its Resource Type directory. Sources within that
-prefix are treated as repository-owned recipes, covered by the existing
-per-recipe tests. This rule checks the source, not the presence of a recipe
-folder. Entries without test apps are excluded from layers 2 and 3.
+prefix are treated as repository-owned recipes. Nightly tests cover these
+recipes both on their own and through the checked-in packs. Entries without
+test apps fail layer 3 unless explicitly excluded; issue #398 tracks the
+temporary `containerImages` exclusion.
+
+Nightly pack deployment sets `RECIPE_PACK_USE_LOCAL_RECIPES=true`. It builds
+each repository-owned Bicep recipe from the checked-out commit and uses a
+temporary copy of the pack with local registry sources and `plainHttp: true`.
+The copy retains the pack name, parameters, output mappings, and external
+module versions, including AVM versions. Azure packs also build the
+Kubernetes recipes they reference. Missing or ambiguous recipe sources and
+build failures stop the test; there is no fallback to a published artifact.
+The checked-in files are not changed.
+
+Local preparation requires each entry's `source` to be a nonempty,
+single-quoted literal on its own line, indented two spaces below the entry key.
+Variables, interpolation, missing or duplicate sources, and inline entries fail
+before deployment. Nested parameter fields named `source` are not recipe sources.
 
 The static check does not validate target module parameter names, parameter
 shapes, or the meaning of conditional results. Several enum values can share
 a default branch. The nightly deployment checks the values used by each test
 app, not every possible property value. A type used by two packs is tested
 once per pack, with that pack active.
+
+Azure has no API that reports live regional capacity. Before the nightly
+deploys an Azure PostgreSQL pack entry, it runs
+[`probe-azure-postgres-capacity.sh`](../.github/scripts/probe-azure-postgres-capacity.sh).
+The probe creates and deletes a `Standard_B1ms` (Burstable) flexible server in
+the test resource group. It retries only on `SkuNotAvailable` or `ServerIsBusy`
+(`RTC_POSTGRES_PROBE_ATTEMPTS`, default 3; `RTC_POSTGRES_PROBE_WAIT_SECONDS`,
+default 600). If capacity stays unavailable, the entry fails with an Azure
+capacity error and the entry is not deployed. After a successful create, the
+probe waits for the delete (`RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS`,
+default 900), so the probe does not hold capacity that the entry needs. If
+that delete fails, the preflight fails. The probe uses `AZURE_SUBSCRIPTION_ID`
+when it is set, and the Azure CLI default subscription otherwise. Keep the
+probe SKU in sync with the size `S` mapping in the `azure-aks` pack.
+
+Before the nightly creates its Azure resource group,
+[`select-azure-test-location.sh`](../.github/scripts/select-azure-test-location.sh)
+runs one probe in the preferred region (`AZURE_LOCATION` repository variable,
+default `westus3`) and, if it has no capacity, one in the fallback region
+(`AZURE_FALLBACK_LOCATION`, default `eastus2`). All Azure tests then use the
+first region with capacity. If neither region has capacity, the preferred
+region is used.
 
 MySQL pack entries that map `tls` to `require_secure_transport` run both
 `tls: required` and `tls: optional`. They pass `verifyTransport` through
@@ -63,6 +100,27 @@ Reversed mappings fail even when a database connection succeeds. Pack entries
 that do not enforce transport policy, such as the Kubernetes MySQL recipe, use
 the connection-only probe.
 
+### Testing a Radius release candidate
+
+[`release-candidate-recipe-pack-tests.yaml`](../.github/workflows/release-candidate-recipe-pack-tests.yaml)
+runs the same tests as the nightly workflow, but against what a Radius release
+candidate ships instead of `main`. Start it manually with the Radius version
+(for example, `0.62.0-rc1`). It reads `deploy/manifest/defaults.yaml` from that
+Radius tag and runs
+[`prepare-release-candidate-sources.sh`](../.github/scripts/release/prepare-release-candidate-sources.sh),
+which:
+
+- restores every pinned namespace folder and Recipe Pack folder from its pinned
+  commit, and removes namespaces and packs that the release does not pin;
+- changes each `ghcr.io/radius-project/...` Recipe source in those packs to the
+  pinned namespace commit SHA. A released `rad` uses the same tag, and
+  `publish-bicep-recipes.yaml` publishes it.
+
+The workflow checks that every pack source can be pulled, installs that Radius
+version, and runs the nightly steps unchanged. It supports only releases whose
+pinned packs all have a platform mapping in `lib-recipe-packs.sh`; older
+releases that pin a pack without one are not supported.
+
 ### What to do when you add or change a pack
 
 - **New pack, same platform group (`kubernetes` or `azure`):** map the folder
@@ -72,11 +130,12 @@ the connection-only probe.
   platform group following the existing `kubernetes`/`azure` jobs as a
   template (see [`validate-resource-types.yaml`](../.github/workflows/validate-resource-types.yaml),
   [`validate-azure-recipes.yaml`](../.github/workflows/validate-azure-recipes.yaml),
-  and [`nightly-recipe-pack-tests.yaml`](../.github/workflows/nightly-recipe-pack-tests.yaml)).
+  [`nightly-recipe-pack-tests.yaml`](../.github/workflows/nightly-recipe-pack-tests.yaml),
+  and [`release-candidate-recipe-pack-tests.yaml`](../.github/workflows/release-candidate-recipe-pack-tests.yaml)).
 - **New direct-module entry in an existing pack:** add a `test/app.bicep`
   under that Resource Type's folder (see
   [Testing Resource Types and Recipes](../docs/contributing/testing-resource-types-recipes.md)
-  for the expected shape). Without it, Layer 3 skips the entry.
+  for the expected shape). Without it, Layer 3 fails the entry.
 - **New required pack parameter:** add a test value to
   `rtc_recipe_pack_param_value` in `lib-recipe-packs.sh`.
 
@@ -94,6 +153,10 @@ RECIPE_PLATFORM_FILTER=kubernetes make build
 # Layer 1: deploy every checked-in pack for a platform group.
 # The optional third argument is a Radius group, not an Azure resource group.
 .github/scripts/deploy-all-checked-in-recipe-packs.sh kubernetes default
+
+# Before layer 3, use the current checkout rather than published repository recipes.
+RECIPE_PACK_USE_LOCAL_RECIPES=true \
+  .github/scripts/deploy-all-checked-in-recipe-packs.sh kubernetes default
 
 # Layer 2: static check of every direct-module mapping (no cluster needed)
 make validate-direct-module-mappings
