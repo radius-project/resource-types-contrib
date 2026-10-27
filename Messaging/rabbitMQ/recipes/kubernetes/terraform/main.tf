@@ -16,8 +16,9 @@ locals {
   resource_name = var.context.resource.name
   # A unique per-resource name so two rabbitMQ resources that share a display
   # name (or the same name across recreates) never collide on their Kubernetes
-  # objects.
-  unique_name      = "${local.resource_name}-${substr(sha256(var.context.resource.id), 0, 13)}"
+  # objects. The name portion is truncated to 49 characters so the Service name
+  # (name + "-" + 13-character hash) stays within the 63-character limit.
+  unique_name      = "${substr(local.resource_name, 0, 49)}-${substr(sha256(var.context.resource.id), 0, 13)}"
   application_name = var.context.application != null ? var.context.application.name : ""
   environment_name = var.context.environment != null ? var.context.environment.name : ""
   resource_group   = element(split("/", var.context.resource.id), 5)
@@ -59,11 +60,13 @@ locals {
   # Writes the broker definitions file (vhost, user, permissions, and the
   # pre-provisioned queue). rabbitmqctl hash_password computes the password hash
   # offline, so the plaintext password is only read at runtime from the
-  # Kubernetes Secret.
+  # Kubernetes Secret. The username and queue arrive already JSON-encoded
+  # (RABBITMQ_USER_JSON, RABBITMQ_QUEUE_JSON) so arbitrary characters such as
+  # quotes or backslashes cannot corrupt the file.
   generate_definitions_script = chomp(<<-EOT
     set -eu
     HASH=$(rabbitmqctl hash_password "$RABBITMQ_PASSWORD" | tail -n1 | tr -d '[:space:]')
-    printf '{"users":[{"name":"%s","password_hash":"%s","hashing_algorithm":"rabbit_password_hashing_sha256","tags":["administrator"]}],"vhosts":[{"name":"/"}],"permissions":[{"user":"%s","vhost":"/","configure":".*","write":".*","read":".*"}],"queues":[{"name":"%s","vhost":"/","durable":true,"auto_delete":false,"arguments":{}}],"exchanges":[],"bindings":[]}\n' "$RABBITMQ_USER" "$HASH" "$RABBITMQ_USER" "$RABBITMQ_QUEUE" > /etc/rabbitmq/definitions/definitions.json
+    printf '{"users":[{"name":%s,"password_hash":"%s","hashing_algorithm":"rabbit_password_hashing_sha256","tags":["administrator"]}],"vhosts":[{"name":"/"}],"permissions":[{"user":%s,"vhost":"/","configure":".*","write":".*","read":".*"}],"queues":[{"name":%s,"vhost":"/","durable":true,"auto_delete":false,"arguments":{}}],"exchanges":[],"bindings":[]}\n' "$RABBITMQ_USER_JSON" "$HASH" "$RABBITMQ_USER_JSON" "$RABBITMQ_QUEUE_JSON" > /etc/rabbitmq/definitions/definitions.json
   EOT
   )
 
@@ -128,9 +131,7 @@ resource "kubernetes_deployment" "rabbitmq" {
     }
 
     selector {
-      match_labels = {
-        "radapp.io/resource" = local.resource_name
-      }
+      match_labels = local.labels
     }
 
     template {
@@ -154,8 +155,8 @@ resource "kubernetes_deployment" "rabbitmq" {
           command = ["sh", "-c", local.generate_definitions_script]
 
           env {
-            name  = "RABBITMQ_USER"
-            value = local.username
+            name  = "RABBITMQ_USER_JSON"
+            value = jsonencode(local.username)
           }
 
           env {
@@ -171,8 +172,8 @@ resource "kubernetes_deployment" "rabbitmq" {
           }
 
           env {
-            name  = "RABBITMQ_QUEUE"
-            value = local.queue
+            name  = "RABBITMQ_QUEUE_JSON"
+            value = jsonencode(local.queue)
           }
 
           volume_mount {
@@ -243,9 +244,7 @@ resource "kubernetes_service" "rabbitmq" {
   spec {
     type = "ClusterIP"
 
-    selector = {
-      "radapp.io/resource" = local.resource_name
-    }
+    selector = local.labels
 
     port {
       port = local.port
