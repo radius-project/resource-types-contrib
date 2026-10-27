@@ -25,6 +25,7 @@ CHANGES_SCRIPT="${REPO_ROOT}/.github/scripts/release/detect-changes.sh"
 BUNDLE_SCRIPT="${REPO_ROOT}/.github/scripts/release/build-recipe-pack-bundle.sh"
 SOURCES_SCRIPT="${REPO_ROOT}/.github/scripts/release/verify-recipe-pack-sources.sh"
 TAGS_SCRIPT="${REPO_ROOT}/.github/scripts/resolve-recipe-tags.sh"
+PUBLISH_SCRIPT="${REPO_ROOT}/.github/scripts/publish-bicep-recipe.sh"
 RC_SOURCES_SCRIPT="${REPO_ROOT}/.github/scripts/release/prepare-release-candidate-sources.sh"
 LIST_NAMESPACES_SCRIPT="${REPO_ROOT}/.github/scripts/release/list-namespaces.sh"
 NOTIFY_WORKFLOW="${REPO_ROOT}/.github/workflows/notify-radius.yaml"
@@ -580,6 +581,33 @@ test_recipe_tags() {
     done
 }
 
+# Release publishes record each pushed digest, without its tag, so the workflow
+# can sign build provenance for exactly what it published.
+test_recipe_publication_subjects() {
+    local bin="$TEST_ROOT/publish-bin" subjects="$TEST_ROOT/publish-subjects"
+    local digest
+    digest="$(printf 'a%.0s' {1..64})"
+    mkdir -p "$bin" "$subjects"
+    printf '#!/bin/bash\nexit 0\n' >"$bin/rad"
+    printf '#!/bin/bash\necho "sha256:%s"\n' "$digest" >"$bin/oras"
+    chmod +x "$bin/rad" "$bin/oras"
+
+    PATH="$bin:$PATH" REGISTRY=ghcr.io/example/kube-recipes TAGS="sha 0.51.0" \
+        bash "$PUBLISH_SCRIPT" demo demo.bicep >/dev/null
+    [[ -z "$(ls -A "$subjects")" ]] || fail "subjects were recorded for an unattested publish"
+
+    PATH="$bin:$PATH" REGISTRY=ghcr.io/example/kube-recipes TAGS="sha 0.51.0" \
+        RECIPE_SUBJECTS_DIR="$subjects" bash "$PUBLISH_SCRIPT" demo demo.bicep >/dev/null
+    assert_eq "${digest}  ghcr.io/example/kube-recipes/demo" "$(sort -u "$subjects"/*)" \
+        "recorded recipe subjects"
+
+    printf '#!/bin/bash\necho "sha256:%s"\n' "${digest:0:12}" >"$bin/oras"
+    if PATH="$bin:$PATH" REGISTRY=ghcr.io/example/kube-recipes TAGS=sha \
+        RECIPE_SUBJECTS_DIR="$subjects" bash "$PUBLISH_SCRIPT" demo demo.bicep >/dev/null 2>&1; then
+        fail "an invalid recipe digest was recorded"
+    fi
+}
+
 # A Radius release pins each namespace and Recipe Pack to a commit. The release
 # candidate tests restore exactly those revisions, drop anything unpinned, and
 # point repo-owned Recipe sources at the published commit-SHA tag.
@@ -712,5 +740,6 @@ test_recipe_pack_release_is_synced
 test_repo_wide_release_covers_all_units
 test_release_change_detection
 test_recipe_tags
+test_recipe_publication_subjects
 test_release_candidate_sources
 echo "Release automation tests passed"
