@@ -98,6 +98,7 @@ test-direct-module-recipes-unit: test-recipe-pack-entries-unit ## Compatibility 
 
 .PHONY: test-recipe-pack-entries-unit
 test-recipe-pack-entries-unit: ## Run fixture-based unit tests for all Recipe Pack entry test scripts (no live environment needed)
+	@bash ./.github/scripts/tests/test-azure-cli-with-refresh.sh
 	@node --test ./.github/scripts/tests/test-azure-test-diagnostics.js
 	@bash ./.github/scripts/tests/test-azure-diagnostics-integration.sh
 	@./.github/scripts/tests/test-mysql-transport.sh
