@@ -24,6 +24,8 @@
 set -euo pipefail
 
 command -v jq >/dev/null || { echo "Error: jq is required for these tests." >&2; exit 1; }
+REAL_SLEEP="$(command -v sleep)"
+export REAL_SLEEP
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/rtc-recipe-test-lib-tests-XXXXXX")"
@@ -144,6 +146,10 @@ chmod +x "$MOCK_BIN/openssl"
 cat >"$MOCK_BIN/sleep" <<'EOF'
 #!/bin/bash
 echo "sleep $*" >>"$CALL_LOG"
+case "$*" in
+    10|20) ;;
+    *) exec "$REAL_SLEEP" "$@" ;;
+esac
 EOF
 chmod +x "$MOCK_BIN/sleep"
 

@@ -1,0 +1,13 @@
+{
+  "app": "rtc-test-1793209612",
+  "azureLocksBefore": [
+    "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Authorization/locks/existing"
+  ],
+  "azureLocksAfter": [
+    "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Authorization/locks/existing",
+    "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Cache/redis/cache/providers/Microsoft.Authorization/locks/new"
+  ],
+  "radiusLockInventory": [
+    "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Cache/redis/cache/providers/Microsoft.Authorization/locks/new"
+  ]
+}
