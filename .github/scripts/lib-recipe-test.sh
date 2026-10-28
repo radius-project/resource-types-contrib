@@ -151,8 +151,32 @@ rtc_report_azure_lock_failure() {
     fi
 }
 
+rtc_save_azure_lock_diagnostics() {
+    local locks_before="$1" locks_after="$2" inventory_locks="$3" app_name="$4"
+    local root="${RTC_AZURE_DIAGNOSTICS_DIR:-}" directory
+    if [[ "${GITHUB_ACTIONS:-}" == true && -z "${RTC_AZURE_DIAGNOSTICS_DIR+x}" ]]; then
+        root="radius-pod-logs/azure-test-diagnostics"
+    fi
+    [[ -n "$root" ]] || return 0
+    if ! mkdir -p "$root" || ! directory=$(mktemp -d "$root/lock-failure-XXXXXXXX"); then
+        echo "Error: Could not create Azure lock diagnostic directory." >&2
+        return 1
+    fi
+    # Save only the IDs, never the raw Radius inventory or recipe secrets.
+    if ! jq -n --arg app "$app_name" --arg before "$locks_before" \
+        --arg after "$locks_after" --arg inventory "$inventory_locks" '
+        def ids: split("\n") | map(select(length > 0));
+        {app: $app, azureLocksBefore: ($before | ids),
+         azureLocksAfter: ($after | ids), radiusLockInventory: ($inventory | ids)}
+    ' >"$directory/locks.json"; then
+        echo "Error: Could not save Azure lock diagnostics." >&2
+        return 1
+    fi
+    echo "==> Saved Azure lock inventory evidence to $directory/locks.json"
+}
+
 rtc_delete_owned_new_azure_management_locks() {
-    local locks_before="$1" inventory_locks="$2" locks_after lock_id delete_output status=0
+    local locks_before="$1" inventory_locks="$2" app_name="$3" locks_after lock_id delete_output status=0
     local -a subscription_args=()
     if [[ -n "${AZURE_SUBSCRIPTION_ID:-}" ]]; then
         subscription_args=(--subscription "$AZURE_SUBSCRIPTION_ID")
@@ -192,10 +216,15 @@ rtc_delete_owned_new_azure_management_locks() {
             continue
         fi
         echo "Error: Radius recorded an Azure management lock that Azure did not list." >&2
-        rtc_report_azure_lock_failure "$lock_id"
+        echo "Error: Unexpected Radius output resource: $lock_id" >&2
+        echo "Error: Check Deployment Engine skipped-resource inventory; this is not evidence of a missing locks/delete permission." >&2
         status=1
     done < <(printf '%s\n' "$inventory_locks" | sed '/^$/d' | sort -u)
 
+    if [[ "$status" -ne 0 ]]; then
+        rtc_save_azure_lock_diagnostics "$locks_before" "$locks_after" "$inventory_locks" "$app_name" ||
+            echo "Error: Azure lock diagnostic collection failed." >&2
+    fi
     return "$status"
 }
 
@@ -348,6 +377,37 @@ rtc_deploy_with_retry() (
     done
 )
 
+rtc_collect_azure_test_diagnostics() {
+    local resource_type="$1" app_name="$2" started="$3" directory status script_dir dependency
+    local diagnostics_root="${RTC_AZURE_DIAGNOSTICS_DIR:-}"
+    if [[ "${RTC_TEST_PLATFORM:-}" != azure || "$resource_type" != Radius.Compute/containers ||
+          -z "$diagnostics_root" ]]; then
+        return 0
+    fi
+    if ! mkdir -p "$diagnostics_root" ||
+       ! directory=$(mktemp -d "$diagnostics_root/failure-XXXXXXXX"); then
+        echo "Error: Could not create Azure diagnostic directory." >&2
+        return 1
+    fi
+    for dependency in node timeout az; do
+        if ! command -v "$dependency" >/dev/null 2>&1; then
+            echo "Error: Azure diagnostics require $dependency." | tee "$directory/collector-status.txt" >&2
+            return 1
+        fi
+    done
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    echo "==> Collecting Azure failure diagnostics before test app cleanup"
+    if timeout --kill-after=5s 100s node "$script_dir/collect-azure-test-diagnostics.js" \
+        "$directory" "${AZURE_SUBSCRIPTION_ID:-}" "${AZURE_RESOURCE_GROUP:-}" "$app_name" "$started"; then
+        echo "Azure diagnostic collection completed." >"$directory/collector-status.txt"
+    else
+        status=$?
+        echo "Error: Azure diagnostics incomplete (collector exit $status); test failure and cleanup are unchanged." |
+            tee "$directory/collector-status.txt" >&2
+        return "$status"
+    fi
+}
+
 # Deploy a Resource Type's test/app.bicep against an already-ready
 # environment and run its post-deploy assertion, then clean up. The
 # environment must already be able to satisfy the type (either a
@@ -364,11 +424,24 @@ rtc_deploy_with_retry() (
 #            <kubernetes-namespace> [additional rad deploy arguments...]
 rtc_deploy_and_assert_test_app() {
     local test_file="$1" resource_type="$2" app_name_prefix="$3" environment_path="$4" workspace_name="$5" kubernetes_namespace="$6"
-    local app_name locks_before="" inventory_locks="" deploy_status=0
-    local -a params=()
+    local app_name started locks_before="" inventory_locks="" deploy_status=0
+    local -a params=() deploy_timeout=() cleanup_timeout=()
+    local -a deploy_command=(rtc_deploy_with_retry)
     shift 6
 
     app_name="${app_name_prefix}-$(date +%s)"
+
+    if [[ "${GITHUB_ACTIONS:-}" == true && "${RTC_TEST_PLATFORM:-}" == azure &&
+          "$resource_type" == Radius.Compute/containers ]]; then
+        if ! command -v timeout >/dev/null 2>&1; then
+            echo "Error: Azure container CI tests require GNU timeout." >&2
+            return 1
+        fi
+        deploy_timeout=(timeout --kill-after=5s 15m)
+        deploy_command=("${deploy_timeout[@]}" bash -c \
+            'source "$1"; shift; rtc_deploy_with_retry "$@"' \
+            bash "${BASH_SOURCE[0]}")
+    fi
 
     if ! grep -qE '^param applicationName string' "$test_file"; then
         echo "Error: Test template must declare an applicationName parameter for cleanup." >&2
@@ -396,15 +469,28 @@ rtc_deploy_and_assert_test_app() {
     fi
 
     echo "==> Deploying test application from $test_file"
-    if rtc_deploy_with_retry "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
+    started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    if "${deploy_command[@]}" "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
         echo "==> Test deployment successful"
 
         if ! rtc_assert_recipe_result "$resource_type" "$app_name" "$workspace_name" "$kubernetes_namespace"; then
             deploy_status=1
         fi
     else
+        deploy_status=$?
         echo "==> Test deployment failed"
+        if [[ -n "${deploy_timeout[*]:-}" && ( "$deploy_status" == 124 || "$deploy_status" == 137 ) ]]; then
+            echo "Error: Azure container test deployment exceeded its 15-minute limit." >&2
+        fi
         deploy_status=1
+    fi
+
+    if [[ "$deploy_status" -ne 0 ]]; then
+        if [[ -n "${deploy_timeout[*]:-}" ]]; then
+            cleanup_timeout=(timeout --kill-after=5s 3m)
+        fi
+        rtc_collect_azure_test_diagnostics "$resource_type" "$app_name" "$started" ||
+            echo "Error: Azure diagnostic collection failed; continuing cleanup." >&2
     fi
 
     if [[ "${RTC_AZURE_LOCK_GUARD:-0}" == "1" ]]; then
@@ -412,8 +498,8 @@ rtc_deploy_and_assert_test_app() {
             echo "Error: Continuing with bounded Radius application deletion without lock ownership data." >&2
             inventory_locks=""
         fi
-        if ! rtc_delete_owned_new_azure_management_locks "$locks_before" "$inventory_locks"; then
-            echo "Error: Skipping Radius application deletion because a test-owned Azure management lock remains." >&2
+        if ! rtc_delete_owned_new_azure_management_locks "$locks_before" "$inventory_locks" "$app_name"; then
+            echo "Error: Skipping Radius application deletion because Azure lock cleanup or Radius lock inventory validation failed." >&2
             rtc_cleanup_kubernetes_resources_bounded "$kubernetes_namespace" "$app_name"
             return 1
         fi
@@ -421,7 +507,7 @@ rtc_deploy_and_assert_test_app() {
 
     echo "==> Cleaning up test application"
     local cleanup_status=0
-    rad app delete "$app_name" --workspace "$workspace_name" --yes || cleanup_status=1
+    ${cleanup_timeout[@]+"${cleanup_timeout[@]}"} rad app delete "$app_name" --workspace "$workspace_name" --yes || cleanup_status=1
     rtc_cleanup_kubernetes_resources "$kubernetes_namespace" "$app_name" || cleanup_status=1
     if [[ "$cleanup_status" -ne 0 ]]; then
         echo "Error: Test app cleanup failed." >&2

@@ -208,6 +208,134 @@ Delete your test cluster when done:
 make delete-radius-cluster
 ```
 
+## Azure CLI login renewal in CI
+
+Azure validation, nightly tests, and release candidate tests install
+`azure-cli-with-refresh.sh` after `azure/login`. The wrapper requests a fresh
+GitHub OIDC assertion and logs in again before an Azure CLI call when the last
+login is at least four minutes old. A file lock prevents concurrent callers
+from renewing the same login at once. It also sets the test subscription.
+This covers capacity probes, lock checks, cleanup, and diagnostic child
+processes throughout a long test step, not just between workflow steps.
+
+The five-minute GitHub assertion is not an Azure access token. Cached access
+tokens can work for about an hour, then fail when Azure CLI tries to exchange
+the expired assertion. Renewing only at job start does not prevent that error.
+The wrapper fails the command if renewal fails. It does not retry deployments
+or change Radius pods' separate Azure workload identity.
+
+## Azure lock inventory diagnostics
+
+Recipe Pack entry tests compare Azure management locks before and after each
+deployment with the lock IDs in the test application's Radius inventory.
+A new, test-owned lock must be deleted before Radius application cleanup.
+A lock ID recorded by Radius but absent from Azure is an inventory error,
+not proof that the test identity lacks `Microsoft.Authorization/locks/delete`.
+The test still fails and skips application deletion in that case.
+
+On either lock failure, the test saves `locks.json` with the application name,
+the two Azure lock lists, and the Radius lock ID list. It does not save raw
+Radius resource properties or secrets. Download
+`azure-test-diagnostics-nightly-azure` or `azure-test-diagnostics-rc-azure`.
+Set `RTC_AZURE_DIAGNOSTICS_DIR` for local collection.
+
+Nightly and release candidate pod-log artifacts also include
+`deployment-engine.log`, alongside Dynamic RP logs that record the resource
+IDs returned by the Deployment Engine. These logs help identify conditional
+resources that the engine skipped but still returned as output resources.
+If no Deployment Engine pod is found, the file states that explicitly.
+
+## Azure container failure diagnostics
+
+Azure validation, nightly tests, and release candidate tests save diagnostics **before** they delete
+a failed `Radius.Compute/containers` test app. This applies to deployment and
+assertion failures, for both per-recipe tests and checked-in Recipe Pack tests.
+The collector does not retry a deployment or turn a failed test into a pass.
+It does not run for successful tests, other resource types, or non-Azure tests.
+
+Download `azure-test-diagnostics-bicep` from Azure validation, or
+`azure-test-diagnostics-nightly-azure` from the nightly run. Each failure has a
+separate directory with `azure.json` and `collector-status.txt`. There is no
+artifact when no applicable test fails. A Terraform artifact uses the suffix
+`-terraform` if a future Azure container Terraform test fails.
+Release candidate tests use `azure-test-diagnostics-rc-azure`.
+
+Azure validation and all three nightly Azure test steps set
+`RTC_AZURE_DIAGNOSTICS_DIR` to `azure-test-diagnostics`. An unset or empty value
+disables collection in both CI and local runs.
+
+In GitHub Actions, the Azure container test limits `rad deploy` to 15 minutes
+and `rad app delete` to 3 minutes after a deployment or assertion failure,
+with a further 5-second kill limit for each. App cleanup after a successful
+test has no timeout.
+This leaves time to collect evidence when provisioning stalls, instead of
+waiting for the 30-minute job limit. A timeout remains a test failure.
+Collection runs before app cleanup, and Kubernetes cleanup is still attempted.
+These limits do not apply to local runs, other resource types, or non-Azure
+tests. They do not cancel an Azure operation or fix the cause of a provider
+stall; the workflow still performs its final resource-group cleanup.
+
+The JSON file contains an allowlist of resource IDs, provisioning states,
+container image references, container states, event names/counts/timestamps,
+subnet and NAT links, and Activity Log operation/status/correlation/request IDs
+when Azure returns them. This is a snapshot of the test's dedicated resource
+group, not proof that every resource belongs to the failed app. It includes
+NGroups, container group profiles, standard container groups, VNets, NAT
+gateways, load balancers, and public IP resource states.
+
+The `2024-11-01-preview` API has no NGroups child-list endpoint or NGroup
+instance view. Standard container-group reads can return instance-view events,
+but might not expose NGroups-managed children. The collector reports empty
+collections and missing instance views. Activity Log records can arrive late.
+Their absence does not prove that an operation did not occur. Direct provider
+operations do not require an Azure ARM deployment record.
+
+The collector does **not** save raw resource JSON, CLI stderr, free-text event
+messages, detailed status text, container commands or logs, environment values,
+tags, credentials, or deployment parameters/outputs. It does not enable CLI
+debug output. Thus original PUT/poll response headers, registry HTTP responses,
+and free-text image-pull detail remain unavailable. Use the saved resource IDs,
+timestamps, and correlation IDs for a provider investigation. These diagnostics
+do not establish or fix the cause of a registry failure.
+
+Resource collection uses only GET requests, scoped to the configured
+subscription and test resource group. For local runs without
+`AZURE_SUBSCRIPTION_ID`, the collector first reads the selected account ID with
+`az account show --query id`. It does not list accounts or read credentials.
+That lookup uses the same time and request budget.
+Each request has a 10-second limit and a 2 MiB response
+limit. Each collection has a 90-second request budget and at most 24 requests.
+The shell stops the collector after 100 seconds, with a further 5-second kill
+limit. Only the first page and at most 20 items per list are kept; pagination
+URLs are never followed. Partial results are saved after each request.
+`errors`, `truncations`, and `collector-status.txt` report failed API calls,
+invalid responses, and bounds. Missing permissions and unsupported APIs produce
+a failed-call entry with the CLI exit code. Raw provider errors are withheld
+to prevent secret exposure, so the artifact cannot distinguish those two causes.
+
+For local Azure tests, set `RTC_AZURE_DIAGNOSTICS_DIR` and `AZURE_RESOURCE_GROUP`
+to an output directory and the dedicated test resource group. Set
+`AZURE_SUBSCRIPTION_ID` to use a subscription other than the selected account's.
+The per-recipe runner derives the platform from the recipe path. The pack test
+driver derives it from `PLATFORM_GROUP`; for a direct invocation of
+`test-recipe-pack-entry.sh`, also set `RTC_TEST_PLATFORM=azure`.
+Collection requires Node.js, Azure CLI with an existing login, and GNU `timeout`.
+It does not change permissions. In CI, its Azure CLI calls use the same login
+renewal wrapper as the tests. Missing tools are reported and cleanup still runs.
+
+Offline checks require Node.js, Bash, `jq`, and GNU `timeout`; no Azure login is needed:
+
+```bash
+node --test .github/scripts/tests/test-azure-test-diagnostics.js
+bash .github/scripts/tests/test-azure-diagnostics-integration.sh
+make test-recipe-pack-entries-unit
+```
+
+The focused checks cover allowed fields, secret exclusion, read-only scope,
+API errors, time and size limits, collection before cleanup, unchanged failure
+status, and unchanged non-Azure behavior. Run them repeatedly to check the
+diagnostic code; this does not measure or validate an ACI flake fix.
+
 ## Manual Testing (Advanced)
 
 If you prefer manual testing or need to test externally-published recipes:
