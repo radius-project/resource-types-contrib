@@ -117,6 +117,33 @@ rad env update default \
 
 After the association is updated, every Resource Type the pack covers can be used in an application deployed to that Environment.
 
+## Migrating from the Azure pack
+
+The former `recipe-packs/azure/aks-recipepack.bicep` deployed a pack named
+`azure-avm`. Its replacement is `recipe-packs/azure-aks/azure-aks.bicep`, which
+deploys a separate pack named `azure-aks`. Existing Environment associations
+are not renamed automatically.
+
+1. Record each Environment's current pack list and Recipe parameter values.
+   Review the runtime, namespace, and resource-naming prerequisites above
+   before upgrading an existing deployment.
+2. Deploy `azure-aks.bicep` as shown above, supplying the existing Gateway,
+   registry, and any optional Recipe parameter values.
+3. Update each intended Environment with `rad env update <environment> --recipe-packs azure-aks`.
+   This replaces the entire pack list; include any other previously associated,
+   non-overlapping packs that must remain. Do not associate both `azure-avm`
+   and `azure-aks`, because their Resource Types overlap.
+4. Verify application deployment and connections in the target Environment.
+   Keep the old pack until no Environment references it and the migration is
+   verified; changing the association alone does not migrate Azure resources.
+
+Release tags also have a new identity: `recipe-pack/azure-aks/v...` starts its
+own series, rather than continuing `recipe-pack/azure/v0.3.0`. A first minor
+bump resolves to `0.1.0`; it does not mean the old pack was downgraded. Retain
+the historical `recipe-pack/azure/v...` tags and releases for existing consumers.
+Update any automation that selects the old directory, filename, pack name, or
+release prefix explicitly.
+
 ## Contributing a Recipe
 
 To add a Recipe for another Resource Type to this pack, add an entry to the `recipes` map keyed by the Resource Type (for example `Radius.Data/mySqlDatabases`). For guidance on writing Recipes and wiring them into a Recipe Pack, see [Contributing Resource Types and Radius Recipes](../../docs/contributing/contributing-resource-types-recipes.md#recipes-and-recipe-packs).
