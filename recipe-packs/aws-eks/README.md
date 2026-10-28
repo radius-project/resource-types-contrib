@@ -23,7 +23,7 @@ The AWS Recipe source is [`Data/mySqlDatabases/recipes/aws/bicep/aws-rds-mysql.b
 
 | Parameter | Description |
 | --- | --- |
-| `eksClusterName` | Name of the EKS cluster that runs the application. AWS Recipes attach their services to the cluster security group. |
+| `eksClusterName` | Name of the EKS cluster that runs the application. AWS Recipes attach their services to the cluster security group; see [Network access](#network-access) for what the workload needs. |
 | `subnetIds` | Comma-separated subnet IDs for AWS Recipes that need a subnet group, for example `subnet-0abc,subnet-0def`. Use subnets in the cluster VPC that span at least two Availability Zones; private subnets are recommended. A JSON array string is also accepted. |
 | `routesGatewayName` | Name of the existing Kubernetes Gateway resource that `Radius.Compute/routes` attach to. |
 | `routesGatewayNamespace` | Namespace of the Gateway resource for `Radius.Compute/routes`. Defaults to `default`. |
@@ -40,9 +40,22 @@ Resource names are `mysql-<hash>`, where the hash covers the EKS cluster name, t
 
 ### Network access
 
-The DB instance joins the **EKS cluster security group**. EKS attaches that group to the control plane and to managed node groups, and it allows all traffic between its members, so pods can reach the database. RDS listens only on port 3306. Nodes in self-managed node groups must also be in the cluster security group to connect.
+The DB instance joins the **EKS cluster security group** and gets no other security group. RDS listens only on port 3306. The cluster security group allows all traffic between its members, but EKS doesn't put every workload in it, so connectivity is a prerequisite you must check.
 
-A security group per database, allowing only port 3306 from the cluster, would be tighter. It isn't possible yet: AWS generates security group IDs, and Radius can't yet manage AWS resources whose ID AWS generates, so the group would be recreated on every deploy. The Recipe will switch once Radius supports these resources.
+**Prerequisite:** every pod that connects to the database needs to reach the instance on TCP 3306. Either the pod's traffic leaves through a security group that is a member of the cluster security group, or you add an inbound rule to the cluster security group that allows TCP 3306 from the security group the pod's traffic uses. That security group's outbound rules must also allow TCP 3306. How this applies depends on how the pods run:
+
+| Workload | Security group the pod's traffic uses | What to check |
+| --- | --- | --- |
+| Managed node group, no launch template security groups | The node's groups, which include the cluster security group | Nothing. |
+| Managed node group whose [launch template sets security groups](https://docs.aws.amazon.com/eks/latest/userguide/launch-templates.html#launch-template-security-groups) | Only the launch template's groups. EKS doesn't add the cluster security group | Add the cluster security group to the launch template, or add the inbound rule. |
+| Self-managed nodes | The groups you attach to the nodes | Attach the cluster security group, or add the inbound rule. |
+| Nodes using VPC CNI [custom networking](https://docs.aws.amazon.com/eks/latest/userguide/cni-custom-network.html) | The groups in the `ENIConfig`, if it lists any | Include the cluster security group in the `ENIConfig`, or add the inbound rule. |
+| Fargate | The cluster security group | Nothing, unless the pods use security groups for pods. |
+| Pods with [security groups for pods](https://docs.aws.amazon.com/eks/latest/userguide/security-groups-for-pods.html) | Only the groups in the pod's `SecurityGroupPolicy` | Include the cluster security group in the policy, or add the inbound rule for the policy's group. |
+
+The Recipe can't detect these setups. If the workload can't reach port 3306, the deploy still succeeds and the application fails when it connects.
+
+A security group per database, allowing only port 3306 from the cluster, would be tighter and wouldn't depend on cluster security group membership. It isn't possible yet: AWS generates security group IDs, and Radius can't yet manage AWS resources whose ID AWS generates, so the group would be recreated on every deploy. The Recipe will switch once Radius supports these resources.
 
 ### Transport policy
 

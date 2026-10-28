@@ -1,6 +1,6 @@
 extension radius
 
-@description('Name of the EKS cluster that runs the application. AWS Recipes attach their services to the cluster security group so pods can reach them.')
+@description('Name of the EKS cluster that runs the application. AWS Recipes attach their services to the cluster security group, so workloads must be in that group or allowed by its rules. See recipe-packs/aws-eks/README.md.')
 param eksClusterName string
 
 @description('Comma-separated IDs of VPC subnets for AWS Recipes that need a subnet group, for example subnet-0abc,subnet-0def. Use subnets in the EKS cluster VPC that span at least two Availability Zones. A JSON array string is also accepted.')
