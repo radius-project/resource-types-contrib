@@ -377,14 +377,23 @@ grep -q '^rad app delete' "$CALL_LOG" ||
 rm -f "$AZ_LOCK_STATE_FILE"
 if output=$(AZURE_RESOURCE_GROUP=rg AZURE_SUBSCRIPTION_ID=sub RTC_AZURE_LOCK_GUARD=1 \
     AZ_LOCKS_BEFORE="" AZ_LOCKS_AFTER="" RESOURCE_LIST_JSON="$LOCK_INVENTORY_JSON" \
+    RTC_AZURE_DIAGNOSTICS_DIR="$TEST_ROOT/lock-diagnostics" \
     run_lib rtc_deploy_and_assert_test_app \
     "$TEST_APP_BICEP" "Radius.Data/somethingElse" rtc-test /envs/myenv myws my-ns 2>&1); then
     fail "an inventory-only Azure lock must fail the test"
 fi
 grep -Fq "Radius recorded an Azure management lock that Azure did not list" <<<"$output" ||
     fail "the inventory-only failure must explain the Azure mismatch"
-grep -Fq "New Azure management lock could not be deleted: $NEW_LOCK" <<<"$output" ||
+grep -Fq "Unexpected Radius output resource: $NEW_LOCK" <<<"$output" ||
     fail "the inventory-only failure must identify the lock"
+if grep -q 'Grant the test identity' <<<"$output"; then
+    fail "an inventory mismatch must not be reported as a permission failure"
+fi
+lock_report="$(find "$TEST_ROOT/lock-diagnostics" -name locks.json)"
+jq -e --arg lock "$NEW_LOCK" '
+    .azureLocksBefore == [] and .azureLocksAfter == [] and
+    .radiusLockInventory == [$lock] and (.app | startswith("rtc-test-"))
+' "$lock_report" >/dev/null || fail "inventory mismatch evidence must persist"
 if grep -q '^rad app delete' "$CALL_LOG"; then
     fail "Radius app deletion must not run for an inventory-only lock"
 fi

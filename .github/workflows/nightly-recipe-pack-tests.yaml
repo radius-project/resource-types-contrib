@@ -148,6 +148,12 @@ jobs:
           else
             echo "applications-rp pod not found" > radius-pod-logs/applications-rp.log
           fi
+          DE_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | test("^(deployment-engine|bicep-de)-")) | .metadata.name' | head -n1)
+          if [ -n "$DE_POD" ]; then
+            kubectl logs "$DE_POD" -n radius-system --all-containers > radius-pod-logs/deployment-engine.log || true
+          else
+            echo "deployment engine pod not found" > radius-pod-logs/deployment-engine.log
+          fi
           UCP_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | startswith("ucp-")) | .metadata.name' | head -n1)
           if [ -n "$UCP_POD" ]; then
             kubectl logs "$UCP_POD" -n radius-system --all-containers > radius-pod-logs/ucp.log || true
@@ -190,6 +196,13 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Enable Azure CLI token renewal
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: bash .github/scripts/azure-cli-with-refresh.sh --install
 
       - name: Set Azure Test Context
         id: set-context
@@ -381,6 +394,12 @@ jobs:
             kubectl logs "$APP_POD" -n radius-system --all-containers > radius-pod-logs/applications-rp.log || true
           else
             echo "applications-rp pod not found" > radius-pod-logs/applications-rp.log
+          fi
+          DE_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | test("^(deployment-engine|bicep-de)-")) | .metadata.name' | head -n1)
+          if [ -n "$DE_POD" ]; then
+            kubectl logs "$DE_POD" -n radius-system --all-containers > radius-pod-logs/deployment-engine.log || true
+          else
+            echo "deployment engine pod not found" > radius-pod-logs/deployment-engine.log
           fi
           UCP_POD=$(kubectl get pods -n radius-system -o json | jq -r '.items[] | select(.metadata.name | startswith("ucp-")) | .metadata.name' | head -n1)
           if [ -n "$UCP_POD" ]; then
