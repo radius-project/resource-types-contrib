@@ -12,6 +12,7 @@ A **Recipe Pack** is a manifest of recipes by Resource Type referenced in a Radi
 | Kubernetes (default) | [`kubernetes/`](kubernetes/) | Kubernetes | Kubernetes |
 | Azure AKS | [`azure-aks/`](azure-aks/) | Kubernetes | Azure managed services |
 | Azure ACI | [`azure-aci/`](azure-aci/) | Azure Container Instances | Azure Files and Key Vault only |
+| AWS EKS | [`aws-eks/`](aws-eks/) | Kubernetes (Amazon EKS) | AWS managed services (Amazon RDS for MySQL today) |
 
 ## The default Recipe Pack
 
@@ -179,6 +180,9 @@ releases that pin a pack without one are not supported.
   [`validate-azure-recipes.yaml`](../.github/workflows/validate-azure-recipes.yaml),
   [`nightly-recipe-pack-tests.yaml`](../.github/workflows/nightly-recipe-pack-tests.yaml),
   and [`release-candidate-recipe-pack-tests.yaml`](../.github/workflows/release-candidate-recipe-pack-tests.yaml)).
+  The `aws` group has Layer 1 only: `validate-resource-types.yaml` deploys and
+  activates the AWS packs on the local cluster, which needs no AWS account.
+  Layers 2 and 3 need an AWS account in CI.
 - **New direct-module entry in an existing pack:** add a `test/app.bicep`
   under that Resource Type's folder (see
   [Testing Resource Types and Recipes](../docs/contributing/testing-resource-types-recipes.md)

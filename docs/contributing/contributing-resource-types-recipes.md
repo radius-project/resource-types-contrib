@@ -52,9 +52,9 @@ resource-types-contrib/
     ├── azure-aci/                    # Azure ACI recipe pack (containers on ACI; Azure Files + Key Vault)
     │       ├── README.md                  # Documentation for the Azure ACI recipe pack
     │       └── azure-aci.bicep            # Recipe pack wiring the Bicep recipes
-    ├── aws-eks/                      # AWS recipe pack (planned; containers on EKS, with aws-ecs for ECS to follow)
-    │       ├── README.md
-    │       └── aws-eks.bicep
+    ├── aws-eks/                      # AWS EKS recipe pack (AWS services; containers on EKS)
+    │       ├── README.md                  # Documentation for the AWS EKS recipe pack
+    │       └── aws-eks.bicep              # Recipe pack wiring the Bicep recipes
     └── kubernetes/           # Kubernetes recipe pack (zero-config, in-cluster)
             ├── README.md
             └── default.bicep
@@ -297,7 +297,7 @@ A brief description of what the Recipe does and how to use it.
 
 ## Recipes and Recipe Packs
 
-Recipes for a Resource Type are added to the platform Recipe Packs under `recipe-packs/` at the repository root. Each pack has its own folder (`azure-aks/`, `azure-aci/`, and `kubernetes/` today, with `aws-eks/` and `aws-ecs/` planned) containing a Bicep file named after the pack (for example `azure-aks/azure-aks.bicep`) that wires its recipes. Each Recipe Pack file declares only a `Radius.Core/recipePacks` resource whose `recipes` map contains an entry for each Resource Type it covers. Environment creation, provider configuration, and Recipe Pack association are separate deployment responsibilities.
+Recipes for a Resource Type are added to the platform Recipe Packs under `recipe-packs/` at the repository root. Each pack has its own folder (`azure-aks/`, `azure-aci/`, `aws-eks/`, and `kubernetes/` today, with `aws-ecs/` planned) containing a Bicep file named after the pack (for example `azure-aks/azure-aks.bicep`) that wires its recipes. Each Recipe Pack file declares only a `Radius.Core/recipePacks` resource whose `recipes` map contains an entry for each Resource Type it covers. Environment creation, provider configuration, and Recipe Pack association are separate deployment responsibilities.
 
 Today Radius supports Bicep and Terraform Recipe drivers, so a Recipe can be a Bicep template or a Terraform configuration. It can also point to well-maintained community modules like the [Azure Verified Modules](https://azure.github.io/Azure-Verified-Modules/) or the [AWS Terraform modules](https://registry.terraform.io/namespaces/terraform-aws-modules). When pointing at a standard module, Radius resolves any `{{context.*}}` expressions in the Recipe's `parameters` against the resource being deployed and maps the module's outputs onto the resource's read-only properties via the `outputs` field, so no Radius-specific wrapping is required.
 

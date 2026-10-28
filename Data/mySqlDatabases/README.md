@@ -27,6 +27,7 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 | Platform | Recipe Pack | Recipe source |
 | --- | --- | --- |
 | Azure | [`recipe-packs/azure-aks/azure-aks.bicep`](../../recipe-packs/azure-aks/azure-aks.bicep) | Direct module — Azure Verified Module `avm/res/db-for-my-sql/flexible-server` |
+| AWS | [`recipe-packs/aws-eks/aws-eks.bicep`](../../recipe-packs/aws-eks/aws-eks.bicep) | `ghcr.io/radius-project/aws-eks-recipes/mysqldatabases` (Amazon RDS for MySQL) |
 | Kubernetes | [`recipe-packs/kubernetes/default.bicep`](../../recipe-packs/kubernetes/default.bicep) | `ghcr.io/radius-project/kube-recipes/mysqldatabases` |
 
 ## Using the resource type
@@ -41,7 +42,10 @@ connection named `mysqldb` produces `CONNECTION_MYSQLDB_HOST`,
 MySQL client for TLS — for example, by passing
 `ssl: { minVersion: 'TLSv1.2' }` to the Node.js `mysql2` driver.
 
-The Azure Recipe enforces the requested policy on the server. The Kubernetes
+The Azure and AWS Recipes enforce the requested policy on the server. The
+AWS Recipe's server is not publicly accessible; see
+[Transport policy](../../recipe-packs/aws-eks/README.md#transport-policy) for
+the certificate authority clients need to verify it. The Kubernetes
 Recipe does not configure or enforce `tls`; its TLS behavior depends on the
 MySQL image and deployment configuration.
 

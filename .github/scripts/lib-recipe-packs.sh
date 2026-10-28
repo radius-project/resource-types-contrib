@@ -87,6 +87,9 @@ rtc_recipe_pack_platform_group() {
         azure-aks | azure-aci)
             echo "azure"
             ;;
+        aws-eks)
+            echo "aws"
+            ;;
         *)
             echo "Error: no platform group mapping for recipe pack '$1'. Add one to rtc_recipe_pack_platform_group() in lib-recipe-packs.sh." >&2
             return 1
@@ -258,6 +261,12 @@ rtc_recipe_pack_param_value() {
             ;;
         containerImagesRegistry)
             echo "localhost:5000"
+            ;;
+        eksClusterName)
+            echo "validation-cluster"
+            ;;
+        subnetIds)
+            echo "subnet-0123456789abcdef0,subnet-0fedcba9876543210"
             ;;
         *)
             echo "Error: no CI test value for required recipe pack parameter '$1'. Add one to rtc_recipe_pack_param_value() in lib-recipe-packs.sh." >&2

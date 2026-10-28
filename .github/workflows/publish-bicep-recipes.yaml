@@ -112,6 +112,11 @@ jobs:
         run: |
           echo "TAGS=$(./.github/scripts/resolve-recipe-tags.sh)" >>"$GITHUB_ENV"
 
+      # AWS recipes use `extension aws`, which Bicep resolves through a
+      # bicepconfig.json in the recipe's directory or an ancestor.
+      - name: Create bicepconfig.json
+        run: ./.github/scripts/update-bicepconfig.sh
+
       # Publishing every recipe from one job means checkout, login and the CLI
       # install happen once instead of once per recipe. At most 10 of these run
       # concurrently; the rest queue.
@@ -142,6 +147,9 @@ jobs:
             run: REGISTRY=ghcr.io/radius-project/azure-aci-recipes ./.github/scripts/publish-bicep-recipe.sh persistentvolumes Compute/persistentVolumes/recipes/azure/bicep/azure-file-volumes.bicep
           - name: Publish azure-aci secrets
             run: REGISTRY=ghcr.io/radius-project/azure-aci-recipes ./.github/scripts/publish-bicep-recipe.sh secrets Security/secrets/recipes/azure/bicep/azure-keyvault-secrets.bicep
+          # AWS recipes wired by the aws-eks recipe pack.
+          - name: Publish aws-eks mysqldatabases
+            run: REGISTRY=ghcr.io/radius-project/aws-eks-recipes ./.github/scripts/publish-bicep-recipe.sh mysqldatabases Data/mySqlDatabases/recipes/aws/bicep/aws-rds-mysql.bicep
 
       - name: Summarize
         run: |

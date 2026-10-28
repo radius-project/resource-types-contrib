@@ -31,7 +31,7 @@ helpers for the three testing layers. It answers three questions:
 | Function | Answers |
 |---|---|
 | `rtc_list_recipe_packs` (from `lib-namespaces.sh`) | "What packs exist?" — scans directories under `recipe-packs/` for Bicep files |
-| `rtc_recipe_pack_platform_group <pack>` | "What platform does this pack target?" — small lookup table (`kubernetes` → `kubernetes`, `azure-aks`/`azure-aci` → `azure`); every new pack needs a mapping, and a new platform also needs CI jobs |
+| `rtc_recipe_pack_platform_group <pack>` | "What platform does this pack target?" — small lookup table (`kubernetes` → `kubernetes`, `azure-aks`/`azure-aci` → `azure`, `aws-eks` → `aws`); every new pack needs a mapping, and a new platform also needs CI jobs |
 | `rtc_list_direct_module_types <pack>` | "Which entries reference external modules and have test apps?" — selects sources outside `ghcr.io/radius-project/` when the Resource Type has a `test/app.bicep`; it does not check for a recipe folder |
 | `rtc_list_recipe_pack_types <pack>` | "Which Resource Types does this pack contain?" — lists every entry for full nightly coverage |
 
