@@ -151,8 +151,32 @@ rtc_report_azure_lock_failure() {
     fi
 }
 
+rtc_save_azure_lock_diagnostics() {
+    local locks_before="$1" locks_after="$2" inventory_locks="$3" app_name="$4"
+    local root="${RTC_AZURE_DIAGNOSTICS_DIR:-}" directory
+    if [[ "${GITHUB_ACTIONS:-}" == true && -z "${RTC_AZURE_DIAGNOSTICS_DIR+x}" ]]; then
+        root="radius-pod-logs/azure-test-diagnostics"
+    fi
+    [[ -n "$root" ]] || return 0
+    if ! mkdir -p "$root" || ! directory=$(mktemp -d "$root/lock-failure-XXXXXXXX"); then
+        echo "Error: Could not create Azure lock diagnostic directory." >&2
+        return 1
+    fi
+    # Save only the IDs, never the raw Radius inventory or recipe secrets.
+    if ! jq -n --arg app "$app_name" --arg before "$locks_before" \
+        --arg after "$locks_after" --arg inventory "$inventory_locks" '
+        def ids: split("\n") | map(select(length > 0));
+        {app: $app, azureLocksBefore: ($before | ids),
+         azureLocksAfter: ($after | ids), radiusLockInventory: ($inventory | ids)}
+    ' >"$directory/locks.json"; then
+        echo "Error: Could not save Azure lock diagnostics." >&2
+        return 1
+    fi
+    echo "==> Saved Azure lock inventory evidence to $directory/locks.json"
+}
+
 rtc_delete_owned_new_azure_management_locks() {
-    local locks_before="$1" inventory_locks="$2" locks_after lock_id delete_output status=0
+    local locks_before="$1" inventory_locks="$2" app_name="$3" locks_after lock_id delete_output status=0
     local -a subscription_args=()
     if [[ -n "${AZURE_SUBSCRIPTION_ID:-}" ]]; then
         subscription_args=(--subscription "$AZURE_SUBSCRIPTION_ID")
@@ -192,10 +216,15 @@ rtc_delete_owned_new_azure_management_locks() {
             continue
         fi
         echo "Error: Radius recorded an Azure management lock that Azure did not list." >&2
-        rtc_report_azure_lock_failure "$lock_id"
+        echo "Error: Unexpected Radius output resource: $lock_id" >&2
+        echo "Error: Check Deployment Engine skipped-resource inventory; this is not evidence of a missing locks/delete permission." >&2
         status=1
     done < <(printf '%s\n' "$inventory_locks" | sed '/^$/d' | sort -u)
 
+    if [[ "$status" -ne 0 ]]; then
+        rtc_save_azure_lock_diagnostics "$locks_before" "$locks_after" "$inventory_locks" "$app_name" ||
+            echo "Error: Azure lock diagnostic collection failed." >&2
+    fi
     return "$status"
 }
 
@@ -397,8 +426,8 @@ rtc_deploy_and_assert_test_app() {
             echo "Error: Continuing with bounded Radius application deletion without lock ownership data." >&2
             inventory_locks=""
         fi
-        if ! rtc_delete_owned_new_azure_management_locks "$locks_before" "$inventory_locks"; then
-            echo "Error: Skipping Radius application deletion because a test-owned Azure management lock remains." >&2
+        if ! rtc_delete_owned_new_azure_management_locks "$locks_before" "$inventory_locks" "$app_name"; then
+            echo "Error: Skipping Radius application deletion because Azure lock cleanup or Radius lock inventory validation failed." >&2
             rtc_cleanup_kubernetes_resources_bounded "$kubernetes_namespace" "$app_name"
             return 1
         fi

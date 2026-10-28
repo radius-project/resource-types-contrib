@@ -202,9 +202,46 @@ Delete your test cluster when done:
 make delete-radius-cluster
 ```
 
+## Azure CLI login renewal in CI
+
+Azure validation, nightly tests, and release candidate tests install
+`azure-cli-with-refresh.sh` after `azure/login`. The wrapper requests a fresh
+GitHub OIDC assertion and logs in again before an Azure CLI call when the last
+login is at least four minutes old. A file lock prevents concurrent callers
+from renewing the same login at once. It also sets the test subscription.
+This covers capacity probes, lock checks, cleanup, and diagnostic child
+processes throughout a long test step, not just between workflow steps.
+
+The five-minute GitHub assertion is not an Azure access token. Cached access
+tokens can work for about an hour, then fail when Azure CLI tries to exchange
+the expired assertion. Renewing only at job start does not prevent that error.
+The wrapper fails the command if renewal fails. It does not retry deployments
+or change Radius pods' separate Azure workload identity.
+
+## Azure lock inventory diagnostics
+
+Recipe Pack entry tests compare Azure management locks before and after each
+deployment with the lock IDs in the test application's Radius inventory.
+A new, test-owned lock must be deleted before Radius application cleanup.
+A lock ID recorded by Radius but absent from Azure is an inventory error,
+not proof that the test identity lacks `Microsoft.Authorization/locks/delete`.
+The test still fails and skips application deletion in that case.
+
+On either lock failure, the test saves `locks.json` with the application name,
+the two Azure lock lists, and the Radius lock ID list. It does not save raw
+Radius resource properties or secrets. Download
+`azure-test-diagnostics-nightly-azure` or `azure-test-diagnostics-rc-azure`.
+Set `RTC_AZURE_DIAGNOSTICS_DIR` for local collection.
+
+Nightly and release candidate pod-log artifacts also include
+`deployment-engine.log`, alongside Dynamic RP logs that record the resource
+IDs returned by the Deployment Engine. These logs help identify conditional
+resources that the engine skipped but still returned as output resources.
+If no Deployment Engine pod is found, the file states that explicitly.
+
 ## Azure container failure diagnostics
 
-Azure validation and nightly Azure tests save diagnostics **before** they delete
+Azure validation, nightly tests, and release candidate tests save diagnostics **before** they delete
 a failed `Radius.Compute/containers` test app. This applies to deployment and
 assertion failures, for both per-recipe tests and checked-in Recipe Pack tests.
 The collector does not retry a deployment or turn a failed test into a pass.
@@ -215,6 +252,7 @@ Download `azure-test-diagnostics-bicep` from Azure validation, or
 separate directory with `azure.json` and `collector-status.txt`. There is no
 artifact when no applicable test fails. A Terraform artifact uses the suffix
 `-terraform` if a future Azure container Terraform test fails.
+Release candidate tests use `azure-test-diagnostics-rc-azure`.
 
 Azure validation and all three nightly Azure test steps set
 `RTC_AZURE_DIAGNOSTICS_DIR` to `azure-test-diagnostics`. An unset or empty value
@@ -276,8 +314,8 @@ The per-recipe runner derives the platform from the recipe path. The pack test
 driver derives it from `PLATFORM_GROUP`; for a direct invocation of
 `test-recipe-pack-entry.sh`, also set `RTC_TEST_PLATFORM=azure`.
 Collection requires Node.js, Azure CLI with an existing login, and GNU `timeout`.
-It does not change login or permissions. Missing tools are reported and cleanup
-still runs.
+It does not change permissions. In CI, its Azure CLI calls use the same login
+renewal wrapper as the tests. Missing tools are reported and cleanup still runs.
 
 Offline checks require Node.js, Bash, `jq`, and GNU `timeout`; no Azure login is needed:
 
