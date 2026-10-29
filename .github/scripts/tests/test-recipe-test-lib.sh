@@ -24,6 +24,8 @@
 set -euo pipefail
 
 command -v jq >/dev/null || { echo "Error: jq is required for these tests." >&2; exit 1; }
+REAL_SLEEP="$(command -v sleep)"
+export REAL_SLEEP
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/rtc-recipe-test-lib-tests-XXXXXX")"
@@ -51,7 +53,19 @@ case "$1 $2" in
         fi
         ;;
     "deploy "*)
-        exit "${DEPLOY_EXIT_CODE:-0}"
+        deploy_attempt=$(grep -c '^rad deploy ' "$CALL_LOG")
+        deploy_exit_code="${DEPLOY_EXIT_CODE:-0}"
+        if (( deploy_attempt <= ${DEPLOY_FAILURES:-0} )); then
+            deploy_exit_code=1
+        fi
+        if [[ "$deploy_exit_code" -ne 0 ]]; then
+            if [[ "$deploy_attempt" -gt 1 && -n "${DEPLOY_ERROR_AFTER_FIRST:-}" ]]; then
+                printf '%s\n' "$DEPLOY_ERROR_AFTER_FIRST" >&2
+            else
+                printf '%s\n' "${DEPLOY_ERROR:-}" >&2
+            fi
+        fi
+        exit "$deploy_exit_code"
         ;;
     "resource show")
         # Used by the containers/postgresql assertion helpers.
@@ -128,6 +142,16 @@ cat >"$MOCK_BIN/openssl" <<'EOF'
 echo "mock-generated-password"
 EOF
 chmod +x "$MOCK_BIN/openssl"
+
+cat >"$MOCK_BIN/sleep" <<'EOF'
+#!/bin/bash
+echo "sleep $*" >>"$CALL_LOG"
+case "$*" in
+    10|20) ;;
+    *) exec "$REAL_SLEEP" "$@" ;;
+esac
+EOF
+chmod +x "$MOCK_BIN/sleep"
 
 run_lib() {
     (
@@ -232,6 +256,7 @@ DEPLOY_EXIT_CODE=0 run_lib rtc_deploy_and_assert_test_app \
     "$TEST_APP_BICEP" "Radius.Data/somethingElse" "rtc-test" "/envs/myenv" "myws" "my-ns" \
     || fail "rtc_deploy_and_assert_test_app should succeed when rad deploy succeeds"
 grep -q '^rad app delete' "$CALL_LOG" || fail "rtc_deploy_and_assert_test_app should delete the app on success"
+assert_eq "1" "$(grep -c '^rad deploy ' "$CALL_LOG")" "successful deployment attempt count"
 assert_app_name() {
     local deployed_name
     deployed_name="$(sed -nE 's/^rad deploy .*--parameters applicationName=([^ ]+).*/\1/p' "$CALL_LOG")"
@@ -249,6 +274,7 @@ if DEPLOY_EXIT_CODE=1 run_lib rtc_deploy_and_assert_test_app \
     fail "rtc_deploy_and_assert_test_app should fail when rad deploy fails"
 fi
 grep -q '^rad app delete' "$CALL_LOG" || fail "rtc_deploy_and_assert_test_app should still attempt app cleanup after a failed deploy"
+assert_eq "1" "$(grep -c '^rad deploy ' "$CALL_LOG")" "ordinary failure attempt count"
 assert_app_name
 
 PREEXISTING_LOCK="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Authorization/locks/existing"
@@ -380,6 +406,7 @@ if POSTGRES_JSON='{"properties":{}}' run_lib rtc_deploy_and_assert_test_app \
     fail "post-deploy assertion failure must fail the test"
 fi
 grep -q '^rad app delete' "$CALL_LOG" || fail "assertion failure must still clean up"
+assert_eq "1" "$(grep -c '^rad deploy ' "$CALL_LOG")" "assertion failure deployment attempt count"
 
 : >"$CALL_LOG"
 if CONTAINERS_JSON='{"properties":{}}' run_lib rtc_deploy_and_assert_test_app \
@@ -400,6 +427,94 @@ DEPLOY_EXIT_CODE=0 run_lib rtc_deploy_and_assert_test_app \
     || fail "rtc_deploy_and_assert_test_app should succeed with an auto-generated password"
 grep -Fq -- '--parameters password=Aa1!mock-generated-password' "$CALL_LOG" \
     || fail "rtc_deploy_and_assert_test_app should pass a generated password value to rad deploy"
+
+# Retry only the Azure deployment-engine transport failure seen in Actions.
+TRANSIENT_DEPLOY_ERROR='Error: {"code":"ResourceDeploymentFailure","message":"System.IO.IOException: Connection reset by peer","target":"/subscriptions/test/resourceGroups/test/providers/Microsoft.KeyVault/vaults/test"}'
+DEPLOY_LOG_DIR="$TEST_ROOT/deploy-logs"
+mkdir -p "$DEPLOY_LOG_DIR"
+for failures in 1 2 3; do
+    : >"$CALL_LOG"
+    retry_status=0
+    TMPDIR="$DEPLOY_LOG_DIR" DEPLOY_FAILURES="$failures" DEPLOY_ERROR="$TRANSIENT_DEPLOY_ERROR" \
+        run_lib rtc_deploy_and_assert_test_app \
+        "$TEST_APP_WITH_PASSWORD" Radius.Security/secrets rtc-test /envs/myenv myws my-ns \
+        --parameters location=test-location >"$TEST_ROOT/retry-output" 2>&1 || retry_status=$?
+    if [[ "$failures" -lt 3 ]]; then
+        assert_eq "0" "$retry_status" "transient failure recovery"
+        expected_attempts=$((failures + 1))
+    else
+        [[ "$retry_status" -ne 0 ]] || fail "exhausted retries must fail"
+        expected_attempts=3
+    fi
+    assert_eq "$expected_attempts" "$(grep -c '^rad deploy ' "$CALL_LOG")" "bounded deployment attempts"
+    assert_eq "$((expected_attempts - 1))" "$(grep -c '^sleep ' "$CALL_LOG")" "retry delay count"
+    grep -Fxq 'sleep 10' "$CALL_LOG" || fail "first retry must back off for 10 seconds"
+    if [[ "$expected_attempts" -eq 3 ]]; then
+        grep -Fxq 'sleep 20' "$CALL_LOG" || fail "second retry must back off for 20 seconds"
+    fi
+    assert_eq "1" "$(grep '^rad deploy ' "$CALL_LOG" | sort -u | wc -l | tr -d ' ')" \
+        "retries must preserve all deployment arguments, including generated credentials"
+    assert_eq "1" "$(grep -c '^rad app delete ' "$CALL_LOG")" "cleanup after retries"
+    awk '/^rad app delete / { cleaned = 1 } /^rad deploy / && cleaned { exit 1 }' "$CALL_LOG" ||
+        fail "cleanup must not run between deployment attempts"
+    grep -Fq 'Connection reset by peer' "$TEST_ROOT/retry-output" || fail "deployment diagnostics must remain visible"
+    [[ -z "$(find "$DEPLOY_LOG_DIR" -type f -print -quit)" ]] || fail "deployment transcripts must be removed"
+done
+
+# A successful Azure operation must not qualify an unrelated failure for retries.
+MIXED_DEPLOY_ERROR='Deployment operations:
+{"status":"Succeeded","target":"/subscriptions/test/resourceGroups/test/providers/Microsoft.ManagedIdentity/userAssignedIdentities/test"}
+Error: {
+  "code": "ResourceDeploymentFailure",
+  "message": "Connection reset by peer",
+  "target": "/planes/radius/local/resourceGroups/test/providers/Radius.Data/widgets/test"
+}'
+
+for deploy_error in \
+    'InvalidTemplate: invalid property' \
+    'AuthorizationFailed: access denied' \
+    "$MIXED_DEPLOY_ERROR" \
+    '{"code":"ResourceDeploymentFailure","message":"VaultAlreadyExists","target":"/subscriptions/test/resourceGroups/test/providers/Microsoft.KeyVault/vaults/test","details":[{"message":"Connection reset by peer"}]}' \
+    '{"code":"ResourceDeploymentFailure","message":"VaultAlreadyExists","target":"/subscriptions/test/resourceGroups/test/providers/Microsoft.KeyVault/vaults/test"}' \
+    'Connection reset by peer' \
+    '{"code":"ResourceDeploymentFailure","message":"Connection reset by peer","target":"/planes/radius/local/resourceGroups/test/providers/Radius.Data/widgets/test"}'; do
+    : >"$CALL_LOG"
+    if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$deploy_error" run_lib rtc_deploy_and_assert_test_app \
+        "$TEST_APP_BICEP" Radius.Security/secrets rtc-test /envs/myenv myws my-ns >/dev/null 2>&1; then
+        fail "non-retryable errors must fail"
+    fi
+    assert_eq "1" "$(grep -c '^rad deploy ' "$CALL_LOG")" "non-retryable deployment attempt count"
+    grep -q '^sleep ' "$CALL_LOG" && fail "non-retryable errors must not back off"
+    grep -q '^rad app delete ' "$CALL_LOG" || fail "non-retryable failures must still clean up"
+done
+
+: >"$CALL_LOG"
+DEPLOY_FAILURES=1 DEPLOY_ERROR='Deploying resources...
+Error: {"code":"DeploymentFailed","details":[{
+  "target": "/subscriptions/test/resourceGroups/test/providers/Microsoft.KeyVault/vaults/test",
+  "message": "System.IO.IOException: Connection reset by peer (\"{transport}\")",
+  "code": "ResourceDeploymentFailure",
+  "details": []
+}]}
+Deployment failed.' run_lib rtc_deploy_with_retry "$TEST_APP_BICEP" >/dev/null 2>&1 ||
+    fail "nested multiline Azure connection-reset errors must retry"
+assert_eq "2" "$(grep -c '^rad deploy ' "$CALL_LOG")" "nested Azure failure attempt count"
+
+: >"$CALL_LOG"
+if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$TRANSIENT_DEPLOY_ERROR" DEPLOY_ERROR_AFTER_FIRST='InvalidTemplate: invalid property' \
+    run_lib rtc_deploy_and_assert_test_app \
+    "$TEST_APP_BICEP" Radius.Security/secrets rtc-test /envs/myenv myws my-ns >/dev/null 2>&1; then
+    fail "permanent errors after a transient failure must fail"
+fi
+assert_eq "2" "$(grep -c '^rad deploy ' "$CALL_LOG")" "only the latest failure may trigger a retry"
+
+: >"$CALL_LOG"
+if APP_DELETE_EXIT_CODE=1 DEPLOY_FAILURES=1 DEPLOY_ERROR="$TRANSIENT_DEPLOY_ERROR" \
+    run_lib rtc_deploy_and_assert_test_app \
+    "$TEST_APP_BICEP" Radius.Security/secrets rtc-test /envs/myenv myws my-ns >/dev/null 2>&1; then
+    fail "cleanup failures after recovery must still fail"
+fi
+assert_eq "2" "$(grep -c '^rad deploy ' "$CALL_LOG")" "cleanup must not trigger deployment retries"
 
 # Exercise the real SQL Server template, not a fixture with fewer parameters.
 : >"$CALL_LOG"

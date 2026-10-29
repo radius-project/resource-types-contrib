@@ -309,6 +309,74 @@ rtc_assert_recipe_result() {
     esac
 }
 
+# CLI progress text can surround JSON errors; inspect each decoded object separately.
+rtc_has_azure_connection_reset() {
+    python3 - "$1" <<'PY'
+import json
+import re
+import sys
+
+with open(sys.argv[1], encoding="utf-8", errors="replace") as log:
+    transcript = log.read()
+decoder = json.JSONDecoder()
+offset = 0
+while (offset := transcript.find("{", offset)) != -1:
+    try:
+        value, offset = decoder.raw_decode(transcript, offset)
+    except ValueError:
+        offset += 1
+        continue
+    pending = [value]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            message = value.get("message")
+            target = value.get("target")
+            if (
+                value.get("code") == "ResourceDeploymentFailure"
+                and isinstance(message, str)
+                and "Connection reset by peer" in message
+                and isinstance(target, str)
+                and re.match(r'/subscriptions/[^"]*/providers/Microsoft\.', target)
+            ):
+                sys.exit(0)
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+sys.exit(1)
+PY
+}
+
+# Retry an Azure deployment-engine connection reset without deleting partially
+# deployed resources. Keep the same arguments so retries are idempotent.
+rtc_deploy_with_retry() (
+    local deploy_log attempt=1 max_attempts=3
+    local -a deploy_status
+    deploy_log=$(mktemp "${TMPDIR:-/tmp}/rtc-deploy-XXXXXX") || return 1
+    trap 'rm -f "$deploy_log"' EXIT
+    set -o pipefail
+
+    while true; do
+        if rad deploy "$@" 2>&1 | tee "$deploy_log"; then
+            return 0
+        else
+            deploy_status=("${PIPESTATUS[@]}")
+        fi
+
+        if [[ "${deploy_status[1]}" -ne 0 ]]; then
+            return 1
+        fi
+        if [[ "$attempt" -ge "$max_attempts" ]] ||
+            ! rtc_has_azure_connection_reset "$deploy_log"; then
+            return "${deploy_status[0]}"
+        fi
+
+        echo "==> Azure deployment connection reset; retrying in $((attempt * 10)) seconds (attempt $((attempt + 1))/$max_attempts)"
+        sleep "$((attempt * 10))" || return 1
+        attempt=$((attempt + 1))
+    done
+)
+
 rtc_collect_azure_test_diagnostics() {
     local resource_type="$1" app_name="$2" started="$3" directory status script_dir dependency
     local diagnostics_root="${RTC_AZURE_DIAGNOSTICS_DIR:-}"
@@ -358,6 +426,7 @@ rtc_deploy_and_assert_test_app() {
     local test_file="$1" resource_type="$2" app_name_prefix="$3" environment_path="$4" workspace_name="$5" kubernetes_namespace="$6"
     local app_name started locks_before="" inventory_locks="" deploy_status=0
     local -a params=() deploy_timeout=() cleanup_timeout=()
+    local -a deploy_command=(rtc_deploy_with_retry)
     shift 6
 
     app_name="${app_name_prefix}-$(date +%s)"
@@ -369,6 +438,9 @@ rtc_deploy_and_assert_test_app() {
             return 1
         fi
         deploy_timeout=(timeout --kill-after=5s 15m)
+        deploy_command=("${deploy_timeout[@]}" bash -c \
+            'source "$1"; shift; rtc_deploy_with_retry "$@"' \
+            bash "${BASH_SOURCE[0]}")
     fi
 
     if ! grep -qE '^param applicationName string' "$test_file"; then
@@ -398,7 +470,7 @@ rtc_deploy_and_assert_test_app() {
 
     echo "==> Deploying test application from $test_file"
     started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    if ${deploy_timeout[@]+"${deploy_timeout[@]}"} rad deploy "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
+    if "${deploy_command[@]}" "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
         echo "==> Test deployment successful"
 
         if ! rtc_assert_recipe_result "$resource_type" "$app_name" "$workspace_name" "$kubernetes_namespace"; then

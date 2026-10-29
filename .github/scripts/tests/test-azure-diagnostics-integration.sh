@@ -65,7 +65,7 @@ cat >"$TEST_ROOT/bin/timeout" <<'EOF'
 [[ "$1" == --kill-after=5s ]] || exit 97
 case "$2 $3 $4" in
     "100s node "*) ;;
-    "15m rad deploy"|"3m rad app")
+    "15m bash -c"|"3m rad app")
         echo "bounded $2 $3 $4" >>"$CALL_LOG"
         if [[ "${DEPLOY_HANG:-0}" == 1 || "${CLEANUP_HANG:-0}" == 1 ]]; then
             shift 2
@@ -121,7 +121,7 @@ assert_before_cleanup
 for status in 124 137; do
     GITHUB_ACTIONS=true DEPLOY_STATUS="$status" assert_failure_cleanup run_helper
     assert_before_cleanup
-    grep -q '^bounded 15m rad deploy$' "$CALL_LOG" || fail "CI deployment must be bounded"
+    grep -q '^bounded 15m bash -c$' "$CALL_LOG" || fail "CI deployment retries must be bounded"
     grep -q '^bounded 3m rad app$' "$CALL_LOG" || fail "CI cleanup must be bounded"
     grep -q 'exceeded its 15-minute limit' "$TEST_ROOT/output" || fail "deployment timeout must be explicit"
 done
@@ -153,7 +153,7 @@ GITHUB_ACTIONS=true DEPLOY_STATUS=0 run_helper >"$TEST_ROOT/output" 2>&1 || fail
 if grep -q '^bounded 3m rad app$' "$CALL_LOG"; then
     fail "successful CI cleanup must not have a timeout"
 fi
-grep -q '^bounded 15m rad deploy$' "$CALL_LOG" || fail "CI deployment must remain bounded"
+grep -q '^bounded 15m bash -c$' "$CALL_LOG" || fail "CI deployment retries must remain bounded"
 
 # Missing dependencies must produce a status artifact but cannot stop cleanup.
 (
