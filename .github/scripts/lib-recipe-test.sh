@@ -310,7 +310,7 @@ rtc_assert_recipe_result() {
 }
 
 # CLI progress text can surround JSON errors; inspect each decoded object separately.
-rtc_has_azure_connection_reset() {
+rtc_deployment_retry_reason() {
     python3 - "$1" <<'PY'
 import json
 import re
@@ -320,18 +320,23 @@ with open(sys.argv[1], encoding="utf-8", errors="replace") as log:
     transcript = log.read()
 decoder = json.JSONDecoder()
 offset = 0
+messages = []
+decoded = False
 while (offset := transcript.find("{", offset)) != -1:
     try:
         value, offset = decoder.raw_decode(transcript, offset)
     except ValueError:
         offset += 1
         continue
+    decoded = True
     pending = [value]
     while pending:
         value = pending.pop()
         if isinstance(value, dict):
             message = value.get("message")
             target = value.get("target")
+            if value.get("code") == "RecipeDeploymentFailed" and isinstance(message, str):
+                messages.append(message)
             if (
                 value.get("code") == "ResourceDeploymentFailure"
                 and isinstance(message, str)
@@ -339,18 +344,44 @@ while (offset := transcript.find("{", offset)) != -1:
                 and isinstance(target, str)
                 and re.match(r'/subscriptions/[^"]*/providers/Microsoft\.', target)
             ):
+                print("Azure deployment connection reset")
                 sys.exit(0)
             pending.extend(value.values())
         elif isinstance(value, list):
             pending.extend(value)
+
+# Do not combine sibling JSON messages or use the escaped JSON as plain text.
+if not decoded:
+    messages = [transcript]
+provider_reset = re.compile(
+    r'Failed to install provider\s+'
+    r'Error while installing [\w./-]+ v[\w.+-]+:\s+'
+    r'releases\.hashicorp\.com:\s+Get\s+'
+    r'"https://releases\.hashicorp\.com/terraform-provider-[^"\s]+\.zip":\s+'
+    r'read tcp [^\n]+: read: connection reset by peer\s*'
+)
+if messages:
+    for message in messages:
+        _, marker, failure = message.partition("terraform init failure: exit status 1")
+        if not marker:
+            sys.exit(1)
+        diagnostics = re.split(r'(?m)^\s*Error:\s*', failure)
+        # Every diagnostic must be this download failure, not a configuration,
+        # version, checksum, signature, authorization, or other permanent error.
+        if diagnostics[0].strip() or len(diagnostics) < 2:
+            sys.exit(1)
+        if not all(provider_reset.fullmatch(item) for item in diagnostics[1:]):
+            sys.exit(1)
+    print("Terraform provider download connection reset")
+    sys.exit(0)
 sys.exit(1)
 PY
 }
 
-# Retry an Azure deployment-engine connection reset without deleting partially
-# deployed resources. Keep the same arguments so retries are idempotent.
+# Retry confirmed download or Azure transport failures without deleting partially
+# deployed resources. Terraform init fails before apply; keep deployment arguments.
 rtc_deploy_with_retry() (
-    local deploy_log attempt=1 max_attempts=3
+    local deploy_log retry_reason attempt=1 max_attempts=3
     local -a deploy_status
     deploy_log=$(mktemp "${TMPDIR:-/tmp}/rtc-deploy-XXXXXX") || return 1
     trap 'rm -f "$deploy_log"' EXIT
@@ -367,11 +398,11 @@ rtc_deploy_with_retry() (
             return 1
         fi
         if [[ "$attempt" -ge "$max_attempts" ]] ||
-            ! rtc_has_azure_connection_reset "$deploy_log"; then
+            ! retry_reason=$(rtc_deployment_retry_reason "$deploy_log"); then
             return "${deploy_status[0]}"
         fi
 
-        echo "==> Azure deployment connection reset; retrying in $((attempt * 10)) seconds (attempt $((attempt + 1))/$max_attempts)"
+        echo "==> $retry_reason; retrying in $((attempt * 10)) seconds (attempt $((attempt + 1))/$max_attempts)"
         sleep "$((attempt * 10))" || return 1
         attempt=$((attempt + 1))
     done
