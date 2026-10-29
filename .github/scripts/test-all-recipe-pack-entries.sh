@@ -45,6 +45,11 @@ workspace_name="${2:-default}"
 environment_name="${3:-default}"
 
 pack_list="$(rtc_recipe_packs_for_platform_group "$platform_group")"
+if [[ "$platform_group" == azure && -n "${RTC_AZURE_SELECTION_FILE+x}" ]]; then
+    # Use the shared PostgreSQL deadline before unrelated cloud deployments.
+    pack_list="$(awk '$0 == "azure-aks" {print; next}
+        {rest = rest $0 ORS} END {printf "%s", rest}' <<<"$pack_list")"
+fi
 packs=()
 if [[ -n "$pack_list" ]]; then
     mapfile -t packs <<<"$pack_list"
@@ -141,6 +146,10 @@ preflight() {
 
 for pack_id in "${packs[@]}"; do
     resource_types="$(rtc_list_recipe_pack_types "$pack_id")"
+    if [[ "$platform_group" == azure && -n "${RTC_AZURE_SELECTION_FILE+x}" ]]; then
+        resource_types="$(awk '$0 == "Data/postgreSqlDatabases" {print; next}
+            {rest = rest $0 ORS} END {printf "%s", rest}' <<<"$resource_types")"
+    fi
     template="$(rtc_recipe_pack_template "$pack_id")"
     pack_name="$(rtc_recipe_pack_name "$template")"
     if [[ -z "$pack_name" ]]; then

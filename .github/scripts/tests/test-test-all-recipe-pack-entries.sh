@@ -271,6 +271,17 @@ jq -n --argjson deadline "$(( $(date +%s) + 600 ))" \
 RTC_AZURE_SELECTION_FILE="$selection" EXPECTED_POSTGRES_SIZE=M run_driver azure azure-ws azure-env >/dev/null ||
     fail "selected M must reach the entry runner"
 if grep -q '^probe-' "$CALL_LOG"; then fail "selected tuples must not be probed twice"; fi
+expected="rad env update azure-env --workspace azure-ws --recipe-packs azure-aks
+test-recipe-pack-entry.sh Data/postgreSqlDatabases azure-ws azure-env
+test-recipe-pack-entry.sh Data/redisCaches azure-ws azure-env
+test-recipe-pack-entry.sh Messaging/rabbitMQ azure-ws azure-env
+test-recipe-pack-entry.sh Data/mySqlDatabases azure-ws azure-env verify-transport
+test-recipe-pack-entry.sh Compute/persistentVolumes azure-ws azure-env
+test-recipe-pack-entry.sh Compute/routes azure-ws azure-env
+rad env update azure-env --workspace azure-ws --recipe-packs azure-aci
+test-recipe-pack-entry.sh Compute/containers azure-ws azure-env"
+diff -u <(echo "$expected") "$CALL_LOG" ||
+    fail "selected PostgreSQL must run before unrelated entries, without dropping any"
 
 for state in missing malformed capacity_exhausted probe_error deadline_exceeded invalid_size invalid_tuple wrong_region expired invalid_deadline; do
     case "$state" in

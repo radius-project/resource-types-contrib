@@ -70,7 +70,9 @@ assert_json() { jq -e "$1" "$RTC_AZURE_SELECTION_FILE" >/dev/null || fail "JSON:
 probe_count() { grep -c '^probe ' "$CALL_LOG" || true; }
 
 reset 0
+selection_started="$(date +%s)"
 [[ "$(select_location westus3 eastus2)" == westus3 ]] || fail "preferred region"
+selection_finished="$(date +%s)"
 [[ "$(probe_count)" == 1 ]] || fail "stop at success"
 grep -q '^probe westus3 S attempts=1 timeout=900$' "$CALL_LOG" || fail "bounded single probe"
 grep -q '^az group delete --name probe-rg' "$CALL_LOG" || fail "group cleanup"
@@ -80,6 +82,8 @@ assert_json '.version == 1 and .status == "selected" and .location == "westus3" 
     .attempts[0] == {region:"westus3",size:"S",skuName:"Standard_B1ms",tier:"Burstable",
                      outcome:"available",errorCode:"",durationSeconds:.attempts[0].durationSeconds} and
     (.attempts[0].durationSeconds | type == "number")'
+assert_json ".deadlineEpochSeconds >= $((selection_started + 3600)) and
+    .deadlineEpochSeconds <= $((selection_finished + 3600))"
 reset 0
 [[ "$(env -u RTC_AZURE_SELECTION_FILE PATH="$TEST_ROOT/bin:$PATH" \
     "$TEST_ROOT/scripts/select-azure-test-location.sh" probe-rg westus3 2>/dev/null)" == westus3 ]] ||
@@ -153,10 +157,13 @@ reset 0
 grep -q '^probe westus3 M ' "$CALL_LOG" || fail "explicit M preference"
 
 reset 2 0
+selection_started="$(date +%s)"
 RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=3 PROBE_SLEEP=4 select_location westus3 eastus2 >/dev/null
 [[ "$(probe_count)" == 1 ]] || fail "global deadline stops candidates"
 grep -qE 'timeout=[1-3]$' "$CALL_LOG" || fail "create capped by remaining time"
 assert_json '.status == "deadline_exceeded" and (has("postgres") | not)'
+assert_json ".deadlineEpochSeconds >= $((selection_started + 3)) and
+    .deadlineEpochSeconds <= $((selection_started + 5))"
 reset 0
 RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=3 PROBE_SLEEP=4 select_location westus3 >/dev/null
 assert_json '.status == "deadline_exceeded" and (has("postgres") | not)'
