@@ -23,8 +23,8 @@
 # cannot be pulled anonymously. Registering a pack only records the source
 # strings; Radius pulls them when a resource is deployed. Without this check a
 # pack could be released while a referenced tag (for example a new registry's
-# `latest`, which only a stable `release_version` publish creates) does not
-# exist yet, or while its GHCR package is still private.
+# `latest`, which needs a one-time bootstrap before its first stable release)
+# does not exist yet, or while its GHCR package is still private.
 #
 # Only literal `source: '<registry>/<repository>:<tag>'` (or `@<digest>`)
 # values in the pack's top-level Bicep templates are checked; interpolated
@@ -131,8 +131,9 @@ done
 if [[ "${#missing[@]}" -gt 0 ]]; then
     {
         echo "Error: ${#missing[@]} Recipe source(s) in the '$RECIPE_PACK' pack cannot be pulled anonymously."
-        echo "Publish them (for a new registry's 'latest', dispatch Publish Bicep Recipes with a stable"
-        echo "release_version) and make sure the GHCR packages are public before releasing this pack."
+        echo "Publish them and make sure the GHCR packages are public before releasing this pack."
+        echo "Bootstrap a new registry's 'latest' with the one-time steps in the Radius recipe pack guide:"
+        echo "https://github.com/radius-project/radius/blob/main/docs/contributing/contributing-recipe-packs.md#3-publish-new-recipe-images"
     } >&2
     exit 1
 fi

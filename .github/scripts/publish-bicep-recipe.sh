@@ -17,8 +17,8 @@
 # ------------------------------------------------------------
 
 # =============================================================================
-# Publish one Bicep recipe to a container registry under every tag in
-# $TAGS. Called once per recipe by the publish-bicep-recipes workflow, which
+# Verify one Bicep recipe's build and tag the same digest.
+# Called once per recipe by the publish-bicep-recipes workflow, which
 # runs the invocations as parallel steps in a single job.
 #
 # Arguments:
@@ -27,7 +27,7 @@
 #
 # Inputs (environment variables):
 #   REGISTRY             required, e.g. ghcr.io/radius-project/kube-recipes
-#   TAGS                 required, space-separated tags, e.g. "0.51.0 latest"
+#   TAGS                 required, source SHA followed by edge or a full version
 #   RECIPE_SUBJECTS_DIR  optional; when set, records "<sha256>  <repository>"
 #                        for every published tag in a new file there, for the
 #                        workflow's provenance attestation (requires oras)
@@ -45,21 +45,11 @@ RECIPE_PATH="${2:?recipe path is required}"
 
 read -ra tags <<<"$TAGS"
 
-for tag in "${tags[@]}"; do
-    target="br:${REGISTRY}/${NAME}:${tag}"
-    echo "Publishing ${RECIPE_PATH} to ${target}"
-    rad bicep publish --file "$RECIPE_PATH" --target "$target"
-done
+digest="$(bash "$(dirname "${BASH_SOURCE[0]}")/recipe-oci.sh" publish \
+    "$RECIPE_PATH" "$REGISTRY/$NAME" "${tags[0]}" "${tags[@]}")"
 
 if [[ -n "${RECIPE_SUBJECTS_DIR:-}" ]]; then
     # Parallel publish steps share the directory, so each writes its own file.
     subjects="$(mktemp "${RECIPE_SUBJECTS_DIR}/subjects-XXXXXX")"
-    for tag in "${tags[@]}"; do
-        digest="$(oras resolve "${REGISTRY}/${NAME}:${tag}")"
-        if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "Error: ${REGISTRY}/${NAME}:${tag} resolved to '${digest}'" >&2
-            exit 1
-        fi
-        printf '%s  %s\n' "${digest#sha256:}" "${REGISTRY}/${NAME}" >>"$subjects"
-    done
+    printf '%s  %s\n' "${digest#sha256:}" "${REGISTRY}/${NAME}" >"$subjects"
 fi

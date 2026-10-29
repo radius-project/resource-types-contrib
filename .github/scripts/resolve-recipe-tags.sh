@@ -33,8 +33,8 @@
 # The remaining tags are aliases layered on top of that immutable coordinate:
 #   * edge      -> pushes to `main` and manual runs with no version.
 #   * <version> -> manual dispatch with RELEASE_VERSION.
-#   * latest    -> only for a stable RELEASE_VERSION; SemVer marks a prerelease
-#                  with a `-`, so `latest` never resolves to an unreleased build.
+# Stable `latest` promotion is separate, after every recipe is published and
+# attested. It must not move when a newer full version already exists.
 #
 # Inputs (environment variables):
 #   COMMIT_SHA       required, full lowercase 40-character commit SHA
@@ -97,9 +97,6 @@ if [[ "$PIN_ONLY" != "true" ]]; then
         tags+=("edge")
     else
         tags+=("$RELEASE_VERSION")
-        if [[ "$RELEASE_VERSION" != *-* ]]; then
-            tags+=("latest")
-        fi
     fi
 fi
 

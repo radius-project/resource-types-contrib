@@ -560,7 +560,7 @@ test_recipe_tags() {
     # reuses it verbatim as the recipe's OCI tag, so every publish must produce
     # that tag no matter which channel triggered it.
     assert_eq "$sha edge" "$(COMMIT_SHA="$sha" bash "$TAGS_SCRIPT")" "edge tags"
-    assert_eq "$sha 0.51.0 latest" \
+    assert_eq "$sha 0.51.0" \
         "$(COMMIT_SHA="$sha" RELEASE_VERSION=0.51.0 bash "$TAGS_SCRIPT")" "stable release tags"
     assert_eq "$sha 0.51.0-rc.1" \
         "$(COMMIT_SHA="$sha" RELEASE_VERSION=0.51.0-rc.1 bash "$TAGS_SCRIPT")" "prerelease tags"
@@ -585,24 +585,39 @@ test_recipe_tags() {
 # can sign build provenance for exactly what it published.
 test_recipe_publication_subjects() {
     local bin="$TEST_ROOT/publish-bin" subjects="$TEST_ROOT/publish-subjects"
-    local digest
+    local digest sha="0123456789abcdef0123456789abcdef01234567"
     digest="$(printf 'a%.0s' {1..64})"
     mkdir -p "$bin" "$subjects"
-    printf '#!/bin/bash\nexit 0\n' >"$bin/rad"
+    cat >"$bin/rad" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+while (($#)); do
+    if [[ "$1" == --target ]]; then
+        target="${2#br:}"
+        printf 'Pushed to %s@sha256:%s\n' "${target%:*}" "$TEST_RECIPE_DIGEST"
+        exit
+    fi
+    shift
+done
+exit 1
+EOF
     printf '#!/bin/bash\necho "sha256:%s"\n' "$digest" >"$bin/oras"
     chmod +x "$bin/rad" "$bin/oras"
 
-    PATH="$bin:$PATH" REGISTRY=ghcr.io/example/kube-recipes TAGS="sha 0.51.0" \
+    PATH="$bin:$PATH" TEST_RECIPE_DIGEST="$digest" \
+        REGISTRY=ghcr.io/example/kube-recipes TAGS="$sha 0.51.0" \
         bash "$PUBLISH_SCRIPT" demo demo.bicep >/dev/null
     [[ -z "$(ls -A "$subjects")" ]] || fail "subjects were recorded for an unattested publish"
 
-    PATH="$bin:$PATH" REGISTRY=ghcr.io/example/kube-recipes TAGS="sha 0.51.0" \
+    PATH="$bin:$PATH" TEST_RECIPE_DIGEST="$digest" \
+        REGISTRY=ghcr.io/example/kube-recipes TAGS="$sha 0.51.0" \
         RECIPE_SUBJECTS_DIR="$subjects" bash "$PUBLISH_SCRIPT" demo demo.bicep >/dev/null
     assert_eq "${digest}  ghcr.io/example/kube-recipes/demo" "$(sort -u "$subjects"/*)" \
         "recorded recipe subjects"
 
     printf '#!/bin/bash\necho "sha256:%s"\n' "${digest:0:12}" >"$bin/oras"
-    if PATH="$bin:$PATH" REGISTRY=ghcr.io/example/kube-recipes TAGS=sha \
+    if PATH="$bin:$PATH" TEST_RECIPE_DIGEST="$digest" \
+        REGISTRY=ghcr.io/example/kube-recipes TAGS="$sha" \
         RECIPE_SUBJECTS_DIR="$subjects" bash "$PUBLISH_SCRIPT" demo demo.bicep >/dev/null 2>&1; then
         fail "an invalid recipe digest was recorded"
     fi
@@ -741,5 +756,6 @@ test_repo_wide_release_covers_all_units
 test_release_change_detection
 test_recipe_tags
 test_recipe_publication_subjects
+bash "${REPO_ROOT}/.github/scripts/tests/test-recipe-oci.sh"
 test_release_candidate_sources
 echo "Release automation tests passed"
