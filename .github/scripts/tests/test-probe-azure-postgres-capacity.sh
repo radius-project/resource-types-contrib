@@ -33,6 +33,8 @@ cat >"$TEST_ROOT/bin/az" <<'EOF'
 set -euo pipefail
 if [[ "$*" == "postgres flexible-server create --help" ]]; then
     echo az-help >>"$CALL_LOG"
+    if [[ -n "${CLI_HELP_RESULT:-}" ]]; then exit "$CLI_HELP_RESULT"; fi
+    if [[ -n "${UNSUPPORTED_CLI:-}" ]]; then echo '--other-option'; exit 0; fi
     if [[ -n "${OLD_CLI:-}" ]]; then
         echo '--high-availability --active-directory-auth --password-auth'
     else
@@ -117,6 +119,15 @@ reset ok
 expect_status 0 env OLD_CLI=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
 grep -q -- '--high-availability Disabled' "$CALL_LOG" || fail "old CLI HA option"
 grep -q -- '--active-directory-auth Enabled' "$CALL_LOG" || fail "old CLI Entra option"
+reset ok
+expect_status 3 env CLI_HELP_RESULT=124 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+[[ "$(count create)" == 0 ]] || fail "help timeout must not create a server"
+reset ok
+expect_status 1 env CLI_HELP_RESULT=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+[[ "$(count create)" == 0 ]] || fail "help failure must not create a server"
+reset ok
+expect_status 1 env UNSUPPORTED_CLI=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+[[ "$(count create)" == 0 ]] || fail "unsupported CLI must not create a server"
 
 reset ok
 expect_status 0 env RTC_POSTGRES_TEST_SIZE=M AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \

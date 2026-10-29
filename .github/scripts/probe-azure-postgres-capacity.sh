@@ -99,8 +99,15 @@ trap 'exit 1' INT TERM
 help_started=$SECONDS
 help_timeout="$create_timeout"
 if ((help_timeout > 30)); then help_timeout=30; fi
-if ! timeout --kill-after=10 "$help_timeout" az postgres flexible-server create --help \
-    >"$work_dir/create-help" 2>/dev/null; then
+help_status=0
+timeout --kill-after=10 "$help_timeout" az postgres flexible-server create --help \
+    >"$work_dir/create-help" 2>/dev/null || help_status=$?
+if ((help_status == 124 || help_status == 137)); then
+    outcome="timeout"; error_code="CreateTimeout"
+    echo "Error: PostgreSQL probe timed out while reading CLI options." >&2
+    exit 3
+fi
+if ((help_status != 0)); then
     error_code="AzureCliHelpFailed"
     echo "Error: could not read Azure CLI PostgreSQL create options." >&2
     exit 1
