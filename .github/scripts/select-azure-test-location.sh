@@ -20,9 +20,10 @@
 # RTC_POSTGRES_TEST_SIZES defaults to S,M. Sizes are the outer loop.
 # At most four distinct regions and two sizes (eight tuples); duplicates retain
 # their first position. Raw lists are limited to 32 entries.
-# RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=3600 (1..3600) bounds selection work.
+# RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=3600 (1..3600) bounds selection and
+# later deployment recovery together, including time between workflow steps.
 # Each create is capped by the remaining deadline and its own limit (max 900).
-# Server cleanup has a separate reserve (max 900 seconds per probe).
+# Cleanup may use up to 900 seconds beyond the shared deadline.
 # Optional RTC_AZURE_SELECTION_FILE receives version 1 JSON. Only "selected"
 # confirms capacity. Consumers MUST fail the PostgreSQL check for other states.
 # For legacy callers, stdout is always the selected or first region and exit is
@@ -84,12 +85,20 @@ selected_postgres="null"
 attempt_records="[]"
 group_started=false
 deadline=$((SECONDS + deadline_seconds))
+deadline_epoch=$(( $(date +%s) + deadline_seconds ))
+cleanup_deadline=$((deadline + 900))
 
+# shellcheck disable=SC2329
 finish() {
     local status=$?
     trap - EXIT INT TERM
-    if [[ "$group_started" == true ]] && ! timeout --kill-after=10 "$delete_timeout" az group delete \
-        "${subscription_args[@]}" --name "$probe_rg" --yes --only-show-errors --output none >&2; then
+    local group_cleanup_limit=$((cleanup_deadline - SECONDS))
+    if ((group_cleanup_limit > delete_timeout)); then group_cleanup_limit="$delete_timeout"; fi
+    if [[ "$group_started" == true ]] && {
+        ((group_cleanup_limit <= 0)) ||
+            ! timeout --kill-after=10 "$group_cleanup_limit" az group delete \
+                "${subscription_args[@]}" --name "$probe_rg" --yes --only-show-errors --output none >&2
+    }; then
         echo "Error: probe group '$probe_rg' cleanup failed." >&2
         selection_status="probe_error"; selected_postgres="null"
         selected_location="${candidates[0]}"; status=1
@@ -97,7 +106,9 @@ finish() {
     if [[ -n "${RTC_AZURE_SELECTION_FILE:-}" ]]; then
         jq -n --arg status "$selection_status" --arg location "$selected_location" \
             --argjson postgres "$selected_postgres" --argjson attempts "$attempt_records" \
-            '{version: 1, status: $status, location: $location, attempts: $attempts}
+            --argjson deadlineEpochSeconds "$deadline_epoch" \
+            '{version: 1, status: $status, location: $location, attempts: $attempts,
+              deadlineEpochSeconds: $deadlineEpochSeconds}
              + (if $status == "selected" then {postgres: $postgres} else {} end)' \
             >"$RTC_AZURE_SELECTION_FILE" || status=1
     fi
@@ -112,6 +123,7 @@ trap 'exit 1' INT TERM
 group_started=true
 if ! timeout --kill-after=10 "$deadline_seconds" az group create "${subscription_args[@]}" \
     --name "$probe_rg" --location "${candidates[0]}" --tags "creationTime=$(date +%s)" \
+    "rtcRunId=${GITHUB_RUN_ID:-local}" "rtcRunAttempt=${GITHUB_RUN_ATTEMPT:-local}" \
     --only-show-errors --output none >&2; then
     if ((SECONDS >= deadline)); then selection_status="deadline_exceeded"; fi
     echo "Error: could not create probe group '$probe_rg'." >&2
@@ -125,12 +137,15 @@ for size in "${test_sizes[@]}"; do
         if ((remaining <= 0)); then selection_status="deadline_exceeded"; break 2; fi
         limit="$create_timeout"
         if ((remaining < limit)); then limit="$remaining"; fi
+        cleanup_limit=$((cleanup_deadline - SECONDS - limit))
+        if ((cleanup_limit > delete_timeout)); then cleanup_limit="$delete_timeout"; fi
         started=$SECONDS
         status=0
         rm -f -- "$work_dir/probe.json"
         AZURE_RESOURCE_GROUP="$probe_rg" AZURE_LOCATION="$location" RTC_POSTGRES_TEST_SIZE="$size" \
             RTC_POSTGRES_PROBE_ATTEMPTS=1 RTC_POSTGRES_PROBE_WAIT_SECONDS=0 \
             RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS="$limit" \
+            RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS="$cleanup_limit" \
             RTC_POSTGRES_PROBE_RESULT_FILE="$work_dir/probe.json" \
             "$script_dir/probe-azure-postgres-capacity.sh" >&2 || status=$?
         duration=$((SECONDS - started))
