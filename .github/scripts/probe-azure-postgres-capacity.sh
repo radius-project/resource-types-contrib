@@ -94,19 +94,56 @@ finish() {
 trap finish EXIT
 trap 'exit 1' INT TERM
 
+# Azure CLI renamed these switches. Read local help, not a cloud capability list.
+# Charge this check to the first create's budget.
+help_started=$SECONDS
+help_timeout="$create_timeout"
+if ((help_timeout > 30)); then help_timeout=30; fi
+if ! timeout --kill-after=10 "$help_timeout" az postgres flexible-server create --help \
+    >"$work_dir/create-help" 2>/dev/null; then
+    error_code="AzureCliHelpFailed"
+    echo "Error: could not read Azure CLI PostgreSQL create options." >&2
+    exit 1
+fi
+if grep -q -- '--zonal-resiliency' "$work_dir/create-help"; then
+    ha_option="--zonal-resiliency"
+elif grep -q -- '--high-availability' "$work_dir/create-help"; then
+    ha_option="--high-availability"
+else
+    error_code="UnsupportedAzureCli"
+    echo "Error: Azure CLI has no supported PostgreSQL HA option." >&2
+    exit 1
+fi
+if grep -q -- '--microsoft-entra-auth' "$work_dir/create-help"; then
+    auth_option="--microsoft-entra-auth"
+elif grep -q -- '--active-directory-auth' "$work_dir/create-help"; then
+    auth_option="--active-directory-auth"
+else
+    error_code="UnsupportedAzureCli"
+    echo "Error: Azure CLI has no supported PostgreSQL Entra authentication option." >&2
+    exit 1
+fi
+first_create_timeout=$((create_timeout - (SECONDS - help_started)))
+if ((first_create_timeout <= 0)); then
+    outcome="timeout"; error_code="CreateTimeout"
+    echo "Error: PostgreSQL probe used its create budget while reading CLI options." >&2
+    exit 3
+fi
 for ((attempt = 1; attempt <= attempts; attempt++)); do
     server_name="pgprobe-${GITHUB_RUN_ID:-local}-${attempt}-${RANDOM}"
     server_name="${server_name:0:63}"
     password="P$(openssl rand -hex 16)a1!"
     echo "==> PostgreSQL probe $attempt/$attempts: $postgres_sku ($postgres_tier) in $location" >&2
     status=0
+    limit="$create_timeout"
+    if ((attempt == 1)); then limit="$first_create_timeout"; fi
     # None enables public networking without a firewall rule. It does not disable
     # TLS. Leave zone unset for automatic placement, as in the pack.
-    timeout --kill-after=10 "$create_timeout" az postgres flexible-server create \
+    timeout --kill-after=10 "$limit" az postgres flexible-server create \
         "${subscription_args[@]}" --resource-group "$resource_group" --name "$server_name" \
         --location "$location" --tier "$postgres_tier" --sku-name "$postgres_sku" \
-        --storage-size 32 --version 16 --high-availability Disabled \
-        --geo-redundant-backup Disabled --active-directory-auth Enabled --password-auth Enabled \
+        --storage-size 32 --version 16 "$ha_option" Disabled \
+        --geo-redundant-backup Disabled "$auth_option" Enabled --password-auth Enabled \
         --public-access None --admin-user probeadmin --admin-password "$password" \
         --yes --only-show-errors --output none > /dev/null 2>"$work_dir/create-error" || status=$?
     unset password

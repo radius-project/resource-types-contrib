@@ -31,6 +31,15 @@ export REAL_TIMEOUT
 cat >"$TEST_ROOT/bin/az" <<'EOF'
 #!/bin/bash
 set -euo pipefail
+if [[ "$*" == "postgres flexible-server create --help" ]]; then
+    echo az-help >>"$CALL_LOG"
+    if [[ -n "${OLD_CLI:-}" ]]; then
+        echo '--high-availability --active-directory-auth --password-auth'
+    else
+        echo '--zonal-resiliency --microsoft-entra-auth --password-auth'
+    fi
+    exit 0
+fi
 echo "az $*" >>"$CALL_LOG"
 case "$3" in
     delete)
@@ -95,8 +104,8 @@ reset ok
 expect_status 0 run_probe
 [[ "$(count create)" == 1 && "$(count delete)" == 1 && "$(count show)" == 1 ]] || fail "create/delete/show sequence"
 for setting in '--sku-name Standard_B1ms' '--tier Burstable' '--location westus3' '--storage-size 32' \
-    '--version 16' '--high-availability Disabled' '--geo-redundant-backup Disabled' \
-    '--active-directory-auth Enabled' '--password-auth Enabled' '--public-access None'; do
+    '--version 16' '--zonal-resiliency Disabled' '--geo-redundant-backup Disabled' \
+    '--microsoft-entra-auth Enabled' '--password-auth Enabled' '--public-access None'; do
     grep -q -- "$setting" "$CALL_LOG" || fail "missing $setting"
 done
 ! grep -qE -- '--no-wait|--subscription|require_secure_transport' "$CALL_LOG" || fail "unexpected probe flags"
@@ -104,6 +113,10 @@ password="$(grep -oE -- '--admin-password [^ ]+' "$CALL_LOG" | cut -d' ' -f2)"
 ! grep -qF "$password" <<<"$output" || fail "password leaked to output"
 ! grep -qF "$password" "$RTC_POSTGRES_PROBE_RESULT_FILE" || fail "password leaked to result"
 jq -e '.outcome == "available" and .errorCode == ""' "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "success record"
+reset ok
+expect_status 0 env OLD_CLI=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+grep -q -- '--high-availability Disabled' "$CALL_LOG" || fail "old CLI HA option"
+grep -q -- '--active-directory-auth Enabled' "$CALL_LOG" || fail "old CLI Entra option"
 
 reset ok
 expect_status 0 env RTC_POSTGRES_TEST_SIZE=M AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \
@@ -156,10 +169,10 @@ expect_status 3 run_probe
 jq -e '.outcome == "timeout" and .errorCode == "CreateTimeout"' "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "timeout result"
 grep -q '^timeout --kill-after=10 900$' "$CALL_LOG" || fail "bounded create"
 reset slow
-expect_status 3 env RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS=1 AZURE_RESOURCE_GROUP=rg \
+expect_status 3 env RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS=2 AZURE_RESOURCE_GROUP=rg \
     AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
 [[ "$(count delete)" == 1 && "$(count show)" == 1 ]] || fail "real timeout must confirm cleanup"
-grep -q '^timeout --kill-after=10 1$' "$CALL_LOG" || fail "configured create timeout"
+grep -qE '^timeout --kill-after=10 [12]$' "$CALL_LOG" || fail "configured create timeout"
 reset capacity ok
 expect_status 1 env RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS=1 DELETE_SLEEP=20 AZURE_RESOURCE_GROUP=rg \
     AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
