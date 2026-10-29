@@ -60,11 +60,28 @@ case "${1:-}" in
     cleanup-probe)
         group="${2:-}"
         [[ -n "$group" ]] || { echo "No probe group recorded; nothing to delete."; exit 0; }
+        run_id="${GITHUB_RUN_ID:-}"
+        run_attempt="${GITHUB_RUN_ATTEMPT:-}"
+        [[ "$run_id" =~ ^[0-9]+$ && "$run_attempt" =~ ^[1-9][0-9]{0,8}$ ]] ||
+            { echo "Error: invalid workflow run ownership context." >&2; exit 1; }
         case "$group" in
-            "rrttest-nightly-${GITHUB_RUN_ID:?}-${GITHUB_RUN_ATTEMPT:?}-probe" | \
-            "rrttest-rc-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-probe") ;;
+            "rrttest-nightly-${run_id}-"*-probe)
+                group_prefix="rrttest-nightly-${run_id}-"
+                group_attempt="${group#"$group_prefix"}"
+                group_attempt="${group_attempt%-probe}"
+                ;;
+            "rrttest-rc-${run_id}-"*-probe)
+                group_prefix="rrttest-rc-${run_id}-"
+                group_attempt="${group#"$group_prefix"}"
+                group_attempt="${group_attempt%-probe}"
+                ;;
             *) echo "Error: refusing to delete a probe group not owned by this run." >&2; exit 1 ;;
         esac
+        if [[ ! "$group_attempt" =~ ^[1-9][0-9]{0,8}$ ]] ||
+            ((10#$group_attempt > 10#$run_attempt)); then
+            echo "Error: refusing a probe group from a future or invalid run attempt." >&2
+            exit 1
+        fi
         : "${AZURE_SUBSCRIPTION_ID:?subscription is required}"
         exists="$(timeout --kill-after=5 30 az group exists --name "$group" \
             --subscription "$AZURE_SUBSCRIPTION_ID" --output tsv)"

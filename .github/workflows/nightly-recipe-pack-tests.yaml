@@ -466,7 +466,7 @@ jobs:
         if: always()
         timeout-minutes: 10
         env:
-          AZURE_RESOURCE_GROUP: ${{ needs.nightly-azure-recipe-pack-tests.outputs.resource_group }}
+          AZURE_RESOURCE_GROUP: ${{ needs.nightly-azure-recipe-pack-tests.outputs.resource_group || format('rrttest-nightly-{0}-{1}', github.run_id, github.run_attempt) }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: make cleanup-azure-resources
 
@@ -474,6 +474,6 @@ jobs:
         if: always()
         timeout-minutes: 16
         env:
-          PROBE_RESOURCE_GROUP: ${{ needs.nightly-azure-recipe-pack-tests.outputs.probe_resource_group }}
+          PROBE_RESOURCE_GROUP: ${{ needs.nightly-azure-recipe-pack-tests.outputs.probe_resource_group || format('rrttest-nightly-{0}-{1}-probe', github.run_id, github.run_attempt) }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: bash .github/scripts/azure-postgres-workflow.sh cleanup-probe "$PROBE_RESOURCE_GROUP"

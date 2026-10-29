@@ -64,7 +64,7 @@ case "$2" in
 esac
 EOF
 chmod +x "$temp/bin/az"
-export PATH="$temp/bin:$PATH" GITHUB_RUN_ID=123 GITHUB_RUN_ATTEMPT=2 AZURE_SUBSCRIPTION_ID=test
+export PATH="$temp/bin:$PATH" GITHUB_RUN_ID=123 GITHUB_RUN_ATTEMPT=3 AZURE_SUBSCRIPTION_ID=test
 for kind in nightly rc; do
     echo true >"$GROUP_STATE"
     : >"$CALL_LOG"
@@ -78,7 +78,9 @@ for kind in nightly rc; do
 done
 : >"$CALL_LOG"
 bash "$script" cleanup-probe ''
-for group in caller-owned rrttest-nightly-124-2-probe rrttest-rc-123-1-probe; do
+for group in caller-owned rrttest-nightly-124-2-probe rrttest-rc-123-4-probe \
+    rrttest-nightly-123-0-probe rrttest-rc-123-x-probe \
+    rrttest-nightly-123-2-probe-suffix; do
     if bash "$script" cleanup-probe "$group" 2>/dev/null; then fail "ownership guard"; fi
 done
 [[ ! -s "$CALL_LOG" ]] || fail "must reject before Azure calls"
@@ -88,5 +90,15 @@ if DELETE_FAILS=true bash "$script" cleanup-probe rrttest-nightly-123-2-probe 2>
 fi
 if DELETE_STUCK=true bash "$script" cleanup-probe rrttest-nightly-123-2-probe 2>/dev/null; then
     fail "delete must be confirmed"
+fi
+for attempt in 1 2 3; do
+    echo false >"$GROUP_STATE"
+    bash "$script" cleanup-probe "rrttest-nightly-123-$attempt-probe"
+done
+if GITHUB_RUN_ID=124 bash "$script" cleanup-probe rrttest-nightly-123-2-probe 2>/dev/null; then
+    fail "mismatched run ID"
+fi
+if GITHUB_RUN_ATTEMPT=invalid bash "$script" cleanup-probe rrttest-nightly-123-2-probe 2>/dev/null; then
+    fail "invalid current attempt"
 fi
 echo "Azure PostgreSQL workflow tests passed"
