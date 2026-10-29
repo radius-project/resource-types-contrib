@@ -107,6 +107,12 @@ chmod +x "$MOCK_BIN/rad"
 cat >"$MOCK_BIN/kubectl" <<'EOF'
 #!/bin/bash
 echo "kubectl $*" >>"$CALL_LOG"
+if [[ "$1" == "wait" && -n "${KUBECTL_WAIT_EXIT_CODE:-}" ]]; then
+    exit "$KUBECTL_WAIT_EXIT_CODE"
+fi
+if [[ "$1" == "get" ]]; then
+    printf '%s' "${KUBECTL_GET_OUTPUT:-}"
+fi
 exit "${KUBECTL_EXIT_CODE:-0}"
 EOF
 chmod +x "$MOCK_BIN/kubectl"
@@ -242,6 +248,53 @@ for invalid_env in '{}' '[]' 'not json'; do
 done
 actual="$(ENV_JSON='[{"id":"/envs/array-env"}]' run_lib rtc_resolve_environment_path myenv myws)"
 assert_eq $'/envs/array-env\t' "$actual" "array environment output"
+
+# Dapr assertions wait for the runtime clients and need the namespace.
+: >"$CALL_LOG"
+run_lib rtc_assert_recipe_result "Radius.Dapr/stateStores" testapp myws my-ns >/dev/null \
+    || fail "Dapr state store assertion should pass when the clients are ready"
+grep -q -- 'kubectl wait deployment -n my-ns -l radapp.io/application=testapp --for=condition=Available' "$CALL_LOG" ||
+    fail "Dapr assertion must wait for the test app deployments"
+if grep -q -- 'kubectl exec' "$CALL_LOG"; then
+    fail "only the configuration store assertion writes to Redis"
+fi
+if run_lib rtc_assert_recipe_result "Radius.Dapr/stateStores" testapp myws >/dev/null 2>&1; then
+    fail "Dapr assertion must fail without a namespace"
+fi
+if KUBECTL_WAIT_EXIT_CODE=1 run_lib rtc_assert_recipe_result "Radius.Dapr/secretStores" testapp myws my-ns >/dev/null 2>&1; then
+    fail "Dapr assertion must fail when a client does not become ready"
+fi
+
+# The secret store assertion gives get access to the allowed secret only, and
+# deletes the access after the clients finish.
+: >"$CALL_LOG"
+run_lib rtc_assert_recipe_result "Radius.Dapr/secretStores" testapp myws my-ns >/dev/null \
+    || fail "Dapr secret store assertion should pass"
+grep -q -- 'kubectl create role dapr-secret-reader-testapp -n my-ns --verb=get --resource=secrets --resource-name=dapr-allowed-secret' "$CALL_LOG" ||
+    fail "secret store assertion must give get access to the allowed secret only"
+grep -q -- 'kubectl create rolebinding dapr-secret-reader-testapp -n my-ns --role=dapr-secret-reader-testapp --serviceaccount=my-ns:default' "$CALL_LOG" ||
+    fail "secret store assertion must bind the Role to the default ServiceAccount"
+tail -n 1 "$CALL_LOG" | grep -q -- 'kubectl delete rolebinding,role dapr-secret-reader-testapp -n my-ns' ||
+    fail "secret store assertion must delete the Role and RoleBinding last"
+: >"$CALL_LOG"
+if KUBECTL_WAIT_EXIT_CODE=1 run_lib rtc_assert_recipe_result "Radius.Dapr/secretStores" testapp myws my-ns >/dev/null 2>&1; then
+    fail "Dapr secret store assertion must fail when a client does not become ready"
+fi
+grep -q -- 'kubectl delete rolebinding,role dapr-secret-reader-testapp' "$CALL_LOG" ||
+    fail "secret store assertion must delete the Role and RoleBinding after a failure"
+
+# The configuration store assertion writes the expected value to Redis first.
+: >"$CALL_LOG"
+KUBECTL_GET_OUTPUT=daprconfig-abc run_lib rtc_assert_recipe_result "Radius.Dapr/configurationStores" testapp myws my-ns >/dev/null \
+    || fail "Dapr configuration store assertion should pass"
+grep -q -- "kubectl exec -n my-ns deployment/daprconfig-abc -- redis-cli SET radius-test-key dapr-config-ok||1" "$CALL_LOG" ||
+    fail "configuration store assertion must write the test value"
+exec_line="$(grep -n -- 'kubectl exec' "$CALL_LOG" | cut -d: -f1)"
+client_wait_line="$(grep -n -- '-l radapp.io/application=testapp --for' "$CALL_LOG" | cut -d: -f1)"
+(( exec_line < client_wait_line )) || fail "the test value must be written before the client wait"
+if run_lib rtc_assert_recipe_result "Radius.Dapr/configurationStores" testapp myws my-ns >/dev/null 2>&1; then
+    fail "configuration store assertion must fail when the Redis deployment is not found"
+fi
 
 # ... and is a no-op success for any other Resource Type.
 run_lib rtc_assert_recipe_result "Radius.Data/somethingElse" testapp myws \
@@ -567,7 +620,7 @@ while IFS= read -r template; do
         app && /^  name:/ { if ($0 != "  name: applicationName") exit 1; found++; app = 0 }
         END { if (found != 1) exit 1 }
     ' "$template" || fail "$template must use applicationName for its application"
-done < <(find "$REPO_ROOT/AI" "$REPO_ROOT/Compute" "$REPO_ROOT/Data" "$REPO_ROOT/Messaging" \
+done < <(find "$REPO_ROOT/AI" "$REPO_ROOT/Compute" "$REPO_ROOT/Dapr" "$REPO_ROOT/Data" "$REPO_ROOT/Messaging" \
     "$REPO_ROOT/Security" "$REPO_ROOT/Storage" -path '*/test/app.bicep' -type f)
 
 # The existing per-recipe caller must preserve failure and cleanup behavior.

@@ -275,6 +275,65 @@ rtc_assert_postgresql_result() {
     echo "==> PostgreSQL result properties validated"
 }
 
+# Dapr test apps run clients that become ready only after they use the
+# component through the Dapr sidecar. The configuration API is read-only, so
+# this function first writes the expected value to the Recipe-owned Redis.
+# For secret stores, it creates the least-privilege access that the
+# Radius.Dapr/secretStores README requires: `get` on the allowed test secret
+# only, bound to the default ServiceAccount of the test containers.
+rtc_assert_dapr_result() {
+    local resource_type="$1" app_name="$2" kubernetes_namespace="$3" redis_deployment status=0
+    local secret_reader="dapr-secret-reader-$app_name"
+    if [[ -z "$kubernetes_namespace" ]]; then
+        echo "Error: Dapr runtime assertion requires the environment Kubernetes namespace." >&2
+        return 1
+    fi
+    if [[ "$resource_type" == Radius.Dapr/secretStores ]]; then
+        if ! kubectl create role "$secret_reader" -n "$kubernetes_namespace" \
+                --verb=get --resource=secrets --resource-name=dapr-allowed-secret ||
+           ! kubectl create rolebinding "$secret_reader" -n "$kubernetes_namespace" \
+                --role="$secret_reader" --serviceaccount="$kubernetes_namespace:default"; then
+            echo "Error: Could not give the Dapr test client read access to the allowed secret." >&2
+            rtc_delete_dapr_secret_reader "$kubernetes_namespace" "$secret_reader"
+            return 1
+        fi
+    fi
+    if [[ "$resource_type" == Radius.Dapr/configurationStores ]]; then
+        local redis_selector="radapp.io/application=$app_name,radapp.io/resource-type=Radius.Dapr-configurationStores"
+        if ! kubectl wait deployment -n "$kubernetes_namespace" -l "$redis_selector" \
+                --for=condition=Available --timeout=180s; then
+            echo "Error: Dapr configuration store Redis is not available." >&2
+            return 1
+        fi
+        redis_deployment="$(kubectl get deployment -n "$kubernetes_namespace" -l "$redis_selector" \
+            -o jsonpath='{.items[0].metadata.name}')" || return 1
+        if [[ -z "$redis_deployment" ]] ||
+           ! kubectl exec -n "$kubernetes_namespace" "deployment/$redis_deployment" -- \
+                redis-cli SET radius-test-key 'dapr-config-ok||1'; then
+            echo "Error: Could not write the Dapr configuration test value." >&2
+            return 1
+        fi
+    fi
+    if ! kubectl wait deployment -n "$kubernetes_namespace" -l "radapp.io/application=$app_name" \
+            --for=condition=Available --timeout=300s; then
+        echo "Error: Dapr runtime assertion failed for $resource_type." >&2
+        kubectl logs -n "$kubernetes_namespace" -l "radapp.io/application=$app_name" \
+            --all-containers --tail=50 --prefix >&2 || true
+        status=1
+    fi
+    if [[ "$resource_type" == Radius.Dapr/secretStores ]]; then
+        rtc_delete_dapr_secret_reader "$kubernetes_namespace" "$secret_reader"
+    fi
+    [[ "$status" -eq 0 ]] && echo "==> Dapr runtime checks passed for $resource_type"
+    return "$status"
+}
+
+rtc_delete_dapr_secret_reader() {
+    local kubernetes_namespace="$1" secret_reader="$2"
+    kubectl delete rolebinding,role "$secret_reader" -n "$kubernetes_namespace" --ignore-not-found ||
+        echo "Warning: Could not delete Role and RoleBinding $secret_reader." >&2
+}
+
 # Resource-Type-specific post-deploy assertion dispatcher. A no-op (success)
 # for every Resource Type without a dedicated assertion above -- for those,
 # `rad deploy` succeeding (the test app's own readiness probes/waits included)
@@ -296,6 +355,9 @@ rtc_assert_recipe_result() {
                 echo "Error: MySQL client readiness assertion failed." >&2
                 return 1
             fi
+            ;;
+        Radius.Dapr/*)
+            rtc_assert_dapr_result "$resource_type" "$app_name" "${4:-}"
             ;;
         Radius.Compute/containers)
             rtc_assert_containers_result "$app_name" "$workspace_name"
