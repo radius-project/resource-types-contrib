@@ -1,5 +1,4 @@
 #!/bin/bash
-
 # ------------------------------------------------------------
 # Copyright 2026 The Radius Authors.
 #
@@ -15,113 +14,167 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ------------------------------------------------------------
-
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 PROBE="$REPO_ROOT/.github/scripts/probe-azure-postgres-capacity.sh"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/rtc-postgres-probe-test-XXXXXX")"
 trap 'rm -rf "$TEST_ROOT"' EXIT
-
 mkdir -p "$TEST_ROOT/bin"
 export CALL_LOG="$TEST_ROOT/calls"
 export CREATE_RESULTS="$TEST_ROOT/create-results"
+export RTC_POSTGRES_PROBE_RESULT_FILE="$TEST_ROOT/result.json"
+REAL_TIMEOUT="$(command -v timeout)"
+export REAL_TIMEOUT
 
-# Each create consumes one line of CREATE_RESULTS: ok, capacity, busy, or other.
+# Each create consumes a result. Show must confirm absence after every delete.
 cat >"$TEST_ROOT/bin/az" <<'EOF'
 #!/bin/bash
+set -euo pipefail
 echo "az $*" >>"$CALL_LOG"
-[[ "$3" == "delete" ]] && { [[ -n "${DELETE_FAILS:-}" ]] && echo '(Conflict) delete rejected' >&2 && exit 1; exit 0; }
+case "$3" in
+    delete)
+        [[ -z "${DELETE_SLEEP:-}" ]] || sleep "$DELETE_SLEEP"
+        if [[ -n "${DELETE_FAILS:-}" ]]; then echo '(Conflict) delete rejected' >&2; exit 1; fi
+        if [[ -n "${DELETE_MISSING:-}" ]]; then echo '(ResourceNotFound) absent' >&2; exit 1; fi
+        exit 0 ;;
+    show)
+        [[ -n "${SERVER_REMAINS:-}" ]] && exit 0
+        echo "(${SHOW_ERROR:-ResourceNotFound}) absent" >&2
+        exit 1 ;;
+esac
 result="$(head -n 1 "$CREATE_RESULTS")"
 sed -i '1d' "$CREATE_RESULTS"
 case "$result" in
     ok) exit 0 ;;
-    capacity) echo '(SkuNotAvailable) Specified SKU is not supported in this region.' >&2 ;;
-    busy) echo '(ServerIsBusy) The server is busy.' >&2 ;;
-    *) echo '(AuthorizationFailed) The client does not have authorization.' >&2 ;;
+    capacity) echo '(SkuNotAvailable) SKU unavailable.' >&2 ;;
+    busy) echo 'ERROR: (ServerIsBusy) Busy.' >&2 ;;
+    json) echo '{"error":{"code":"SkuNotAvailable","message":"Unavailable"}}' >&2 ;;
+    mixed) printf '%s\n' '(SkuNotAvailable) Unavailable.' '(AuthorizationFailed) Denied.' >&2 ;;
+    misleading) echo '(AuthorizationFailed) Cannot check SkuNotAvailable.' >&2 ;;
+    text) echo 'CLI failed while reading SkuNotAvailable text.' >&2 ;;
+    quota) echo '(QuotaExceeded) Quota exceeded.' >&2 ;;
+    policy) echo '(RequestDisallowedByPolicy) Policy denied.' >&2 ;;
+    leak) echo "(AuthorizationFailed) Request arguments: $*" >&2 ;;
+    timeout) exit 124 ;;
+    slow) sleep 20; exit 0 ;;
+    *) echo '(AuthorizationFailed) No authorization.' >&2 ;;
 esac
 exit 1
 EOF
-chmod +x "$TEST_ROOT/bin/az"
 
-fail() {
-    echo "FAIL: $1" >&2
-    exit 1
-}
+# Keep timeout arguments observable, but use the real timeout implementation.
+cat >"$TEST_ROOT/bin/timeout" <<'EOF'
+#!/bin/bash
+echo "timeout $1 $2" >>"$CALL_LOG"
+exec "$REAL_TIMEOUT" "$@"
+EOF
+chmod +x "$TEST_ROOT/bin/"*
 
+fail() { echo "FAIL: $1" >&2; exit 1; }
 run_probe() {
-    (
-        export PATH="$TEST_ROOT/bin:$PATH"
-        export AZURE_RESOURCE_GROUP="${PROBE_RG-rg}"
-        export AZURE_LOCATION="${PROBE_LOCATION-westus3}"
-        export AZURE_SUBSCRIPTION_ID="${PROBE_SUBSCRIPTION-}"
-        export RTC_POSTGRES_PROBE_WAIT_SECONDS=0
-        "$PROBE"
-    )
+    PATH="$TEST_ROOT/bin:$PATH" AZURE_RESOURCE_GROUP="${PROBE_RG-rg}" \
+        AZURE_LOCATION="${PROBE_LOCATION-westus3}" AZURE_SUBSCRIPTION_ID="${PROBE_SUBSCRIPTION-}" \
+        RTC_POSTGRES_PROBE_WAIT_SECONDS="${PROBE_WAIT-0}" "$PROBE"
 }
-
 reset() {
     : >"$CALL_LOG"
+    rm -f "$RTC_POSTGRES_PROBE_RESULT_FILE"
     printf '%s\n' "$@" >"$CREATE_RESULTS"
 }
-
-count() {
-    grep -c "^az postgres flexible-server $1 " "$CALL_LOG" || true
+count() { grep -c "^az postgres flexible-server $1 " "$CALL_LOG" || true; }
+expect_status() {
+    local expected="$1"
+    shift
+    local status=0
+    output=$("$@" 2>&1) || status=$?
+    [[ "$status" == "$expected" ]] || fail "expected status $expected, got $status: $output"
 }
 
 reset ok
-output=$(run_probe 2>&1) || fail "expected available capacity to pass"
-[[ "$(count create)" == 1 && "$(count delete)" == 1 ]] ||
-    fail "expected one create and one delete when capacity is available"
-grep -q -- '--sku-name Standard_B1ms' "$CALL_LOG" || fail "expected the Standard_B1ms SKU"
-grep -q -- '--tier Burstable' "$CALL_LOG" || fail "expected the Burstable tier"
-grep -q -- '--location westus3' "$CALL_LOG" || fail "expected the configured location"
-grep -q -- '--no-wait' "$CALL_LOG" && fail "a successful probe must wait for its delete"
-! grep -q -- '--subscription' "$CALL_LOG" || fail "expected the Azure CLI default subscription"
-password="$(grep -oE -- '--admin-password [^ ]+' "$CALL_LOG" | head -n 1 | cut -d' ' -f2)"
-if grep -qF -- "$password" <<<"$output"; then
-    fail "the probe must not print the server password"
-fi
+expect_status 0 run_probe
+[[ "$(count create)" == 1 && "$(count delete)" == 1 && "$(count show)" == 1 ]] || fail "create/delete/show sequence"
+for setting in '--sku-name Standard_B1ms' '--tier Burstable' '--location westus3' '--storage-size 32' \
+    '--version 16' '--high-availability Disabled' '--geo-redundant-backup Disabled' \
+    '--active-directory-auth Enabled' '--password-auth Enabled' '--public-access None'; do
+    grep -q -- "$setting" "$CALL_LOG" || fail "missing $setting"
+done
+! grep -qE -- '--no-wait|--subscription|require_secure_transport' "$CALL_LOG" || fail "unexpected probe flags"
+password="$(grep -oE -- '--admin-password [^ ]+' "$CALL_LOG" | cut -d' ' -f2)"
+! grep -qF "$password" <<<"$output" || fail "password leaked to output"
+! grep -qF "$password" "$RTC_POSTGRES_PROBE_RESULT_FILE" || fail "password leaked to result"
+jq -e '.outcome == "available" and .errorCode == ""' "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "success record"
+
+reset ok
+expect_status 0 env RTC_POSTGRES_TEST_SIZE=M AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \
+    PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+grep -q -- '--sku-name Standard_D2ds_v5 --storage-size' "$CALL_LOG" || fail "M SKU"
+grep -q -- '--tier GeneralPurpose' "$CALL_LOG" || fail "M tier"
 
 reset capacity busy ok
-run_probe >/dev/null 2>&1 || fail "expected capacity errors to be retried"
-[[ "$(count create)" == 3 && "$(count delete)" == 3 ]] ||
-    fail "expected three probes and a delete after each"
-servers="$(grep -oE -- '--name [^ ]+' "$CALL_LOG" | sort -u | wc -l)"
-[[ "$servers" -eq 3 ]] || fail "expected each probe to use a new server name"
-[[ "$(grep -c -- 'delete .*--no-wait' "$CALL_LOG")" == 2 ]] ||
-    fail "expected failed-create cleanup not to wait and the successful delete to wait"
+expect_status 0 run_probe
+[[ "$(count create)" == 3 && "$(count delete)" == 3 && "$(count show)" == 3 ]] || fail "retry cleanup"
+[[ "$(grep -oE -- '--name [^ ]+' "$CALL_LOG" | sort -u | wc -l)" -eq 3 ]] || fail "unique server names"
+[[ "$(awk '/^az / {print $4}' "$CALL_LOG" | paste -sd,)" == "create,delete,show,create,delete,show,create,delete,show" ]] ||
+    fail "must confirm deletion before next allocation"
 
 reset ok
-status=0
-output=$(DELETE_FAILS=1 run_probe 2>&1) || status=$?
-[[ "$status" -eq 1 ]] || fail "expected a failed probe delete to fail preflight, got $status"
-grep -q "was not deleted" <<<"$output" || fail "expected a delete failure message"
-
+expect_status 0 env DELETE_MISSING=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
 reset ok
-PROBE_SUBSCRIPTION=sub-123 run_probe >/dev/null 2>&1 || fail "expected the probe to pass with a subscription"
-[[ "$(grep -c -- '--subscription sub-123' "$CALL_LOG")" == 2 ]] ||
-    fail "expected the configured subscription on the create and the delete"
+expect_status 0 env AZURE_SUBSCRIPTION_ID=sub-123 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+[[ "$(grep -c -- '--subscription sub-123' "$CALL_LOG")" == 3 ]] || fail "subscription on all calls"
 
 reset capacity capacity capacity
-status=0
-output=$(run_probe 2>&1) || status=$?
-[[ "$status" -eq 2 ]] || fail "expected persistent capacity errors to exit 2, got $status"
-[[ "$(count create)" == 3 ]] || fail "expected the default limit of three probes"
-grep -q "This is an Azure capacity limit, not a recipe failure" <<<"$output" ||
-    fail "expected a clear capacity error"
+expect_status 2 run_probe
+[[ "$(count create)" == 3 ]] || fail "standalone retry bound"
+grep -q 'This is an Azure capacity limit, not a recipe failure' <<<"$output" || fail "capacity message"
+reset json
+expect_status 2 env RTC_POSTGRES_PROBE_ATTEMPTS=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
 
-reset other ok
-status=0
-output=$(run_probe 2>&1) || status=$?
-[[ "$status" -eq 1 ]] || fail "expected a non-capacity error to exit 1, got $status"
-[[ "$(count create)" == 1 ]] || fail "a non-capacity error must not be retried"
-grep -q "AuthorizationFailed" <<<"$output" || fail "expected the original error in the output"
+for result in other misleading text quota policy mixed; do
+    reset "$result" ok
+    expect_status 1 run_probe
+    [[ "$(count create)" == 1 && "$(count show)" == 1 ]] || fail "$result must stop after confirmed cleanup"
+done
+reset leak
+expect_status 1 run_probe
+password="$(grep -oE -- '--admin-password [^ ]+' "$CALL_LOG" | cut -d' ' -f2)"
+! grep -qF "$password" <<<"$output" || fail "password leaked from Azure error"
+for result in ok capacity timeout; do
+    reset "$result"
+    expect_status 1 env DELETE_FAILS=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+    [[ "$(count create)" == 1 ]] || fail "cleanup failure must stop"
+    jq -e '.errorCode == "CleanupFailed"' "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "cleanup result"
+done
+for setting in SERVER_REMAINS=1 SHOW_ERROR=AuthorizationFailed; do
+    reset ok
+    expect_status 1 env "$setting" AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+done
+reset timeout
+expect_status 3 run_probe
+[[ "$(count delete)" == 1 && "$(count show)" == 1 ]] || fail "timeout cleanup"
+jq -e '.outcome == "timeout" and .errorCode == "CreateTimeout"' "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "timeout result"
+grep -q '^timeout --kill-after=10 900$' "$CALL_LOG" || fail "bounded create"
+reset slow
+expect_status 3 env RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS=1 AZURE_RESOURCE_GROUP=rg \
+    AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+[[ "$(count delete)" == 1 && "$(count show)" == 1 ]] || fail "real timeout must confirm cleanup"
+grep -q '^timeout --kill-after=10 1$' "$CALL_LOG" || fail "configured create timeout"
+reset capacity ok
+expect_status 1 env RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS=1 DELETE_SLEEP=20 AZURE_RESOURCE_GROUP=rg \
+    AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+[[ "$(count create)" == 1 ]] || fail "delete timeout must prevent another create"
+jq -e '.errorCode == "CleanupFailed"' "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "delete timeout result"
 
+for setting in RTC_POSTGRES_TEST_SIZE=L RTC_POSTGRES_TEST_SIZE=bad RTC_POSTGRES_TEST_SIZE= \
+    RTC_POSTGRES_PROBE_ATTEMPTS=0 RTC_POSTGRES_PROBE_ATTEMPTS=4 RTC_POSTGRES_PROBE_ATTEMPTS=99999999999999999 \
+    RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS=0 RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS=901 \
+    RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS=-1 RTC_POSTGRES_PROBE_WAIT_SECONDS=601; do
+    reset ok
+    expect_status 1 env "$setting" AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+    [[ ! -s "$CALL_LOG" ]] || fail "invalid input must not call Azure: $setting"
+done
 reset ok
-if PROBE_RG="" run_probe >/dev/null 2>&1; then
-    fail "expected a missing resource group to fail"
-fi
-[[ "$(count create)" == 0 ]] || fail "no probe should run without a resource group"
-
+expect_status 1 env AZURE_RESOURCE_GROUP= AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+[[ ! -s "$CALL_LOG" ]] || fail "missing group must not call Azure"
 echo "PostgreSQL capacity probe tests passed"
