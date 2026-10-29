@@ -41,8 +41,10 @@ var subnetIdList = filter(
 // recreated for each deploy. The hash adds the cluster and the Environment's
 // Kubernetes namespace, which identify where the app runs and stay the same
 // across installations. RDS stores names in lowercase; uniqueString is lowercase.
+// uniqueString joins its arguments with `-`, which cluster names and namespaces
+// can contain, so join those two with `/`, which neither allows.
 var namespace = context.runtime.?kubernetes.?namespace ?? ''
-var name = 'mysql-${uniqueString(eksClusterName, namespace, context.resource.id)}'
+var name = 'mysql-${uniqueString('${eksClusterName}/${namespace}', context.resource.id)}'
 
 var tags = [
   {
@@ -62,9 +64,9 @@ var tags = [
 //////////////////////////////////////////
 // Network
 //
-// AWS assigns the ID of a new security group, and Radius can't yet manage AWS
-// resources whose ID AWS generates, so a recipe-owned security group would be
-// recreated on every deploy. The instance joins the EKS cluster security group
+// AWS assigns the ID of a new security group, and Radius can't manage AWS
+// resources whose ID AWS assigns: each deploy creates one and then fails
+// (radius-project/radius#13211). The instance joins the EKS cluster security group
 // instead, which allows all traffic between its members. Workloads that aren't
 // in that group, such as nodes with custom launch template security groups or
 // pods with their own security groups, need a rule that allows TCP 3306. See
@@ -130,6 +132,9 @@ resource instance 'AWS.RDS/DBInstance@default' = {
     MultiAZ: false
     BackupRetentionPeriod: 1
     DeletionProtection: false
+    // Delete through Cloud Control keeps a final snapshot. The tags show which
+    // Radius resource it came from.
+    CopyTagsToSnapshot: true
     Tags: tags
   }
 }
