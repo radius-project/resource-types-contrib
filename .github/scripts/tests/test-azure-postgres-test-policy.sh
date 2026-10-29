@@ -19,20 +19,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 # shellcheck source=.github/scripts/lib-azure-postgres-test.sh
 source "$REPO_ROOT/.github/scripts/lib-azure-postgres-test.sh"
 pack="${RTC_POSTGRES_POLICY_PACK_FILE:-$REPO_ROOT/recipe-packs/azure-aks/azure-aks.bicep}"
-entry="$(sed -n "/'Radius.Data\/postgreSqlDatabases': {/,/'Radius.Data\/sqlServerDatabases': {/p" "$pack")"
 fail() { echo "FAIL: Azure PostgreSQL test policy differs from $pack: $1" >&2; exit 1; }
-rtc_postgres_test_tuple S
-small_sku="$postgres_sku"; small_tier="$postgres_tier"
-rtc_postgres_test_tuple M
-grep -Fq "skuName: '{{context.resource.properties.size == \"S\" ? \"$small_sku\" : \"$postgres_sku\"}}'" <<<"$entry" ||
-    fail "SKU mapping"
-grep -Fq "tier: '{{context.resource.properties.size == \"S\" ? \"$small_tier\" : \"$postgres_tier\"}}'" <<<"$entry" ||
-    fail "tier mapping"
-for setting in "version: '16'" "availabilityZone: -1" "highAvailability: 'Disabled'" \
-    "geoRedundantBackup: 'Disabled'" "storageSizeGB: 32" "publicNetworkAccess: 'Enabled'" \
-    "activeDirectoryAuth: 'Enabled'" "passwordAuth: 'Enabled'"; do
-    grep -Fq "$setting" <<<"$entry" || fail "$setting"
-done
+rtc_validate_postgres_test_pack "$pack" || fail "approved tuple or settings"
 # Check that the guard rejects a changed production mapping, not just this pack.
 if [[ -z "${RTC_POSTGRES_POLICY_PACK_FILE:-}" ]]; then
     test_pack="$(mktemp "${TMPDIR:-/tmp}/rtc-postgres-policy-XXXXXX")"

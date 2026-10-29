@@ -65,6 +65,18 @@ resource pack 'Radius.Core/recipePacks@2025-08-01-preview' = {
       'Radius.Data/postgreSqlDatabases': {
         kind: 'bicep'
         source: 'mcr.microsoft.com/bicep/avm/res/db-for-postgre-sql/flexible-server:0.15.2'
+        parameters: {
+          skuName: '{{context.resource.properties.size == "S" ? "Standard_B1ms" : "Standard_D2ds_v5"}}'
+          tier: '{{context.resource.properties.size == "S" ? "Burstable" : "GeneralPurpose"}}'
+          version: '16'
+          availabilityZone: -1
+          highAvailability: 'Disabled'
+          geoRedundantBackup: 'Disabled'
+          storageSizeGB: 32
+          publicNetworkAccess: 'Enabled'
+          activeDirectoryAuth: 'Enabled'
+          passwordAuth: 'Enabled'
+        }
       }
       'Radius.Compute/persistentVolumes': {
         kind: 'bicep'
@@ -134,6 +146,10 @@ export FAIL_TYPE=""
 cat >"$TEST_ROOT/bin/test-recipe-pack-entry.sh" <<'EOF'
 #!/bin/bash
 echo "test-recipe-pack-entry.sh $*" >>"$CALL_LOG"
+if [[ "$1" == Data/postgreSqlDatabases && "${RTC_TEST_PLATFORM:-}" == azure ]]; then
+    [[ "${RTC_POSTGRES_TEST_SIZE:-}" == "${EXPECTED_POSTGRES_SIZE:-S}" ]] || exit 96
+    [[ "${RTC_POSTGRES_TEST_DEADLINE_EPOCH:-}" =~ ^[0-9]+$ ]] || exit 95
+fi
 case "$2" in
     azure-ws) [[ "${RTC_TEST_PLATFORM:-}" == azure ]] || exit 97 ;;
     kubernetes-ws) [[ "${RTC_TEST_PLATFORM:-}" == kubernetes ]] || exit 98 ;;
@@ -150,12 +166,22 @@ exit "${ACTIVATE_EXIT_CODE:-0}"
 EOF
 chmod +x "$TEST_ROOT/bin/rad"
 
+cat >"$TEST_ROOT/bin/az" <<'EOF'
+#!/bin/bash
+[[ "$*" == "group show "* ]] || exit 1
+echo westus3
+EOF
+chmod +x "$TEST_ROOT/bin/az"
+export AZURE_RESOURCE_GROUP=fixture-rg
+
 SCRIPTS_COPY="$TEST_ROOT/scripts"
 cp -r "$REPO_ROOT/.github/scripts" "$SCRIPTS_COPY"
 cp "$TEST_ROOT/bin/test-recipe-pack-entry.sh" "$SCRIPTS_COPY/test-recipe-pack-entry.sh"
 cat >"$SCRIPTS_COPY/probe-azure-postgres-capacity.sh" <<'EOF'
 #!/bin/bash
 echo "probe-azure-postgres-capacity.sh" >>"$CALL_LOG"
+[[ "${AZURE_LOCATION:-}" == westus3 && "${RTC_POSTGRES_TEST_SIZE:-}" == S &&
+   "${RTC_POSTGRES_PROBE_ATTEMPTS:-}" == 1 && "${RTC_POSTGRES_PROBE_WAIT_SECONDS:-}" == 0 ]] || exit 94
 exit "${PROBE_EXIT_CODE:-0}"
 EOF
 chmod +x "$SCRIPTS_COPY/probe-azure-postgres-capacity.sh"
@@ -236,6 +262,61 @@ if grep -q '^test-recipe-pack-entry.sh Data/postgreSqlDatabases' "$CALL_LOG"; th
 fi
 grep -q '^test-recipe-pack-entry.sh Compute/persistentVolumes' "$CALL_LOG" ||
     fail "expected testing to continue after a failed capacity probe"
+
+selection="$TEST_ROOT/selection.json"
+jq -n --argjson deadline "$(( $(date +%s) + 600 ))" \
+    '{version:1,status:"selected",location:"westus3",deadlineEpochSeconds:$deadline,
+      postgres:{size:"M",skuName:"Standard_D2ds_v5",tier:"GeneralPurpose"}}' >"$selection"
+: >"$CALL_LOG"
+RTC_AZURE_SELECTION_FILE="$selection" EXPECTED_POSTGRES_SIZE=M run_driver azure azure-ws azure-env >/dev/null ||
+    fail "selected M must reach the entry runner"
+if grep -q '^probe-' "$CALL_LOG"; then fail "selected tuples must not be probed twice"; fi
+
+for state in missing malformed capacity_exhausted probe_error deadline_exceeded invalid_size invalid_tuple wrong_region expired invalid_deadline; do
+    case "$state" in
+        missing) rm -f "$selection" ;;
+        malformed) echo '{' >"$selection" ;;
+        invalid_size) echo '{"version":1,"status":"selected","location":"westus3","postgres":{"size":"L"}}' >"$selection" ;;
+        invalid_tuple) echo '{"version":1,"status":"selected","location":"westus3","postgres":{"size":"S","skuName":"Other","tier":"Burstable"}}' >"$selection" ;;
+        wrong_region) echo '{"version":1,"status":"selected","location":"eastus2","postgres":{"size":"S"}}' >"$selection" ;;
+        expired|invalid_deadline)
+            deadline=1
+            [[ "$state" != invalid_deadline ]] || deadline='"bad"'
+            echo "{\"version\":1,\"status\":\"selected\",\"location\":\"westus3\",\"deadlineEpochSeconds\":$deadline,\"postgres\":{\"size\":\"S\",\"skuName\":\"Standard_B1ms\",\"tier\":\"Burstable\"}}" >"$selection" ;;
+        *) printf '{"version":1,"status":"%s"}\n' "$state" >"$selection" ;;
+    esac
+    : >"$CALL_LOG"
+    if output=$(RTC_AZURE_SELECTION_FILE="$selection" run_driver azure azure-ws azure-env 2>&1); then
+        fail "$state selection must fail PostgreSQL"
+    fi
+    grep -qi 'PostgreSQL.*selection' <<<"$output" || fail "selection failure must be clear"
+    if grep -q '^test-recipe-pack-entry.sh Data/postgreSqlDatabases' "$CALL_LOG"; then
+        fail "$state selection must block PostgreSQL deployment"
+    fi
+    grep -q '^test-recipe-pack-entry.sh Compute/routes' "$CALL_LOG" || fail "later entries must still run"
+done
+
+: >"$CALL_LOG"
+RTC_AZURE_SELECTION_FILE="$selection" run_driver kubernetes kubernetes-ws kubernetes-env >/dev/null ||
+    fail "Kubernetes must ignore Azure selection state"
+for code in 2 3; do
+    : >"$CALL_LOG"
+    if PROBE_EXIT_CODE="$code" run_driver azure azure-ws azure-env >/dev/null 2>&1; then
+        fail "probe capacity exhaustion or timeout must fail"
+    fi
+    grep -q '^test-recipe-pack-entry.sh Compute/routes' "$CALL_LOG" || fail "later entries must run after probe failure"
+done
+
+pack="$FIXTURE_ROOT/recipe-packs/azure-aks/azure-aks.bicep"
+cp "$pack" "$TEST_ROOT/original-pack.bicep"
+sed 's/Standard_B1ms/Standard_B2ms/g' "$TEST_ROOT/original-pack.bicep" >"$pack"
+: >"$CALL_LOG"
+if output=$(run_driver azure azure-ws azure-env 2>&1); then fail "pack mapping drift must fail"; fi
+grep -q 'differs from the pack SKU' <<<"$output" || fail "mapping error must identify pack drift"
+if grep -q '^test-recipe-pack-entry.sh Data/postgreSqlDatabases' "$CALL_LOG"; then
+    fail "mapping drift must block PostgreSQL"
+fi
+cp "$TEST_ROOT/original-pack.bicep" "$pack"
 
 : >"$CALL_LOG"
 if ACTIVATE_EXIT_CODE=1 run_driver azure azure-ws azure-env; then
