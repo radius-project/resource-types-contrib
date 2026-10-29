@@ -118,6 +118,10 @@ test-azure-secret-inputs: ## Run Azure secret input tests in a temporary directo
 	terraform -chdir="$$test_dir" init -backend=false -input=false; \
 	terraform -chdir="$$test_dir" test -no-color
 
+.PHONY: test-bicepconfig
+test-bicepconfig: ## Run offline Bicep extension configuration tests
+	@./.github/scripts/tests/test-update-bicepconfig.sh
+
 .PHONY: update-env-recipe-pack
 update-env-recipe-pack: ## Update environment with recipe pack ID (requires RECIPE_PACK_NAME and optionally RESOURCE_GROUP and ENVIRONMENT)
 ifndef RECIPE_PACK_NAME

@@ -16,25 +16,36 @@
 # limitations under the License.
 # ------------------------------------------------------------
 
-set -e
+set -euo pipefail
 
-# This script creates a fresh bicepconfig.json with all published .tgz files
+# Merge the canonical extensions and published .tgz files into bicepconfig.json.
 
-echo "Creating bicepconfig.json with published extensions..."
+echo "Updating bicepconfig.json with published extensions..."
 
-# Create base bicepconfig.json with required experimental features if it does not exist
 if [[ ! -f bicepconfig.json ]]; then
-  cat > bicepconfig.json << 'EOF'
-{
-  "extensions": {
-    "radius": "br:biceptypes.azurecr.io/radius:latest",
-    "aws": "br:biceptypes.azurecr.io/aws:latest"
-  }
-}
-EOF
-else
-  echo "bicepconfig.json already exists; leaving base config untouched"
+  printf '{}\n' > bicepconfig.json
 fi
+
+config_tmp=$(mktemp ./bicepconfig.XXXXXX)
+trap 'rm -f "$config_tmp"' EXIT
+
+# Only migrate the legacy Radius/AWS defaults; keep custom references and tags.
+jq '
+  def migrate($name):
+    "br:biceptypes.azurecr.io/\($name):" as $legacy
+    | "br:ghcr.io/radius-project/bicep-types-\($name):" as $canonical
+    | if . == null then $canonical + "edge"
+      elif type == "string" then
+        if startswith($legacy) then
+          ltrimstr($legacy) as $tag
+          | $canonical + (if $tag == "latest" then "edge" else $tag end)
+        else . end
+      else . end;
+  .experimentalFeaturesEnabled.ociEnabled = true
+  | .extensions.radius |= migrate("radius")
+  | .extensions.aws |= migrate("aws")
+' bicepconfig.json > "$config_tmp"
+mv "$config_tmp" bicepconfig.json
 
 # Find all published .tgz files and add them to bicepconfig.json (safe handling)
 tgz_files=()
@@ -55,8 +66,8 @@ if [[ ${#tgz_files[@]} -gt 0 ]]; then
 
     # Update bicepconfig.json using jq
     jq --arg name "$resource_name" --arg path "$tgz_file" \
-      '.extensions[$name] = $path' bicepconfig.json > bicepconfig.tmp && \
-      mv bicepconfig.tmp bicepconfig.json
+      '.extensions[$name] = $path' bicepconfig.json > "$config_tmp"
+    mv "$config_tmp" bicepconfig.json
   done
 
   echo "✅ Successfully created bicepconfig.json with extensions"
