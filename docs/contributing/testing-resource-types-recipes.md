@@ -314,8 +314,13 @@ Probe groups carry creation-time, run-ID, and run-attempt tags.
 The selector deletes each server and requests group deletion on exit. Because
 traps cannot cover runner loss, the separate cleanup job checks and deletes
 the exact probe group for that run and attempt, then confirms it is gone.
-It does not delete caller-owned groups. A cleanup error fails that step and
-leaves the exact target in the job output for operator or stale-resource recovery.
+When the producing job's output is unavailable, the cleanup job builds the
+group name from the workflow run ID and attempt. On a cleanup-only rerun, it
+can also clean the exact group recorded by an earlier attempt of the same run.
+It rejects other run IDs, future attempts, malformed names, and unrelated
+prefixes. A group that is already absent is treated as cleaned. The same
+deterministic fallback applies to the main group. A cleanup error fails that
+step and leaves the target visible for operator or stale-resource recovery.
 Main-group cleanup keeps the existing asynchronous deletion behavior.
 
 For example, after checking access and service support for `centralus`, constrain
