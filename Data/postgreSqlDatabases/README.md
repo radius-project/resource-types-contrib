@@ -41,3 +41,33 @@ Use `optional` only when the server is not publicly reachable. Non-TLS connectio
 ## Migrating Kubernetes consumers
 
 The Kubernetes Recipes no longer return the user-supplied `password` or derived `connectionString` through `result.secrets`. Existing consumers of those managed secret keys must explicitly provide the password to the consuming Container. Author a `Radius.Security/secrets` resource with the same password passed to the database, then either connect the Container directly to that Secret for generated `CONNECTION_<CONNECTION-NAME>_<KEY>` variables or bind the key to the required variable with `valueFrom.secretKeyRef`, as shown in [`test/app.bicep`](test/app.bicep). This change does not silently create a replacement `connectionString`; applications that require one must compose it from the database connection values and the referenced password.
+
+## Test size and Azure capacity recovery
+
+The test app accepts `postgresSize` (`S`, `M`, or `L`) and defaults to `S`.
+Kubernetes tests keep that default. Azure pack-entry tests use only `S`
+(`Standard_B1ms`, Burstable) and `M` (`Standard_D2ds_v5`, GeneralPurpose).
+`L` is not a recovery option because it maps to the same Azure SKU as `M`.
+The Resource Type schema and production pack defaults do not change.
+
+The all-entry runner reads `RTC_AZURE_SELECTION_FILE` when it is set. Only a
+valid version 1 result with `status: selected` permits PostgreSQL deployment.
+The result must match the existing resource group's region and the approved
+size, SKU, and tier. A missing, invalid, exhausted, or failed result fails the
+PostgreSQL entry; later entries still run. Without a result file, the runner
+makes one bounded `S` probe in the existing group's region.
+
+For a direct Azure entry test, set `RTC_TEST_PLATFORM=azure`,
+`AZURE_RESOURCE_GROUP`, and `RTC_POSTGRES_TEST_SIZE=S` or `M`. The runner passes
+the size to the test app. Each deployment has a 15-minute limit, reduced to
+the remaining time when `deadlineEpochSeconds` is present in the selection
+result. Direct runs can set `RTC_POSTGRES_TEST_DEADLINE_EPOCH` to the same
+absolute Unix deadline. Without a deadline, the entry has a 30-minute budget.
+
+If a deployment reports a structured `SkuNotAvailable` or `ServerIsBusy`
+error for an Azure PostgreSQL server, the runner deletes the failed app and
+checks that no new Azure resource IDs remain in the group. Only after these
+checks pass can it retry once with the other approved size and a distinct
+app name. The region does not change. Mixed or unknown errors, timeouts,
+assertion failures, and incomplete cleanup stop recovery. Cleanup has a
+separate time allowance and never deletes untracked Azure resources.
