@@ -28,7 +28,11 @@ cat >"$TEST_ROOT/bin/az" <<'EOF'
 #!/bin/bash
 echo "az $*" >>"$CALL_LOG"
 [[ "$2" == "create" && -n "${GROUP_CREATE_FAILS:-}" ]] && exit 1
-[[ "$2" == "delete" && -n "${GROUP_DELETE_FAILS:-}" ]] && exit 1
+if [[ "$2" == "delete" ]]; then
+    [[ "$*" != *" --no-wait "* ]] || exit 90
+    [[ -z "${GROUP_DELETE_SLEEP:-}" ]] || sleep "$GROUP_DELETE_SLEEP"
+    [[ -n "${GROUP_DELETE_FAILS:-}" ]] && exit 1
+fi
 exit 0
 EOF
 cat >"$TEST_ROOT/scripts/probe-azure-postgres-capacity.sh" <<'EOF'
@@ -70,6 +74,7 @@ reset 0
 [[ "$(probe_count)" == 1 ]] || fail "stop at success"
 grep -q '^probe westus3 S attempts=1 timeout=900$' "$CALL_LOG" || fail "bounded single probe"
 grep -q '^az group delete --name probe-rg' "$CALL_LOG" || fail "group cleanup"
+! grep -q -- '--no-wait' "$CALL_LOG" || fail "group deletion must wait for completion"
 assert_json '.version == 1 and .status == "selected" and .location == "westus3" and
     .postgres == {size:"S",skuName:"Standard_B1ms",tier:"Burstable"} and
     .attempts[0] == {region:"westus3",size:"S",skuName:"Standard_B1ms",tier:"Burstable",
@@ -129,6 +134,12 @@ assert_json '.status == "probe_error" and .attempts == []'
 grep -q '^az group delete' "$CALL_LOG" || fail "clean partially created group"
 reset 0
 if GROUP_DELETE_FAILS=1 select_location westus3 >/dev/null; then fail "group delete failure must fail"; fi
+assert_json '.status == "probe_error" and (has("postgres") | not)'
+reset 0
+if RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS=1 GROUP_DELETE_SLEEP=20 select_location westus3 >/dev/null 2>&1; then
+    fail "bounded group deletion timeout must fail"
+fi
+[[ "$(grep -c '^az group delete' "$CALL_LOG")" == 1 ]] || fail "one timed group deletion"
 assert_json '.status == "probe_error" and (has("postgres") | not)'
 reset 0
 NO_RECORD=1 select_location westus3 >/dev/null

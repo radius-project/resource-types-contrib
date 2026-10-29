@@ -95,14 +95,14 @@ trap finish EXIT
 trap 'exit 1' INT TERM
 
 # Azure CLI renamed these switches. Read local help, not a cloud capability list.
-# Charge this check to the first create's budget.
+# Charge the full remaining create/selection budget to this check.
 help_started=$SECONDS
 help_timeout="$create_timeout"
-if ((help_timeout > 30)); then help_timeout=30; fi
 help_status=0
-timeout --kill-after=10 "$help_timeout" az postgres flexible-server create --help \
+timeout --signal=KILL "$help_timeout" az postgres flexible-server create --help \
     >"$work_dir/create-help" 2>/dev/null || help_status=$?
-if ((help_status == 124 || help_status == 137)); then
+help_elapsed=$((SECONDS - help_started))
+if ((help_status == 124 || help_status == 137)) && ((help_elapsed >= help_timeout)); then
     outcome="timeout"; error_code="CreateTimeout"
     echo "Error: PostgreSQL probe timed out while reading CLI options." >&2
     exit 3

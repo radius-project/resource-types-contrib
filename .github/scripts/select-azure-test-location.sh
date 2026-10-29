@@ -89,7 +89,7 @@ finish() {
     local status=$?
     trap - EXIT INT TERM
     if [[ "$group_started" == true ]] && ! timeout --kill-after=10 "$delete_timeout" az group delete \
-        "${subscription_args[@]}" --name "$probe_rg" --yes --no-wait --only-show-errors --output none >&2; then
+        "${subscription_args[@]}" --name "$probe_rg" --yes --only-show-errors --output none >&2; then
         echo "Error: probe group '$probe_rg' cleanup failed." >&2
         selection_status="probe_error"; selected_postgres="null"
         selected_location="${candidates[0]}"; status=1
