@@ -588,21 +588,36 @@ test_recipe_publication_subjects() {
     local digest sha="0123456789abcdef0123456789abcdef01234567"
     digest="$(printf 'a%.0s' {1..64})"
     mkdir -p "$bin" "$subjects"
-    printf '#!/bin/bash\nexit 0\n' >"$bin/rad"
+    cat >"$bin/rad" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+while (($#)); do
+    if [[ "$1" == --target ]]; then
+        target="${2#br:}"
+        printf 'Pushed to %s@sha256:%s\n' "${target%:*}" "$TEST_RECIPE_DIGEST"
+        exit
+    fi
+    shift
+done
+exit 1
+EOF
     printf '#!/bin/bash\necho "sha256:%s"\n' "$digest" >"$bin/oras"
     chmod +x "$bin/rad" "$bin/oras"
 
-    PATH="$bin:$PATH" REGISTRY=ghcr.io/example/kube-recipes TAGS="$sha 0.51.0" \
+    PATH="$bin:$PATH" TEST_RECIPE_DIGEST="$digest" \
+        REGISTRY=ghcr.io/example/kube-recipes TAGS="$sha 0.51.0" \
         bash "$PUBLISH_SCRIPT" demo demo.bicep >/dev/null
     [[ -z "$(ls -A "$subjects")" ]] || fail "subjects were recorded for an unattested publish"
 
-    PATH="$bin:$PATH" REGISTRY=ghcr.io/example/kube-recipes TAGS="$sha 0.51.0" \
+    PATH="$bin:$PATH" TEST_RECIPE_DIGEST="$digest" \
+        REGISTRY=ghcr.io/example/kube-recipes TAGS="$sha 0.51.0" \
         RECIPE_SUBJECTS_DIR="$subjects" bash "$PUBLISH_SCRIPT" demo demo.bicep >/dev/null
     assert_eq "${digest}  ghcr.io/example/kube-recipes/demo" "$(sort -u "$subjects"/*)" \
         "recorded recipe subjects"
 
     printf '#!/bin/bash\necho "sha256:%s"\n' "${digest:0:12}" >"$bin/oras"
-    if PATH="$bin:$PATH" REGISTRY=ghcr.io/example/kube-recipes TAGS="$sha" \
+    if PATH="$bin:$PATH" TEST_RECIPE_DIGEST="$digest" \
+        REGISTRY=ghcr.io/example/kube-recipes TAGS="$sha" \
         RECIPE_SUBJECTS_DIR="$subjects" bash "$PUBLISH_SCRIPT" demo demo.bicep >/dev/null 2>&1; then
         fail "an invalid recipe digest was recorded"
     fi

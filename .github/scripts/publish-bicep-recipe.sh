@@ -17,7 +17,7 @@
 # ------------------------------------------------------------
 
 # =============================================================================
-# Publish one Bicep recipe once per source commit and tag the same digest.
+# Verify one Bicep recipe's build and tag the same digest.
 # Called once per recipe by the publish-bicep-recipes workflow, which
 # runs the invocations as parallel steps in a single job.
 #

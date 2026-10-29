@@ -33,7 +33,11 @@ if [[ "$tool" == rad ]]; then
     fi
     while (($#)); do
         if [[ "$1" == --target ]]; then
-            write_tag "${2#br:}" "$(jq -r '.build_digest' "$state")"
+            target="${2#br:}"
+            digest="$(jq -r '.build_digest' "$state")"
+            write_tag "$target" "$(jq -r '.staged_digest // .build_digest' "$state")"
+            jq -r --arg output "Pushed to ${target%:*}@$digest" \
+                '.build_output // $output' "$state"
             exit
         fi
         shift
@@ -102,8 +106,10 @@ tag_is() {
         fail "unexpected digest for $1"
 }
 writes() { jq '[.calls[] | select(.[0] == "rad" or .[0:2] == ["oras","tag"])] | length' "$REGISTRY_STATE"; }
+tag_writes() { jq '[.calls[] | select(.[0:2] == ["oras","tag"])] | length' "$REGISTRY_STATE"; }
 run_helper() {
-    if RESULT="$(bash "$HELPER" "$@" 2>&1)"; then STATUS=0; else STATUS=$?; fi
+    if STDOUT="$(bash "$HELPER" "$@" 2>"$CASE_ROOT/stderr")"; then STATUS=0; else STATUS=$?; fi
+    RESULT="$STDOUT$(<"$CASE_ROOT/stderr")"
 }
 publish() { run_helper publish recipe.bicep "$REPOSITORY" "$SOURCE" "$@"; }
 promote() { run_helper promote "${1:-0.62.1}" "$SUBJECTS" "${2:-0.62}"; }
@@ -116,7 +122,7 @@ seed latest "$OLDER"
 seed 0.62 "$OLDER"
 publish edge
 success
-[[ "$RESULT" == "$DIGEST" ]] || fail "publisher output must be one digest"
+[[ "$STDOUT" == "$DIGEST" ]] || fail "publisher output must be one digest"
 tag_is edge "$DIGEST"
 tag_is latest "$OLDER"
 tag_is 0.62 "$OLDER"
@@ -125,17 +131,54 @@ tag_is 0.62 "$OLDER"
 new_case retry
 publish "$SOURCE" 0.62.1
 success
-before="$(writes)"
+before="$(tag_writes)"
 publish "$SOURCE" 0.62.1
 success
-[[ "$(writes)" == "$before" ]] || fail "retry rebuilt or retagged content"
+[[ "$(tag_writes)" == "$before" ]] || fail "retry retagged identical content"
+[[ "$(jq '[.calls[] | select(.[0] == "rad")] | length' "$REGISTRY_STATE")" == 2 ]] ||
+    fail "retry trusted the source tag without rebuilding"
+
+for tag in edge 0.62.1 "$SOURCE"; do
+    new_case tampered_source
+    seed "$SOURCE" "$OLDER"
+    seed edge "$OLDER"
+    seed latest "$OLDER"
+    seed 0.62.1 "$OLDER"
+    publish "$tag"
+    failure "conflicting digest"
+    [[ -z "$STDOUT" ]] || fail "unverified digest returned for attestation"
+    [[ "$(tag_writes)" == 0 ]] || fail "tampered content was tagged"
+    tag_is "$SOURCE" "$OLDER"
+    tag_is edge "$OLDER"
+    tag_is latest "$OLDER"
+    tag_is 0.62.1 "$OLDER"
+done
+
+new_case staging_readback
+change --arg digest "$OLDER" ".staged_digest = \$digest"
+publish edge
+failure "Staged recipe digest"
+[[ -z "$STDOUT" && "$(tag_writes)" == 0 ]] ||
+    fail "registry digest replaced the locally built digest"
+
+for output in '' "Pushed to ghcr.io/untrusted/recipe@$DIGEST" \
+    "Pushed to $REPOSITORY@sha256:1234" \
+    "Pushed to $REPOSITORY@$DIGEST"$'\n'"Pushed to $REPOSITORY@$OLDER"; do
+    new_case invalid_build_output
+    change --arg output "$output" ".build_output = \$output"
+    publish edge
+    failure "build digest"
+    [[ -z "$STDOUT" && "$(tag_writes)" == 0 ]] ||
+        fail "invalid publisher output was trusted"
+done
 
 new_case immutable_conflict
 seed "$SOURCE" "$DIGEST"
 seed 0.62.1 "$OLDER"
 publish 0.62.1
 failure "conflicting digest"
-no_writes
+[[ "$(tag_writes)" == 0 ]] || fail "immutable conflict changed a tag"
+tag_is 0.62.1 "$OLDER"
 
 for tag in latest 0.62 'bad tag' "$(printf 'a%.0s' {1..129})"; do
     new_case invalid_tag
@@ -149,7 +192,8 @@ run_helper publish recipe.bicep "$REPOSITORY" short edge
 failure "full source commit SHA"
 no_writes
 
-for message in 'HTTP 401 unauthorized' 'HTTP 403 forbidden' 'not found: denied' 'TLS handshake timeout'; do
+for message in 'manifest unknown: HTTP 401 unauthorized' \
+    'manifest unknown: HTTP 403 forbidden' 'manifest unknown: denied' 'TLS handshake timeout'; do
     new_case lookup_failure
     change --arg ref "$REPOSITORY:$SOURCE" --arg message "$message" ".resolve_errors[\$ref] = \$message"
     publish edge
@@ -169,6 +213,7 @@ failure "Invalid digest"
 no_writes
 
 new_case build_failure
+seed "$SOURCE" "$DIGEST"
 seed edge "$OLDER"
 seed latest "$OLDER"
 change '.build_error = true'
@@ -297,16 +342,29 @@ tag_is latest "$DIGEST"
 jq -e --arg ref "$REPOSITORY:0.62" '.tags | has($ref) | not' "$REGISTRY_STATE" >/dev/null ||
     fail "modern promotion created a channel alias"
 
+new_case publisher_rejects_tampered_subject
+seed "$SOURCE" "$OLDER"
+mkdir "$CASE_ROOT/subjects"
+if REGISTRY="${REPOSITORY%/*}" TAGS="$SOURCE" RECIPE_SUBJECTS_DIR="$CASE_ROOT/subjects" \
+    bash "$SCRIPTS/publish-bicep-recipe.sh" demo recipe.bicep >"$CASE_ROOT/output" 2>&1; then
+    fail "pin-only publisher accepted substituted source content"
+fi
+grep -Fq 'conflicting digest' "$CASE_ROOT/output" || fail "wrong rejection reason"
+[[ -z "$(ls -A "$CASE_ROOT/subjects")" ]] ||
+    fail "unverified content was recorded for attestation"
+
 new_case workflow_contract
 workflow="$SCRIPTS/../workflows/publish-bicep-recipes.yaml"
 for expected in \
-    'group: publish-bicep-recipes' 'queue: max' \
+    'queue: max' \
     'needs: [publish-bicep-recipes, attest-bicep-recipes]' \
     "!contains(inputs.release_version, '-') && !inputs.pin_only" \
     "repos/radius-project/radius/releases/tags/v\${RELEASE_VERSION}" \
     "tags=\"\$COMMIT_SHA\""; do
     grep -Fq "$expected" "$workflow" || fail "missing workflow contract: $expected"
 done
+grep -Eq '^  group: publish-bicep-recipes$' "$workflow" ||
+    fail "publication must use one shared concurrency group"
 [[ "$(grep -Fc 'id-token: write' "$workflow")" == 1 ]] || fail "signing permissions leaked"
 
 echo "Recipe OCI tests passed ($CASES cases)"
