@@ -741,6 +741,6 @@ test_repo_wide_release_covers_all_units
 test_release_change_detection
 test_recipe_tags
 test_recipe_publication_subjects
-python3 "${REPO_ROOT}/.github/scripts/tests/test-recipe-oci.py"
+bash "${REPO_ROOT}/.github/scripts/tests/test-recipe-oci.sh"
 test_release_candidate_sources
 echo "Release automation tests passed"

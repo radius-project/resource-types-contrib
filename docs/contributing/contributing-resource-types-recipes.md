@@ -354,7 +354,7 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
 ### Recipe Guidelines
 
 - Published Bicep recipes use `edge` for main and `latest` for the newest stable Radius release. The **Publish Bicep Recipes** workflow requires an existing public Radius release for `release_version`; this version is independent of namespace and Recipe Pack versions. It publishes source-SHA and full-version tags first, then promotes `latest` from the attested digest after all recipes succeed. A newer full-version tag prevents an older manual run from moving `latest`. Retain those full-version tags, and finish a failed newer publication rather than promoting an older version over it. `pin_only` publishes only the immutable source pin and never moves aliases.
-- Publication retries reuse the source-SHA digest and reject conflicting full-version tags instead of rebuilding or overwriting them. Run `make test-release-automation` with Python 3, Bash, and jq for the offline publication and alias regressions.
+- Publication retries reuse the source-SHA digest and reject conflicting full-version tags instead of rebuilding or overwriting them. Run `make test-release-automation` with Bash and jq for the offline publication and alias regressions.
 - Prefer standard, versioned modules (for example, Azure Verified Modules) where available, and pin the version with the `:<tag>` syntax so deployments are reproducible.
 - Recipes should be idempotent, meaning they can be run multiple times without causing issues.
 - Map developer-authored properties (such as `size`) onto concrete infrastructure settings using `{{context.*}}` parameter expressions rather than exposing platform-specific properties on the Resource Type.
