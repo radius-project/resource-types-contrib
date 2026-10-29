@@ -106,25 +106,34 @@ server = re.compile(
 wrappers = {"ResourceDeploymentFailure", "DeploymentFailed", "ResourceOperationFailure"}
 codes = []
 invalid = False
+json_spans = []
 
 def objects(text):
+    found = []
     offset = 0
     while (offset := text.find("{", offset)) != -1:
         try:
-            value, offset = decoder.raw_decode(text, offset)
-            yield value
+            start = offset
+            value, end = decoder.raw_decode(text, offset)
+            found.append((value, start, end))
+            offset = end
         except ValueError:
             offset += 1
+    return found
 
-def visit(value, target=""):
+def visit(value, target="", failure_context=False):
     global invalid
     if isinstance(value, list):
         for item in value:
-            visit(item, target)
+            visit(item, target, failure_context)
     elif isinstance(value, dict):
         before = len(codes)
         target = value.get("target", target)
         code = value.get("code")
+        status = value.get("status", "")
+        is_failure = failure_context or (
+            isinstance(status, str) and status.lower() in {"failed", "failure", "error"}
+        )
         if code:
             if code in {"SkuNotAvailable", "ServerIsBusy"}:
                 if isinstance(target, str) and server.fullmatch(target):
@@ -133,16 +142,49 @@ def visit(value, target=""):
                     invalid = True
             elif code not in wrappers:
                 invalid = True
-        children = list(value.values())
-        embedded = list(objects(value.get("message", ""))) if isinstance(value.get("message"), str) else []
-        for item in children + embedded:
+        elif is_failure or ("target" in value and "message" in value):
+            invalid = True
+        if is_failure and not code:
+            invalid = True
+
+        children = []
+        for key, item in value.items():
             if isinstance(item, (dict, list)):
-                visit(item, target)
+                children.append((item, is_failure or (code in wrappers and key == "details")))
+        embedded = []
+        if isinstance(value.get("message"), str):
+            for item, start, end in objects(value["message"]):
+                embedded.append((item, True))
+        for item, child_failure in children + embedded:
+            if isinstance(item, (dict, list)):
+                visit(item, target, child_failure)
         if code in wrappers and len(codes) == before:
             invalid = True
 
-for root in objects(transcript):
+for root, start, end in objects(transcript):
+    json_spans.append((start, end))
     visit(root)
+
+# CLI progress output may contain normal Error-prefixed JSON records, which are
+# classified above. A second plain error line is not safe to ignore.
+line_start = 0
+for line in transcript.splitlines(keepends=True):
+    line_body = line.rstrip("\r\n")
+    if re.search(r"^\s*(?:Error|ERROR|Fatal|FATAL|Failure|Failed):", line_body):
+        residual = list(line_body)
+        line_end = line_start + len(line_body)
+        for start, end in json_spans:
+            overlap_start = max(start, line_start)
+            overlap_end = min(end, line_end)
+            if overlap_start < overlap_end:
+                residual[overlap_start - line_start:overlap_end - line_start] = \
+                    [" "] * (overlap_end - overlap_start)
+        residual = "".join(residual)
+        residual = re.sub(r"^\s*(?:Error|ERROR|Fatal|FATAL|Failure|Failed):", "", residual)
+        if residual.strip():
+            invalid = True
+    line_start += len(line)
+
 sys.exit(0 if codes and not invalid else 1)
 PY
 }
@@ -170,7 +212,7 @@ rtc_snapshot_azure_resource_ids() {
 rtc_test_azure_postgresql_app() {
     local test_file="$1" environment_path="$2" workspace_name="$3" kubernetes_namespace="$4"
     local size="${RTC_POSTGRES_TEST_SIZE:-S}" deadline="${RTC_POSTGRES_TEST_DEADLINE_EPOCH:-}"
-    local remaining limit status attempt
+    local remaining status attempt
     case "$size" in S|M) ;; *) echo "Error: PostgreSQL test size must be S or M." >&2; return 1 ;; esac
     if [[ -z "$deadline" ]]; then deadline=$(( $(date +%s) + 1800 )); fi
     if [[ ! "$deadline" =~ ^[1-9][0-9]{0,10}$ ]]; then
@@ -178,15 +220,12 @@ rtc_test_azure_postgresql_app() {
         return 1
     fi
     for attempt in 1 2; do
-        remaining=$((deadline - $(date +%s)))
-        if ((remaining <= 0)); then
+        if ((deadline <= $(date +%s))); then
             echo "Error: PostgreSQL deployment deadline has expired." >&2
             return 1
         fi
-        limit=900
-        if ((remaining < limit)); then limit="$remaining"; fi
         status=0
-        RTC_POSTGRES_CAPACITY_RECOVERY=1 RTC_POSTGRES_DEPLOY_TIMEOUT_SECONDS="$limit" \
+        RTC_POSTGRES_CAPACITY_RECOVERY=1 RTC_POSTGRES_TEST_DEADLINE_EPOCH="$deadline" \
             rtc_deploy_and_assert_test_app "$test_file" Radius.Data/postgreSqlDatabases \
                 "recipepacktest-pg-$size-$attempt" "$environment_path" "$workspace_name" "$kubernetes_namespace" \
                 --parameters "postgresSize=$size" || status=$?
@@ -558,12 +597,7 @@ rtc_deploy_and_assert_test_app() {
             echo "Error: Could not snapshot Azure resources before PostgreSQL deployment." >&2
             return 1
         fi
-        deploy_timeout=(timeout --kill-after=5s "${RTC_POSTGRES_DEPLOY_TIMEOUT_SECONDS}s")
         cleanup_timeout=(timeout --kill-after=5s 12m)
-        # shellcheck disable=SC2016 # Expanded by the child shell.
-        deploy_command=("${deploy_timeout[@]}" bash -c \
-            'source "$1"; shift; rtc_deploy_with_retry "$@"' \
-            bash "${BASH_SOURCE[0]}")
     elif [[ "${GITHUB_ACTIONS:-}" == true && "${RTC_TEST_PLATFORM:-}" == azure &&
           "$resource_type" == Radius.Compute/containers ]]; then
         if ! command -v timeout >/dev/null 2>&1; then
@@ -604,6 +638,24 @@ rtc_deploy_and_assert_test_app() {
 
     echo "==> Deploying test application from $test_file"
     started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
+        local deadline="${RTC_POSTGRES_TEST_DEADLINE_EPOCH:-}" remaining
+        if [[ ! "$deadline" =~ ^[1-9][0-9]{0,10}$ ]]; then
+            echo "Error: Invalid PostgreSQL test deadline." >&2
+            return 1
+        fi
+        remaining=$((deadline - $(date +%s)))
+        if ((remaining <= 0)); then
+            echo "Error: PostgreSQL deployment deadline expired before allocation." >&2
+            return 1
+        fi
+        if ((remaining > 900)); then remaining=900; fi
+        deploy_timeout=(timeout --kill-after=5s "${remaining}s")
+        # shellcheck disable=SC2016 # Expanded by the child shell.
+        deploy_command=("${deploy_timeout[@]}" bash -c \
+            'source "$1"; shift; rtc_deploy_with_retry "$@"' \
+            bash "${BASH_SOURCE[0]}")
+    fi
     if "${deploy_command[@]}" "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
         echo "==> Test deployment successful"
 

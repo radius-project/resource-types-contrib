@@ -117,6 +117,7 @@ echo "az $*" >>"$CALL_LOG"
 case "$1 $2" in
     "resource list")
         if [[ "${AZ_RESOURCE_LIST_FAIL:-0}" == 1 ]]; then exit 1; fi
+        if [[ -n "${AZ_RESOURCE_LIST_DELAY_SECONDS:-}" ]]; then sleep "$AZ_RESOURCE_LIST_DELAY_SECONDS"; fi
         if grep -q '^rad app delete' "$CALL_LOG"; then
             printf '%s\n' "${AZ_RESOURCES_AFTER:-[]}"
         else
@@ -604,7 +605,7 @@ POSTGRES_CAPACITY_ERROR='Error: {"code":"DeploymentFailed","details":[{"code":"R
 cat >"$MOCK_BIN/timeout" <<'EOF'
 #!/bin/bash
 echo "timeout $*" >>"$CALL_LOG"
-if [[ "${POSTGRES_DEPLOY_TIMEOUT:-0}" == 1 && "$3" == bash ]]; then exit 124; fi
+if [[ "${POSTGRES_DEPLOY_TIMEOUT:-0}" == 1 && " $* " == *" bash -c "* ]]; then exit 124; fi
 exec /usr/bin/timeout "$@"
 EOF
 chmod +x "$MOCK_BIN/timeout"
@@ -655,6 +656,18 @@ for failure in \
     assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "non-capacity errors must not retry"
 done
 
+for failure in \
+    "$POSTGRES_CAPACITY_ERROR"$'\n''Error: AuthorizationFailed: access denied' \
+    "${POSTGRES_CAPACITY_ERROR} AuthorizationFailed: access denied" \
+    'Error: {"code":"DeploymentFailed","details":[{"code":"ResourceDeploymentFailure","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg","message":"{\"code\":\"SkuNotAvailable\",\"message\":\"capacity unavailable\"}"},{"target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg","message":"uncoded deployment failure"}]}' \
+    '{"code":"DeploymentFailed","status":"Failed","details":[{"code":"ResourceDeploymentFailure","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg","message":"{\"code\":\"SkuNotAvailable\",\"message\":\"capacity unavailable\"}"},{"status":"Failed","message":"uncoded failure detail"}]}'; do
+    : >"$CALL_LOG"
+    if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$failure" run_postgres >/dev/null 2>&1; then
+        fail "capacity plus unclassified failure output must not retry"
+    fi
+    assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "mixed unclassified failure attempt count"
+done
+
 for failure in APP_DELETE_EXIT_CODE KUBECTL_EXIT_CODE AZ_RESOURCE_LIST_FAIL; do
     : >"$CALL_LOG"
     if (
@@ -691,6 +704,15 @@ RTC_POSTGRES_TEST_DEADLINE_EPOCH="$(( $(date +%s) + 45 ))" run_postgres >/dev/nu
 limit="$(sed -nE 's/^timeout --kill-after=5s ([0-9]+)s bash .*/\1/p' "$CALL_LOG")"
 [[ "$limit" =~ ^[0-9]+$ && "$limit" -gt 0 && "$limit" -le 45 ]] ||
     fail "deployment must respect remaining selection time"
+
+: >"$CALL_LOG"
+if RTC_POSTGRES_TEST_DEADLINE_EPOCH="$(( $(date +%s) + 1 ))" AZ_RESOURCE_LIST_DELAY_SECONDS=2 \
+    run_postgres >/dev/null 2>&1; then
+    fail "an expired deadline after inventory snapshots must prevent deployment"
+fi
+if grep -q '^rad deploy ' "$CALL_LOG"; then
+    fail "deployment must not begin after snapshots consume the deadline"
+fi
 
 # Exercise the actual single-entry caller with the same mock cloud commands.
 run_postgres_entry() {
