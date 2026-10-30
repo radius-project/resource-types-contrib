@@ -115,6 +115,15 @@ cat >"$MOCK_BIN/az" <<'EOF'
 #!/bin/bash
 echo "az $*" >>"$CALL_LOG"
 case "$1 $2" in
+    "resource list")
+        if [[ "${AZ_RESOURCE_LIST_FAIL:-0}" == 1 ]]; then exit 1; fi
+        if [[ -n "${AZ_RESOURCE_LIST_DELAY_SECONDS:-}" ]]; then sleep "$AZ_RESOURCE_LIST_DELAY_SECONDS"; fi
+        if grep -q '^rad app delete' "$CALL_LOG"; then
+            printf '%s\n' "${AZ_RESOURCES_AFTER:-[]}"
+        else
+            echo '[]'
+        fi
+        ;;
     "lock list")
         lock_list_calls=0
         if [[ -f "$AZ_LOCK_STATE_FILE" ]]; then
@@ -591,5 +600,138 @@ grep -q '^rad app delete' "$CALL_LOG" || fail "per-recipe failure must still del
 if grep -q '^rad recipe ' "$CALL_LOG"; then
     fail "per-recipe failure must not call the removed 'rad recipe' command"
 fi
+
+POSTGRES_CAPACITY_ERROR='Error: {"code":"DeploymentFailed","details":[{"code":"ResourceDeploymentFailure","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg","message":"{\"code\":\"SkuNotAvailable\",\"message\":\"capacity unavailable\"}"}]}'
+cat >"$MOCK_BIN/timeout" <<'EOF'
+#!/bin/bash
+echo "timeout $*" >>"$CALL_LOG"
+if [[ "${POSTGRES_DEPLOY_TIMEOUT:-0}" == 1 && " $* " == *" bash -c "* ]]; then exit 124; fi
+exec /usr/bin/timeout "$@"
+EOF
+chmod +x "$MOCK_BIN/timeout"
+run_postgres() {
+    AZURE_RESOURCE_GROUP=rg RTC_TEST_PLATFORM=azure run_lib rtc_test_azure_postgresql_app \
+        "$TEST_APP_BICEP" /envs/myenv myws my-ns
+}
+: >"$CALL_LOG"
+DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres >/dev/null ||
+    fail "PostgreSQL deploy-time capacity loss must recover"
+assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "PostgreSQL recovery attempts"
+grep -q -- '--parameters postgresSize=S' "$CALL_LOG" || fail "first deployment must use S"
+grep -q -- '--parameters postgresSize=M' "$CALL_LOG" || fail "recovery must use M"
+assert_eq 2 "$(grep '^rad deploy ' "$CALL_LOG" | sed -E 's/.*applicationName=([^ ]+).*/\1/' | sort -u | wc -l | tr -d ' ')" \
+    "recovery application names must be distinct"
+awk '/^rad app delete / { cleaned++ } /^az resource list / { snapshots++ }
+    /^rad deploy / { attempts++; if (attempts == 2 && (cleaned != 1 || snapshots < 3)) exit 1 }' "$CALL_LOG" ||
+    fail "recovery must follow Radius cleanup and Azure deletion verification"
+
+: >"$CALL_LOG"
+DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" RTC_POSTGRES_TEST_SIZE=M run_postgres >/dev/null ||
+    fail "an M selection must recover with untried S"
+grep '^rad deploy ' "$CALL_LOG" | tail -1 | grep -q 'postgresSize=S' ||
+    fail "M recovery must use S, not L (the same SKU)"
+
+: >"$CALL_LOG"
+if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres >/dev/null 2>&1; then
+    fail "capacity recovery exhaustion must fail"
+fi
+assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "capacity recovery is limited to two attempts"
+
+: >"$CALL_LOG"
+DEPLOY_FAILURES=1 DEPLOY_ERROR="${POSTGRES_CAPACITY_ERROR//SkuNotAvailable/ServerIsBusy}" run_postgres >/dev/null ||
+    fail "PostgreSQL ServerIsBusy must permit recovery"
+assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "ServerIsBusy recovery attempts"
+
+for failure in \
+    'SkuNotAvailable' \
+    '{"code":"SkuNotAvailable","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm"}' \
+    '{"code":"AuthorizationFailed","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg"}' \
+    '{"code":"DeploymentFailed","details":[{"code":"ServerIsBusy","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg"},{"code":"AuthorizationFailed"}]}' \
+    '{"code":"DeploymentFailed","details":[{"code":"ServerIsBusy","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg"},{"code":"ResourceDeploymentFailure","details":[]}]}' \
+    '{"code":"UnknownError","message":"SkuNotAvailable"}'; do
+    : >"$CALL_LOG"
+    if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$failure" run_postgres >/dev/null 2>&1; then
+        fail "non-capacity or mixed errors must fail"
+    fi
+    assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "non-capacity errors must not retry"
+done
+
+for failure in \
+    "$POSTGRES_CAPACITY_ERROR"$'\n''Error: AuthorizationFailed: access denied' \
+    "${POSTGRES_CAPACITY_ERROR} AuthorizationFailed: access denied" \
+    'Error: {"code":"DeploymentFailed","details":[{"code":"ResourceDeploymentFailure","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg","message":"{\"code\":\"SkuNotAvailable\",\"message\":\"capacity unavailable\"}"},{"target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg","message":"uncoded deployment failure"}]}' \
+    '{"code":"DeploymentFailed","status":"Failed","details":[{"code":"ResourceDeploymentFailure","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg","message":"{\"code\":\"SkuNotAvailable\",\"message\":\"capacity unavailable\"}"},{"status":"Failed","message":"uncoded failure detail"}]}'; do
+    : >"$CALL_LOG"
+    if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$failure" run_postgres >/dev/null 2>&1; then
+        fail "capacity plus unclassified failure output must not retry"
+    fi
+    assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "mixed unclassified failure attempt count"
+done
+
+for failure in APP_DELETE_EXIT_CODE KUBECTL_EXIT_CODE AZ_RESOURCE_LIST_FAIL; do
+    : >"$CALL_LOG"
+    if (
+        export "$failure=1"
+        DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres
+    ) >/dev/null 2>&1; then fail "$failure must block recovery"; fi
+    [[ "$(grep -c '^rad deploy ' "$CALL_LOG")" -le 1 ]] || fail "cleanup uncertainty must block recovery"
+done
+: >"$CALL_LOG"
+if DEPLOY_EXIT_CODE=42 DEPLOY_ERROR='Unknown CLI failure' run_postgres >/dev/null 2>&1; then
+    fail "a raw CLI exit code must not grant capacity recovery"
+fi
+assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "raw exit 42 is not evidence of capacity"
+: >"$CALL_LOG"
+if DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" \
+    AZ_RESOURCES_AFTER='[{"id":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/leftover"}]' \
+    run_postgres >/dev/null 2>&1; then fail "leftover Azure resources must block recovery"; fi
+assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "leftover resource must block new allocation"
+
+: >"$CALL_LOG"
+if POSTGRES_JSON='{"properties":{}}' run_postgres >/dev/null 2>&1; then fail "assertion failure must fail"; fi
+assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "assertion failure must not change size"
+: >"$CALL_LOG"
+if RTC_POSTGRES_TEST_DEADLINE_EPOCH=1 run_postgres >/dev/null 2>&1; then fail "expired deadline must fail"; fi
+[[ ! -s "$CALL_LOG" ]] || fail "deadline must stop allocation"
+
+: >"$CALL_LOG"
+if POSTGRES_DEPLOY_TIMEOUT=1 run_postgres >/dev/null 2>&1; then fail "deploy timeout must fail"; fi
+assert_eq 1 "$(grep -c '^timeout .* bash -c ' "$CALL_LOG")" "timeout must not change size"
+assert_eq 1 "$(grep -c '^rad app delete ' "$CALL_LOG")" "timeout must still clean up"
+: >"$CALL_LOG"
+RTC_POSTGRES_TEST_DEADLINE_EPOCH="$(( $(date +%s) + 45 ))" run_postgres >/dev/null ||
+    fail "a remaining deadline must permit a bounded deployment"
+limit="$(sed -nE 's/^timeout --kill-after=5s ([0-9]+)s bash .*/\1/p' "$CALL_LOG")"
+[[ "$limit" =~ ^[0-9]+$ && "$limit" -gt 0 && "$limit" -le 45 ]] ||
+    fail "deployment must respect remaining selection time"
+
+: >"$CALL_LOG"
+if RTC_POSTGRES_TEST_DEADLINE_EPOCH="$(( $(date +%s) + 1 ))" AZ_RESOURCE_LIST_DELAY_SECONDS=2 \
+    run_postgres >/dev/null 2>&1; then
+    fail "an expired deadline after inventory snapshots must prevent deployment"
+fi
+if grep -q '^rad deploy ' "$CALL_LOG"; then
+    fail "deployment must not begin after snapshots consume the deadline"
+fi
+
+# Exercise the actual single-entry caller with the same mock cloud commands.
+run_postgres_entry() {
+    (
+        cd "$REPO_ROOT"
+        # shellcheck disable=SC2031 # This fixture sets PATH in its own subshell.
+        PATH="$MOCK_BIN:$PATH" CALL_LOG="$CALL_LOG" \
+            bash .github/scripts/test-recipe-pack-entry.sh Data/postgreSqlDatabases myws myenv
+    )
+}
+: >"$CALL_LOG"
+RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg RTC_POSTGRES_TEST_SIZE=M \
+    run_postgres_entry >/dev/null || fail "single-entry Azure runner must pass selected M"
+grep -q -- '--parameters postgresSize=M' "$CALL_LOG" || fail "single-entry runner must pass M to Bicep"
+: >"$CALL_LOG"
+RTC_TEST_PLATFORM=kubernetes RTC_POSTGRES_TEST_SIZE=M run_postgres_entry >/dev/null ||
+    fail "Kubernetes entry must retain the default template size"
+if grep -q 'postgresSize=' "$CALL_LOG"; then fail "Kubernetes must not get an Azure size override"; fi
+grep -q "^param postgresSize string = 'S'$" "$REPO_ROOT/Data/postgreSqlDatabases/test/app.bicep" ||
+    fail "test template default must remain S"
 
 echo "Recipe test library test passed"

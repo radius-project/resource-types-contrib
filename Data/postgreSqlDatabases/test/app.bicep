@@ -6,6 +6,10 @@ param environment string
 @description('Application name. CI supplies a unique name for deployment and cleanup.')
 param applicationName string = 'postgresql-test'
 
+@description('Portable PostgreSQL size. Azure capacity tests can select an approved alternative.')
+@allowed(['S', 'M', 'L'])
+param postgresSize string = 'S'
+
 @description('Database admin password. Set on the `password` property of the database (x-radius-sensitive, so Radius encrypts it at rest and injects it decrypted into the Recipe) and stored in a Radius.Security/secrets resource for the consuming container to bind by reference.')
 @secure()
 param password string
@@ -42,7 +46,7 @@ resource postgresql 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
   properties: {
     environment: environment
     application: app.id
-    size: 'S'
+    size: postgresSize
     database: 'appdb'
     username: 'radadmin'
     password: password
