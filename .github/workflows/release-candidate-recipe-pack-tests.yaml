@@ -208,6 +208,7 @@ jobs:
       contents: read
     outputs:
       resource_group: ${{ steps.set-context.outputs.resource_group }}
+      probe_resource_group: ${{ steps.set-context.outputs.probe_resource_group }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -230,6 +231,22 @@ jobs:
             RECIPE_PACK="$pack" ./.github/scripts/release/verify-recipe-pack-sources.sh
           done
 
+      - name: Record owned Azure groups
+        id: set-context
+        run: |
+          RG="rrttest-rc-${{ github.run_id }}-${{ github.run_attempt }}"
+          {
+            echo "resource_group=$RG"
+            echo "probe_resource_group=${RG}-probe"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "AZURE_RESOURCE_GROUP=$RG"
+            echo "AZURE_PROBE_RESOURCE_GROUP=${RG}-probe"
+            echo "AZURE_WORKSPACE_NAME=default"
+            echo "AZURE_ENVIRONMENT_NAME=default"
+            echo "RTC_AZURE_SELECTION_FILE=$GITHUB_WORKSPACE/azure-test-diagnostics/postgres-selection.json"
+          } >> "$GITHUB_ENV"
+
       - name: Azure Login
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
@@ -244,25 +261,28 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: bash .github/scripts/azure-cli-with-refresh.sh --install
 
-      - name: Set Azure Test Context
-        id: set-context
+      # Use current tooling with the released sources; never change pack pins.
+      - name: Select Azure Test Context
+        timeout-minutes: 76
         run: |
-          LOCATION="${AZURE_LOCATION:-$DEFAULT_AZURE_LOCATION}"
-          if [ -z "$LOCATION" ]; then
-            LOCATION="westus3"
+          set -euo pipefail
+          if [[ -n "$REGION_OVERRIDE" ]]; then
+            export RTC_AZURE_TEST_REGIONS="$REGION_OVERRIDE"
           fi
-          RG="rrttest-rc-${{ github.run_id }}-${{ github.run_attempt }}"
-          {
-            echo "AZURE_LOCATION=$LOCATION"
-            echo "AZURE_RESOURCE_GROUP=$RG"
-            echo "AZURE_WORKSPACE_NAME=default"
-            echo "AZURE_ENVIRONMENT_NAME=default"
-          } >> "$GITHUB_ENV"
-          echo "resource_group=$RG" >> "$GITHUB_OUTPUT"
+          regions="$(bash .github/scripts/azure-postgres-workflow.sh regions)"
+          export RTC_AZURE_TEST_REGIONS="$regions"
+          mkdir -p "$(dirname "$RTC_AZURE_SELECTION_FILE")"
+          LOCATION="$(bash .github/scripts/select-azure-test-location.sh "$AZURE_PROBE_RESOURCE_GROUP")"
+          echo "AZURE_LOCATION=$LOCATION" >> "$GITHUB_ENV"
         env:
-          DEFAULT_AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+          REGION_OVERRIDE: ${{ vars.RTC_AZURE_TEST_REGIONS }}
+          AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+          AZURE_FALLBACK_LOCATION: ${{ vars.AZURE_FALLBACK_LOCATION }}
+          RTC_POSTGRES_TEST_SIZES: ${{ vars.RTC_POSTGRES_TEST_SIZES || 'S,M' }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Create Azure Resource Group
+        timeout-minutes: 5
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
@@ -270,14 +290,19 @@ jobs:
           RG="$AZURE_RESOURCE_GROUP"
           LOCATION="$AZURE_LOCATION"
           current_time=$(date +%s)
-          az group create \
+          timeout --kill-after=5 180 az group create \
             --only-show-errors \
             --output none \
             --location "$LOCATION" \
             --name "$RG" \
             --subscription "$AZURE_SUBSCRIPTION_ID" \
             --tags "creationTime=$current_time" > /dev/null
-          while [[ "$(az group exists --name "$RG" --subscription "$AZURE_SUBSCRIPTION_ID")" != "true" ]]; do
+          deadline=$((SECONDS + 60))
+          while [[ "$(timeout 10 az group exists --name "$RG" --subscription "$AZURE_SUBSCRIPTION_ID")" != "true" ]]; do
+            if ((SECONDS >= deadline)); then
+              echo "::error::Resource group readiness timed out."
+              exit 1
+            fi
             echo "Waiting for resource group '$RG' to be available..."
             sleep 5
           done
@@ -315,10 +340,25 @@ jobs:
       - name: Build released Azure Recipes
         run: make build-azure-recipes
 
+      - name: Deploy released Azure Recipe Packs
+        id: azure_pack_deploy
+        continue-on-error: true
+        timeout-minutes: 15
+        run: .github/scripts/deploy-all-checked-in-recipe-packs.sh azure "$AZURE_ENVIRONMENT_NAME"
+
+      - name: Test all runnable released Recipe Pack entries
+        id: azure_pack_entries
+        continue-on-error: true
+        timeout-minutes: 90
+        env:
+          RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+
       - name: Test released Azure Bicep recipes
         id: azure_bicep
         continue-on-error: true
-        timeout-minutes: 75
+        timeout-minutes: 55
         env:
           RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
         run: |
@@ -343,7 +383,7 @@ jobs:
       - name: Test released Azure Terraform recipes
         id: azure_terraform
         continue-on-error: true
-        timeout-minutes: 75
+        timeout-minutes: 55
         env:
           RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
         run: |
@@ -365,19 +405,10 @@ jobs:
             ENVIRONMENT="$AZURE_ENVIRONMENT_NAME" \
             RECIPE_TYPE=terraform
 
-      - name: Deploy released Azure Recipe Packs
-        id: azure_pack_deploy
-        continue-on-error: true
-        timeout-minutes: 15
-        run: .github/scripts/deploy-all-checked-in-recipe-packs.sh azure "$AZURE_ENVIRONMENT_NAME"
-
-      - name: Test all runnable released Recipe Pack entries
-        id: azure_pack_entries
-        continue-on-error: true
-        timeout-minutes: 120
-        env:
-          RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
-        run: make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+      - name: Summarize PostgreSQL selection
+        if: always()
+        timeout-minutes: 1
+        run: bash .github/scripts/azure-postgres-workflow.sh summary
 
       - name: Upload pre-cleanup Azure diagnostics
         if: always()
@@ -470,7 +501,17 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Cleanup Azure Resources
+        if: always()
+        timeout-minutes: 10
         env:
-          AZURE_RESOURCE_GROUP: ${{ needs.rc-azure-recipe-pack-tests.outputs.resource_group }}
+          AZURE_RESOURCE_GROUP: ${{ needs.rc-azure-recipe-pack-tests.outputs.resource_group || format('rrttest-rc-{0}-{1}', github.run_id, github.run_attempt) }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: make cleanup-azure-resources
+
+      - name: Cleanup owned PostgreSQL probe group
+        if: always()
+        timeout-minutes: 16
+        env:
+          PROBE_RESOURCE_GROUP: ${{ needs.rc-azure-recipe-pack-tests.outputs.probe_resource_group || format('rrttest-rc-{0}-{1}-probe', github.run_id, github.run_attempt) }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: bash .github/scripts/azure-postgres-workflow.sh cleanup-probe "$PROBE_RESOURCE_GROUP"
