@@ -103,7 +103,12 @@ server = re.compile(
     r"^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/"
     r"Microsoft\.DBforPostgreSQL/flexibleServers/[^/]+$", re.I
 )
-wrappers = {"ResourceDeploymentFailure", "DeploymentFailed", "ResourceOperationFailure"}
+wrappers = {
+    "RecipeDeploymentFailed",
+    "ResourceDeploymentFailure",
+    "DeploymentFailed",
+    "ResourceOperationFailure",
+}
 codes = []
 invalid = False
 json_spans = []

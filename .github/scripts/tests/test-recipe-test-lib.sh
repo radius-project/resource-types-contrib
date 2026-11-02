@@ -697,6 +697,12 @@ awk '/^rad app delete / { cleaned++ } /^az resource list / { snapshots++ }
     /^rad deploy / { attempts++; if (attempts == 2 && (cleaned != 1 || snapshots < 3)) exit 1 }' "$CALL_LOG" ||
     fail "recovery must follow Radius cleanup and Azure deletion verification"
 
+RADIUS_POSTGRES_CAPACITY_ERROR='Error: {"code":"RecipeDeploymentFailed","message":"Recipe deployment failed","details":[{"code":"DeploymentFailed","details":[{"code":"ResourceDeploymentFailure","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg","message":"{\"code\":\"SkuNotAvailable\",\"message\":\"capacity unavailable\"}"}]}]}'
+: >"$CALL_LOG"
+DEPLOY_FAILURES=1 DEPLOY_ERROR="$RADIUS_POSTGRES_CAPACITY_ERROR" run_postgres >/dev/null ||
+    fail "Radius RecipeDeploymentFailed wrapper must permit capacity recovery"
+assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "Radius wrapper recovery attempts"
+
 : >"$CALL_LOG"
 DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" RTC_POSTGRES_TEST_SIZE=M run_postgres >/dev/null ||
     fail "an M selection must recover with untried S"
