@@ -686,12 +686,20 @@ run_postgres() {
         "$TEST_APP_BICEP" /envs/myenv myws my-ns
 }
 
-for pure_error in "$WRAPPED_TERRAFORM_ERROR" "$TRANSIENT_DEPLOY_ERROR" "$POSTGRES_CAPACITY_ERROR"; do
+for pure_error in "$WRAPPED_TERRAFORM_ERROR" "$TERRAFORM_DOWNLOAD_ERROR" "$TRANSIENT_DEPLOY_ERROR" "$POSTGRES_CAPACITY_ERROR"; do
     for diagnostic in \
         'AuthorizationFailed: access denied' \
         'InvalidTemplate: invalid property' \
         'UnknownDiagnostic: unclassified problem' \
         '(AuthorizationFailed): access denied' \
+        'Forbidden: access denied' \
+        'Unauthorized: access denied' \
+        'Denied: access denied' \
+        'RESOURCE_EXHAUSTED: quota reached' \
+        'permission_denied: access denied' \
+        'Something: unrecognized diagnostic' \
+        'Status: Failed' \
+        'Status: Unknown' \
         'unknown failure during resource deployment'; do
         mixed_error="$pure_error"$'\n'"$diagnostic"
         printf '%s\n' "$mixed_error" >"$TEST_ROOT/bare-failure.log"
@@ -707,7 +715,7 @@ for pure_error in "$WRAPPED_TERRAFORM_ERROR" "$TRANSIENT_DEPLOY_ERROR" "$POSTGRE
         assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "bare failure deployment attempts"
         if grep -q 'postgresSize=M' "$CALL_LOG"; then fail "bare failures must not change size"; fi
     done
-    printf 'Deploying resources...\nLocation: westus3\nStatus: Running\n%s\nDeployment failed.\n' \
+    printf 'Deploying resources...\nLocation: westus3\nStatus: Running\nStatus: Accepted\nStatus: Succeeded\n%s\n' \
         "$pure_error" >"$TEST_ROOT/pure-error-progress.log"
     classifier=rtc_deployment_retry_reason
     [[ "$pure_error" != "$POSTGRES_CAPACITY_ERROR" ]] || classifier=rtc_has_postgresql_capacity_failure

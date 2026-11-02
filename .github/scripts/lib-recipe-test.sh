@@ -174,8 +174,11 @@ for root, start, end in objects(transcript):
 # classified above. A second plain error line is not safe to ignore.
 failure_prefix = re.compile(r"^\s*(?:error|fatal|failure|failed):", re.IGNORECASE)
 bare_failure = re.compile(
-    r"^\s*(?:[A-Za-z][a-z0-9]+(?:[A-Z][A-Za-z0-9]*)+|\([A-Za-z][A-Za-z0-9]*\))\s*:\s*\S"
+    r"^\s*(?:[A-Za-z_][A-Za-z0-9_.-]*|\([A-Za-z_][A-Za-z0-9_.-]*\))\s*:\s*\S"
     r"|^\s*(?i:unknown|unclassified|unexpected)\b.*\b(?i:error|failure)\b"
+)
+harmless_progress = re.compile(
+    r"\s*(?:Location:\s*[a-z][a-z0-9-]*|Status:\s*(?:Running|Accepted|Succeeded))\s*"
 )
 line_start = 0
 for line in transcript.splitlines(keepends=True):
@@ -189,7 +192,7 @@ for line in transcript.splitlines(keepends=True):
             residual[overlap_start - line_start:overlap_end - line_start] = \
                 [" "] * (overlap_end - overlap_start)
     residual = "".join(residual)
-    if bare_failure.search(residual) or (
+    if (bare_failure.search(residual) and not harmless_progress.fullmatch(residual)) or (
         failure_prefix.search(residual) and failure_prefix.sub("", residual).strip()
     ):
         invalid = True
@@ -493,8 +496,11 @@ provider_reset = re.compile(
 )
 failure_prefix = re.compile(r"^\s*(?:error|fatal|failure|failed):", re.IGNORECASE | re.MULTILINE)
 bare_failure = re.compile(
-    r"^\s*(?:[A-Za-z][a-z0-9]+(?:[A-Z][A-Za-z0-9]*)+|\([A-Za-z][A-Za-z0-9]*\))\s*:\s*\S"
+    r"^\s*(?:[A-Za-z_][A-Za-z0-9_.-]*|\([A-Za-z_][A-Za-z0-9_.-]*\))\s*:\s*\S"
     r"|^\s*(?i:unknown|unclassified|unexpected)\b.*\b(?i:error|failure)\b"
+)
+harmless_progress = re.compile(
+    r"\s*(?:Location:\s*[a-z][a-z0-9-]*|Status:\s*(?:Running|Accepted|Succeeded))\s*"
 )
 wrappers = {"DeploymentFailed", "RecipeDeploymentFailed", "ResourceDeploymentFailure", "ResourceOperationFailure"}
 reasons = []
@@ -515,7 +521,7 @@ def is_provider_reset(message):
     if not marker:
         return False
     for line in preamble.splitlines():
-        if bare_failure.search(line) or (
+        if (bare_failure.search(line) and not harmless_progress.fullmatch(line)) or (
             failure_prefix.search(line) and failure_prefix.sub("", line).strip()
         ):
             return False
@@ -576,7 +582,7 @@ else:
         visit(root)
         residual[start:end] = ["\n" if char == "\n" else " " for char in transcript[start:end]]
     for line in "".join(residual).splitlines():
-        if bare_failure.search(line) or (
+        if (bare_failure.search(line) and not harmless_progress.fullmatch(line)) or (
             failure_prefix.search(line) and failure_prefix.sub("", line).strip()
         ):
             invalid = True
