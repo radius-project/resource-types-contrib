@@ -172,10 +172,11 @@ for root, start, end in objects(transcript):
 
 # CLI progress output may contain normal Error-prefixed JSON records, which are
 # classified above. A second plain error line is not safe to ignore.
+failure_prefix = re.compile(r"^\s*(?:error|fatal|failure|failed):", re.IGNORECASE)
 line_start = 0
 for line in transcript.splitlines(keepends=True):
     line_body = line.rstrip("\r\n")
-    if re.search(r"^\s*(?:Error|ERROR|Fatal|FATAL|Failure|Failed):", line_body):
+    if failure_prefix.search(line_body):
         residual = list(line_body)
         line_end = line_start + len(line_body)
         for start, end in json_spans:
@@ -185,7 +186,7 @@ for line in transcript.splitlines(keepends=True):
                 residual[overlap_start - line_start:overlap_end - line_start] = \
                     [" "] * (overlap_end - overlap_start)
         residual = "".join(residual)
-        residual = re.sub(r"^\s*(?:Error|ERROR|Fatal|FATAL|Failure|Failed):", "", residual)
+        residual = failure_prefix.sub("", residual)
         if residual.strip():
             invalid = True
     line_start += len(line)

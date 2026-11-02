@@ -746,6 +746,20 @@ for failure in \
     assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "mixed unclassified failure attempt count"
 done
 
+for prefix in error eRrOr fatal FaTaL failure fAiLuRe failed fAiLeD; do
+    : >"$CALL_LOG"
+    if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR"$'\n'"$prefix: AuthorizationFailed: access denied" \
+        run_postgres >/dev/null 2>&1; then
+        fail "$prefix must block capacity recovery"
+    fi
+    assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "$prefix must not trigger a retry"
+
+    : >"$CALL_LOG"
+    DEPLOY_FAILURES=1 DEPLOY_ERROR="${POSTGRES_CAPACITY_ERROR/Error:/$prefix:}" run_postgres >/dev/null ||
+        fail "$prefix must preserve structured capacity recovery"
+    assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "$prefix structured recovery attempt count"
+done
+
 for failure in APP_DELETE_EXIT_CODE KUBECTL_EXIT_CODE AZ_RESOURCE_LIST_FAIL; do
     : >"$CALL_LOG"
     if (
