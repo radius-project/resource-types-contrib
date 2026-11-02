@@ -223,11 +223,18 @@ rtc_snapshot_azure_resource_ids() {
 }
 
 # Retry one untried size only when the shared helper confirms safe cleanup.
-rtc_test_azure_postgresql_app() {
+rtc_test_azure_postgresql_app() (
     local test_file="$1" environment_path="$2" workspace_name="$3" kubernetes_namespace="$4"
     local size="${RTC_POSTGRES_TEST_SIZE:-S}" deadline="${RTC_POSTGRES_TEST_DEADLINE_EPOCH:-}"
-    local remaining status attempt
+    local remaining status attempt test_harness script_dir
     case "$size" in S|M) ;; *) echo "Error: PostgreSQL test size must be S or M." >&2; return 1 ;; esac
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
+    test_harness=$(mktemp "${TMPDIR:-/tmp}/rtc-postgres-test-XXXXXX.bicep") || return 1
+    trap 'rm -f -- "$test_harness"' EXIT
+    if ! bash "$script_dir/prepare-postgres-test-harness.sh" "$test_file" "$test_harness"; then
+        return 1
+    fi
+    test_file="$test_harness"
     if [[ -z "$deadline" ]]; then deadline=$(( $(date +%s) + 1800 )); fi
     if [[ ! "$deadline" =~ ^[1-9][0-9]{0,10}$ ]]; then
         echo "Error: Invalid PostgreSQL test deadline." >&2
@@ -251,7 +258,7 @@ rtc_test_azure_postgresql_app() {
         if [[ "$size" == S ]]; then size=M; else size=S; fi
         echo "==> PostgreSQL capacity lost; cleanup confirmed. Retrying size $size in the same region."
     done
-}
+)
 
 # Best-effort cleanup for fast-fail paths. The request timeout and non-blocking
 # delete keep cleanup bounded when the cluster or resource controllers are unhealthy.

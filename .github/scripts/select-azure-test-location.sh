@@ -15,14 +15,17 @@
 # limitations under the License.
 # ------------------------------------------------------------
 
-# Usage: select-azure-test-location.sh <owned-probe-resource-group> <region>...
+# Usage: select-azure-test-location.sh <probe-resource-group-prefix> <region>...
+# The selector appends a random 128-bit suffix; callers must pass a prefix, not
+# a resource-group name that they expect the selector to create verbatim.
 # RTC_AZURE_TEST_REGIONS, when set, overrides positional regions (comma-separated).
 # RTC_POSTGRES_TEST_SIZES defaults to S,M. Sizes are the outer loop.
 # At most four distinct regions and two sizes (eight tuples); duplicates retain
 # their first position. Raw lists are limited to 32 entries.
-# RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=3600 (1..3600) bounds selection work.
+# RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=3600 (1..3600) bounds selection and
+# later deployment recovery together, including time between workflow steps.
 # Each create is capped by the remaining deadline and its own limit (max 900).
-# Server cleanup has a separate reserve (max 900 seconds per probe).
+# Cleanup may use up to 900 seconds beyond the shared deadline.
 # Optional RTC_AZURE_SELECTION_FILE receives version 1 JSON. Only "selected"
 # confirms capacity. Consumers MUST fail the PostgreSQL check for other states.
 # For legacy callers, stdout is always the selected or first region and exit is
@@ -38,7 +41,7 @@ if (($# < 1)); then
     echo "Usage: $0 <probe-resource-group> <region>..." >&2
     exit 1
 fi
-probe_rg="$1"
+requested_probe_rg="$1"
 shift
 regions=("$@")
 if [[ -v RTC_AZURE_TEST_REGIONS ]]; then
@@ -53,7 +56,9 @@ IFS=',' read -r -a sizes <<<"$size_list"
 deadline_seconds="${RTC_POSTGRES_SELECTION_DEADLINE_SECONDS-3600}"
 create_timeout="${RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS-900}"
 delete_timeout="${RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS-900}"
-if [[ -z "$probe_rg" ]] || ((${#regions[@]} == 0 || ${#regions[@]} > 32 || ${#sizes[@]} == 0 || ${#sizes[@]} > 32)) ||
+if [[ ! "$requested_probe_rg" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
+    ((${#requested_probe_rg} + 33 > 90)) ||
+    ((${#regions[@]} == 0 || ${#regions[@]} > 32 || ${#sizes[@]} == 0 || ${#sizes[@]} > 32)) ||
     ! rtc_postgres_positive_limit "$deadline_seconds" 3600 ||
     ! rtc_postgres_positive_limit "$create_timeout" 900 ||
     ! rtc_postgres_positive_limit "$delete_timeout" 900; then
@@ -84,20 +89,55 @@ selected_postgres="null"
 attempt_records="[]"
 group_started=false
 deadline=$((SECONDS + deadline_seconds))
+deadline_epoch=$(( $(date +%s) + deadline_seconds ))
+cleanup_deadline=$((deadline + 900))
+probe_rg=""
+probe_owner_token=""
 
+group_has_owner_tag() {
+    local owner_tag
+    owner_tag="$(timeout --kill-after=10 30 az group show "${subscription_args[@]}" \
+        --name "$probe_rg" --query "tags.rtcPostgresSelectorOwner" --output tsv 2>/dev/null)" ||
+        return 1
+    [[ "$owner_tag" == "$probe_owner_token" ]]
+}
+
+delete_owned_probe_group() {
+    local remaining exists
+    exists="$(timeout --kill-after=10 30 az group exists "${subscription_args[@]}" \
+        --name "$probe_rg" --output tsv)" || return 1
+    [[ "$exists" == false ]] && return 0
+    [[ "$exists" == true ]] || return 1
+    group_has_owner_tag || return 1
+    remaining=$((cleanup_deadline - SECONDS))
+    ((remaining > 0)) || return 1
+    if ((remaining > delete_timeout)); then remaining="$delete_timeout"; fi
+    timeout --kill-after=10 "$remaining" az group delete "${subscription_args[@]}" \
+        --name "$probe_rg" --yes --only-show-errors --output none >&2 || return 1
+    remaining=$((cleanup_deadline - SECONDS))
+    ((remaining > 0)) || return 1
+    if ((remaining > 30)); then remaining=30; fi
+    exists="$(timeout --kill-after=10 "$remaining" az group exists "${subscription_args[@]}" \
+        --name "$probe_rg" --output tsv)" || return 1
+    [[ "$exists" == false ]]
+}
+
+# shellcheck disable=SC2329
 finish() {
     local status=$?
     trap - EXIT INT TERM
-    if [[ "$group_started" == true ]] && ! timeout --kill-after=10 "$delete_timeout" az group delete \
-        "${subscription_args[@]}" --name "$probe_rg" --yes --only-show-errors --output none >&2; then
-        echo "Error: probe group '$probe_rg' cleanup failed." >&2
+    if [[ "$group_started" == true ]] && ! delete_owned_probe_group; then
+        echo "Error: owned probe group '$probe_rg' cleanup failed or ownership could not be confirmed." >&2
+        echo "Recovery: inspect the resource group and its rtcPostgresSelectorOwner tag before removing it." >&2
         selection_status="probe_error"; selected_postgres="null"
         selected_location="${candidates[0]}"; status=1
     fi
     if [[ -n "${RTC_AZURE_SELECTION_FILE:-}" ]]; then
         jq -n --arg status "$selection_status" --arg location "$selected_location" \
             --argjson postgres "$selected_postgres" --argjson attempts "$attempt_records" \
-            '{version: 1, status: $status, location: $location, attempts: $attempts}
+            --argjson deadlineEpochSeconds "$deadline_epoch" \
+            '{version: 1, status: $status, location: $location, attempts: $attempts,
+              deadlineEpochSeconds: $deadlineEpochSeconds}
              + (if $status == "selected" then {postgres: $postgres} else {} end)' \
             >"$RTC_AZURE_SELECTION_FILE" || status=1
     fi
@@ -108,15 +148,66 @@ finish() {
 trap finish EXIT
 trap 'exit 1' INT TERM
 
+# Refuse a supplied name that already exists. Azure group create is an upsert.
+existing_group="$(timeout --kill-after=10 30 az group exists "${subscription_args[@]}" \
+    --name "$requested_probe_rg" --output tsv)" || {
+    echo "Error: could not verify supplied probe group '$requested_probe_rg'; refusing to create or delete it." >&2
+    exit 1
+}
+if [[ "$existing_group" == true ]]; then
+    echo "Error: supplied probe group '$requested_probe_rg' already exists; refusing to update or delete it." >&2
+    exit 1
+fi
+if [[ "$existing_group" != false ]]; then
+    echo "Error: Azure returned an unknown state for supplied probe group '$requested_probe_rg'; refusing to continue." >&2
+    exit 1
+fi
+
+# A random target prevents concurrent selectors from upserting the same RG.
+probe_owner_token="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+if [[ ! "$probe_owner_token" =~ ^[a-f0-9]{32}$ ]]; then
+    echo "Error: could not create a valid unique probe group name from '$requested_probe_rg'." >&2
+    exit 1
+fi
+probe_rg="${requested_probe_rg}-${probe_owner_token}"
+existing_group="$(timeout --kill-after=10 30 az group exists "${subscription_args[@]}" \
+    --name "$probe_rg" --output tsv)" || {
+    echo "Error: could not verify unique probe group '$probe_rg'; refusing to create it." >&2
+    exit 1
+}
+if [[ "$existing_group" != false ]]; then
+    echo "Error: unique probe group '$probe_rg' is not confirmed absent; refusing to create or delete it." >&2
+    exit 1
+fi
+
 # The group's location does not restrict its servers' locations.
-group_started=true
-if ! timeout --kill-after=10 "$deadline_seconds" az group create "${subscription_args[@]}" \
-    --name "$probe_rg" --location "${candidates[0]}" --tags "creationTime=$(date +%s)" \
+group_create_limit=$((deadline - SECONDS))
+if ((group_create_limit <= 0)); then
+    selection_status="deadline_exceeded"
+    echo "Error: PostgreSQL selection deadline expired before probe group creation." >&2
+    exit 1
+fi
+if ! timeout --kill-after=10 "$group_create_limit" az group create "${subscription_args[@]}" \
+    --name "$probe_rg" --location "${candidates[0]}" \
+    --tags "creationTime=$(date +%s)" "rtcRunId=${GITHUB_RUN_ID:-local}" \
+    "rtcRunAttempt=${GITHUB_RUN_ATTEMPT:-local}" "rtcPostgresSelectorOwner=$probe_owner_token" \
     --only-show-errors --output none >&2; then
     if ((SECONDS >= deadline)); then selection_status="deadline_exceeded"; fi
-    echo "Error: could not create probe group '$probe_rg'." >&2
-    exit 0
+    if group_has_owner_tag; then
+        group_started=true
+        echo "Error: probe group creation failed after creating an owned partial group '$probe_rg'; cleanup will be attempted." >&2
+    else
+        echo "Error: probe group creation failed or timed out; ownership of '$probe_rg' cannot be proven, so it will not be deleted." >&2
+        echo "Recovery: inspect '$probe_rg' and remove it only if it is the partial group from this selector attempt." >&2
+    fi
+    exit 1
 fi
+if ! group_has_owner_tag; then
+    echo "Error: probe group '$probe_rg' was created but its ownership tag could not be confirmed; it will not be deleted." >&2
+    echo "Recovery: inspect '$probe_rg' and its rtcPostgresSelectorOwner tag before removing it." >&2
+    exit 1
+fi
+group_started=true
 selection_status="capacity_exhausted"
 for size in "${test_sizes[@]}"; do
     rtc_postgres_test_tuple "$size"
@@ -125,12 +216,15 @@ for size in "${test_sizes[@]}"; do
         if ((remaining <= 0)); then selection_status="deadline_exceeded"; break 2; fi
         limit="$create_timeout"
         if ((remaining < limit)); then limit="$remaining"; fi
+        cleanup_limit=$((cleanup_deadline - SECONDS - limit))
+        if ((cleanup_limit > delete_timeout)); then cleanup_limit="$delete_timeout"; fi
         started=$SECONDS
         status=0
         rm -f -- "$work_dir/probe.json"
         AZURE_RESOURCE_GROUP="$probe_rg" AZURE_LOCATION="$location" RTC_POSTGRES_TEST_SIZE="$size" \
             RTC_POSTGRES_PROBE_ATTEMPTS=1 RTC_POSTGRES_PROBE_WAIT_SECONDS=0 \
             RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS="$limit" \
+            RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS="$cleanup_limit" \
             RTC_POSTGRES_PROBE_RESULT_FILE="$work_dir/probe.json" \
             "$script_dir/probe-azure-postgres-capacity.sh" >&2 || status=$?
         duration=$((SECONDS - started))

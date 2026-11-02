@@ -184,75 +184,35 @@ jobs:
       contents: read
     outputs:
       resource_group: ${{ steps.set-context.outputs.resource_group }}
+      probe_resource_group: ${{ steps.set-context.outputs.probe_resource_group }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Azure Login
-        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Enable Azure CLI token renewal
-        env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-        run: bash .github/scripts/azure-cli-with-refresh.sh --install
-
-      - name: Set Azure Test Context
+      - name: Record owned Azure groups
         id: set-context
         run: |
-          set -euo pipefail
-          LOCATION="${AZURE_LOCATION:-$DEFAULT_AZURE_LOCATION}"
-          if [ -z "$LOCATION" ]; then
-            LOCATION="westus3"
-          fi
-          RG="rrttest-nightly-${{ github.run_id }}-${{ github.run_attempt }}"
-          # Recipes use the resource group's region. Fall back when the
-          # preferred region has no Burstable PostgreSQL capacity.
-          FALLBACK="${AZURE_FALLBACK_LOCATION:-eastus2}"
-          CANDIDATES=("$LOCATION")
-          if [[ -n "$FALLBACK" && "$FALLBACK" != "$LOCATION" ]]; then
-            CANDIDATES+=("$FALLBACK")
-          fi
-          LOCATION="$(.github/scripts/select-azure-test-location.sh "${RG}-probe" "${CANDIDATES[@]}")"
+          RG_BASE="rrttest-nightly-${{ github.run_id }}-${{ github.run_attempt }}"
+          OWNER_TOKEN="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+          [[ "$OWNER_TOKEN" =~ ^[a-f0-9]{32}$ ]] || {
+            echo "::error::Could not generate an Azure resource group ownership token."
+            exit 1
+          }
+          RG="${RG_BASE}-${OWNER_TOKEN}"
           {
-            echo "AZURE_LOCATION=$LOCATION"
+            echo "resource_group=$RG"
+            echo "probe_resource_group=${RG_BASE}-probe"
+          } >> "$GITHUB_OUTPUT"
+          {
             echo "AZURE_RESOURCE_GROUP=$RG"
+            echo "AZURE_GROUP_OWNER_TOKEN=$OWNER_TOKEN"
+            echo "AZURE_PROBE_RESOURCE_GROUP=${RG_BASE}-probe"
             echo "AZURE_WORKSPACE_NAME=default"
             echo "AZURE_ENVIRONMENT_NAME=default"
+            echo "RTC_AZURE_SELECTION_FILE=$GITHUB_WORKSPACE/azure-test-diagnostics/postgres-selection.json"
           } >> "$GITHUB_ENV"
-          echo "resource_group=$RG" >> "$GITHUB_OUTPUT"
-        env:
-          DEFAULT_AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
-          AZURE_FALLBACK_LOCATION: ${{ vars.AZURE_FALLBACK_LOCATION }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Create Azure Resource Group
-        env:
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-        run: |
-          set -euo pipefail
-          RG="$AZURE_RESOURCE_GROUP"
-          LOCATION="$AZURE_LOCATION"
-          current_time=$(date +%s)
-          az group create \
-            --only-show-errors \
-            --output none \
-            --location "$LOCATION" \
-            --name "$RG" \
-            --subscription "$AZURE_SUBSCRIPTION_ID" \
-            --tags "creationTime=$current_time" > /dev/null
-          while [[ "$(az group exists --name "$RG" --subscription "$AZURE_SUBSCRIPTION_ID")" != "true" ]]; do
-            echo "Waiting for resource group '$RG' to be available..."
-            sleep 5
-          done
-          echo "Resource group '$RG' is ready"
 
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -274,6 +234,52 @@ jobs:
           TEST_AZURE_OIDC_JSON: ${{ secrets.TEST_AZURE_OIDC_JSON }}
         run: make create-radius-cluster
 
+      - name: Build Azure Recipes
+        run: make build-azure-recipes
+
+      - name: Azure Login
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Enable Azure CLI token renewal
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: bash .github/scripts/azure-cli-with-refresh.sh --install
+
+      # One 60-minute deadline covers PostgreSQL selection and deployment recovery.
+      - name: Select Azure Test Context
+        timeout-minutes: 76
+        run: |
+          set -euo pipefail
+          if [[ -n "$REGION_OVERRIDE" ]]; then
+            export RTC_AZURE_TEST_REGIONS="$REGION_OVERRIDE"
+          fi
+          regions="$(bash .github/scripts/azure-postgres-workflow.sh regions)"
+          export RTC_AZURE_TEST_REGIONS="$regions"
+          mkdir -p "$(dirname "$RTC_AZURE_SELECTION_FILE")"
+          LOCATION="$(bash .github/scripts/select-azure-test-location.sh "$AZURE_PROBE_RESOURCE_GROUP")"
+          echo "AZURE_LOCATION=$LOCATION" >> "$GITHUB_ENV"
+        env:
+          REGION_OVERRIDE: ${{ vars.RTC_AZURE_TEST_REGIONS }}
+          AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+          AZURE_FALLBACK_LOCATION: ${{ vars.AZURE_FALLBACK_LOCATION }}
+          RTC_POSTGRES_TEST_SIZES: ${{ vars.RTC_POSTGRES_TEST_SIZES || 'S,M' }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Create Azure Resource Group
+        timeout-minutes: 5
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          bash .github/scripts/azure-postgres-workflow.sh create-main nightly \
+            "$AZURE_RESOURCE_GROUP" "$AZURE_LOCATION" "$AZURE_GROUP_OWNER_TOKEN"
+
       - name: Configure Azure Provider
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -281,13 +287,38 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: make configure-azure-provider
 
-      - name: Build Azure Recipes
-        run: make build-azure-recipes
+      - name: Deploy checked-in Azure Recipe Packs
+        id: azure_pack_deploy
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          RECIPE_PACK_USE_LOCAL_RECIPES: "true"
+        run: .github/scripts/deploy-all-checked-in-recipe-packs.sh azure "$AZURE_ENVIRONMENT_NAME"
+
+      - name: Test PostgreSQL Recipe Pack entry
+        id: azure_postgres_entry
+        continue-on-error: true
+        timeout-minutes: 45
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
+          RTC_AZURE_PACK_ENTRY_PHASE: postgres
+        run: make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+
+      - name: Test unrelated Recipe Pack entries
+        id: azure_pack_entries
+        continue-on-error: true
+        timeout-minutes: 60
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
+          RTC_AZURE_PACK_ENTRY_PHASE: unrelated
+        run: make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
 
       - name: Test Azure Bicep recipes
         id: azure_bicep
         continue-on-error: true
-        timeout-minutes: 75
+        timeout-minutes: 55
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
@@ -313,7 +344,7 @@ jobs:
       - name: Test Azure Terraform recipes
         id: azure_terraform
         continue-on-error: true
-        timeout-minutes: 75
+        timeout-minutes: 55
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
@@ -336,23 +367,10 @@ jobs:
             ENVIRONMENT="$AZURE_ENVIRONMENT_NAME" \
             RECIPE_TYPE=terraform
 
-      - name: Deploy checked-in Azure Recipe Packs
-        id: azure_pack_deploy
-        continue-on-error: true
-        timeout-minutes: 15
-        env:
-          RECIPE_PACK_USE_LOCAL_RECIPES: "true"
-        run: .github/scripts/deploy-all-checked-in-recipe-packs.sh azure "$AZURE_ENVIRONMENT_NAME"
-
-      - name: Test all runnable Recipe Pack entries
-        id: azure_pack_entries
-        continue-on-error: true
-        # Allows extra time for PostgreSQL capacity probes and retries.
-        timeout-minutes: 150
-        env:
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
-        run: make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+      - name: Summarize PostgreSQL selection
+        if: always()
+        timeout-minutes: 1
+        run: bash .github/scripts/azure-postgres-workflow.sh summary
 
       - name: Upload pre-cleanup Azure diagnostics
         if: always()
@@ -365,25 +383,18 @@ jobs:
       - name: Report Azure test failures
         if: ${{ !cancelled() }}
         env:
+          POSTGRES_OUTCOME: ${{ steps.azure_postgres_entry.outcome }}
           BICEP_OUTCOME: ${{ steps.azure_bicep.outcome }}
           TERRAFORM_OUTCOME: ${{ steps.azure_terraform.outcome }}
           PACK_DEPLOY_OUTCOME: ${{ steps.azure_pack_deploy.outcome }}
           PACK_ENTRIES_OUTCOME: ${{ steps.azure_pack_entries.outcome }}
         run: |
-          failures=0
-          for result in \
+          bash .github/scripts/report-azure-test-failures.sh \
+            "PostgreSQL entry:$POSTGRES_OUTCOME" \
             "Bicep recipes:$BICEP_OUTCOME" \
             "Terraform recipes:$TERRAFORM_OUTCOME" \
             "checked-in pack deployment:$PACK_DEPLOY_OUTCOME" \
-            "checked-in pack entries:$PACK_ENTRIES_OUTCOME"; do
-            name="${result%%:*}"
-            outcome="${result#*:}"
-            if [[ "$outcome" != "success" ]]; then
-              echo "::error::$name finished with outcome '$outcome'"
-              failures=1
-            fi
-          done
-          exit "$failures"
+            "unrelated pack entries:$PACK_ENTRIES_OUTCOME"
 
       - name: Collect Radius pod logs
         if: always()
@@ -444,8 +455,9 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Cleanup Azure Resources
+      - name: Cleanup resource groups owned by this run
+        if: always()
+        timeout-minutes: 26
         env:
-          AZURE_RESOURCE_GROUP: ${{ needs.nightly-azure-recipe-pack-tests.outputs.resource_group }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-        run: make cleanup-azure-resources
+        run: bash .github/scripts/azure-postgres-workflow.sh cleanup-run-groups nightly

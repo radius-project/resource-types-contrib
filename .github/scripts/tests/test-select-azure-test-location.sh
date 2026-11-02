@@ -23,17 +23,85 @@ cp "$REPO_ROOT/.github/scripts/"{select-azure-test-location,lib-azure-postgres-t
 export CALL_LOG="$TEST_ROOT/calls"
 export PROBE_RESULTS="$TEST_ROOT/probe-results"
 export RTC_AZURE_SELECTION_FILE="$TEST_ROOT/selection.json"
+export GROUP_STATE="$TEST_ROOT/groups"
+export GROUP_SHOW_COUNT="$TEST_ROOT/show-count"
 
 cat >"$TEST_ROOT/bin/az" <<'EOF'
 #!/bin/bash
+set -euo pipefail
 echo "az $*" >>"$CALL_LOG"
-[[ "$2" == "create" && -n "${GROUP_CREATE_FAILS:-}" ]] && exit 1
-if [[ "$2" == "delete" ]]; then
-    [[ "$*" != *" --no-wait "* ]] || exit 90
-    [[ -z "${GROUP_DELETE_SLEEP:-}" ]] || sleep "$GROUP_DELETE_SLEEP"
-    [[ -n "${GROUP_DELETE_FAILS:-}" ]] && exit 1
-fi
-exit 0
+command="$2"
+shift 2
+group=""
+location=""
+query=""
+tags=()
+while (($#)); do
+    case "$1" in
+        --name) group="$2"; shift 2 ;;
+        --location) location="$2"; shift 2 ;;
+        --query) query="$2"; shift 2 ;;
+        --tags)
+            shift
+            while (($#)) && [[ "$1" != --* ]]; do tags+=("$1"); shift; done
+            ;;
+        *) shift ;;
+    esac
+done
+state_owner() { awk -F'|' -v name="$1" '$1 == name { print $2; exit }' "$GROUP_STATE"; }
+state_location() { awk -F'|' -v name="$1" '$1 == name { print $3; exit }' "$GROUP_STATE"; }
+case "$command" in
+    exists)
+        if grep -Fq "$group|" "$GROUP_STATE"; then echo true; else echo false; fi
+        ;;
+    show)
+        if [[ ! -f "$GROUP_STATE" ]] || ! grep -Fq "$group|" "$GROUP_STATE"; then exit 1; fi
+        if [[ "$query" == tags.rtcPostgresSelectorOwner ]]; then
+            if [[ -n "${GROUP_OWNER_MISMATCH_SECOND_SHOW:-}" ]]; then
+                show_count=0
+                [[ ! -f "$GROUP_SHOW_COUNT" ]] || show_count="$(cat "$GROUP_SHOW_COUNT")"
+                show_count=$((show_count + 1))
+                echo "$show_count" >"$GROUP_SHOW_COUNT"
+                if ((show_count >= 2)); then echo mismatched-owner; else state_owner "$group"; fi
+            else
+                state_owner "$group"
+            fi
+        fi
+        ;;
+    create)
+        owner=""
+        for tag in "${tags[@]}"; do
+            [[ "$tag" == rtcPostgresSelectorOwner=* ]] && owner="${tag#*=}"
+        done
+        if [[ -n "${GROUP_CREATE_FAILS:-}" ]]; then
+            if [[ -n "${GROUP_CREATE_PARTIAL:-}" ]]; then
+                printf '%s|%s|%s\n' "$group" "$owner" "$location" >>"$GROUP_STATE"
+            fi
+            [[ -z "${GROUP_CREATE_SLEEP:-}" ]] || sleep "$GROUP_CREATE_SLEEP"
+            exit 1
+        fi
+        if [[ -n "${GROUP_CREATE_SLEEP:-}" ]]; then
+            if [[ -n "${GROUP_CREATE_PARTIAL:-}" ]]; then
+                printf '%s|%s|%s\n' "$group" "$owner" "$location" >>"$GROUP_STATE"
+            fi
+            sleep "$GROUP_CREATE_SLEEP"
+        fi
+        if grep -Fq "$group|" "$GROUP_STATE"; then
+            [[ "$(state_location "$group")" == "$location" ]] || exit 1
+        else
+            printf '%s|%s|%s\n' "$group" "$owner" "$location" >>"$GROUP_STATE"
+        fi
+        ;;
+    delete)
+        ! grep -Fq ' --no-wait ' "$CALL_LOG" || exit 90
+        [[ -z "${GROUP_DELETE_SLEEP:-}" ]] || sleep "$GROUP_DELETE_SLEEP"
+        [[ -z "${GROUP_DELETE_FAILS:-}" ]] || exit 1
+        [[ -z "${GROUP_DELETE_STUCK:-}" ]] || exit 0
+        grep -Fv "$group|" "$GROUP_STATE" >"$GROUP_STATE.next" || true
+        mv "$GROUP_STATE.next" "$GROUP_STATE"
+        ;;
+    *) exit 1 ;;
+esac
 EOF
 cat >"$TEST_ROOT/scripts/probe-azure-postgres-capacity.sh" <<'EOF'
 #!/bin/bash
@@ -63,6 +131,8 @@ select_location() {
 }
 reset() {
     : >"$CALL_LOG"
+    : >"$GROUP_STATE"
+    rm -f "$GROUP_SHOW_COUNT"
     rm -f "$RTC_AZURE_SELECTION_FILE"
     printf '%s\n' "$@" >"$PROBE_RESULTS"
 }
@@ -70,16 +140,27 @@ assert_json() { jq -e "$1" "$RTC_AZURE_SELECTION_FILE" >/dev/null || fail "JSON:
 probe_count() { grep -c '^probe ' "$CALL_LOG" || true; }
 
 reset 0
+selection_started="$(date +%s)"
 [[ "$(select_location westus3 eastus2)" == westus3 ]] || fail "preferred region"
+selection_finished="$(date +%s)"
 [[ "$(probe_count)" == 1 ]] || fail "stop at success"
 grep -q '^probe westus3 S attempts=1 timeout=900$' "$CALL_LOG" || fail "bounded single probe"
-grep -q '^az group delete --name probe-rg' "$CALL_LOG" || fail "group cleanup"
+grep -Eq '^az group delete --name probe-rg-[a-f0-9]{32}' "$CALL_LOG" || fail "group cleanup"
+created_group="$(sed -nE 's/^az group create --name ([^ ]+).*/\1/p' "$CALL_LOG")"
+deleted_group="$(sed -nE 's/^az group delete --name ([^ ]+).*/\1/p' "$CALL_LOG")"
+[[ "$created_group" =~ ^probe-rg-[a-f0-9]{32}$ ]] || fail "direct caller must get a random 128-bit group name"
+[[ "$deleted_group" == "$created_group" ]] || fail "direct caller must delete only its random group"
+owner_token="${created_group##*-}"
+grep -Fq "rtcPostgresSelectorOwner=$owner_token" "$CALL_LOG" || fail "random name token must match ownership tag"
+[[ ! -s "$GROUP_STATE" ]] || fail "owned group removed after selection"
 ! grep -q -- '--no-wait' "$CALL_LOG" || fail "group deletion must wait for completion"
 assert_json '.version == 1 and .status == "selected" and .location == "westus3" and
     .postgres == {size:"S",skuName:"Standard_B1ms",tier:"Burstable"} and
     .attempts[0] == {region:"westus3",size:"S",skuName:"Standard_B1ms",tier:"Burstable",
                      outcome:"available",errorCode:"",durationSeconds:.attempts[0].durationSeconds} and
     (.attempts[0].durationSeconds | type == "number")'
+assert_json ".deadlineEpochSeconds >= $((selection_started + 3600)) and
+    .deadlineEpochSeconds <= $((selection_finished + 3600))"
 reset 0
 [[ "$(env -u RTC_AZURE_SELECTION_FILE PATH="$TEST_ROOT/bin:$PATH" \
     "$TEST_ROOT/scripts/select-azure-test-location.sh" probe-rg westus3 2>/dev/null)" == westus3 ]] ||
@@ -126,12 +207,41 @@ reset 2 0
 
 reset 0
 SELECT_SUBSCRIPTION=sub-123 select_location westus3 >/dev/null
-[[ "$(grep -c -- '--subscription sub-123' "$CALL_LOG")" == 2 ]] || fail "group subscription"
+[[ "$(grep -c -- '--subscription sub-123' "$CALL_LOG")" -ge 5 ]] || fail "group subscription"
 reset 0
-GROUP_CREATE_FAILS=1 select_location westus3 >/dev/null
+if GROUP_CREATE_FAILS=1 select_location westus3 >/dev/null; then fail "group create failure must fail"; fi
 [[ "$(probe_count)" == 0 ]] || fail "group create failure stops probes"
 assert_json '.status == "probe_error" and .attempts == []'
-grep -q '^az group delete' "$CALL_LOG" || fail "clean partially created group"
+! grep -q '^az group delete' "$CALL_LOG" || fail "must not delete group with unproven ownership"
+[[ ! -s "$GROUP_STATE" ]] || fail "failed create without a partial group"
+reset 0
+if GROUP_CREATE_FAILS=1 GROUP_CREATE_PARTIAL=1 select_location westus3 >/dev/null; then
+    fail "partial group create failure must fail"
+fi
+[[ "$(grep -c '^az group delete' "$CALL_LOG")" == 1 ]] || fail "delete proven partial group"
+[[ ! -s "$GROUP_STATE" ]] || fail "proven partial group cleanup"
+reset 0
+printf 'probe-rg||westus3\n' >"$GROUP_STATE"
+if select_location westus3 >/dev/null; then fail "existing same-location group must be rejected"; fi
+! grep -q '^az group create' "$CALL_LOG" || fail "must not update existing same-location group"
+! grep -q '^az group delete' "$CALL_LOG" || fail "must not delete existing same-location group"
+grep -Fq 'probe-rg||westus3' "$GROUP_STATE" || fail "same-location group preserved"
+reset 0
+printf 'probe-rg||eastus2\n' >"$GROUP_STATE"
+if select_location westus3 >/dev/null; then fail "existing different-location group must be rejected"; fi
+! grep -q '^az group create' "$CALL_LOG" || fail "must not update existing different-location group"
+! grep -q '^az group delete' "$CALL_LOG" || fail "must not delete existing different-location group"
+grep -Fq 'probe-rg||eastus2' "$GROUP_STATE" || fail "different-location group preserved"
+reset 0
+if RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=1 GROUP_CREATE_SLEEP=3 \
+    select_location westus3 >/dev/null; then fail "group create timeout must fail"; fi
+! grep -q '^az group delete' "$CALL_LOG" || fail "must not delete group after uncertain timeout"
+[[ ! -s "$GROUP_STATE" ]] || fail "timeout without partial group"
+reset 0
+if RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=1 GROUP_CREATE_PARTIAL=1 GROUP_CREATE_SLEEP=3 \
+    select_location westus3 >/dev/null; then fail "partial group create timeout must fail"; fi
+[[ "$(grep -c '^az group delete' "$CALL_LOG")" == 1 ]] || fail "delete proven timed-out partial group"
+[[ ! -s "$GROUP_STATE" ]] || fail "timed-out partial group cleanup"
 reset 0
 if GROUP_DELETE_FAILS=1 select_location westus3 >/dev/null; then fail "group delete failure must fail"; fi
 assert_json '.status == "probe_error" and (has("postgres") | not)'
@@ -140,6 +250,19 @@ if RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS=1 GROUP_DELETE_SLEEP=20 select_loca
     fail "bounded group deletion timeout must fail"
 fi
 [[ "$(grep -c '^az group delete' "$CALL_LOG")" == 1 ]] || fail "one timed group deletion"
+assert_json '.status == "probe_error" and (has("postgres") | not)'
+reset 0
+if GROUP_DELETE_STUCK=1 select_location westus3 >/dev/null 2>&1; then
+    fail "unconfirmed group deletion must fail"
+fi
+assert_json '.status == "probe_error" and (has("postgres") | not)'
+grep -q '^az group exists' "$CALL_LOG" || fail "confirm resource group deletion"
+reset 0
+if GROUP_OWNER_MISMATCH_SECOND_SHOW=1 select_location westus3 >/dev/null 2>&1; then
+    fail "cleanup must fail when ownership changes after creation"
+fi
+! grep -q '^az group delete' "$CALL_LOG" || fail "must not delete a group with a mismatched ownership tag"
+[[ -s "$GROUP_STATE" ]] || fail "mismatched-owner group must remain untouched"
 assert_json '.status == "probe_error" and (has("postgres") | not)'
 reset 0
 NO_RECORD=1 select_location westus3 >/dev/null
@@ -153,10 +276,13 @@ reset 0
 grep -q '^probe westus3 M ' "$CALL_LOG" || fail "explicit M preference"
 
 reset 2 0
+selection_started="$(date +%s)"
 RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=3 PROBE_SLEEP=4 select_location westus3 eastus2 >/dev/null
 [[ "$(probe_count)" == 1 ]] || fail "global deadline stops candidates"
 grep -qE 'timeout=[1-3]$' "$CALL_LOG" || fail "create capped by remaining time"
 assert_json '.status == "deadline_exceeded" and (has("postgres") | not)'
+assert_json ".deadlineEpochSeconds >= $((selection_started + 3)) and
+    .deadlineEpochSeconds <= $((selection_started + 5))"
 reset 0
 RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=3 PROBE_SLEEP=4 select_location westus3 >/dev/null
 assert_json '.status == "deadline_exceeded" and (has("postgres") | not)'

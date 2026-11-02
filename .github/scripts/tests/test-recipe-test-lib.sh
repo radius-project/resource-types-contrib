@@ -674,6 +674,7 @@ if grep -q '^rad recipe ' "$CALL_LOG"; then
 fi
 
 POSTGRES_CAPACITY_ERROR='Error: {"code":"DeploymentFailed","details":[{"code":"ResourceDeploymentFailure","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg","message":"{\"code\":\"SkuNotAvailable\",\"message\":\"capacity unavailable\"}"}]}'
+POSTGRES_TEST_APP_BICEP="$REPO_ROOT/Data/postgreSqlDatabases/test/app.bicep"
 cat >"$MOCK_BIN/timeout" <<'EOF'
 #!/bin/bash
 echo "timeout $*" >>"$CALL_LOG"
@@ -683,7 +684,7 @@ EOF
 chmod +x "$MOCK_BIN/timeout"
 run_postgres() {
     AZURE_RESOURCE_GROUP=rg RTC_TEST_PLATFORM=azure run_lib rtc_test_azure_postgresql_app \
-        "$TEST_APP_BICEP" /envs/myenv myws my-ns
+        "$POSTGRES_TEST_APP_BICEP" /envs/myenv myws my-ns
 }
 
 RADIUS_PROGRESS="Building Data/mongoDatabases/test/app.bicep...
@@ -977,5 +978,38 @@ RTC_TEST_PLATFORM=kubernetes RTC_POSTGRES_TEST_SIZE=M run_postgres_entry >/dev/n
 if grep -q 'postgresSize=' "$CALL_LOG"; then fail "Kubernetes must not get an Azure size override"; fi
 grep -q "^param postgresSize string = 'S'$" "$REPO_ROOT/Data/postgreSqlDatabases/test/app.bicep" ||
     fail "test template default must remain S"
+
+FIXED_POSTGRES_TEST_APP="$REPO_ROOT/.github/scripts/tests/fixtures/postgresql-test-app-fixed-s.bicep"
+POSTGRES_TEST_HARNESS="$TEST_ROOT/postgresql-test-harness.bicep"
+bash "$REPO_ROOT/.github/scripts/prepare-postgres-test-harness.sh" \
+    "$FIXED_POSTGRES_TEST_APP" "$POSTGRES_TEST_HARNESS" ||
+    fail "fixed-S pinned test app must produce a parameterized harness"
+grep -q "^param postgresSize string = 'S'$" "$POSTGRES_TEST_HARNESS" ||
+    fail "generated harness must default to S"
+grep -q "^@allowed(\['S', 'M'\])$" "$POSTGRES_TEST_HARNESS" ||
+    fail "generated harness must allow only selected S and M sizes"
+grep -qE '^[[:space:]]*size: postgresSize$' "$POSTGRES_TEST_HARNESS" ||
+    fail "generated harness must pass postgresSize to the PostgreSQL resource"
+if grep -q 'postgresSize' "$FIXED_POSTGRES_TEST_APP"; then
+    fail "pinned fixed-S fixture must remain unchanged"
+fi
+
+for selected_size in S M; do
+    : >"$CALL_LOG"
+    RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg RTC_POSTGRES_TEST_SIZE="$selected_size" \
+        RTC_POSTGRES_TEST_HARNESS="$POSTGRES_TEST_HARNESS" run_postgres_entry >/dev/null ||
+        fail "pinned fixed-S harness must deploy selected size $selected_size"
+    grep -q -- "--parameters postgresSize=$selected_size" "$CALL_LOG" ||
+        fail "deployment must pass selected size $selected_size to Bicep"
+    if grep '^rad deploy ' "$CALL_LOG" | grep -Fq "$FIXED_POSTGRES_TEST_APP"; then
+        fail "deployment must use a temporary parameterized harness, not the pinned test app"
+    fi
+done
+
+sed "s/size: 'S'/size: 'L'/" "$FIXED_POSTGRES_TEST_APP" >"$TEST_ROOT/unsupported-postgres-size.bicep"
+if bash "$REPO_ROOT/.github/scripts/prepare-postgres-test-harness.sh" \
+    "$TEST_ROOT/unsupported-postgres-size.bicep" "$TEST_ROOT/unsupported-harness.bicep" >/dev/null 2>&1; then
+    fail "unsupported fixed PostgreSQL sizes must fail closed"
+fi
 
 echo "Recipe test library test passed"
