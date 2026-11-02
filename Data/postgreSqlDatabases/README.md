@@ -75,7 +75,8 @@ The selection JSON reports fixed server settings once in `settings`: version
 16, 32 GiB storage, disabled HA and geo-redundant backup, automatic zone
 (`availabilityZone: -1`), public network access, and enabled Entra and password
 authentication. These settings are checked against the pack and do not change
-between region and size candidates. Public access has no firewall rule.
+between region and size candidates. The probe creates no firewall rule.
+The Azure AKS pack keeps its existing allow-all firewall rule.
 Each attempt and its job-summary row includes `cleanup`: `confirmed` for
 confirmed server removal, `failed` when cleanup cannot be confirmed,
 `not_required` when no allocation was made, or `uncertain` after an interrupted
