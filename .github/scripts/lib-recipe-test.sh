@@ -173,22 +173,26 @@ for root, start, end in objects(transcript):
 # CLI progress output may contain normal Error-prefixed JSON records, which are
 # classified above. A second plain error line is not safe to ignore.
 failure_prefix = re.compile(r"^\s*(?:error|fatal|failure|failed):", re.IGNORECASE)
+bare_failure = re.compile(
+    r"^\s*(?:[A-Za-z][a-z0-9]+(?:[A-Z][A-Za-z0-9]*)+|\([A-Za-z][A-Za-z0-9]*\))\s*:\s*\S"
+    r"|^\s*(?i:unknown|unclassified|unexpected)\b.*\b(?i:error|failure)\b"
+)
 line_start = 0
 for line in transcript.splitlines(keepends=True):
     line_body = line.rstrip("\r\n")
-    if failure_prefix.search(line_body):
-        residual = list(line_body)
-        line_end = line_start + len(line_body)
-        for start, end in json_spans:
-            overlap_start = max(start, line_start)
-            overlap_end = min(end, line_end)
-            if overlap_start < overlap_end:
-                residual[overlap_start - line_start:overlap_end - line_start] = \
-                    [" "] * (overlap_end - overlap_start)
-        residual = "".join(residual)
-        residual = failure_prefix.sub("", residual)
-        if residual.strip():
-            invalid = True
+    residual = list(line_body)
+    line_end = line_start + len(line_body)
+    for start, end in json_spans:
+        overlap_start = max(start, line_start)
+        overlap_end = min(end, line_end)
+        if overlap_start < overlap_end:
+            residual[overlap_start - line_start:overlap_end - line_start] = \
+                [" "] * (overlap_end - overlap_start)
+    residual = "".join(residual)
+    if bare_failure.search(residual) or (
+        failure_prefix.search(residual) and failure_prefix.sub("", residual).strip()
+    ):
+        invalid = True
     line_start += len(line)
 
 sys.exit(0 if codes and not invalid else 1)
@@ -488,6 +492,10 @@ provider_reset = re.compile(
     r'read tcp [^\n]+: read: connection reset by peer\s*'
 )
 failure_prefix = re.compile(r"^\s*(?:error|fatal|failure|failed):", re.IGNORECASE | re.MULTILINE)
+bare_failure = re.compile(
+    r"^\s*(?:[A-Za-z][a-z0-9]+(?:[A-Z][A-Za-z0-9]*)+|\([A-Za-z][A-Za-z0-9]*\))\s*:\s*\S"
+    r"|^\s*(?i:unknown|unclassified|unexpected)\b.*\b(?i:error|failure)\b"
+)
 wrappers = {"DeploymentFailed", "RecipeDeploymentFailed", "ResourceDeploymentFailure", "ResourceOperationFailure"}
 reasons = []
 invalid = False
@@ -507,7 +515,9 @@ def is_provider_reset(message):
     if not marker:
         return False
     for line in preamble.splitlines():
-        if failure_prefix.search(line) and failure_prefix.sub("", line).strip():
+        if bare_failure.search(line) or (
+            failure_prefix.search(line) and failure_prefix.sub("", line).strip()
+        ):
             return False
     diagnostics = re.split(r'(?mi)^\s*Error:\s*', failure)
     return (
@@ -566,7 +576,9 @@ else:
         visit(root)
         residual[start:end] = ["\n" if char == "\n" else " " for char in transcript[start:end]]
     for line in "".join(residual).splitlines():
-        if failure_prefix.search(line) and failure_prefix.sub("", line).strip():
+        if bare_failure.search(line) or (
+            failure_prefix.search(line) and failure_prefix.sub("", line).strip()
+        ):
             invalid = True
 
 if reasons and not invalid:

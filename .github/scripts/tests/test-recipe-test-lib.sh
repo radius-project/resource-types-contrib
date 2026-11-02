@@ -686,6 +686,35 @@ run_postgres() {
         "$TEST_APP_BICEP" /envs/myenv myws my-ns
 }
 
+for pure_error in "$WRAPPED_TERRAFORM_ERROR" "$TRANSIENT_DEPLOY_ERROR" "$POSTGRES_CAPACITY_ERROR"; do
+    for diagnostic in \
+        'AuthorizationFailed: access denied' \
+        'InvalidTemplate: invalid property' \
+        'UnknownDiagnostic: unclassified problem' \
+        '(AuthorizationFailed): access denied' \
+        'unknown failure during resource deployment'; do
+        mixed_error="$pure_error"$'\n'"$diagnostic"
+        printf '%s\n' "$mixed_error" >"$TEST_ROOT/bare-failure.log"
+        for classifier in rtc_deployment_retry_reason rtc_has_postgresql_capacity_failure; do
+            if run_lib "$classifier" "$TEST_ROOT/bare-failure.log" >/dev/null; then
+                fail "$classifier must reject independent bare diagnostic: $diagnostic"
+            fi
+        done
+        : >"$CALL_LOG"
+        if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$mixed_error" run_postgres >/dev/null 2>&1; then
+            fail "bare failure mixtures must fail PostgreSQL"
+        fi
+        assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "bare failure deployment attempts"
+        if grep -q 'postgresSize=M' "$CALL_LOG"; then fail "bare failures must not change size"; fi
+    done
+    printf 'Deploying resources...\nLocation: westus3\nStatus: Running\n%s\nDeployment failed.\n' \
+        "$pure_error" >"$TEST_ROOT/pure-error-progress.log"
+    classifier=rtc_deployment_retry_reason
+    [[ "$pure_error" != "$POSTGRES_CAPACITY_ERROR" ]] || classifier=rtc_has_postgresql_capacity_failure
+    run_lib "$classifier" "$TEST_ROOT/pure-error-progress.log" >/dev/null ||
+        fail "$classifier must preserve pure errors with benign progress"
+done
+
 for reset in \
     "$(jq -cn --arg message "$TERRAFORM_DOWNLOAD_ERROR" '{code:"RecipeDeploymentFailed",message:$message}')" \
     "${TRANSIENT_DEPLOY_ERROR#Error: }"; do
