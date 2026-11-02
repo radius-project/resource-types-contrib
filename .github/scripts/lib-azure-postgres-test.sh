@@ -26,6 +26,10 @@ rtc_postgres_test_tuple() {
     esac
 }
 
+rtc_postgres_test_settings() {
+    printf '%s\n' '{"version":"16","storageSizeGB":32,"highAvailability":"Disabled","geoRedundantBackup":"Disabled","availabilityZone":-1,"publicNetworkAccess":"Enabled","activeDirectoryAuth":"Enabled","passwordAuth":"Enabled"}'
+}
+
 # Fail closed when a release overlay changes the tuple or required features.
 rtc_validate_postgres_test_pack() {
     local pack="$1" entry small_sku small_tier setting

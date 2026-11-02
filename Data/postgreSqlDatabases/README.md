@@ -71,6 +71,21 @@ Probe commands and region reads run in a separate process group. Their
 watchdog kills that group on timeout, cancellation, or command exit so a
 wrapper's child cannot keep output handles open or outlive cleanup.
 
+The selection JSON reports fixed server settings once in `settings`: version
+16, 32 GiB storage, disabled HA and geo-redundant backup, automatic zone
+(`availabilityZone: -1`), public network access, and enabled Entra and password
+authentication. These settings are checked against the pack and do not change
+between region and size candidates. Public access has no firewall rule.
+Each attempt and its job-summary row includes `cleanup`: `confirmed` for
+confirmed server removal, `failed` when cleanup cannot be confirmed,
+`not_required` when no allocation was made, or `uncertain` after an interrupted
+or timed-out create. Immediate absence after such a create remains uncertain,
+even when the selector later deletes its owned resource group.
+When the shared deadline expires, the result also lists each remaining
+configured region and size as `not_attempted`, with zero duration and
+`cleanup: not_required`. A valid deadline result remains `deadline_exceeded`
+when the selector exits with an error; a cleanup failure takes precedence.
+
 The probe uses a 128-bit random server name and checks that the name is absent
 before creation. It sets an ownership tag at creation and verifies that tag
 before deletion, including after a failed or timed-out create. Azure reads are
@@ -89,6 +104,10 @@ Azure CLI `Code:` and `Message:` lines are accepted only when they repeat
 the code and message in the error header. Contradictory fields stop allocation.
 An interrupted command cannot confirm absence or allow a retry, even if its
 error text reports missing resources or unavailable capacity.
+Login renewal notices and token-mask commands use a separate log descriptor.
+The watchdog preserves it through child processes, so GitHub receives masks
+even when provider stderr is captured or discarded. Provider errors still use
+the strict checks above.
 Use `az postgres flexible-server show --resource-group
 <group> --name <server> --output json` with the original subscription to check
 the target again. Delete it only after its `tags["rtc-probe-owner"]` value
@@ -116,6 +135,9 @@ cleanup, and the final Azure inventory check.
 `RTC_POSTGRES_CLEANUP_RESERVE_SECONDS` sets this reserve (default and maximum
 900 seconds). A cleanup timeout blocks further probes and deployment.
 These limits do not change unrelated entry tests.
+Initial and recovery probe cleanup also ends no later than the absolute work
+deadline plus this reserve. A smaller configured probe-delete timeout still
+applies. Invalid cleanup limits fail before the probe reads Azure state.
 
 If a deployment reports a structured `SkuNotAvailable` or `ServerIsBusy`
 error for an Azure PostgreSQL server, the runner deletes the failed app and
@@ -123,6 +145,12 @@ checks that no new Azure resource IDs remain in the group. Only after these
 checks pass can it probe the other allowed size once in the existing group's
 region. The probe uses the remaining shared deadline and must confirm its
 own cleanup before a retry with that size and a distinct app name.
+Each entry invocation generates a 128-bit random application name component.
+The name also includes the size and attempt number and stays within the
+63-character limit, so concurrent calls do not share application cleanup targets.
+This does not make parallel deployments in one Radius resource group safe.
+The pinned test app still uses fixed names for its child resources. Use separate
+Radius resource groups for concurrent deployments.
 An unsupported, failed, or uncertain probe stops recovery.
 The region does not change. Mixed or unknown errors, timeouts,
 assertion failures, and incomplete cleanup stop recovery. Cleanup has a

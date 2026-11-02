@@ -156,8 +156,13 @@ case "$result" in
     *) outcome=probe_error; code="${PROBE_ERROR_CODE:-AuthorizationFailed}" ;;
 esac
 if [[ -z "${NO_RECORD:-}" ]]; then
-    jq -n --arg outcome "$outcome" --arg errorCode "$code" \
-        '{outcome:$outcome,errorCode:$errorCode}' >"$RTC_POSTGRES_PROBE_RESULT_FILE"
+    cleanup=confirmed
+    [[ "$result" != 4 ]] || cleanup=not_required
+    [[ "$result" != 3 ]] || cleanup=uncertain
+    [[ "$code" != CleanupFailed ]] || cleanup=failed
+    cleanup="${PROBE_CLEANUP:-$cleanup}"
+    jq -n --arg outcome "$outcome" --arg errorCode "$code" --arg cleanup "$cleanup" \
+        '{outcome:$outcome,errorCode:$errorCode,cleanup:$cleanup}' >"$RTC_POSTGRES_PROBE_RESULT_FILE"
 fi
 if [[ -n "${BAD_RECORD:-}" ]]; then printf '%s\n' '{}' >"$RTC_POSTGRES_PROBE_RESULT_FILE"; fi
 exit "$result"
@@ -199,8 +204,12 @@ grep -Fq "rtcPostgresSelectorOwner=$owner_token" "$CALL_LOG" || fail "random nam
 assert_json '.version == 1 and .status == "selected" and .location == "westus3" and
     .postgres == {size:"S",skuName:"Standard_B1ms",tier:"Burstable"} and
     .attempts[0] == {region:"westus3",size:"S",skuName:"Standard_B1ms",tier:"Burstable",
-                     outcome:"available",errorCode:"",durationSeconds:.attempts[0].durationSeconds} and
+                     outcome:"available",errorCode:"",cleanup:"confirmed",
+                     durationSeconds:.attempts[0].durationSeconds} and
     (.attempts[0].durationSeconds | type == "number")'
+assert_json '.settings == {version:"16",storageSizeGB:32,highAvailability:"Disabled",
+    geoRedundantBackup:"Disabled",availabilityZone:-1,publicNetworkAccess:"Enabled",
+    activeDirectoryAuth:"Enabled",passwordAuth:"Enabled"}'
 assert_json ".deadlineEpochSeconds >= $((selection_started + 3600)) and
     .deadlineEpochSeconds <= $((selection_finished + 3600))"
 reset 0
@@ -530,11 +539,27 @@ RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=3 PROBE_SLEEP=4 select_location westus3 
 [[ "$(probe_count)" == 1 ]] || fail "global deadline stops candidates"
 grep -qE 'timeout=[1-3]$' "$CALL_LOG" || fail "create capped by remaining time"
 assert_json '.status == "deadline_exceeded" and (has("postgres") | not)'
+assert_json '.attempts | length == 4 and
+    .[0].outcome == "capacity_exhausted" and .[0].cleanup == "confirmed" and
+    .[1:] == [
+        {region:"eastus2",size:"S",skuName:"Standard_B1ms",tier:"Burstable",
+         outcome:"not_attempted",errorCode:"DeadlineExceeded",durationSeconds:0,cleanup:"not_required"},
+        {region:"westus3",size:"M",skuName:"Standard_D2ds_v5",tier:"GeneralPurpose",
+         outcome:"not_attempted",errorCode:"DeadlineExceeded",durationSeconds:0,cleanup:"not_required"},
+        {region:"eastus2",size:"M",skuName:"Standard_D2ds_v5",tier:"GeneralPurpose",
+         outcome:"not_attempted",errorCode:"DeadlineExceeded",durationSeconds:0,cleanup:"not_required"}]'
 assert_json ".deadlineEpochSeconds >= $((selection_started + 3)) and
     .deadlineEpochSeconds <= $((selection_started + 5))"
 reset 0
 RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=3 PROBE_SLEEP=4 select_location westus3 >/dev/null
 assert_json '.status == "deadline_exceeded" and (has("postgres") | not)'
+
+for cleanup in failed uncertain; do
+    reset 0 0
+    PROBE_CLEANUP="$cleanup" select_location westus3 eastus2 >/dev/null
+    [[ "$(probe_count)" == 1 ]] || fail "unconfirmed cleanup must stop candidate allocation"
+    assert_json ".status == \"probe_error\" and .attempts[0].cleanup == \"$cleanup\""
+done
 
 for setting in RTC_POSTGRES_TEST_SIZES= RTC_POSTGRES_TEST_SIZES=L RTC_POSTGRES_TEST_SIZES=S,,M \
     'RTC_POSTGRES_TEST_SIZES=S,' RTC_POSTGRES_TEST_SIZES='S M' RTC_AZURE_TEST_REGIONS= \

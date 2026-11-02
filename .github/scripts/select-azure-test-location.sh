@@ -152,7 +152,8 @@ delete_owned_probe_group() {
 
 # shellcheck disable=SC2329
 finish() {
-    local status=$?
+    local status=$? deadline_expired=false
+    [[ "$selection_status" != deadline_exceeded ]] || deadline_expired=true
     trap - EXIT INT TERM
     if [[ "$group_create_attempted" == true ]]; then
         if group_has_owner_tag "$cleanup_deadline"; then
@@ -171,12 +172,25 @@ finish() {
         selection_status="probe_error"; selected_postgres="null"
         selected_location="${candidates[0]}"; status=1
     fi
+    if [[ "$deadline_expired" == true ]]; then
+        for size in "${test_sizes[@]}"; do
+            rtc_postgres_test_tuple "$size"
+            for location in "${candidates[@]}"; do
+                attempt_records="$(jq -c --arg region "$location" --arg size "$size" \
+                    --arg skuName "$postgres_sku" --arg tier "$postgres_tier" '
+                    if any(.[]; .region == $region and .size == $size) then .
+                    else . + [{region:$region,size:$size,skuName:$skuName,tier:$tier,
+                        outcome:"not_attempted",errorCode:"DeadlineExceeded",
+                        durationSeconds:0,cleanup:"not_required"}] end' <<<"$attempt_records")"
+            done
+        done
+    fi
     if [[ -n "${RTC_AZURE_SELECTION_FILE:-}" ]]; then
         jq -n --arg status "$selection_status" --arg location "$selected_location" \
             --argjson postgres "$selected_postgres" --argjson attempts "$attempt_records" \
-            --argjson deadlineEpochSeconds "$deadline_epoch" \
+            --argjson deadlineEpochSeconds "$deadline_epoch" --argjson settings "$(rtc_postgres_test_settings)" \
             '{version: 1, status: $status, location: $location, attempts: $attempts,
-              deadlineEpochSeconds: $deadlineEpochSeconds}
+              deadlineEpochSeconds: $deadlineEpochSeconds, settings: $settings}
              + (if $status == "selected" then {postgres: $postgres} else {} end)' \
             >"$RTC_AZURE_SELECTION_FILE" || status=1
     fi
@@ -293,6 +307,7 @@ for size in "${test_sizes[@]}"; do
             RTC_POSTGRES_PROBE_ATTEMPTS=1 RTC_POSTGRES_PROBE_WAIT_SECONDS=0 \
             RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS="$limit" \
             RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS="$cleanup_limit" \
+            RTC_POSTGRES_PROBE_CLEANUP_DEADLINE_EPOCH="$((deadline_epoch + cleanup_reserve))" \
             RTC_POSTGRES_PROBE_RESULT_FILE="$work_dir/probe.json" \
             "$script_dir/probe-azure-postgres-capacity.sh" >&2 || status=$?
         duration=$((SECONDS - started))
@@ -304,11 +319,20 @@ for size in "${test_sizes[@]}"; do
             *) outcome="probe_error" ;;
         esac
         error_code="UnknownError"
+        cleanup="uncertain"
         if [[ -f "$work_dir/probe.json" ]] && jq -e --arg outcome "$outcome" \
-            '.outcome == $outcome and (.errorCode | type == "string")' "$work_dir/probe.json" >/dev/null; then
+            '.outcome == $outcome and (.errorCode | type == "string") and
+             (.cleanup == "not_required" or .cleanup == "confirmed" or
+              .cleanup == "failed" or .cleanup == "uncertain")' "$work_dir/probe.json" >/dev/null; then
             error_code="$(jq -er '.errorCode | select(type == "string")' "$work_dir/probe.json")" || status=1
+            cleanup="$(jq -r '.cleanup' "$work_dir/probe.json")"
         else
             status=1; outcome="probe_error"
+        fi
+        if [[ "$cleanup" == failed ]] ||
+            { [[ "$cleanup" != confirmed ]] && ((status == 0 || status == 2)); } ||
+            { [[ "$cleanup" != not_required ]] && ((status == 4)); }; then
+            status=1; outcome="probe_error"; error_code="CleanupUnconfirmed"
         fi
         if ((status == 4)) &&
             [[ ! "$error_code" =~ ^Unsupported(Version|Tier|Sku|Storage)$ ]]; then
@@ -316,10 +340,11 @@ for size in "${test_sizes[@]}"; do
             outcome="probe_error"
         fi
         attempt_records="$(jq -c --arg region "$location" --arg size "$size" --arg skuName "$postgres_sku" \
-            --arg tier "$postgres_tier" --arg outcome "$outcome" --arg errorCode "$error_code" \
+            --arg tier "$postgres_tier" --arg outcome "$outcome" --arg errorCode "$error_code" --arg cleanup "$cleanup" \
             --argjson durationSeconds "$duration" \
             '. + [{region: $region, size: $size, skuName: $skuName, tier: $tier,
-                   outcome: $outcome, errorCode: $errorCode, durationSeconds: $durationSeconds}]' <<<"$attempt_records")"
+                   outcome: $outcome, errorCode: $errorCode, durationSeconds: $durationSeconds,
+                   cleanup:$cleanup}]' <<<"$attempt_records")"
         echo "==> $location/$size ($postgres_sku): $outcome, code=$error_code, ${duration}s" >&2
         # Cleanup failure and other provider errors must not be hidden by a deadline.
         if ((status != 0 && status != 2 && status != 3 && status != 4)); then

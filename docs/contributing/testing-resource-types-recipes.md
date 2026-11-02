@@ -351,14 +351,22 @@ errors stop selection; they do not trigger another allocation.
 The legacy selector still prints a region on failure. That region is for
 unrelated entries only; it is not evidence of PostgreSQL capacity.
 PostgreSQL remains a failed check, unrelated entries can continue, and the job
-reports failure. If the selector exits nonzero, the workflow writes a
-non-selected `probe_error` record and uses the first validated candidate as the
-main group's fallback location. PostgreSQL deployment remains blocked, unrelated
+reports failure. If the selector exits nonzero, the workflow keeps a valid
+`deadline_exceeded` or `unsupported` result. Inconsistent selected results and
+cleanup failures become `probe_error`. It uses the first validated candidate as
+the main group's fallback location. PostgreSQL deployment remains blocked, unrelated
 entries continue, and the final report includes the selector failure. Cleanup
 failure stops further PostgreSQL allocations.
 
 The job summary has a credential-free attempt table with region, size, SKU,
-tier, outcome, error code, and duration, plus final selection status.
+tier, outcome, error code, duration, and cleanup, plus final selection status.
+Cleanup is `confirmed`, `failed`, `not_required`, or `uncertain`. A timed-out or
+interrupted create stays uncertain even if its server is immediately absent.
+After a shared deadline, the table and JSON list remaining configured tuples as
+`not_attempted`, with zero duration and no allocation.
+The JSON `settings` field records the common version, storage, HA, backup,
+automatic zone, authentication, and network settings checked against the pack.
+These settings do not vary by candidate.
 `azure-test-diagnostics/postgres-selection.json` is included in the existing
 Azure diagnostics artifact. Deployment recovery uses the entry runner's
 separate safe failure records. Passwords, tokens, connection strings, and raw

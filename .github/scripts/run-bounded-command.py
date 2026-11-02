@@ -50,7 +50,17 @@ def main():
     try:
         if interrupted:
             return 128 + interrupted
-        process = subprocess.Popen(sys.argv[2:], start_new_session=True, stdin=subprocess.DEVNULL)
+        pass_fds = ()
+        login_log_fd = os.environ.get("RTC_AZURE_LOGIN_LOG_FD")
+        if login_log_fd is not None:
+            if not login_log_fd.isdigit():
+                print("Error: invalid Azure login log descriptor.", file=sys.stderr)
+                return 1
+            pass_fds = (int(login_log_fd),)
+        process = subprocess.Popen(
+            sys.argv[2:], start_new_session=True, stdin=subprocess.DEVNULL,
+            pass_fds=pass_fds,
+        )
         if interrupted:
             return 128 + interrupted
         try:

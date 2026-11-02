@@ -31,18 +31,23 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=.github/scripts/lib-azure-postgres-test.sh
 source "$script_dir/lib-azure-postgres-test.sh"
 
+# Keep login notices and mask commands outside captured provider diagnostics.
+exec 3>&2
+export RTC_AZURE_LOGIN_LOG_FD=3
 resource_group="${AZURE_RESOURCE_GROUP:-}"
 location="${AZURE_LOCATION:-}"
 attempts="${RTC_POSTGRES_PROBE_ATTEMPTS-3}"
 wait_seconds="${RTC_POSTGRES_PROBE_WAIT_SECONDS-600}"
 create_timeout="${RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS-900}"
 delete_timeout="${RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS-900}"
+cleanup_deadline_epoch="${RTC_POSTGRES_PROBE_CLEANUP_DEADLINE_EPOCH:-}"
 rtc_postgres_test_tuple "${RTC_POSTGRES_TEST_SIZE-S}" || exit 1
 if [[ -z "$resource_group" || ! "$location" =~ ^[a-z0-9]+$ ]] ||
     ! rtc_postgres_positive_limit "$attempts" 3 ||
     ! rtc_postgres_positive_limit "$create_timeout" 900 ||
     ! rtc_postgres_positive_limit "$delete_timeout" 900 ||
-    [[ ! "$wait_seconds" =~ ^(0|[1-9][0-9]{0,2})$ ]] || ((10#$wait_seconds > 600)); then
+    [[ ! "$wait_seconds" =~ ^(0|[1-9][0-9]{0,2})$ ]] || ((10#$wait_seconds > 600)) ||
+    { [[ -n "$cleanup_deadline_epoch" ]] && [[ ! "$cleanup_deadline_epoch" =~ ^[1-9][0-9]{0,10}$ ]]; }; then
     echo "Error: invalid probe environment or time/attempt limit." >&2
     exit 1
 fi
@@ -57,6 +62,8 @@ probe_owner=""
 create_in_flight=false
 outcome="probe_error"
 error_code="UnknownError"
+cleanup_result="not_required"
+create_uncertain=false
 
 report_uncertain_create() {
     echo "Error: create request timed out or was interrupted for probe server '$server_name' in resource group '$resource_group' (ownership tag rtc-probe-owner=$probe_owner)." >&2
@@ -64,16 +71,24 @@ report_uncertain_create() {
 }
 
 delete_server() {
-    local status=0 remaining cleanup_deadline codes
-    cleanup_deadline=$((SECONDS + delete_timeout))
-    python3 "$script_dir/run-bounded-command.py" "$delete_timeout" az postgres flexible-server show \
+    local status=0 remaining cleanup_deadline codes cleanup_limit="$delete_timeout"
+    if [[ -n "$cleanup_deadline_epoch" ]]; then
+        remaining=$((cleanup_deadline_epoch - $(date +%s)))
+        ((remaining > 0)) || return 1
+        if ((remaining < cleanup_limit)); then cleanup_limit="$remaining"; fi
+    fi
+    cleanup_deadline=$((SECONDS + cleanup_limit))
+    python3 "$script_dir/run-bounded-command.py" "$cleanup_limit" az postgres flexible-server show \
         "${subscription_args[@]}" --resource-group "$resource_group" --name "$server_name" \
         --only-show-errors --output json >"$work_dir/server" 2>"$work_dir/show-error" || status=$?
     if ((status != 0)); then
         codes="$(rtc_postgres_error_codes "$work_dir/show-error")"
-        ((status != 124 && status != 130 && status != 137 && status != 143)) &&
-            [[ "$codes" == "ResourceNotFound" ]]
-        return
+        if ((status != 124 && status != 130 && status != 137 && status != 143)) &&
+            [[ "$codes" == "ResourceNotFound" ]]; then
+            # Bash 5.2 bare return can restore the failure from before an EXIT trap.
+            return 0
+        fi
+        return 1
     fi
     [[ ! -s "$work_dir/show-error" ]] || return 1
     if ! jq -e --arg owner "$probe_owner" '.tags["rtc-probe-owner"] == $owner' \
@@ -87,7 +102,7 @@ delete_server() {
         "${subscription_args[@]}" --resource-group "$resource_group" --name "$server_name" \
         --yes --only-show-errors --output none > /dev/null 2>"$work_dir/delete-error" || status=$?
     if ((status != 0)); then
-        if ((status == 130 || status == 143)); then return 1; fi
+        if ((status == 124 || status == 130 || status == 137 || status == 143)); then return 1; fi
         codes="$(rtc_postgres_error_codes "$work_dir/delete-error")"
         [[ "$codes" == "ResourceNotFound" ]] || return 1
     elif [[ -s "$work_dir/delete-error" ]]; then
@@ -110,16 +125,20 @@ finish() {
     local status=$?
     trap - EXIT INT TERM
     if [[ "$create_in_flight" == true ]]; then
+        create_uncertain=true
         report_uncertain_create
         outcome="probe_error"; error_code="CreateInterrupted"; status=1
     fi
     if [[ -n "$server_name" ]] && ! delete_server; then
+        cleanup_result="failed"
         echo "Error: probe server '$server_name' deletion was not confirmed." >&2
         outcome="probe_error"; error_code="CleanupFailed"; status=1
+    elif [[ -n "$server_name" && "$create_uncertain" == false ]]; then
+        cleanup_result="confirmed"
     fi
     if [[ -n "${RTC_POSTGRES_PROBE_RESULT_FILE:-}" ]]; then
-        jq -n --arg outcome "$outcome" --arg errorCode "$error_code" \
-            '{outcome: $outcome, errorCode: $errorCode}' >"$RTC_POSTGRES_PROBE_RESULT_FILE" || status=1
+        jq -n --arg outcome "$outcome" --arg errorCode "$error_code" --arg cleanup "$cleanup_result" \
+            '{outcome: $outcome, errorCode: $errorCode, cleanup: $cleanup}' >"$RTC_POSTGRES_PROBE_RESULT_FILE" || status=1
     fi
     rm -rf -- "$work_dir"
     exit "$status"
@@ -227,6 +246,7 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
         exit 3
     fi
     server_name="$candidate_name"
+    cleanup_result="uncertain"
     password="P$(openssl rand -hex 16)a1!"
     echo "==> PostgreSQL probe $attempt/$attempts: $postgres_sku ($postgres_tier) in $location" >&2
     echo "==> Recovery target: probe server '$server_name' in resource group '$resource_group' (ownership tag rtc-probe-owner=$probe_owner). Verify this tag before any later deletion." >&2
@@ -247,17 +267,20 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
     # Keep the in-flight target so the exit trap reports and cleans it safely.
     if ((status == 130 || status == 143)); then exit 1; fi
     if ((status == 124 || status == 137)); then
+        create_uncertain=true
         report_uncertain_create
     fi
     create_in_flight=false
     codes="$(rtc_postgres_error_codes "$work_dir/create-error")"
     if ! delete_server; then
+        cleanup_result="failed"
         echo "Error: probe server '$server_name' deletion was not confirmed." >&2
         # Do not allocate again after failed cleanup. The caller owns group recovery.
         server_name=""
         outcome="probe_error"; error_code="CleanupFailed"
         exit 1
     fi
+    if [[ "$create_uncertain" == false ]]; then cleanup_result="confirmed"; fi
     server_name=""
     if ((status == 0)); then
         outcome="available"; error_code=""

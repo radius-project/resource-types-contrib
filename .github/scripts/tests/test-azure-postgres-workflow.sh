@@ -36,16 +36,21 @@ if RTC_AZURE_TEST_REGIONS="$(printf 'eastus2,%.0s' {1..32})eastus2" \
 selector_scripts="$temp/selector-scripts"
 mkdir "$selector_scripts"
 cp "$script" "$selector_scripts/azure-postgres-workflow.sh"
+cp "$root/.github/scripts/lib-azure-postgres-test.sh" "$selector_scripts/"
 export SIZE_LOG="$temp/selector-sizes"
 cat >"$selector_scripts/select-azure-test-location.sh" <<'EOF'
 #!/bin/bash
 printf '%s\n' "$RTC_POSTGRES_TEST_SIZES" >"$SIZE_LOG"
 printf '%s\n' "${RTC_AZURE_TEST_REGIONS%%,*}"
-jq -n --arg location "${RTC_AZURE_TEST_REGIONS%%,*}" \
-    '{version:1,status:"selected",location:$location,deadlineEpochSeconds:123456,
+jq -n --arg location "${RTC_AZURE_TEST_REGIONS%%,*}" --arg status "${FAKE_SELECTION_STATUS:-selected}" \
+    --arg cleanup "${FAKE_CLEANUP:-confirmed}" \
+    '{version:1,status:$status,location:$location,deadlineEpochSeconds:123456,
       postgres:{size:"S",skuName:"Standard_B1ms",tier:"Burstable"},
       attempts:[{region:$location,size:"S",skuName:"Standard_B1ms",tier:"Burstable",
-        outcome:"selected",errorCode:"",durationSeconds:1}]}' >"$RTC_AZURE_SELECTION_FILE"
+        outcome:(if $status == "deadline_exceeded" then "timeout" else "available" end),
+        errorCode:(if $status == "deadline_exceeded" then "CreateTimeout" else "" end),
+        durationSeconds:1,cleanup:$cleanup}]} |
+        if $status == "selected" then . else del(.postgres) end' >"$RTC_AZURE_SELECTION_FILE"
 exit "${FAKE_SELECTOR_STATUS:-23}"
 EOF
 chmod +x "$selector_scripts/select-azure-test-location.sh"
@@ -67,6 +72,32 @@ grep -q 'continuing unrelated entries' <<<"$output" ||
 grep -Fxq 'RTC_POSTGRES_TEST_SIZES=S,M' "$failed_env" ||
     fail "validated default size list must persist to later workflow steps"
 
+for cleanup in confirmed failed; do
+    expected_status=deadline_exceeded
+    [[ "$cleanup" != failed ]] || expected_status=probe_error
+    if FAKE_SELECTION_STATUS=deadline_exceeded FAKE_CLEANUP="$cleanup" \
+        RTC_AZURE_TEST_REGIONS=centralus RTC_AZURE_SELECTION_FILE="$failed_selection" \
+        GITHUB_ENV="$failed_env" bash "$selector_scripts/azure-postgres-workflow.sh" \
+        select-context fixture-probe >/dev/null 2>&1; then
+        fail "nonzero deadline selector must fail its workflow step"
+    fi
+    jq -e --arg status "$expected_status" '.status == $status and (has("postgres") | not)' \
+        "$failed_selection" >/dev/null || fail "deadline and cleanup status must remain distinct"
+done
+
+cleanup_selection="$temp/cleanup-selection.json"
+jq -n '{version:1,status:"deadline_exceeded",location:"centralus",attempts:
+    (["confirmed","failed","not_required","uncertain"] | map({
+        region:"centralus",size:"S",skuName:"Standard_B1ms",tier:"Burstable",
+        outcome:"probe_error",errorCode:"Test",durationSeconds:0,cleanup:.
+    }))}' >"$cleanup_selection"
+cleanup_summary="$temp/cleanup-summary.md"
+RTC_AZURE_SELECTION_FILE="$cleanup_selection" GITHUB_STEP_SUMMARY="$cleanup_summary" \
+    bash "$script" summary failure success
+for cleanup in confirmed failed not_required uncertain; do
+    grep -Fq "| 0 | $cleanup |" "$cleanup_summary" || fail "summary must show each cleanup state"
+done
+
 single_selection="$temp/single-size-selection.json"
 single_env="$temp/single-size.env"
 if RTC_AZURE_TEST_REGIONS=centralus RTC_POSTGRES_TEST_SIZES=S \
@@ -85,12 +116,13 @@ export RTC_AZURE_SELECTION_FILE="$temp/selection.json" GITHUB_STEP_SUMMARY="$tem
 for status in selected capacity_exhausted unsupported probe_error deadline_exceeded; do
     jq -n --arg status "$status" '{version:1,status:$status,deadlineEpochSeconds:123456,
         secret:"DO_NOT_PRINT",attempts:[{region:"centralus",size:"M",skuName:"Standard_D2ds_v5",
-        tier:"GeneralPurpose",outcome:"capacity_exhausted",errorCode:"SkuNotAvailable",durationSeconds:12}]}' \
+        tier:"GeneralPurpose",outcome:"capacity_exhausted",errorCode:"SkuNotAvailable",
+        durationSeconds:12,cleanup:"confirmed"}]}' \
         >"$RTC_AZURE_SELECTION_FILE"
     : >"$GITHUB_STEP_SUMMARY"
     bash "$script" summary
     grep -Fq "Final selection status: **$status**" "$GITHUB_STEP_SUMMARY" || fail "status summary"
-    grep -Fq '| centralus | M | Standard_D2ds_v5 | GeneralPurpose | capacity_exhausted | SkuNotAvailable | 12 |' \
+    grep -Fq '| centralus | M | Standard_D2ds_v5 | GeneralPurpose | capacity_exhausted | SkuNotAvailable | 12 | confirmed |' \
         "$GITHUB_STEP_SUMMARY" || fail "attempt table"
     ! grep -q DO_NOT_PRINT "$GITHUB_STEP_SUMMARY" || fail "unexpected fields leaked"
 done

@@ -369,6 +369,7 @@ selector_scripts="$TEST_ROOT/selector-scripts"
 mkdir "$selector_scripts"
 cp "$REPO_ROOT/.github/scripts/azure-postgres-workflow.sh" \
     "$selector_scripts/azure-postgres-workflow.sh"
+cp "$REPO_ROOT/.github/scripts/lib-azure-postgres-test.sh" "$selector_scripts/"
 cat >"$selector_scripts/select-azure-test-location.sh" <<'EOF'
 #!/bin/bash
 printf '%s\n' "${RTC_AZURE_TEST_REGIONS%%,*}"
@@ -376,7 +377,7 @@ jq -n --arg location "${RTC_AZURE_TEST_REGIONS%%,*}" \
     '{version:1,status:"selected",location:$location,deadlineEpochSeconds:123456,
       postgres:{size:"S",skuName:"Standard_B1ms",tier:"Burstable"},
       attempts:[{region:$location,size:"S",skuName:"Standard_B1ms",tier:"Burstable",
-        outcome:"selected",errorCode:"",durationSeconds:1}]}' >"$RTC_AZURE_SELECTION_FILE"
+        outcome:"selected",errorCode:"",durationSeconds:1,cleanup:"confirmed"}]}' >"$RTC_AZURE_SELECTION_FILE"
 exit 23
 EOF
 chmod +x "$selector_scripts/select-azure-test-location.sh"

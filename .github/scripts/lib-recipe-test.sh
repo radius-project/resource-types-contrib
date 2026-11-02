@@ -259,8 +259,17 @@ rtc_postgresql_group_location() {
 # Probe a tuple in the existing group's region, never a caller's location hint.
 rtc_probe_azure_postgresql_size() {
     local size="$1" deadline="$2" remaining location script_dir
-    location="$(rtc_postgresql_group_location "$deadline")" || return 1
+    local cleanup_reserve="${RTC_POSTGRES_CLEANUP_RESERVE_SECONDS-900}"
+    local delete_timeout="${RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS-900}"
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
+    # shellcheck source=.github/scripts/lib-azure-postgres-test.sh
+    source "$script_dir/lib-azure-postgres-test.sh"
+    if ! rtc_postgres_positive_limit "$cleanup_reserve" 900 ||
+        ! rtc_postgres_positive_limit "$delete_timeout" 900; then
+        echo "Error: Invalid PostgreSQL probe cleanup reserve or delete timeout." >&2
+        return 1
+    fi
+    location="$(rtc_postgresql_group_location "$deadline")" || return 1
     remaining=$((deadline - $(date +%s)))
     if ((remaining <= 0)); then
         echo "Error: PostgreSQL deadline has expired before the probe." >&2
@@ -269,6 +278,8 @@ rtc_probe_azure_postgresql_size() {
     if ((remaining > 900)); then remaining=900; fi
     AZURE_LOCATION="$location" RTC_POSTGRES_TEST_SIZE="$size" RTC_POSTGRES_PROBE_ATTEMPTS=1 \
         RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS="$remaining" \
+        RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS="$delete_timeout" \
+        RTC_POSTGRES_PROBE_CLEANUP_DEADLINE_EPOCH="$((deadline + cleanup_reserve))" \
         "$script_dir/probe-azure-postgres-capacity.sh"
 }
 
@@ -276,7 +287,7 @@ rtc_probe_azure_postgresql_size() {
 rtc_test_azure_postgresql_app() (
     local test_file="$1" environment_path="$2" workspace_name="$3" kubernetes_namespace="$4"
     local size="${RTC_POSTGRES_TEST_SIZE:-S}" deadline="${RTC_POSTGRES_TEST_DEADLINE_EPOCH:-}"
-    local test_harness script_dir workspace_root
+    local test_harness script_dir workspace_root invocation_id
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
     workspace_root="${GITHUB_WORKSPACE:-$(cd "$script_dir/../.." && pwd)}"
     workspace_root="$(cd "$workspace_root" && pwd)" || return 1
@@ -286,6 +297,10 @@ rtc_test_azure_postgresql_app() (
         return 1
     fi
     test_file="$test_harness"
+    if ! invocation_id="$(python3 -c 'import secrets; print(secrets.token_hex(16))')"; then
+        echo "Error: Could not generate a unique PostgreSQL test application name." >&2
+        return 1
+    fi
     local status attempt candidate alternate=""
     local size_list="${RTC_POSTGRES_TEST_SIZES-S,M}"
     local -a allowed_sizes
@@ -326,7 +341,7 @@ rtc_test_azure_postgresql_app() (
         status=0
         RTC_POSTGRES_CAPACITY_RECOVERY=1 RTC_POSTGRES_TEST_DEADLINE_EPOCH="$deadline" \
             rtc_deploy_and_assert_test_app "$test_file" Radius.Data/postgreSqlDatabases \
-                "recipepacktest-pg-$size-$attempt" "$environment_path" "$workspace_name" "$kubernetes_namespace" \
+                "rtcpg-$invocation_id-$size-$attempt" "$environment_path" "$workspace_name" "$kubernetes_namespace" \
                 --parameters "postgresSize=$size" || status=$?
         if ((status == 0)); then return 0; fi
         if ((status != 42 || attempt == 2)); then

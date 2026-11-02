@@ -167,8 +167,12 @@ output="$(
 
 jq -e '
     .version == 1 and .status == "selected" and .location == "westus3" and
+    .settings == {version:"16",storageSizeGB:32,highAvailability:"Disabled",
+        geoRedundantBackup:"Disabled",availabilityZone:-1,publicNetworkAccess:"Enabled",
+        activeDirectoryAuth:"Enabled",passwordAuth:"Enabled"} and
     .postgres == {size:"M",skuName:"Standard_D2ds_v5",tier:"GeneralPurpose"} and
     (.attempts | length == 5) and
+    all(.attempts[]; .cleanup == "confirmed") and
     ([.attempts[0:4][] | [.region,.size,.skuName,.tier,.outcome]] ==
         [["westus3","S","Standard_B1ms","Burstable","capacity_exhausted"],
          ["centralus","S","Standard_B1ms","Burstable","capacity_exhausted"],

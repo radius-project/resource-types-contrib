@@ -957,9 +957,41 @@ DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres >/dev/nul
     fail "default recovery must remain available"
 assert_eq 2 "$(grep '^rad deploy ' "$CALL_LOG" | sed -E 's/.*applicationName=([^ ]+).*/\1/' | sort -u | wc -l | tr -d ' ')" \
     "recovery application names must be distinct"
+assert_eq 1 "$(grep '^rad deploy ' "$CALL_LOG" |
+    sed -nE 's/.*applicationName=rtcpg-([a-f0-9]{32})-[SM]-[12]-.*/\1/p' | sort -u | wc -l | tr -d ' ')" \
+    "recovery must retain its per-invocation identity"
 awk '/^rad app delete / { cleaned++ } /^az resource list / { snapshots++ }
     /^rad deploy / { attempts++; if (attempts == 2 && (cleaned != 1 || snapshots < 3)) exit 1 }' "$CALL_LOG" ||
     fail "recovery must follow Radius cleanup and Azure deletion verification"
+
+: >"$CALL_LOG"
+export REAL_DATE
+REAL_DATE="$(command -v date)"
+cat >"$MOCK_BIN/date" <<'EOF'
+#!/bin/bash
+if [[ "$*" == '+%s' ]]; then
+    echo 1700000000
+else
+    exec "$REAL_DATE" "$@"
+fi
+EOF
+chmod +x "$MOCK_BIN/date"
+run_postgres >"$TEST_ROOT/parallel-postgres-1.log" 2>&1 &
+first_postgres=$!
+run_postgres >"$TEST_ROOT/parallel-postgres-2.log" 2>&1 &
+second_postgres=$!
+wait "$first_postgres" || fail "first concurrent PostgreSQL test failed"
+wait "$second_postgres" || fail "second concurrent PostgreSQL test failed"
+rm -f -- "$MOCK_BIN/date"
+parallel_names="$(sed -nE 's/^rad deploy .*applicationName=([^ ]+).*/\1/p' "$CALL_LOG")"
+assert_eq 2 "$(sort -u <<<"$parallel_names" | wc -l | tr -d ' ')" \
+    "parallel PostgreSQL applications must have distinct names"
+while IFS= read -r name; do
+    [[ "$name" =~ ^rtcpg-[a-f0-9]{32}-S-1-1700000000-[0-9]+$ && ${#name} -le 63 ]] ||
+        fail "concurrent PostgreSQL name must include a unique invocation and remain within 63 characters"
+    grep -Fq "rad app delete $name --workspace " "$CALL_LOG" ||
+        fail "each concurrent test must delete its own application"
+done <<<"$parallel_names"
 
 RADIUS_POSTGRES_CAPACITY_ERROR='Error: {"code":"RecipeDeploymentFailed","message":"Recipe deployment failed","details":[{"code":"DeploymentFailed","details":[{"code":"ResourceDeploymentFailure","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg","message":"{\"code\":\"SkuNotAvailable\",\"message\":\"capacity unavailable\"}"}]}]}'
 : >"$CALL_LOG"
@@ -1137,6 +1169,49 @@ PY
     if grep -q '^az postgres flexible-server create ' "$CALL_LOG"; then
         fail "$slow_command uncertainty must block another probe"
     fi
+done
+
+# Initial and recovery probes share the absolute work deadline plus cleanup reserve.
+for initial in 0 1; do
+    : >"$CALL_LOG"
+    rm -f -- "$SLOW_COMMAND_PIDS"
+    started_seconds=$SECONDS
+    if (
+        export RTC_POSTGRES_TEST_DEADLINE_EPOCH="$(( $(date +%s) + 2 ))"
+        export RTC_POSTGRES_CLEANUP_RESERVE_SECONDS=2
+        export SLOW_COMMAND='az postgres flexible-server show' SLOW_AFTER=2
+        export DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR"
+        if [[ "$initial" == 1 ]]; then
+            AZURE_RESOURCE_GROUP=rg RTC_TEST_PLATFORM=azure run_lib rtc_test_azure_postgresql_app \
+                "$POSTGRES_TEST_APP_BICEP" /envs/myenv myws my-ns
+        else
+            run_postgres
+        fi
+    ) >"$TEST_ROOT/probe-cleanup-deadline.log" 2>&1; then
+        fail "uncertain probe cleanup must fail"
+    fi
+    ((SECONDS - started_seconds < 8)) || fail "probe cleanup exceeded the work deadline plus reserve"
+    [[ -s "$SLOW_COMMAND_PIDS" ]] || fail "probe must exercise slow ownership confirmation"
+    assert_eq "$((1 - initial))" "$(grep -c '^rad deploy ' "$CALL_LOG" || true)" \
+        "uncertain initial or recovery cleanup must block the next deployment"
+done
+: >"$CALL_LOG"
+started_seconds=$SECONDS
+if SLOW_COMMAND='az postgres flexible-server show' SLOW_AFTER=2 \
+    RTC_POSTGRES_CLEANUP_RESERVE_SECONDS=2 RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS=1 \
+    AZURE_RESOURCE_GROUP=rg run_lib rtc_probe_azure_postgresql_size S "$(( $(date +%s) + 30 ))" \
+    >"$TEST_ROOT/probe-short-delete.log" 2>&1; then
+    fail "short probe delete limit must fail on stalled ownership"
+fi
+((SECONDS - started_seconds < 5)) || fail "probe must honor a smaller configured delete timeout"
+for setting in RTC_POSTGRES_CLEANUP_RESERVE_SECONDS= RTC_POSTGRES_CLEANUP_RESERVE_SECONDS=0 \
+    RTC_POSTGRES_CLEANUP_RESERVE_SECONDS=901 RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS=0; do
+    : >"$CALL_LOG"
+    if (
+        export "${setting?}"
+        AZURE_RESOURCE_GROUP=rg run_lib rtc_probe_azure_postgresql_size S "$(( $(date +%s) + 30 ))"
+    ) >/dev/null 2>&1; then fail "invalid probe cleanup settings must fail"; fi
+    [[ ! -s "$CALL_LOG" ]] || fail "invalid cleanup settings must fail before Azure reads"
 done
 
 # Exercise the actual single-entry caller with the same mock cloud commands.

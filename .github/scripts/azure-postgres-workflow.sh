@@ -12,6 +12,8 @@
 
 set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=.github/scripts/lib-azure-postgres-test.sh
+source "$script_dir/lib-azure-postgres-test.sh"
 
 validate_run_context() {
     run_id="${GITHUB_RUN_ID:-}"
@@ -176,11 +178,17 @@ write_failed_selection() {
         (.attempts | all(.[]; (.region | type == "string") and (.size | type == "string") and
             (.skuName | type == "string") and (.tier | type == "string") and
             (.outcome | type == "string") and (.errorCode | type == "string") and
-            (.durationSeconds | type == "number")))
+            (.durationSeconds | type == "number") and
+            (.cleanup == "not_required" or .cleanup == "confirmed" or
+             .cleanup == "failed" or .cleanup == "uncertain")))
     ' "$RTC_AZURE_SELECTION_FILE" >/dev/null 2>&1; then
-        jq --arg location "$location" --argjson fallbackDeadline "$deadline" '
-            .status = (if .status == "unsupported" then "unsupported" else "probe_error" end) |
+        jq --arg location "$location" --argjson fallbackDeadline "$deadline" \
+            --argjson settings "$(rtc_postgres_test_settings)" '
+            .status = (if any(.attempts[]; .cleanup == "failed") then "probe_error"
+                elif .status == "unsupported" or .status == "deadline_exceeded" then .status
+                else "probe_error" end) |
             .location = $location |
+            .settings = $settings |
             .deadlineEpochSeconds =
                 (if (.deadlineEpochSeconds | type == "number" and floor == . and . > 0 and . < 100000000000)
                  then .deadlineEpochSeconds else $fallbackDeadline end) |
@@ -191,8 +199,9 @@ write_failed_selection() {
         }
     else
         jq -n --arg location "$location" --argjson deadline "$deadline" \
+            --argjson settings "$(rtc_postgres_test_settings)" \
             '{version:1,status:"probe_error",location:$location,attempts:[],
-              deadlineEpochSeconds:$deadline}' >"$temporary" || {
+              deadlineEpochSeconds:$deadline,settings:$settings}' >"$temporary" || {
             rm -f -- "$temporary"
             return 1
         }
@@ -318,9 +327,9 @@ case "${1:-}" in
             "## PostgreSQL capacity selection\n",
             ("Final selection status: **" + (.status | cell) + "**\n"),
             ("Shared work deadline (Unix seconds): " + (.deadlineEpochSeconds | cell) + "\n"),
-            "| Region | Size | SKU | Tier | Outcome | Error code | Duration (s) |",
-            "| --- | --- | --- | --- | --- | --- | --- |",
-            (.attempts[] | "| " + ([.region,.size,.skuName,.tier,.outcome,.errorCode,.durationSeconds]
+            "| Region | Size | SKU | Tier | Outcome | Error code | Duration (s) | Cleanup |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+            (.attempts[] | "| " + ([.region,.size,.skuName,.tier,.outcome,.errorCode,.durationSeconds,.cleanup]
                 | map(cell) | join(" | ")) + " |")
         ' "$RTC_AZURE_SELECTION_FILE" >>"$GITHUB_STEP_SUMMARY"
         ;;

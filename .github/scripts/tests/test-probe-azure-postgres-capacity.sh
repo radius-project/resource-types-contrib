@@ -40,6 +40,11 @@ CATALOG_JSON="$(jq -cn '{supportedServerVersions:[{name:"16",status:null}],suppo
 cat >"$TEST_ROOT/bin/az" <<'EOF'
 #!/bin/bash
 set -euo pipefail
+if [[ "$1" == login ]]; then
+    [[ "$*" == *'--federated-token test-probe-assertion'* ]] || exit 99
+    exit 0
+fi
+if [[ "$1 ${2:-}" == "account set" ]]; then exit 0; fi
 if [[ "$*" == "postgres flexible-server create --help" ]]; then
     echo az-help >>"$CALL_LOG"
     [[ -z "${CLI_HELP_SLEEP:-}" ]] || sleep "$CLI_HELP_SLEEP"
@@ -65,6 +70,7 @@ case "$3" in
         exit 0 ;;
     delete)
         if [[ -n "${INTERRUPTED_DELETE_STATUS:-}" ]]; then
+            [[ "${DELETE_REMOVES_BEFORE_STATUS:-0}" != 1 ]] || rm -f "$SERVER_STATE"
             echo '(ResourceNotFound) absent' >&2
             exit "$INTERRUPTED_DELETE_STATUS"
         fi
@@ -243,7 +249,8 @@ done
 password="$(grep -oE -- '--admin-password [^ ]+' "$CALL_LOG" | cut -d' ' -f2)"
 ! grep -qF "$password" <<<"$output" || fail "password leaked to output"
 ! grep -qF "$password" "$RTC_POSTGRES_PROBE_RESULT_FILE" || fail "password leaked to result"
-jq -e '.outcome == "available" and .errorCode == ""' "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "success record"
+jq -e '.outcome == "available" and .errorCode == "" and .cleanup == "confirmed"' \
+    "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "success record"
 reset ok
 expect_status 0 env OLD_CLI=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
 grep -q -- '--high-availability Disabled' "$CALL_LOG" || fail "old CLI HA option"
@@ -323,7 +330,8 @@ for result in ok capacity timeout; do
     reset "$result"
     expect_status 1 env DELETE_FAILS=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
     [[ "$(count create)" == 1 ]] || fail "cleanup failure must stop"
-    jq -e '.errorCode == "CleanupFailed"' "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "cleanup result"
+    jq -e '.errorCode == "CleanupFailed" and .cleanup == "failed"' \
+        "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "cleanup result"
 done
 for setting in SERVER_REMAINS=1 SHOW_ERROR=AuthorizationFailed; do
     reset ok
@@ -332,7 +340,8 @@ done
 reset timeout
 expect_status 3 run_probe
 [[ "$(count delete)" == 1 && "$(count show)" == 3 ]] || fail "timeout cleanup"
-jq -e '.outcome == "timeout" and .errorCode == "CreateTimeout"' "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "timeout result"
+jq -e '.outcome == "timeout" and .errorCode == "CreateTimeout" and .cleanup == "uncertain"' \
+    "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "timeout result"
 grep -qE '^timeout --process-tree (89[0-9]|900)$' "$CALL_LOG" || fail "bounded create"
 reset slow
 expect_status 3 env RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS=2 AZURE_RESOURCE_GROUP=rg \
@@ -344,6 +353,16 @@ expect_status 1 env RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS=1 DELETE_SLEEP=20 
     AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
 [[ "$(count create)" == 1 ]] || fail "delete timeout must prevent another create"
 jq -e '.errorCode == "CleanupFailed"' "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "delete timeout result"
+for status in 124 137; do
+    reset capacity ok
+    expect_status 1 env INTERRUPTED_DELETE_STATUS="$status" DELETE_REMOVES_BEFORE_STATUS=1 \
+        RTC_POSTGRES_PROBE_ATTEMPTS=2 RTC_POSTGRES_PROBE_WAIT_SECONDS=0 \
+        AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+    [[ "$(count create)" == 1 && "$(count delete)" == 1 && ! -f "$SERVER_STATE" ]] ||
+        fail "timed-out delete must prevent another allocation even after removing the server"
+    jq -e '.outcome == "probe_error" and .errorCode == "CleanupFailed" and .cleanup == "failed"' \
+        "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "timed-out deletion must not confirm cleanup"
+done
 
 for setting in EXISTING_SERVER=1 PRECHECK_ERROR=AuthorizationFailed; do
     reset ok
@@ -392,7 +411,7 @@ for result in other timeout; do
         grep -Fq "rtc-probe-owner=$owner" <<<"$output" || fail "timeout must report the expected ownership tag"
         grep -Fq 'does not rule out later creation' <<<"$output" ||
             fail "timeout must not claim immediate absence prevents later creation"
-        jq -e '.outcome == "timeout" and .errorCode == "CreateTimeout"' \
+        jq -e '.outcome == "timeout" and .errorCode == "CreateTimeout" and .cleanup == "uncertain"' \
             "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "absent timeout result"
     fi
 done
@@ -448,7 +467,7 @@ PY
         fail "interrupted create must report its expected ownership tag"
     grep -Fq 'does not rule out later creation' <<<"$output" ||
         fail "interrupted create must warn about late creation"
-    jq -e '.outcome == "probe_error" and .errorCode == "CreateInterrupted"' \
+    jq -e '.outcome == "probe_error" and .errorCode == "CreateInterrupted" and .cleanup == "uncertain"' \
         "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null ||
         fail "interrupted create result: $(cat "$RTC_POSTGRES_PROBE_RESULT_FILE"); output: $output"
     grep -Fq 'Recovery target:' <<<"$output" || fail "recovery target must be logged before create"
@@ -466,6 +485,8 @@ for interrupted_status in 130 143; do
             AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
         if [[ "$stage" == pre ]]; then
             [[ "$(count create)" == 0 ]] || fail "interrupted absence check must block creation"
+            jq -e '.cleanup == "not_required"' "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null ||
+                fail "no allocation must report no cleanup required"
         else
             [[ "$(count create)" == 1 ]] || fail "interrupted cleanup must block another allocation"
             jq -e '.outcome == "probe_error" and .errorCode == "CleanupFailed"' \
@@ -488,7 +509,7 @@ for result in interrupted-int interrupted-term interrupted-capacity-int interrup
         [[ "$(count create)" == 1 ]] || fail "interrupted child must block another allocation"
         [[ "$absent" == 1 || "$(count delete)" == 1 ]] ||
             fail "interrupted child must still clean up its owned partial server"
-        jq -e '.outcome == "probe_error" and .errorCode == "CreateInterrupted"' \
+        jq -e '.outcome == "probe_error" and .errorCode == "CreateInterrupted" and .cleanup == "uncertain"' \
             "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null ||
             fail "interrupted child result: $(cat "$RTC_POSTGRES_PROBE_RESULT_FILE"); output: $output"
         grep -Fq 'does not rule out later creation' <<<"$output" ||
@@ -536,7 +557,8 @@ for field in Version Tier Sku Storage; do
     expect_status 4 env CATALOG_JSON="$catalog" AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \
         PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
     [[ "$(count create)" == 0 ]] || fail "unsupported $field must not allocate"
-    jq -e --arg code "Unsupported$field" '.outcome == "unsupported" and .errorCode == $code' \
+    jq -e --arg code "Unsupported$field" \
+        '.outcome == "unsupported" and .errorCode == $code and .cleanup == "not_required"' \
         "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "unsupported $field result"
 done
 for catalog in 'not json' '[]' '[{}]' \
@@ -563,6 +585,50 @@ reset ok
 expect_status 3 env CATALOG_SLEEP=20 RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS=1 \
     AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
 [[ "$(count create)" == 0 ]] || fail "catalog timeout must not allocate"
+
+# Renew on every real wrapper call, including help with discarded stderr.
+mv "$TEST_ROOT/bin/az" "$TEST_ROOT/bin/provider-az"
+cp "$REPO_ROOT/.github/scripts/azure-cli-with-refresh.sh" "$TEST_ROOT/bin/az"
+cat >"$TEST_ROOT/bin/curl" <<'EOF'
+#!/bin/bash
+echo '{"value":"test-probe-assertion"}'
+EOF
+cat >"$TEST_ROOT/bin/date" <<'EOF'
+#!/bin/bash
+now=1000000
+[[ ! -f "$LOGIN_CLOCK" ]] || read -r now <"$LOGIN_CLOCK"
+echo $((now + 240)) >"$LOGIN_CLOCK"
+echo "$now"
+EOF
+chmod +x "$TEST_ROOT/bin/"*
+export RTC_AZURE_CLI="$TEST_ROOT/bin/provider-az" RTC_AZURE_LOGIN_STAMP="$TEST_ROOT/login-stamp"
+export LOGIN_CLOCK="$TEST_ROOT/login-clock"
+export AZURE_CLIENT_ID=client AZURE_TENANT_ID=tenant
+export ACTIONS_ID_TOKEN_REQUEST_URL=https://example.invalid/token ACTIONS_ID_TOKEN_REQUEST_TOKEN=fake-request
+for result in ok capacity mixed; do
+    reset "$result"
+    expected=0
+    [[ "$result" != capacity ]] || expected=2
+    [[ "$result" != mixed ]] || expected=1
+    expect_status "$expected" env RTC_POSTGRES_PROBE_ATTEMPTS=1 \
+        AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 AZURE_SUBSCRIPTION_ID=subscription \
+        PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+    [[ "$(count create)" == 1 && "$(count delete)" == 1 ]] || fail "renewal must not prevent owned cleanup"
+    [[ "$(grep -c '^::add-mask::test-probe-assertion$' <<<"$output")" == 7 ]] ||
+        fail "every renewal must deliver its mask outside captured help and provider diagnostics"
+    ! grep -Fq test-probe-assertion "$RTC_POSTGRES_PROBE_RESULT_FILE" "$CALL_LOG" ||
+        fail "renewal token must not enter artifacts or call logs"
+    ! grep -v '^::add-mask::test-probe-assertion$' <<<"$output" | grep -Fq test-probe-assertion ||
+        fail "renewal token must appear only in mask commands"
+    jq -e '.cleanup == "confirmed"' "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null ||
+        fail "renewal must not change cleanup evidence"
+    if [[ "$result" == mixed ]]; then
+        jq -e '.outcome == "probe_error" and (.errorCode | contains("AuthorizationFailed"))' \
+            "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "renewal must not hide mixed provider errors"
+    fi
+done
+mv "$TEST_ROOT/bin/provider-az" "$TEST_ROOT/bin/az"
+rm -f -- "$TEST_ROOT/bin/date"
 
 python3 - "$REPO_ROOT/.github/scripts/run-bounded-command.py" <<'PY'
 import signal
@@ -614,7 +680,8 @@ PY
 for setting in RTC_POSTGRES_TEST_SIZE=L RTC_POSTGRES_TEST_SIZE=bad RTC_POSTGRES_TEST_SIZE= \
     RTC_POSTGRES_PROBE_ATTEMPTS=0 RTC_POSTGRES_PROBE_ATTEMPTS=4 RTC_POSTGRES_PROBE_ATTEMPTS=99999999999999999 \
     RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS=0 RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS=901 \
-    RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS=-1 RTC_POSTGRES_PROBE_WAIT_SECONDS=601; do
+    RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS=-1 RTC_POSTGRES_PROBE_WAIT_SECONDS=601 \
+    RTC_POSTGRES_PROBE_CLEANUP_DEADLINE_EPOCH=bad; do
     reset ok
     expect_status 1 env "$setting" AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
     [[ ! -s "$CALL_LOG" ]] || fail "invalid input must not call Azure: $setting"
