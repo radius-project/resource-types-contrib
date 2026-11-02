@@ -703,6 +703,36 @@ DEPLOY_FAILURES=1 DEPLOY_ERROR="$RADIUS_POSTGRES_CAPACITY_ERROR" run_postgres >/
     fail "Radius RecipeDeploymentFailed wrapper must permit capacity recovery"
 assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "Radius wrapper recovery attempts"
 
+for capacity_error in "$POSTGRES_CAPACITY_ERROR" "$RADIUS_POSTGRES_CAPACITY_ERROR"; do
+    printf '%s\n' "$capacity_error" >"$TEST_ROOT/capacity-error.log"
+    if run_lib rtc_deployment_retry_reason "$TEST_ROOT/capacity-error.log" >/dev/null; then
+        fail "capacity errors must not qualify as transport or provider download retries"
+    fi
+done
+printf '%s\n' "$WRAPPED_TERRAFORM_ERROR" >"$TEST_ROOT/provider-error.log"
+if run_lib rtc_has_postgresql_capacity_failure "$TEST_ROOT/provider-error.log"; then
+    fail "Terraform provider download resets must not qualify as PostgreSQL capacity errors"
+fi
+
+: >"$CALL_LOG"
+DEPLOY_FAILURES=1 DEPLOY_ERROR="$WRAPPED_TERRAFORM_ERROR" run_postgres >"$TEST_ROOT/postgres-provider-output" ||
+    fail "PostgreSQL tests must preserve the Terraform provider download retry"
+assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "PostgreSQL provider download retry attempts"
+assert_eq 1 "$(grep '^rad deploy ' "$CALL_LOG" | sort -u | wc -l | tr -d ' ')" \
+    "provider download retries must preserve the app name and size"
+assert_eq 1 "$(grep -c '^rad app delete ' "$CALL_LOG")" "provider retries must share one cleanup"
+grep -q 'Terraform provider download connection reset; retrying' "$TEST_ROOT/postgres-provider-output" ||
+    fail "PostgreSQL provider retries must log their reason"
+
+: >"$CALL_LOG"
+if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$WRAPPED_TERRAFORM_ERROR" run_postgres >/dev/null 2>&1; then
+    fail "exhausted Terraform provider retries must fail PostgreSQL"
+fi
+assert_eq 3 "$(grep -c '^rad deploy ' "$CALL_LOG")" "PostgreSQL provider retry limit"
+if grep -q 'postgresSize=M' "$CALL_LOG"; then
+    fail "provider download exhaustion must not trigger capacity size recovery"
+fi
+
 : >"$CALL_LOG"
 DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" RTC_POSTGRES_TEST_SIZE=M run_postgres >/dev/null ||
     fail "an M selection must recover with untried S"
