@@ -53,6 +53,18 @@ case "$3" in
         [[ -n "${SERVER_REMAINS:-}" ]] || rm -f "$SERVER_STATE"
         exit 0 ;;
     show)
+        if [[ -n "${MIXED_SHOW_STAGE:-}" ]] && {
+            [[ "$MIXED_SHOW_STAGE" == pre && ! -f "$SERVER_STATE.attempted" ]] ||
+            [[ "$MIXED_SHOW_STAGE" == ownership && -f "$SERVER_STATE" ]] ||
+            [[ "$MIXED_SHOW_STAGE" == deleted && -f "$SERVER_STATE.attempted" && ! -f "$SERVER_STATE" ]]
+        }; then
+            if [[ "${MIXED_FORMAT:-plain}" == json ]]; then
+                echo '{"error":{"code":"ResourceNotFound","message":"no server","details":[{"message":"Authorization denied."}]}}' >&2
+            else
+                printf '%s\n' 'ERROR: (ResourceNotFound) no server' 'ERROR: Authorization denied.' >&2
+            fi
+            exit 1
+        fi
         if [[ ! -f "$SERVER_STATE.attempted" ]]; then
             [[ -z "${PRECHECK_SLEEP:-}" ]] || sleep "$PRECHECK_SLEEP"
             if [[ -n "${EXISTING_SERVER:-}" ]]; then echo '{"tags":{}}'; exit 0; fi
@@ -91,6 +103,9 @@ case "$result" in
     busy) echo 'ERROR: (ServerIsBusy) Busy.' >&2 ;;
     json) echo '{"error":{"code":"SkuNotAvailable","message":"Unavailable"}}' >&2 ;;
     mixed) printf '%s\n' '(SkuNotAvailable) Unavailable.' '(AuthorizationFailed) Denied.' >&2 ;;
+    uncoded) printf '%s\n' 'ERROR: (SkuNotAvailable) SKU capacity unavailable' \
+        'ERROR: The client is not authorized to perform this operation.' >&2 ;;
+    uncoded-json) echo '{"error":{"code":"SkuNotAvailable","message":"Unavailable","details":[{"message":"Authorization denied."}]}}' >&2 ;;
     misleading) echo '(AuthorizationFailed) Cannot check SkuNotAvailable.' >&2 ;;
     text) echo 'CLI failed while reading SkuNotAvailable text.' >&2 ;;
     quota) echo '(QuotaExceeded) Quota exceeded.' >&2 ;;
@@ -199,7 +214,7 @@ grep -q 'This is an Azure capacity limit, not a recipe failure' <<<"$output" || 
 reset json
 expect_status 2 env RTC_POSTGRES_PROBE_ATTEMPTS=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
 
-for result in other misleading text quota policy mixed; do
+for result in other misleading text quota policy mixed uncoded uncoded-json; do
     reset "$result" ok
     expect_status 1 run_probe
     [[ "$(count create)" == 1 && "$(count show)" == 3 ]] || fail "$result must stop after confirmed cleanup"
@@ -284,6 +299,42 @@ for result in other timeout; do
         jq -e '.outcome == "timeout" and .errorCode == "CreateTimeout"' \
             "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "absent timeout result"
     fi
+done
+reset slow ok
+expect_status 124 "$REAL_TIMEOUT" --signal=TERM --kill-after=30 5 \
+    env CREATE_ABSENT=1 RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS=15 \
+    RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS=10 AZURE_RESOURCE_GROUP=rg \
+    AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+[[ "$(count create)" == 1 && "$(count delete)" == 0 && "$(count show)" == 2 ]] ||
+    fail "interrupted create must check ownership without deletion or another allocation"
+server="$(grep '^az postgres flexible-server create ' "$CALL_LOG" | grep -oE -- '--name [^ ]+' | cut -d' ' -f2)"
+grep -Fq "probe server '$server' in resource group 'rg'" <<<"$output" ||
+    fail "interrupted create must report the exact recovery target"
+grep -Fq "rtc-probe-owner=${server#pgprobe-}" <<<"$output" ||
+    fail "interrupted create must report its expected ownership tag"
+grep -Fq 'does not rule out later creation' <<<"$output" ||
+    fail "interrupted create must warn about late creation"
+jq -e '.outcome == "probe_error" and .errorCode == "CreateInterrupted"' \
+    "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "interrupted create result"
+grep -Fq 'Recovery target:' <<<"$output" || fail "recovery target must be logged before create"
+for format in plain json; do
+    for stage in pre ownership deleted; do
+        reset ok ok
+        expect_status 1 env MIXED_SHOW_STAGE="$stage" MIXED_FORMAT="$format" \
+            AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+        if [[ "$stage" == pre ]]; then
+            [[ "$(count create)" == 0 && "$(count delete)" == 0 ]] ||
+                fail "mixed absence errors must not authorize allocation or deletion"
+            jq -e '.errorCode == "ServerAbsenceUnknown"' "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null ||
+                fail "mixed pre-create read must report unknown absence"
+        else
+            [[ "$(count create)" == 1 ]] || fail "mixed cleanup errors must stop allocation"
+            [[ "$stage" != ownership || "$(count delete)" == 0 ]] ||
+                fail "mixed ownership read must not authorize deletion"
+            jq -e '.errorCode == "CleanupFailed"' "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null ||
+                fail "mixed cleanup errors must not report confirmed cleanup"
+        fi
+    done
 done
 reset ok
 expect_status 0 env PRECHECK_SLEEP=1 OWNERSHIP_SLEEP=1 \

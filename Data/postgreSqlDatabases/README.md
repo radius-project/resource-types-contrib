@@ -66,8 +66,12 @@ probe without another allocation.
 
 A timed-out create can finish after the client exits. An immediate
 `ResourceNotFound` response does not rule out later creation. On create
-timeout, the probe prints the exact server name, resource group, and expected
-`rtc-probe-owner` tag. Use `az postgres flexible-server show --resource-group
+timeout or interruption during creation, the probe prints the exact server
+name, resource group, and expected `rtc-probe-owner` tag. It also logs this
+non-secret recovery target before creation, in case the process is killed
+before cleanup can run. Mixed or uncoded failure records cannot authorize
+another allocation or confirm absence during cleanup.
+Use `az postgres flexible-server show --resource-group
 <group> --name <server> --output json` with the original subscription to check
 the target again. Delete it only after its `tags["rtc-probe-owner"]` value
 matches the printed tag. If ownership cannot be verified, do not delete it.

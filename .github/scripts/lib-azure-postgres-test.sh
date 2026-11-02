@@ -55,11 +55,46 @@ rtc_postgres_positive_limit() {
 
 # Read Azure CLI codes, not words in an error message. Reject mixed failures.
 rtc_postgres_error_codes() {
-    local file="$1"
-    if jq -e . "$file" >/dev/null 2>&1; then
-        jq -r '.. | objects | .code? // empty |
-            if type == "string" and test("^[A-Za-z][A-Za-z0-9]*$") then . else "UnknownError" end' "$file"
-    else
-        sed -nE 's/^(ERROR: )?\(([A-Za-z][A-Za-z0-9]*)\).*/\2/p' "$file"
-    fi
+    python3 - "$1" <<'PY'
+import json
+import re
+import sys
+
+with open(sys.argv[1], encoding="utf-8", errors="replace") as log:
+    text = log.read()
+decoder = json.JSONDecoder()
+codes = set()
+
+def visit(value):
+    if isinstance(value, list) and value:
+        for item in value:
+            visit(item)
+    elif isinstance(value, dict):
+        code = value.get("code")
+        children = [value[key] for key in ("error", "details", "innererror") if key in value]
+        if isinstance(code, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9]*", code):
+            codes.add(code)
+        elif code is not None or not children or "message" in value:
+            codes.add("UnknownError")
+        for child in children:
+            visit(child)
+    else:
+        codes.add("UnknownError")
+
+while text.strip():
+    text = re.sub(r"^(?:error|fatal|failure|failed):\s*", "", text.lstrip(), count=1, flags=re.I)
+    if text.startswith(("{", "[")):
+        try:
+            value, end = decoder.raw_decode(text)
+            visit(value)
+            text = text[end:]
+            continue
+        except ValueError:
+            pass
+    line, _, text = text.partition("\n")
+    match = re.fullmatch(r"\(([A-Za-z][A-Za-z0-9]*)\)(?:\s+.*)?", line.strip())
+    codes.add(match[1] if match else "UnknownError")
+
+print("\n".join(sorted(codes)))
+PY
 }

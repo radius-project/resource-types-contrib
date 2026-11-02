@@ -53,8 +53,14 @@ fi
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/rtc-postgres-probe-XXXXXX")"
 server_name=""
 probe_owner=""
+create_in_flight=false
 outcome="probe_error"
 error_code="UnknownError"
+
+report_uncertain_create() {
+    echo "Error: create request timed out or was interrupted for probe server '$server_name' in resource group '$resource_group' (ownership tag rtc-probe-owner=$probe_owner)." >&2
+    echo "A current ResourceNotFound response does not rule out later creation. Check this target again and verify its ownership tag before deletion." >&2
+}
 
 delete_server() {
     local status=0 remaining cleanup_deadline codes
@@ -96,6 +102,10 @@ delete_server() {
 finish() {
     local status=$?
     trap - EXIT INT TERM
+    if [[ "$create_in_flight" == true ]]; then
+        report_uncertain_create
+        outcome="probe_error"; error_code="CreateInterrupted"; status=1
+    fi
     if [[ -n "$server_name" ]] && ! delete_server; then
         echo "Error: probe server '$server_name' deletion was not confirmed." >&2
         outcome="probe_error"; error_code="CleanupFailed"; status=1
@@ -190,9 +200,11 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
     server_name="$candidate_name"
     password="P$(openssl rand -hex 16)a1!"
     echo "==> PostgreSQL probe $attempt/$attempts: $postgres_sku ($postgres_tier) in $location" >&2
+    echo "==> Recovery target: probe server '$server_name' in resource group '$resource_group' (ownership tag rtc-probe-owner=$probe_owner). Verify this tag before any later deletion." >&2
     status=0
     # None enables public networking without a firewall rule. It does not disable
     # TLS. Leave zone unset for automatic placement, as in the pack.
+    create_in_flight=true
     timeout --signal=KILL "$limit" az postgres flexible-server create \
         "${subscription_args[@]}" --resource-group "$resource_group" --name "$server_name" \
         --location "$location" --tier "$postgres_tier" --sku-name "$postgres_sku" \
@@ -203,9 +215,9 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
         --yes --only-show-errors --output none > /dev/null 2>"$work_dir/create-error" || status=$?
     unset password
     if ((status == 124 || status == 137)); then
-        echo "Error: create request timed out for probe server '$server_name' in resource group '$resource_group' (ownership tag rtc-probe-owner=$probe_owner)." >&2
-        echo "A current ResourceNotFound response does not rule out later creation. Check this target again and verify its ownership tag before deletion." >&2
+        report_uncertain_create
     fi
+    create_in_flight=false
     codes="$(rtc_postgres_error_codes "$work_dir/create-error")"
     if ! delete_server; then
         echo "Error: probe server '$server_name' deletion was not confirmed." >&2
