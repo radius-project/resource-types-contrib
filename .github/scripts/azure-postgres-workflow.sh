@@ -11,6 +11,7 @@
 # limitations under the License.
 
 set -euo pipefail
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 validate_run_context() {
     run_id="${GITHUB_RUN_ID:-}"
@@ -143,12 +144,138 @@ create_main_group() {
     echo "Resource group '$group' is ready"
 }
 
+fallback_location() {
+    local override="${REGION_OVERRIDE:-${RTC_AZURE_TEST_REGIONS:-}}"
+    if [[ "$override" =~ ^[a-z0-9]+(,[a-z0-9]+)*$ ]]; then
+        printf '%s\n' "${override%%,*}"
+    elif [[ "${AZURE_LOCATION:-}" =~ ^[a-z0-9]+$ ]]; then
+        printf '%s\n' "$AZURE_LOCATION"
+    elif [[ "${AZURE_FALLBACK_LOCATION:-}" =~ ^[a-z0-9]+$ ]]; then
+        printf '%s\n' "$AZURE_FALLBACK_LOCATION"
+    else
+        printf '%s\n' centralus
+    fi
+}
+
+write_failed_selection() {
+    local location="$1" deadline="$2" temporary
+    temporary="$(mktemp "${RTC_AZURE_SELECTION_FILE}.XXXXXX")" || return 1
+    if [[ -f "$RTC_AZURE_SELECTION_FILE" ]] && jq -e '
+        type == "object" and .version == 1 and
+        (.status == "selected" or .status == "capacity_exhausted" or
+         .status == "unsupported" or .status == "probe_error" or
+         .status == "deadline_exceeded") and
+        (.location | type == "string") and (.attempts | type == "array") and
+        (.attempts | all(.[]; (.region | type == "string") and (.size | type == "string") and
+            (.skuName | type == "string") and (.tier | type == "string") and
+            (.outcome | type == "string") and (.errorCode | type == "string") and
+            (.durationSeconds | type == "number")))
+    ' "$RTC_AZURE_SELECTION_FILE" >/dev/null 2>&1; then
+        jq --arg location "$location" --argjson fallbackDeadline "$deadline" '
+            .status = (if .status == "unsupported" then "unsupported" else "probe_error" end) |
+            .location = $location |
+            .deadlineEpochSeconds =
+                (if (.deadlineEpochSeconds | type == "number" and floor == . and . > 0 and . < 100000000000)
+                 then .deadlineEpochSeconds else $fallbackDeadline end) |
+            del(.postgres)
+        ' "$RTC_AZURE_SELECTION_FILE" >"$temporary" || {
+            rm -f -- "$temporary"
+            return 1
+        }
+    else
+        jq -n --arg location "$location" --argjson deadline "$deadline" \
+            '{version:1,status:"probe_error",location:$location,attempts:[],
+              deadlineEpochSeconds:$deadline}' >"$temporary" || {
+            rm -f -- "$temporary"
+            return 1
+        }
+    fi
+    mv -f -- "$temporary" "$RTC_AZURE_SELECTION_FILE"
+}
+
+select_context() {
+    local probe_group="$1" regions location fallback deadline selector_status deadline_seconds
+    local size_list size
+    local -a sizes normalized_sizes
+    : "${RTC_AZURE_SELECTION_FILE:?selection file is required}"
+    : "${GITHUB_ENV:?workflow environment file is required}"
+    fallback="$(fallback_location)"
+    mkdir -p "$(dirname "$RTC_AZURE_SELECTION_FILE")"
+    rm -f -- "$RTC_AZURE_SELECTION_FILE"
+    deadline_seconds="${RTC_POSTGRES_SELECTION_DEADLINE_SECONDS:-3600}"
+    if [[ ! "$deadline_seconds" =~ ^[1-9][0-9]{0,3}$ ]] || ((deadline_seconds > 3600)); then
+        deadline_seconds=3600
+    fi
+    deadline=$(( $(date +%s) + deadline_seconds ))
+    size_list="${RTC_POSTGRES_TEST_SIZES-S,M}"
+    if [[ ! "$size_list" =~ ^[SM](,[SM])*$ ]]; then
+        printf 'AZURE_LOCATION=%s\n' "$fallback" >>"$GITHUB_ENV"
+        write_failed_selection "$fallback" "$deadline" || return 1
+        echo "::error::Azure PostgreSQL size configuration is invalid; continuing unrelated entries in $fallback without PostgreSQL allocation."
+        return 1
+    fi
+    normalized_sizes=()
+    IFS=',' read -r -a sizes <<<"$size_list"
+    for size in "${sizes[@]}"; do
+        if [[ ! " ${normalized_sizes[*]} " == *" $size "* ]]; then
+            normalized_sizes+=("$size")
+        fi
+    done
+    size_list="$(IFS=','; echo "${normalized_sizes[*]}")"
+    export RTC_POSTGRES_TEST_SIZES="$size_list"
+    printf 'RTC_POSTGRES_TEST_SIZES=%s\n' "$size_list" >>"$GITHUB_ENV"
+    if [[ -n "${REGION_OVERRIDE:-}" ]]; then
+        export RTC_AZURE_TEST_REGIONS="$REGION_OVERRIDE"
+    fi
+    if regions="$(bash "$script_dir/azure-postgres-workflow.sh" regions)"; then
+        fallback="${regions%%,*}"
+        export RTC_AZURE_TEST_REGIONS="$regions"
+    else
+        regions="$fallback"
+        export RTC_AZURE_TEST_REGIONS="$regions"
+        printf 'AZURE_LOCATION=%s\n' "$fallback" >>"$GITHUB_ENV"
+        write_failed_selection "$fallback" "$deadline" || return 1
+        echo "::error::Azure PostgreSQL region configuration is invalid; continuing unrelated entries in $fallback without PostgreSQL allocation."
+        return 1
+    fi
+    if location="$(bash "$script_dir/select-azure-test-location.sh" "$probe_group")" &&
+        [[ "$location" =~ ^[a-z0-9]+$ && ",$regions," == *",$location,"* ]] &&
+        [[ -f "$RTC_AZURE_SELECTION_FILE" ]] && jq -e '
+            type == "object" and .version == 1 and
+            (.status == "selected" or .status == "capacity_exhausted" or
+             .status == "unsupported" or .status == "probe_error" or
+             .status == "deadline_exceeded") and
+            (.location | type == "string") and (.attempts | type == "array")
+        ' "$RTC_AZURE_SELECTION_FILE" >/dev/null 2>&1; then
+        printf 'AZURE_LOCATION=%s\n' "$location" >>"$GITHUB_ENV"
+        return 0
+    else
+        selector_status=$?
+    fi
+    printf 'AZURE_LOCATION=%s\n' "$fallback" >>"$GITHUB_ENV"
+    write_failed_selection "$fallback" "$deadline" || {
+        echo "::error::Azure PostgreSQL selection failed and its failure record could not be written."
+        return 1
+    }
+    echo "::error::Azure PostgreSQL capacity selection failed (status $selector_status); continuing unrelated entries in $fallback without PostgreSQL allocation."
+    return 1
+}
+
 case "${1:-}" in
+    select-context)
+        probe_group="${2:-}"
+        [[ -n "$probe_group" ]] || { echo "Error: probe resource group is required." >&2; exit 1; }
+        select_context "$probe_group"
+        ;;
     regions)
         if [[ -v RTC_AZURE_TEST_REGIONS ]]; then
             list="$RTC_AZURE_TEST_REGIONS"
         else
-            list="${AZURE_LOCATION:-westus3},${AZURE_FALLBACK_LOCATION:-eastus2},centralus"
+            regions=()
+            [[ -z "${AZURE_LOCATION:-}" ]] || regions+=("$AZURE_LOCATION")
+            [[ -z "${AZURE_FALLBACK_LOCATION:-}" ]] || regions+=("$AZURE_FALLBACK_LOCATION")
+            regions+=(centralus westus2)
+            list="$(IFS=','; echo "${regions[*]}")"
         fi
         [[ "$list" =~ ^[a-z0-9]+(,[a-z0-9]+)*$ ]] ||
             { echo "Error: invalid Azure region list." >&2; exit 1; }
@@ -175,7 +302,8 @@ case "${1:-}" in
         jq -er '
             if .version != 1 or (.attempts | type) != "array" or
                 (.status != "selected" and .status != "capacity_exhausted" and
-                 .status != "probe_error" and .status != "deadline_exceeded") then
+                 .status != "unsupported" and .status != "probe_error" and
+                 .status != "deadline_exceeded") then
                 error("invalid selection record")
             else . end |
             def cell: tostring | gsub("[^A-Za-z0-9_., -]"; "?");
@@ -255,5 +383,5 @@ case "${1:-}" in
         done <<<"$groups"
         exit "$cleanup_status"
         ;;
-    *) echo "Usage: $0 regions|summary|cleanup-probe [owned-group]|create-main <nightly|rc> <group> <location> <token>|cleanup-run-groups <nightly|rc>" >&2; exit 1 ;;
+    *) echo "Usage: $0 regions|select-context <probe-group>|summary|cleanup-probe [owned-group]|create-main <nightly|rc> <group> <location> <token>|cleanup-run-groups <nightly|rc>" >&2; exit 1 ;;
 esac

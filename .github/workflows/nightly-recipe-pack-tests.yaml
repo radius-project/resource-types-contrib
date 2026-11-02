@@ -253,17 +253,10 @@ jobs:
 
       # One 60-minute deadline covers PostgreSQL selection and deployment recovery.
       - name: Select Azure Test Context
+        id: azure_select_context
+        continue-on-error: true
         timeout-minutes: 76
-        run: |
-          set -euo pipefail
-          if [[ -n "$REGION_OVERRIDE" ]]; then
-            export RTC_AZURE_TEST_REGIONS="$REGION_OVERRIDE"
-          fi
-          regions="$(bash .github/scripts/azure-postgres-workflow.sh regions)"
-          export RTC_AZURE_TEST_REGIONS="$regions"
-          mkdir -p "$(dirname "$RTC_AZURE_SELECTION_FILE")"
-          LOCATION="$(bash .github/scripts/select-azure-test-location.sh "$AZURE_PROBE_RESOURCE_GROUP")"
-          echo "AZURE_LOCATION=$LOCATION" >> "$GITHUB_ENV"
+        run: bash .github/scripts/azure-postgres-workflow.sh select-context "$AZURE_PROBE_RESOURCE_GROUP"
         env:
           REGION_OVERRIDE: ${{ vars.RTC_AZURE_TEST_REGIONS }}
           AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
@@ -308,7 +301,7 @@ jobs:
       - name: Test unrelated Recipe Pack entries
         id: azure_pack_entries
         continue-on-error: true
-        timeout-minutes: 60
+        timeout-minutes: 68
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
@@ -318,7 +311,7 @@ jobs:
       - name: Test Azure Bicep recipes
         id: azure_bicep
         continue-on-error: true
-        timeout-minutes: 55
+        timeout-minutes: 75
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
@@ -344,7 +337,7 @@ jobs:
       - name: Test Azure Terraform recipes
         id: azure_terraform
         continue-on-error: true
-        timeout-minutes: 55
+        timeout-minutes: 75
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
@@ -384,12 +377,14 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           POSTGRES_OUTCOME: ${{ steps.azure_postgres_entry.outcome }}
+          SELECT_OUTCOME: ${{ steps.azure_select_context.outcome }}
           BICEP_OUTCOME: ${{ steps.azure_bicep.outcome }}
           TERRAFORM_OUTCOME: ${{ steps.azure_terraform.outcome }}
           PACK_DEPLOY_OUTCOME: ${{ steps.azure_pack_deploy.outcome }}
           PACK_ENTRIES_OUTCOME: ${{ steps.azure_pack_entries.outcome }}
         run: |
           bash .github/scripts/report-azure-test-failures.sh \
+            "PostgreSQL selection:$SELECT_OUTCOME" \
             "PostgreSQL entry:$POSTGRES_OUTCOME" \
             "Bicep recipes:$BICEP_OUTCOME" \
             "Terraform recipes:$TERRAFORM_OUTCOME" \

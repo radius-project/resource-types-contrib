@@ -361,6 +361,47 @@ for state in missing malformed capacity_exhausted probe_error deadline_exceeded 
     grep -q '^test-recipe-pack-entry.sh Compute/routes' "$CALL_LOG" || fail "later entries must still run"
 done
 
+selector_scripts="$TEST_ROOT/selector-scripts"
+mkdir "$selector_scripts"
+cp "$REPO_ROOT/.github/scripts/azure-postgres-workflow.sh" \
+    "$selector_scripts/azure-postgres-workflow.sh"
+cat >"$selector_scripts/select-azure-test-location.sh" <<'EOF'
+#!/bin/bash
+printf '%s\n' "${RTC_AZURE_TEST_REGIONS%%,*}"
+jq -n --arg location "${RTC_AZURE_TEST_REGIONS%%,*}" \
+    '{version:1,status:"selected",location:$location,deadlineEpochSeconds:123456,
+      postgres:{size:"S",skuName:"Standard_B1ms",tier:"Burstable"},
+      attempts:[{region:$location,size:"S",skuName:"Standard_B1ms",tier:"Burstable",
+        outcome:"selected",errorCode:"",durationSeconds:1}]}' >"$RTC_AZURE_SELECTION_FILE"
+exit 23
+EOF
+chmod +x "$selector_scripts/select-azure-test-location.sh"
+failed_selection="$TEST_ROOT/workflow-failed-selection.json"
+failed_env="$TEST_ROOT/workflow-selection.env"
+if RTC_AZURE_TEST_REGIONS=westus3,eastus2 RTC_AZURE_SELECTION_FILE="$failed_selection" \
+    GITHUB_ENV="$failed_env" \
+    bash "$selector_scripts/azure-postgres-workflow.sh" select-context fixture-probe \
+    >"$TEST_ROOT/selection-output.log" 2>&1; then
+    fail "workflow must retain nonzero selector outcome"
+fi
+jq -e '.status == "probe_error" and .location == "westus3" and
+    (has("postgres") | not)' "$failed_selection" >/dev/null ||
+    fail "workflow fallback must not authorize PostgreSQL allocation"
+grep -Fxq 'AZURE_LOCATION=westus3' "$failed_env" ||
+    fail "workflow must export its validated fallback for main-group creation"
+grep -q 'continuing unrelated entries' "$TEST_ROOT/selection-output.log" ||
+    fail "workflow must explicitly report selector failure"
+: >"$CALL_LOG"
+if output=$(RTC_AZURE_SELECTION_FILE="$failed_selection" run_driver azure azure-ws azure-env 2>&1); then
+    fail "failed selector must still fail the Azure pack-entry phase"
+fi
+! grep -q '^test-recipe-pack-entry.sh Data/postgreSqlDatabases' "$CALL_LOG" ||
+    fail "failed selector must prevent PostgreSQL allocation"
+grep -q '^test-recipe-pack-entry.sh Compute/routes' "$CALL_LOG" ||
+    fail "unrelated entries must run after a nonzero selector"
+grep -q "Data/postgreSqlDatabases (from pack 'azure-aks'): preflight check failed" <<<"$output" ||
+    fail "failed selector must fail the PostgreSQL entry explicitly"
+
 : >"$CALL_LOG"
 RTC_AZURE_SELECTION_FILE="$selection" run_driver kubernetes kubernetes-ws kubernetes-env >/dev/null ||
     fail "Kubernetes must ignore Azure selection state"

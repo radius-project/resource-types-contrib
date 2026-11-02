@@ -53,6 +53,20 @@ case "$1 $2" in
         fi
         ;;
     "deploy "*)
+        if [[ -n "${ASSERT_BICEP_CONFIG_WORKSPACE:-}" ]]; then
+            deploy_file="$2"
+            [[ -f "$deploy_file" ]] || {
+                echo "Expected deployed Bicep file does not exist: $deploy_file" >&2
+                exit 97
+            }
+            deploy_directory="$(cd "$(dirname "$deploy_file")" && pwd)" || exit 98
+            config_directory="$(cd "$ASSERT_BICEP_CONFIG_WORKSPACE" && pwd)" || exit 98
+            if [[ "$deploy_directory" != "$config_directory" ||
+                ! -f "$deploy_directory/bicepconfig.json" ]]; then
+                echo "Deployed Bicep file cannot resolve the workspace config: $deploy_file" >&2
+                exit 99
+            fi
+        fi
         deploy_attempt=$(grep -c '^rad deploy ' "$CALL_LOG")
         deploy_exit_code="${DEPLOY_EXIT_CODE:-0}"
         if (( deploy_attempt <= ${DEPLOY_FAILURES:-0} )); then
@@ -1056,6 +1070,10 @@ if grep -q '^rad deploy ' "$CALL_LOG"; then
 fi
 
 # Exercise the actual single-entry caller with the same mock cloud commands.
+POSTGRES_CONFIG_WORKSPACE="$TEST_ROOT/postgres-workspace"
+mkdir -p "$POSTGRES_CONFIG_WORKSPACE"
+printf '{"extensions":{"radius":"br:test/radius:latest"}}\n' \
+    >"$POSTGRES_CONFIG_WORKSPACE/bicepconfig.json"
 run_postgres_entry() {
     (
         cd "$REPO_ROOT"
@@ -1065,7 +1083,9 @@ run_postgres_entry() {
     )
 }
 : >"$CALL_LOG"
-RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg RTC_POSTGRES_TEST_SIZE=M \
+GITHUB_WORKSPACE="$POSTGRES_CONFIG_WORKSPACE" \
+    ASSERT_BICEP_CONFIG_WORKSPACE="$POSTGRES_CONFIG_WORKSPACE" \
+    RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg RTC_POSTGRES_TEST_SIZE=M \
     run_postgres_entry >/dev/null || fail "single-entry Azure runner must pass selected M"
 grep -q -- '--parameters postgresSize=M' "$CALL_LOG" || fail "single-entry runner must pass M to Bicep"
 assert_eq 1 "$(grep '^az postgres flexible-server create ' "$CALL_LOG" | grep -vc -- ' --help')" \
@@ -1093,6 +1113,9 @@ if grep -q '^az postgres flexible-server create ' "$CALL_LOG"; then fail "verifi
 if RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg PG_CATALOG_UNSUPPORTED=1 \
     run_postgres_entry >/dev/null 2>&1; then fail "unsupported initial tuple must fail"; fi
 if grep -q '^rad deploy ' "$CALL_LOG"; then fail "failed initial probe must prevent deployment"; fi
+if compgen -G "$POSTGRES_CONFIG_WORKSPACE/.rtc-postgres-test-*.bicep" >/dev/null; then
+    fail "current PostgreSQL harness must be removed from the workspace config directory"
+fi
 : >"$CALL_LOG"
 RTC_TEST_PLATFORM=kubernetes RTC_POSTGRES_TEST_SIZE=M run_postgres_entry >/dev/null ||
     fail "Kubernetes entry must retain the default template size"
@@ -1117,13 +1140,18 @@ fi
 
 for selected_size in S M; do
     : >"$CALL_LOG"
-    RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg RTC_POSTGRES_TEST_SIZE="$selected_size" \
+    GITHUB_WORKSPACE="$POSTGRES_CONFIG_WORKSPACE" \
+        ASSERT_BICEP_CONFIG_WORKSPACE="$POSTGRES_CONFIG_WORKSPACE" \
+        RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg RTC_POSTGRES_TEST_SIZE="$selected_size" \
         RTC_POSTGRES_TEST_HARNESS="$POSTGRES_TEST_HARNESS" run_postgres_entry >/dev/null ||
         fail "pinned fixed-S harness must deploy selected size $selected_size"
     grep -q -- "--parameters postgresSize=$selected_size" "$CALL_LOG" ||
         fail "deployment must pass selected size $selected_size to Bicep"
     if grep '^rad deploy ' "$CALL_LOG" | grep -Fq "$FIXED_POSTGRES_TEST_APP"; then
         fail "deployment must use a temporary parameterized harness, not the pinned test app"
+    fi
+    if compgen -G "$POSTGRES_CONFIG_WORKSPACE/.rtc-postgres-test-*.bicep" >/dev/null; then
+        fail "fixed-S PostgreSQL harness must be removed from the workspace config directory"
     fi
 done
 

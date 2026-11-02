@@ -257,9 +257,11 @@ rtc_probe_azure_postgresql_size() {
 rtc_test_azure_postgresql_app() (
     local test_file="$1" environment_path="$2" workspace_name="$3" kubernetes_namespace="$4"
     local size="${RTC_POSTGRES_TEST_SIZE:-S}" deadline="${RTC_POSTGRES_TEST_DEADLINE_EPOCH:-}"
-    local test_harness script_dir
+    local test_harness script_dir workspace_root
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
-    test_harness=$(mktemp "${TMPDIR:-/tmp}/rtc-postgres-test-XXXXXX.bicep") || return 1
+    workspace_root="${GITHUB_WORKSPACE:-$(cd "$script_dir/../.." && pwd)}"
+    workspace_root="$(cd "$workspace_root" && pwd)" || return 1
+    test_harness=$(mktemp "$workspace_root/.rtc-postgres-test-XXXXXX.bicep") || return 1
     trap 'rm -f -- "$test_harness"' EXIT
     if ! bash "$script_dir/prepare-postgres-test-harness.sh" "$test_file" "$test_harness"; then
         return 1

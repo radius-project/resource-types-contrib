@@ -17,11 +17,11 @@ temp="$(mktemp -d)"
 trap 'rm -rf -- "$temp"' EXIT
 fail() { echo "FAIL: $1" >&2; exit 1; }
 unset RTC_AZURE_TEST_REGIONS AZURE_LOCATION AZURE_FALLBACK_LOCATION
-[[ "$(bash "$script" regions)" == westus3,eastus2,centralus ]] || fail defaults
+[[ "$(bash "$script" regions)" == centralus,westus2 ]] || fail defaults
 [[ "$(AZURE_LOCATION=eastus AZURE_FALLBACK_LOCATION=northeurope bash "$script" regions)" == \
-    eastus,northeurope,centralus ]] || fail "legacy settings"
+    eastus,northeurope,centralus,westus2 ]] || fail "legacy settings"
 [[ "$(AZURE_LOCATION=centralus AZURE_FALLBACK_LOCATION=centralus bash "$script" regions)" == \
-    centralus ]] || fail "stable deduplication"
+    centralus,westus2 ]] || fail "stable deduplication"
 [[ "$(RTC_AZURE_TEST_REGIONS=westus2,westus2,eastus2 AZURE_LOCATION=bad bash "$script" regions)" == \
     westus2,eastus2 ]] || fail "override precedence"
 [[ "$(RTC_AZURE_TEST_REGIONS=westus3,eastus2,centralus,westus2 bash "$script" regions)" == \
@@ -33,8 +33,56 @@ done
 if RTC_AZURE_TEST_REGIONS="$(printf 'eastus2,%.0s' {1..32})eastus2" \
     bash "$script" regions >/dev/null 2>&1; then fail "raw list bound"; fi
 
+selector_scripts="$temp/selector-scripts"
+mkdir "$selector_scripts"
+cp "$script" "$selector_scripts/azure-postgres-workflow.sh"
+export SIZE_LOG="$temp/selector-sizes"
+cat >"$selector_scripts/select-azure-test-location.sh" <<'EOF'
+#!/bin/bash
+printf '%s\n' "$RTC_POSTGRES_TEST_SIZES" >"$SIZE_LOG"
+printf '%s\n' "${RTC_AZURE_TEST_REGIONS%%,*}"
+jq -n --arg location "${RTC_AZURE_TEST_REGIONS%%,*}" \
+    '{version:1,status:"selected",location:$location,deadlineEpochSeconds:123456,
+      postgres:{size:"S",skuName:"Standard_B1ms",tier:"Burstable"},
+      attempts:[{region:$location,size:"S",skuName:"Standard_B1ms",tier:"Burstable",
+        outcome:"selected",errorCode:"",durationSeconds:1}]}' >"$RTC_AZURE_SELECTION_FILE"
+exit "${FAKE_SELECTOR_STATUS:-23}"
+EOF
+chmod +x "$selector_scripts/select-azure-test-location.sh"
+failed_selection="$temp/failed-selection.json"
+failed_env="$temp/failed-selection.env"
+if output=$(RTC_AZURE_TEST_REGIONS=centralus,westus2 RTC_AZURE_SELECTION_FILE="$failed_selection" \
+    GITHUB_ENV="$failed_env" bash "$selector_scripts/azure-postgres-workflow.sh" \
+    select-context fixture-probe 2>&1); then
+    fail "a nonzero selector must remain a workflow failure"
+fi
+jq -e '.version == 1 and .status == "probe_error" and .location == "centralus" and
+    .deadlineEpochSeconds == 123456 and (has("postgres") | not) and
+    .attempts[0].region == "centralus"' "$failed_selection" >/dev/null ||
+    fail "nonzero selector must preserve diagnostics but fail closed"
+grep -Fxq 'AZURE_LOCATION=centralus' "$failed_env" ||
+    fail "nonzero selector must export its validated fallback region"
+grep -q 'continuing unrelated entries' <<<"$output" ||
+    fail "nonzero selector must report its safe continuation"
+grep -Fxq 'RTC_POSTGRES_TEST_SIZES=S,M' "$failed_env" ||
+    fail "validated default size list must persist to later workflow steps"
+
+single_selection="$temp/single-size-selection.json"
+single_env="$temp/single-size.env"
+if RTC_AZURE_TEST_REGIONS=centralus RTC_POSTGRES_TEST_SIZES=S \
+    RTC_AZURE_SELECTION_FILE="$single_selection" GITHUB_ENV="$single_env" \
+    FAKE_SELECTOR_STATUS=0 bash "$selector_scripts/azure-postgres-workflow.sh" \
+    select-context fixture-probe >/dev/null 2>&1; then
+    :
+else
+    fail "single-size selection fixture should succeed"
+fi
+[[ "$(cat "$SIZE_LOG")" == S ]] || fail "selector must receive the single configured size"
+grep -Fxq 'RTC_POSTGRES_TEST_SIZES=S' "$single_env" ||
+    fail "validated single-size list must persist to the PostgreSQL deployment step"
+
 export RTC_AZURE_SELECTION_FILE="$temp/selection.json" GITHUB_STEP_SUMMARY="$temp/summary.md"
-for status in selected capacity_exhausted probe_error deadline_exceeded; do
+for status in selected capacity_exhausted unsupported probe_error deadline_exceeded; do
     jq -n --arg status "$status" '{version:1,status:$status,deadlineEpochSeconds:123456,
         secret:"DO_NOT_PRINT",attempts:[{region:"centralus",size:"M",skuName:"Standard_D2ds_v5",
         tier:"GeneralPurpose",outcome:"capacity_exhausted",errorCode:"SkuNotAvailable",durationSeconds:12}]}' \
@@ -104,6 +152,18 @@ case "$command" in
                 rtcAzureTestGroupOwner=*) owner_tag=rtcAzureTestGroupOwner; owner_value="${tag#*=}" ;;
             esac
         done
+        case "${CREATE_FAILURE_MODE:-}" in
+            owned)
+                printf '%s|%s|%s\n' "$group" "$owner_tag" "$owner_value" >>"$GROUP_STATE"
+                exit 1
+                ;;
+            foreign)
+                printf '%s|rtcAzureTestGroupOwner|%s\n' "$group" "$FOREIGN_OWNER_TOKEN" >>"$GROUP_STATE"
+                exit 1
+                ;;
+            absent) exit 1 ;;
+            timeout) exit 124 ;;
+        esac
         printf '%s|%s|%s\n' "$group" "$owner_tag" "$owner_value" >>"$GROUP_STATE"
         ;;
     *) exit 1 ;;
@@ -257,5 +317,29 @@ for kind in nightly rc; do
     fi
     ! grep -q '^group create' "$CALL_LOG" || fail "must not update existing main group"
     grep -Fq "$group||" "$GROUP_STATE" || fail "existing main group preserved"
+
+    for mode in owned foreign absent timeout; do
+        : >"$GROUP_STATE"
+        : >"$CALL_LOG"
+        if CREATE_FAILURE_MODE="$mode" FOREIGN_OWNER_TOKEN="$token_b" \
+            bash "$script" create-main "$kind" "$group" westus3 "$token_a" \
+            >/dev/null 2>&1; then
+            fail "$kind main-group $mode creation failure"
+        fi
+        ! grep -q 'group delete' "$CALL_LOG" || fail "$kind $mode failure must not delete an unconfirmed group"
+        case "$mode" in
+            owned)
+                grep -Fq "$group|rtcAzureTestGroupOwner|$token_a" "$GROUP_STATE" ||
+                    fail "$kind partial owned group must be left for the cleanup job"
+                ;;
+            foreign)
+                grep -Fq "$group|rtcAzureTestGroupOwner|$token_b" "$GROUP_STATE" ||
+                    fail "$kind foreign-tagged group must be preserved"
+                ;;
+            absent|timeout)
+                [[ ! -s "$GROUP_STATE" ]] || fail "$kind $mode failure must leave absent group state"
+                ;;
+        esac
+    done
 done
 echo "Azure PostgreSQL workflow tests passed"

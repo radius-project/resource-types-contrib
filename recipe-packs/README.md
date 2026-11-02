@@ -116,27 +116,41 @@ a default branch. The nightly deployment checks the values used by each test
 app, not every possible property value. A type used by two packs is tested
 once per pack, with that pack active.
 
-Azure has no API that reports live regional capacity. Before the nightly
-deploys an Azure PostgreSQL pack entry, it runs
-[`probe-azure-postgres-capacity.sh`](../.github/scripts/probe-azure-postgres-capacity.sh).
-The probe creates and deletes a `Standard_B1ms` (Burstable) flexible server in
-the test resource group. It retries only on `SkuNotAvailable` or `ServerIsBusy`
-(`RTC_POSTGRES_PROBE_ATTEMPTS`, default 3; `RTC_POSTGRES_PROBE_WAIT_SECONDS`,
-default 600). If capacity stays unavailable, the entry fails with an Azure
-capacity error and the entry is not deployed. After a successful create, the
-probe waits for the delete (`RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS`,
-default 900), so the probe does not hold capacity that the entry needs. If
-that delete fails, the preflight fails. The probe uses `AZURE_SUBSCRIPTION_ID`
-when it is set, and the Azure CLI default subscription otherwise. Keep the
-probe SKU in sync with the size `S` mapping in the `azure-aks` pack.
-
-Before the nightly creates its Azure resource group,
+Before nightly or release-candidate Azure tests create the main resource group,
 [`select-azure-test-location.sh`](../.github/scripts/select-azure-test-location.sh)
-runs one probe in the preferred region (`AZURE_LOCATION` repository variable,
-default `westus3`) and, if it has no capacity, one in the fallback region
-(`AZURE_FALLBACK_LOCATION`, default `eastus2`). All Azure tests then use the
-first region with capacity. If neither region has capacity, the preferred
-region is used.
+checks candidate regions in order. Set the repository variable
+`RTC_AZURE_TEST_REGIONS` to override the list (up to four distinct Azure region
+names). Otherwise, the workflows try `AZURE_LOCATION`, then
+`AZURE_FALLBACK_LOCATION`, followed by `centralus` and `westus2`; duplicates
+are removed without changing order. `RTC_POSTGRES_TEST_SIZES` controls the
+candidate sizes (`S,M` by default, at most two distinct sizes).
+
+For each tuple, the test first checks the read-only PostgreSQL catalog for
+version 16, the mapped SKU and tier, and 32-GiB storage. Verified unsupported
+tuples are reported separately and are not created. Catalog errors, malformed
+responses, and regions restricted by the subscription fail closed; they are
+not treated as capacity shortages. A supported tuple is probed by creating
+and deleting a flexible server in a temporary resource group with a random
+name and ownership tag. The selector checks the tag before deletion. Failed
+or uncertain cleanup stops further probes and reports the exact recovery
+target rather than deleting an unverified resource.
+
+Capacity errors such as `SkuNotAvailable` and `ServerIsBusy` move selection to
+the next configured tuple. The first tuple with capacity sets `AZURE_LOCATION`
+for the Azure tests. If no tuple works, the PostgreSQL entry fails; the first
+validated region remains only as the location for unrelated tests, which still
+run. The job reports the PostgreSQL failure instead of treating that region as
+a successful fallback. Selection and PostgreSQL deployment recovery share one
+60-minute deadline; cleanup has a separate reserve of up to 15 minutes. A
+deployment that loses capacity may retry one configured alternate size in the
+selected region after confirmed cleanup, within that same deadline.
+
+The probe uses `AZURE_SUBSCRIPTION_ID` when it is set, and the Azure CLI
+default subscription otherwise. More candidates can improve reliability but
+cannot guarantee Azure capacity. Verify every configured region for
+subscription access, quota, policy, PostgreSQL 16, and the other Azure AKS pack
+services. In particular, verify `centralus` and `westus2` before relying on
+the default candidates.
 
 MySQL pack entries that map `tls` to `require_secure_transport` run both
 `tls: required` and `tls: optional`. They pass `verifyTransport` through
