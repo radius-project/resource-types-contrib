@@ -38,6 +38,10 @@ CALL_LOG="$TEST_ROOT/calls.log"
 cat >"$MOCK_BIN/rad" <<'EOF'
 #!/bin/bash
 echo "rad $*" >>"$CALL_LOG"
+if [[ -n "${SLOW_COMMAND:-}" && "rad $*" == "$SLOW_COMMAND "* ]] &&
+    (( $(grep -c "^$SLOW_COMMAND " "$CALL_LOG") >= ${SLOW_AFTER:-1} )); then
+    exec "$SLOW_COMMAND_HELPER"
+fi
 case "$1 $2" in
     "workspace switch")
         exit "${WORKSPACE_EXIT_CODE:-0}"
@@ -121,6 +125,9 @@ chmod +x "$MOCK_BIN/rad"
 cat >"$MOCK_BIN/kubectl" <<'EOF'
 #!/bin/bash
 echo "kubectl $*" >>"$CALL_LOG"
+if [[ -n "${SLOW_COMMAND:-}" && "kubectl $*" == "$SLOW_COMMAND "* ]]; then
+    exec "$SLOW_COMMAND_HELPER"
+fi
 exit "${KUBECTL_EXIT_CODE:-0}"
 EOF
 chmod +x "$MOCK_BIN/kubectl"
@@ -128,6 +135,10 @@ chmod +x "$MOCK_BIN/kubectl"
 cat >"$MOCK_BIN/az" <<'EOF'
 #!/bin/bash
 echo "az $*" >>"$CALL_LOG"
+if [[ -n "${SLOW_COMMAND:-}" && "az $*" == "$SLOW_COMMAND "* ]] &&
+    (( $(grep -c "^$SLOW_COMMAND " "$CALL_LOG") >= ${SLOW_AFTER:-1} )); then
+    exec "$SLOW_COMMAND_HELPER"
+fi
 case "$1 $2" in
     "group show")
         printf '%s\n' "${AZ_GROUP_LOCATION:-westus3}"
@@ -202,6 +213,23 @@ case "$1 $2" in
 esac
 EOF
 chmod +x "$MOCK_BIN/az"
+
+export SLOW_COMMAND_HELPER="$TEST_ROOT/slow-command.py"
+export SLOW_COMMAND_PIDS="$TEST_ROOT/slow-command.pids"
+cat >"$SLOW_COMMAND_HELPER" <<'PY'
+#!/usr/bin/env python3
+import os
+import signal
+import time
+
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+child = os.fork()
+if child:
+    with open(os.environ["SLOW_COMMAND_PIDS"], "w", encoding="ascii") as output:
+        output.write(f"{os.getpid()}\n{child}\n")
+time.sleep(20)
+PY
+chmod +x "$SLOW_COMMAND_HELPER"
 
 cat >"$MOCK_BIN/openssl" <<'EOF'
 #!/bin/bash
@@ -913,7 +941,10 @@ for setting in PG_PROBE_EXIT_CODE=1 PG_PROBE_EXIT_CODE=124 PG_PROBE_UNKNOWN_OWNE
         export "${setting?}"
         DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres >/dev/null 2>&1
     ); then fail "failed or uncertain alternate probe must stop recovery"; fi
-    assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "failed alternate probe deployment attempts"
+    expected_deployments=1
+    [[ "$setting" != AZ_GROUP_EXIT_CODE=1 ]] || expected_deployments=0
+    assert_eq "$expected_deployments" "$(grep -c '^rad deploy ' "$CALL_LOG" || true)" \
+        "failed alternate probe deployment attempts"
 done
 for sizes in '' L S,L bad; do
     : >"$CALL_LOG"
@@ -1050,15 +1081,15 @@ if RTC_POSTGRES_TEST_DEADLINE_EPOCH=1 run_postgres >/dev/null 2>&1; then fail "e
 [[ ! -s "$CALL_LOG" ]] || fail "deadline must stop allocation"
 
 : >"$CALL_LOG"
-if POSTGRES_DEPLOY_TIMEOUT=1 run_postgres >/dev/null 2>&1; then fail "deploy timeout must fail"; fi
-assert_eq 1 "$(grep -c '^timeout .* bash -c ' "$CALL_LOG")" "timeout must not change size"
+if SLOW_COMMAND='rad deploy' RTC_POSTGRES_TEST_DEADLINE_EPOCH="$(( $(date +%s) + 2 ))" \
+    run_postgres >"$TEST_ROOT/deploy-timeout.log" 2>&1; then fail "deploy timeout must fail"; fi
+assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "timeout must not change size"
 assert_eq 1 "$(grep -c '^rad app delete ' "$CALL_LOG")" "timeout must still clean up"
+grep -q 'deployment exceeded its time limit' "$TEST_ROOT/deploy-timeout.log" ||
+    fail "deployment watchdog timeout must be reported"
 : >"$CALL_LOG"
 RTC_POSTGRES_TEST_DEADLINE_EPOCH="$(( $(date +%s) + 45 ))" run_postgres >/dev/null ||
     fail "a remaining deadline must permit a bounded deployment"
-limit="$(sed -nE 's/^timeout --kill-after=5s ([0-9]+)s bash .*/\1/p' "$CALL_LOG")"
-[[ "$limit" =~ ^[0-9]+$ && "$limit" -gt 0 && "$limit" -le 45 ]] ||
-    fail "deployment must respect remaining selection time"
 
 : >"$CALL_LOG"
 if RTC_POSTGRES_TEST_DEADLINE_EPOCH="$(( $(date +%s) + 1 ))" AZ_RESOURCE_LIST_DELAY_SECONDS=2 \
@@ -1068,6 +1099,45 @@ fi
 if grep -q '^rad deploy ' "$CALL_LOG"; then
     fail "deployment must not begin after snapshots consume the deadline"
 fi
+
+for slow_command in 'az resource list' 'az lock list' 'rad resource show' \
+    'rad resource list' 'az lock delete' 'rad app delete' 'kubectl delete' 'az resource list'; do
+    : >"$CALL_LOG"
+    rm -f -- "$SLOW_COMMAND_PIDS" "$AZ_LOCK_STATE_FILE"
+    slow_after=1
+    deploy_failures=1
+    [[ "$slow_command" != 'rad resource show' ]] || deploy_failures=0
+    [[ "$slow_command" != 'az resource list' || "${tested_resource_snapshot:-0}" == 0 ]] || slow_after=2
+    [[ "$slow_command" != 'az resource list' ]] || tested_resource_snapshot=1
+    started_seconds=$SECONDS
+    if SLOW_COMMAND="$slow_command" SLOW_AFTER="$slow_after" \
+        RTC_POSTGRES_TEST_DEADLINE_EPOCH="$(( $(date +%s) + 2 ))" \
+        RTC_POSTGRES_CLEANUP_RESERVE_SECONDS=2 RTC_AZURE_LOCK_GUARD=1 \
+        AZ_LOCKS_AFTER="$NEW_LOCK" RESOURCE_LIST_JSON="$LOCK_INVENTORY_JSON" \
+        DEPLOY_FAILURES="$deploy_failures" DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" \
+        run_postgres >"$TEST_ROOT/slow-command.log" 2>&1; then
+        fail "$slow_command timeout must fail"
+    fi
+    ((SECONDS - started_seconds < 10)) || fail "$slow_command exceeded the shared command budget"
+    [[ -s "$SLOW_COMMAND_PIDS" ]] || fail "$slow_command did not exercise the slow process"
+    python3 - "$SLOW_COMMAND_PIDS" <<'PY' || fail "watchdog left a process running"
+import pathlib
+import sys
+
+for pid in pathlib.Path(sys.argv[1]).read_text().splitlines():
+    try:
+        state = pathlib.Path(f"/proc/{pid}/stat").read_text().split(") ", 1)[1][0]
+    except FileNotFoundError:
+        continue
+    if state != "Z":
+        raise SystemExit(f"Process {pid} is still running ({state})")
+PY
+    [[ "$(grep -c '^rad deploy ' "$CALL_LOG" || true)" -le 1 ]] ||
+        fail "$slow_command uncertainty must block another deployment"
+    if grep -q '^az postgres flexible-server create ' "$CALL_LOG"; then
+        fail "$slow_command uncertainty must block another probe"
+    fi
+done
 
 # Exercise the actual single-entry caller with the same mock cloud commands.
 POSTGRES_CONFIG_WORKSPACE="$TEST_ROOT/postgres-workspace"
@@ -1109,6 +1179,14 @@ RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg RTC_POSTGRES_VERIFIED_SIZE=S \
     RTC_POSTGRES_VERIFIED_LOCATION=westus3 run_postgres_entry >/dev/null ||
     fail "verified orchestrator tuple must deploy without a duplicate initial probe"
 if grep -q '^az postgres flexible-server create ' "$CALL_LOG"; then fail "verified tuple must not be probed twice"; fi
+: >"$CALL_LOG"
+if RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg RTC_POSTGRES_VERIFIED_SIZE=S \
+    RTC_POSTGRES_VERIFIED_LOCATION=centralus run_postgres_entry >/dev/null 2>&1; then
+    fail "a verified marker for a different group region must fail"
+fi
+if grep -q '^rad deploy ' "$CALL_LOG"; then
+    fail "a mismatched verified region must not allocate"
+fi
 : >"$CALL_LOG"
 if RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg PG_CATALOG_UNSUPPORTED=1 \
     run_postgres_entry >/dev/null 2>&1; then fail "unsupported initial tuple must fail"; fi

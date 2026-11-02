@@ -102,7 +102,16 @@ recovery; an empty or invalid list fails before deployment.
 Direct entry calls first probe the requested size in the actual resource
 group's region, even if `AZURE_LOCATION` is unset or points elsewhere.
 The all-entry runner passes its verified size and region to avoid a duplicate
-initial probe.
+initial probe. The entry runner checks that this region still matches the
+existing resource group before it accepts the verification.
+
+All PostgreSQL deployment, assertion, lock and resource inventory commands
+use a process-group watchdog with the remaining work budget. Cleanup uses
+one separate reserve across lock removal, application deletion, Kubernetes
+cleanup, and the final Azure inventory check.
+`RTC_POSTGRES_CLEANUP_RESERVE_SECONDS` sets this reserve (default and maximum
+900 seconds). A cleanup timeout blocks further probes and deployment.
+These limits do not change unrelated entry tests.
 
 If a deployment reports a structured `SkuNotAvailable` or `ServerIsBusy`
 error for an Azure PostgreSQL server, the runner deletes the failed app and
