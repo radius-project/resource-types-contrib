@@ -686,6 +686,14 @@ run_postgres() {
         "$TEST_APP_BICEP" /envs/myenv myws my-ns
 }
 
+RADIUS_PROGRESS="Building Data/mongoDatabases/test/app.bicep...
+WARNING: Radius type compatibility is not verified.
+    Configured Radius extension tag(s): latest
+    CLI release: edge
+    Target control-plane release: edge
+    The Radius extension and control-plane versions can differ.
+Deploying template 'app.bicep' ...
+Deployment In Progress..."
 for pure_error in "$WRAPPED_TERRAFORM_ERROR" "$TERRAFORM_DOWNLOAD_ERROR" "$TRANSIENT_DEPLOY_ERROR" "$POSTGRES_CAPACITY_ERROR"; do
     for diagnostic in \
         'AuthorizationFailed: access denied' \
@@ -700,6 +708,7 @@ for pure_error in "$WRAPPED_TERRAFORM_ERROR" "$TERRAFORM_DOWNLOAD_ERROR" "$TRANS
         'Something: unrecognized diagnostic' \
         'Status: Failed' \
         'Status: Unknown' \
+        'WARNING: access denied' \
         'unknown failure during resource deployment'; do
         mixed_error="$pure_error"$'\n'"$diagnostic"
         printf '%s\n' "$mixed_error" >"$TEST_ROOT/bare-failure.log"
@@ -721,6 +730,13 @@ for pure_error in "$WRAPPED_TERRAFORM_ERROR" "$TERRAFORM_DOWNLOAD_ERROR" "$TRANS
     [[ "$pure_error" != "$POSTGRES_CAPACITY_ERROR" ]] || classifier=rtc_has_postgresql_capacity_failure
     run_lib "$classifier" "$TEST_ROOT/pure-error-progress.log" >/dev/null ||
         fail "$classifier must preserve pure errors with benign progress"
+    printf '%s\n%s\n' "$RADIUS_PROGRESS" "$pure_error" >"$TEST_ROOT/pure-error-progress.log"
+    run_lib "$classifier" "$TEST_ROOT/pure-error-progress.log" >/dev/null ||
+        fail "$classifier must preserve Radius compatibility warnings and progress"
+    : >"$CALL_LOG"
+    DEPLOY_FAILURES=1 DEPLOY_ERROR="$RADIUS_PROGRESS"$'\n'"$pure_error" \
+        run_postgres >/dev/null 2>&1 || fail "pure errors with Radius progress must recover"
+    assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "Radius progress recovery attempts"
 done
 
 for reset in \

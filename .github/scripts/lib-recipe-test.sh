@@ -178,7 +178,8 @@ bare_failure = re.compile(
     r"|^\s*(?i:unknown|unclassified|unexpected)\b.*\b(?i:error|failure)\b"
 )
 harmless_progress = re.compile(
-    r"\s*(?:Location:\s*[a-z][a-z0-9-]*|Status:\s*(?:Running|Accepted|Succeeded))\s*"
+    r"\s*(?:Location:\s*[a-z][a-z0-9-]*|Status:\s*(?:Running|Accepted|Succeeded)"
+    r"|WARNING: Radius type compatibility is not verified\.)\s*"
 )
 line_start = 0
 for line in transcript.splitlines(keepends=True):
@@ -500,7 +501,8 @@ bare_failure = re.compile(
     r"|^\s*(?i:unknown|unclassified|unexpected)\b.*\b(?i:error|failure)\b"
 )
 harmless_progress = re.compile(
-    r"\s*(?:Location:\s*[a-z][a-z0-9-]*|Status:\s*(?:Running|Accepted|Succeeded))\s*"
+    r"\s*(?:Location:\s*[a-z][a-z0-9-]*|Status:\s*(?:Running|Accepted|Succeeded)"
+    r"|WARNING: Radius type compatibility is not verified\.)\s*"
 )
 wrappers = {"DeploymentFailed", "RecipeDeploymentFailed", "ResourceDeploymentFailure", "ResourceOperationFailure"}
 reasons = []
