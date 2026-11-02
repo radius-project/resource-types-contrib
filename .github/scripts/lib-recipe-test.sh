@@ -480,40 +480,6 @@ import sys
 with open(sys.argv[1], encoding="utf-8", errors="replace") as log:
     transcript = log.read()
 decoder = json.JSONDecoder()
-offset = 0
-messages = []
-decoded = False
-while (offset := transcript.find("{", offset)) != -1:
-    try:
-        value, offset = decoder.raw_decode(transcript, offset)
-    except ValueError:
-        offset += 1
-        continue
-    decoded = True
-    pending = [value]
-    while pending:
-        value = pending.pop()
-        if isinstance(value, dict):
-            message = value.get("message")
-            target = value.get("target")
-            if value.get("code") == "RecipeDeploymentFailed" and isinstance(message, str):
-                messages.append(message)
-            if (
-                value.get("code") == "ResourceDeploymentFailure"
-                and isinstance(message, str)
-                and "Connection reset by peer" in message
-                and isinstance(target, str)
-                and re.match(r'/subscriptions/[^"]*/providers/Microsoft\.', target)
-            ):
-                print("Azure deployment connection reset")
-                sys.exit(0)
-            pending.extend(value.values())
-        elif isinstance(value, list):
-            pending.extend(value)
-
-# Do not combine sibling JSON messages or use the escaped JSON as plain text.
-if not decoded:
-    messages = [transcript]
 provider_reset = re.compile(
     r'Failed to install provider\s+'
     r'Error while installing [\w./-]+ v[\w.+-]+:\s+'
@@ -521,19 +487,90 @@ provider_reset = re.compile(
     r'"https://releases\.hashicorp\.com/terraform-provider-[^"\s]+\.zip":\s+'
     r'read tcp [^\n]+: read: connection reset by peer\s*'
 )
-if messages:
-    for message in messages:
-        _, marker, failure = message.partition("terraform init failure: exit status 1")
-        if not marker:
-            sys.exit(1)
-        diagnostics = re.split(r'(?m)^\s*Error:\s*', failure)
-        # Every diagnostic must be this download failure, not a configuration,
-        # version, checksum, signature, authorization, or other permanent error.
-        if diagnostics[0].strip() or len(diagnostics) < 2:
-            sys.exit(1)
-        if not all(provider_reset.fullmatch(item) for item in diagnostics[1:]):
-            sys.exit(1)
-    print("Terraform provider download connection reset")
+failure_prefix = re.compile(r"^\s*(?:error|fatal|failure|failed):", re.IGNORECASE | re.MULTILINE)
+wrappers = {"DeploymentFailed", "RecipeDeploymentFailed", "ResourceDeploymentFailure", "ResourceOperationFailure"}
+reasons = []
+invalid = False
+
+def objects(text):
+    offset = 0
+    while (offset := text.find("{", offset)) != -1:
+        try:
+            start = offset
+            value, offset = decoder.raw_decode(text, offset)
+            yield value, start, offset
+        except ValueError:
+            offset += 1
+
+def is_provider_reset(message):
+    preamble, marker, failure = message.partition("terraform init failure: exit status 1")
+    if not marker:
+        return False
+    for line in preamble.splitlines():
+        if failure_prefix.search(line) and failure_prefix.sub("", line).strip():
+            return False
+    diagnostics = re.split(r'(?mi)^\s*Error:\s*', failure)
+    return (
+        not diagnostics[0].strip() and len(diagnostics) >= 2
+        and all(provider_reset.fullmatch(item) for item in diagnostics[1:])
+    )
+
+def visit(value, failure_context=False):
+    global invalid
+    if isinstance(value, list):
+        for item in value:
+            visit(item, failure_context)
+    elif isinstance(value, dict):
+        before = len(reasons)
+        code = value.get("code")
+        message = value.get("message")
+        target = value.get("target")
+        status = value.get("status", "")
+        is_failure = failure_context or (
+            isinstance(status, str) and status.lower() in {"failed", "failure", "error"}
+        )
+        if code:
+            if code not in wrappers:
+                invalid = True
+            elif code == "RecipeDeploymentFailed" and isinstance(message, str) and is_provider_reset(message):
+                reasons.append("Terraform provider download connection reset")
+            elif (
+                code == "ResourceDeploymentFailure"
+                and isinstance(message, str) and "Connection reset by peer" in message
+                and isinstance(target, str)
+                and re.match(r'/subscriptions/[^"]*/providers/Microsoft\.', target)
+            ):
+                reasons.append("Azure deployment connection reset")
+        elif is_failure or (
+            "message" in value and status not in {"Succeeded", "Running", "Accepted"}
+        ):
+            invalid = True
+        for key, item in value.items():
+            if isinstance(item, (dict, list)):
+                visit(item, is_failure or (code in wrappers and key in {"details", "error"}))
+        if isinstance(message, str):
+            for item, _, _ in objects(message):
+                visit(item, True)
+        if code in wrappers and len(reasons) == before:
+            invalid = True
+    elif failure_context:
+        invalid = True
+
+records = list(objects(transcript))
+if not records:
+    if is_provider_reset(transcript):
+        reasons.append("Terraform provider download connection reset")
+else:
+    residual = list(transcript)
+    for root, start, end in records:
+        visit(root)
+        residual[start:end] = ["\n" if char == "\n" else " " for char in transcript[start:end]]
+    for line in "".join(residual).splitlines():
+        if failure_prefix.search(line) and failure_prefix.sub("", line).strip():
+            invalid = True
+
+if reasons and not invalid:
+    print("; ".join(dict.fromkeys(reasons)))
     sys.exit(0)
 sys.exit(1)
 PY

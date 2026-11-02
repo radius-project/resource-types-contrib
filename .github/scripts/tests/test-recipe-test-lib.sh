@@ -685,6 +685,75 @@ run_postgres() {
     AZURE_RESOURCE_GROUP=rg RTC_TEST_PLATFORM=azure run_lib rtc_test_azure_postgresql_app \
         "$TEST_APP_BICEP" /envs/myenv myws my-ns
 }
+
+for reset in \
+    "$(jq -cn --arg message "$TERRAFORM_DOWNLOAD_ERROR" '{code:"RecipeDeploymentFailed",message:$message}')" \
+    "${TRANSIENT_DEPLOY_ERROR#Error: }"; do
+    for sibling in \
+        '{"code":"AuthorizationFailed","message":"access denied"}' \
+        '{"code":"ServerIsBusy","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg","message":"capacity unavailable"}' \
+        '{"message":"unclassified deployment failure"}'; do
+        mixed_error="$(jq -cn --argjson reset "$reset" --argjson sibling "$sibling" \
+            '{code:"DeploymentFailed",details:[$reset,$sibling]}')"
+        printf '%s\n' "$mixed_error" >"$TEST_ROOT/mixed-reset.log"
+        if run_lib rtc_deployment_retry_reason "$TEST_ROOT/mixed-reset.log" >/dev/null; then
+            fail "a reset plus an unrelated or unknown failure must not qualify for retry"
+        fi
+        : >"$CALL_LOG"
+        if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$mixed_error" run_postgres >/dev/null 2>&1; then
+            fail "mixed reset failures must fail PostgreSQL"
+        fi
+        assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "mixed reset deployment attempts"
+        if grep -q 'postgresSize=M' "$CALL_LOG"; then fail "mixed resets must not change size"; fi
+    done
+    for prefix in Error ERROR error eRrOr fatal FaTaL failure fAiLuRe failed fAiLeD; do
+        mixed_error="Error: $reset"$'\n'"$prefix: AuthorizationFailed: access denied"
+        printf '%s\n' "$mixed_error" >"$TEST_ROOT/mixed-reset.log"
+        if run_lib rtc_deployment_retry_reason "$TEST_ROOT/mixed-reset.log" >/dev/null; then
+            fail "a reset plus a $prefix line must not qualify for retry"
+        fi
+        : >"$CALL_LOG"
+        if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$mixed_error" run_postgres >/dev/null 2>&1; then
+            fail "mixed plain reset failures must fail PostgreSQL"
+        fi
+        assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "mixed plain reset deployment attempts"
+        if grep -q 'postgresSize=M' "$CALL_LOG"; then fail "mixed plain resets must not change size"; fi
+    done
+done
+
+for mixed_error in \
+    "$TERRAFORM_DOWNLOAD_ERROR"$'\nerror: AuthorizationFailed: access denied' \
+    $'error: AuthorizationFailed: access denied\n'"$TERRAFORM_DOWNLOAD_ERROR"; do
+    printf '%s\n' "$mixed_error" >"$TEST_ROOT/mixed-reset.log"
+    if run_lib rtc_deployment_retry_reason "$TEST_ROOT/mixed-reset.log" >/dev/null; then
+        fail "plain provider output must not hide an independent error"
+    fi
+    : >"$CALL_LOG"
+    if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$mixed_error" run_postgres >/dev/null 2>&1; then
+        fail "mixed plain provider errors must fail PostgreSQL"
+    fi
+    assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "mixed plain provider attempts"
+done
+
+for pure_reset in \
+    "$(jq -cn --arg message "$TERRAFORM_DOWNLOAD_ERROR" \
+        '{code:"DeploymentFailed",details:[{code:"RecipeDeploymentFailed",message:$message},{code:"RecipeDeploymentFailed",message:$message}]}')" \
+    "$(jq -cn --arg message "$TERRAFORM_DOWNLOAD_ERROR"$'\n\n'"${TERRAFORM_DOWNLOAD_ERROR#*exit status 1}" \
+        '{code:"RecipeDeploymentFailed",message:$message}')" \
+    "$TRANSIENT_DEPLOY_ERROR"$'\n'"$WRAPPED_TERRAFORM_ERROR" \
+    "$(jq -cn --argjson reset "${TRANSIENT_DEPLOY_ERROR#Error: }" \
+        '{code:"DeploymentFailed",details:[$reset,$reset]}')" \
+    "$(jq -cn --arg message "${TRANSIENT_DEPLOY_ERROR#Error: }" \
+        '{code:"RecipeDeploymentFailed",message:$message}')" \
+    $'{"status":"Succeeded","message":"Resource deployment complete"}\n'"$WRAPPED_TERRAFORM_ERROR"; do
+    : >"$CALL_LOG"
+    DEPLOY_FAILURES=1 DEPLOY_ERROR="Deploying resources..."$'\n'"$pure_reset"$'\n''Deployment failed.' \
+        run_postgres >/dev/null || fail "pure reset diagnostics with progress must still retry"
+    assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "pure reset diagnostic attempts"
+    assert_eq 1 "$(grep '^rad deploy ' "$CALL_LOG" | sort -u | wc -l | tr -d ' ')" \
+        "pure resets must preserve the deployment arguments"
+done
+
 : >"$CALL_LOG"
 DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres >/dev/null ||
     fail "PostgreSQL deploy-time capacity loss must recover"
