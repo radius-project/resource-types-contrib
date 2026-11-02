@@ -109,6 +109,19 @@ seconds before retrying. Retries reuse the same application name and parameters;
 cleanup runs only after the final attempt. Other deployment errors, assertion
 failures, and cleanup failures still fail the test.
 
+The same retry limit and delays apply when `terraform init` fails to download
+a provider package from `releases.hashicorp.com` with `connection reset by peer`.
+This includes errors inside a Radius `RecipeDeploymentFailed` JSON response.
+Each retry logs the reason and the next attempt number. No other Terraform
+download errors qualify. Invalid versions, checksum or signature errors,
+authorization errors, and invalid configuration fail without a retry.
+
+Radius returns an initialization failure before it calls Terraform apply.
+The runner repeats the same deployment, with the same application name and
+parameters, so Radius can reuse resources from earlier work. It does not delete
+partially deployed resources between attempts. These rules apply to both
+per-recipe and Recipe Pack entry tests.
+
 ### 6. Test All Recipes
 
 Run tests for all recipes in the repository:

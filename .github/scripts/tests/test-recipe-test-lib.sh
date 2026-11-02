@@ -428,38 +428,108 @@ DEPLOY_EXIT_CODE=0 run_lib rtc_deploy_and_assert_test_app \
 grep -Fq -- '--parameters password=Aa1!mock-generated-password' "$CALL_LOG" \
     || fail "rtc_deploy_and_assert_test_app should pass a generated password value to rad deploy"
 
-# Retry only the Azure deployment-engine transport failure seen in Actions.
+# Retry only the Azure transport and Terraform provider download failures.
 TRANSIENT_DEPLOY_ERROR='Error: {"code":"ResourceDeploymentFailure","message":"System.IO.IOException: Connection reset by peer","target":"/subscriptions/test/resourceGroups/test/providers/Microsoft.KeyVault/vaults/test"}'
+TERRAFORM_DOWNLOAD_ERROR='terraform init failure: exit status 1
+
+Error: Failed to install provider
+
+Error while installing hashicorp/kubernetes v3.4.0: releases.hashicorp.com:
+Get
+"https://releases.hashicorp.com/terraform-provider-kubernetes/3.4.0/terraform-provider-kubernetes_3.4.0_linux_amd64.zip":
+read tcp 10.0.0.1:12345->10.0.0.2:443: read: connection reset by peer'
+WRAPPED_TERRAFORM_ERROR="Deploying resources...
+Error: $(jq -cn --arg message "$TERRAFORM_DOWNLOAD_ERROR" \
+    '{code:"DeploymentFailed",details:[{code:"RecipeDeploymentFailed",message:$message}]}')"
 DEPLOY_LOG_DIR="$TEST_ROOT/deploy-logs"
 mkdir -p "$DEPLOY_LOG_DIR"
-for failures in 1 2 3; do
-    : >"$CALL_LOG"
-    retry_status=0
-    TMPDIR="$DEPLOY_LOG_DIR" DEPLOY_FAILURES="$failures" DEPLOY_ERROR="$TRANSIENT_DEPLOY_ERROR" \
-        run_lib rtc_deploy_and_assert_test_app \
-        "$TEST_APP_WITH_PASSWORD" Radius.Security/secrets rtc-test /envs/myenv myws my-ns \
-        --parameters location=test-location >"$TEST_ROOT/retry-output" 2>&1 || retry_status=$?
-    if [[ "$failures" -lt 3 ]]; then
-        assert_eq "0" "$retry_status" "transient failure recovery"
-        expected_attempts=$((failures + 1))
-    else
-        [[ "$retry_status" -ne 0 ]] || fail "exhausted retries must fail"
-        expected_attempts=3
-    fi
-    assert_eq "$expected_attempts" "$(grep -c '^rad deploy ' "$CALL_LOG")" "bounded deployment attempts"
-    assert_eq "$((expected_attempts - 1))" "$(grep -c '^sleep ' "$CALL_LOG")" "retry delay count"
-    grep -Fxq 'sleep 10' "$CALL_LOG" || fail "first retry must back off for 10 seconds"
-    if [[ "$expected_attempts" -eq 3 ]]; then
-        grep -Fxq 'sleep 20' "$CALL_LOG" || fail "second retry must back off for 20 seconds"
-    fi
-    assert_eq "1" "$(grep '^rad deploy ' "$CALL_LOG" | sort -u | wc -l | tr -d ' ')" \
-        "retries must preserve all deployment arguments, including generated credentials"
-    assert_eq "1" "$(grep -c '^rad app delete ' "$CALL_LOG")" "cleanup after retries"
-    awk '/^rad app delete / { cleaned = 1 } /^rad deploy / && cleaned { exit 1 }' "$CALL_LOG" ||
-        fail "cleanup must not run between deployment attempts"
-    grep -Fq 'Connection reset by peer' "$TEST_ROOT/retry-output" || fail "deployment diagnostics must remain visible"
-    [[ -z "$(find "$DEPLOY_LOG_DIR" -type f -print -quit)" ]] || fail "deployment transcripts must be removed"
+for deploy_error in "$TRANSIENT_DEPLOY_ERROR" "$TERRAFORM_DOWNLOAD_ERROR" "$WRAPPED_TERRAFORM_ERROR"; do
+    for failures in 1 2 3; do
+        : >"$CALL_LOG"
+        retry_status=0
+        TMPDIR="$DEPLOY_LOG_DIR" DEPLOY_FAILURES="$failures" DEPLOY_ERROR="$deploy_error" \
+            run_lib rtc_deploy_and_assert_test_app \
+            "$TEST_APP_WITH_PASSWORD" Radius.Security/secrets rtc-test /envs/myenv myws my-ns \
+            --parameters location=test-location >"$TEST_ROOT/retry-output" 2>&1 || retry_status=$?
+        if [[ "$failures" -lt 3 ]]; then
+            assert_eq "0" "$retry_status" "transient failure recovery"
+            expected_attempts=$((failures + 1))
+        else
+            [[ "$retry_status" -ne 0 ]] || fail "exhausted retries must fail"
+            expected_attempts=3
+        fi
+        assert_eq "$expected_attempts" "$(grep -c '^rad deploy ' "$CALL_LOG")" "bounded deployment attempts"
+        assert_eq "$((expected_attempts - 1))" "$(grep -c '^sleep ' "$CALL_LOG")" "retry delay count"
+        grep -Fxq 'sleep 10' "$CALL_LOG" || fail "first retry must back off for 10 seconds"
+        if [[ "$expected_attempts" -eq 3 ]]; then
+            grep -Fxq 'sleep 20' "$CALL_LOG" || fail "second retry must back off for 20 seconds"
+        fi
+        assert_eq "1" "$(grep '^rad deploy ' "$CALL_LOG" | sort -u | wc -l | tr -d ' ')" \
+            "retries must preserve all deployment arguments, including generated credentials"
+        assert_eq "1" "$(grep -c '^rad app delete ' "$CALL_LOG")" "cleanup after retries"
+        awk '/^rad app delete |^kubectl delete / { cleaned = 1 } /^rad deploy / && cleaned { exit 1 }' "$CALL_LOG" ||
+            fail "cleanup must not run between deployment attempts"
+        grep -Fiq 'connection reset by peer' "$TEST_ROOT/retry-output" || fail "deployment diagnostics must remain visible"
+        grep -Fq 'attempt 2/3' "$TEST_ROOT/retry-output" || fail "retry must log the next attempt and limit"
+        if [[ "$deploy_error" == "$TRANSIENT_DEPLOY_ERROR" ]]; then
+            reason="Azure deployment connection reset"
+        else
+            reason="Terraform provider download connection reset"
+        fi
+        grep -Fq "$reason; retrying" "$TEST_ROOT/retry-output" || fail "retry must log the reason"
+        [[ -z "$(find "$DEPLOY_LOG_DIR" -type f -print -quit)" ]] || fail "deployment transcripts must be removed"
+    done
 done
+
+# Permanent diagnostics must not qualify even if a download reset is also present.
+for permanent_error in \
+    'Failed to query available provider packages: no available releases match the given constraints' \
+    'Failed to install provider: checksum list has no SHA-256 hash' \
+    'Failed to install provider: authentication signature from unknown issuer' \
+    'Failed to install provider: 403 Forbidden' \
+    'Invalid resource type'; do
+    for deploy_error in "terraform init failure: exit status 1"$'\n\nError: '"$permanent_error" \
+        "$TERRAFORM_DOWNLOAD_ERROR"$'\n\nError: '"$permanent_error"; do
+        : >"$CALL_LOG"
+        wrapped_error="$(jq -cn --arg message "$deploy_error" '{code:"RecipeDeploymentFailed",message:$message}')"
+        if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$wrapped_error" run_lib rtc_deploy_with_retry \
+            "$TEST_APP_BICEP" >"$TEST_ROOT/retry-output" 2>&1; then
+            fail "permanent Terraform errors must fail"
+        fi
+        assert_eq "1" "$(grep -c '^rad deploy ' "$CALL_LOG")" "permanent Terraform failure attempts"
+        grep -q '^sleep ' "$CALL_LOG" && fail "permanent Terraform errors must not back off"
+    done
+done
+
+for deploy_error in \
+    "${TERRAFORM_DOWNLOAD_ERROR/terraform init failure/terraform apply failure}" \
+    "${TERRAFORM_DOWNLOAD_ERROR/Failed to install provider/Failed to download module}" \
+    "${TERRAFORM_DOWNLOAD_ERROR/releases.hashicorp.com/registry.example.com}" \
+    "${TERRAFORM_DOWNLOAD_ERROR/connection reset by peer/403 Forbidden}" \
+    "${TERRAFORM_DOWNLOAD_ERROR/connection reset by peer/checksum mismatch}" \
+    "${TERRAFORM_DOWNLOAD_ERROR/connection reset by peer/signature verification failed}" \
+    "${TERRAFORM_DOWNLOAD_ERROR/connection reset by peer/no available releases match the given constraints}" \
+    "${TERRAFORM_DOWNLOAD_ERROR/connection reset by peer/i/o timeout}" \
+    "$(jq -cn --arg message "$TERRAFORM_DOWNLOAD_ERROR" \
+        '{code:"DeploymentFailed",details:[{code:"RecipeDeploymentFailed",message:$message},
+        {code:"RecipeDeploymentFailed",message:"Invalid Terraform configuration"}]}')" \
+    "$(jq -cn --arg message "$TERRAFORM_DOWNLOAD_ERROR" '{status:"Succeeded",message:$message}')" \
+    '{"code":"RecipeDeploymentFailed","message":"terraform init failure: exit status 1\n\nError: Failed to install provider","details":[{"message":"connection reset by peer"}]}'; do
+    : >"$CALL_LOG"
+    if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$deploy_error" run_lib rtc_deploy_with_retry \
+        "$TEST_APP_BICEP" >/dev/null 2>&1; then
+        fail "unconfirmed Terraform download errors must fail"
+    fi
+    assert_eq "1" "$(grep -c '^rad deploy ' "$CALL_LOG")" "unconfirmed Terraform failure attempts"
+    grep -q '^sleep ' "$CALL_LOG" && fail "unconfirmed Terraform errors must not back off"
+done
+
+: >"$CALL_LOG"
+retry_status=0
+DEPLOY_EXIT_CODE=17 DEPLOY_ERROR="$WRAPPED_TERRAFORM_ERROR" run_lib rtc_deploy_with_retry \
+    "$TEST_APP_BICEP" >/dev/null 2>&1 || retry_status=$?
+assert_eq "17" "$retry_status" "retry exhaustion must preserve the deployment exit code"
+assert_eq "3" "$(grep -c '^rad deploy ' "$CALL_LOG")" "Terraform exhaustion attempt count"
 
 # A successful Azure operation must not qualify an unrelated failure for retries.
 MIXED_DEPLOY_ERROR='Deployment operations:
@@ -500,13 +570,15 @@ Deployment failed.' run_lib rtc_deploy_with_retry "$TEST_APP_BICEP" >/dev/null 2
     fail "nested multiline Azure connection-reset errors must retry"
 assert_eq "2" "$(grep -c '^rad deploy ' "$CALL_LOG")" "nested Azure failure attempt count"
 
-: >"$CALL_LOG"
-if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$TRANSIENT_DEPLOY_ERROR" DEPLOY_ERROR_AFTER_FIRST='InvalidTemplate: invalid property' \
-    run_lib rtc_deploy_and_assert_test_app \
-    "$TEST_APP_BICEP" Radius.Security/secrets rtc-test /envs/myenv myws my-ns >/dev/null 2>&1; then
-    fail "permanent errors after a transient failure must fail"
-fi
-assert_eq "2" "$(grep -c '^rad deploy ' "$CALL_LOG")" "only the latest failure may trigger a retry"
+for deploy_error in "$TRANSIENT_DEPLOY_ERROR" "$WRAPPED_TERRAFORM_ERROR"; do
+    : >"$CALL_LOG"
+    if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$deploy_error" DEPLOY_ERROR_AFTER_FIRST='InvalidTemplate: invalid property' \
+        run_lib rtc_deploy_and_assert_test_app \
+        "$TEST_APP_BICEP" Radius.Security/secrets rtc-test /envs/myenv myws my-ns >/dev/null 2>&1; then
+        fail "permanent errors after a transient failure must fail"
+    fi
+    assert_eq "2" "$(grep -c '^rad deploy ' "$CALL_LOG")" "only the latest failure may trigger a retry"
+done
 
 : >"$CALL_LOG"
 if APP_DELETE_EXIT_CODE=1 DEPLOY_FAILURES=1 DEPLOY_ERROR="$TRANSIENT_DEPLOY_ERROR" \
