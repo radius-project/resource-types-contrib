@@ -17,11 +17,11 @@ temp="$(mktemp -d)"
 trap 'rm -rf -- "$temp"' EXIT
 fail() { echo "FAIL: $1" >&2; exit 1; }
 unset RTC_AZURE_TEST_REGIONS AZURE_LOCATION AZURE_FALLBACK_LOCATION
-[[ "$(bash "$script" regions)" == westus3,eastus2,centralus,westus2 ]] || fail defaults
+[[ "$(bash "$script" regions)" == westus3,eastus2,centralus ]] || fail defaults
 [[ "$(AZURE_LOCATION=eastus AZURE_FALLBACK_LOCATION=northeurope bash "$script" regions)" == \
-    eastus,northeurope,centralus,westus2 ]] || fail "legacy settings"
+    eastus,northeurope,centralus ]] || fail "legacy settings"
 [[ "$(AZURE_LOCATION=centralus AZURE_FALLBACK_LOCATION=centralus bash "$script" regions)" == \
-    centralus,westus2 ]] || fail "stable deduplication"
+    centralus ]] || fail "stable deduplication"
 [[ "$(RTC_AZURE_TEST_REGIONS=westus2,westus2,eastus2 AZURE_LOCATION=bad bash "$script" regions)" == \
     westus2,eastus2 ]] || fail "override precedence"
 [[ "$(RTC_AZURE_TEST_REGIONS=centralus bash "$script" regions)" == centralus ]] || fail "single region"

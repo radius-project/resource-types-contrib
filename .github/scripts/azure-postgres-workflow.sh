@@ -79,7 +79,7 @@ case "${1:-}" in
         if [[ -v RTC_AZURE_TEST_REGIONS ]]; then
             list="$RTC_AZURE_TEST_REGIONS"
         else
-            list="${AZURE_LOCATION:-westus3},${AZURE_FALLBACK_LOCATION:-eastus2},centralus,westus2"
+            list="${AZURE_LOCATION:-westus3},${AZURE_FALLBACK_LOCATION:-eastus2},centralus"
         fi
         [[ "$list" =~ ^[a-z0-9]+(,[a-z0-9]+)*$ ]] ||
             { echo "Error: invalid Azure region list." >&2; exit 1; }

@@ -233,23 +233,29 @@ mapping that does not match the test tuple fails the PostgreSQL check.
 Set repository variable `RTC_AZURE_TEST_REGIONS` to a comma-separated list of
 approved regions. It overrides all other region settings. If it is not set,
 the workflows use `AZURE_LOCATION` (default `westus3`), then
-`AZURE_FALLBACK_LOCATION` (default `eastus2`), then `centralus,westus2`.
+`AZURE_FALLBACK_LOCATION` (default `eastus2`), then `centralus`. The automatic
+default list is `westus3,eastus2,centralus`; it avoids `westus2` because the
+unrelated `azure-aks` AI models test requires an OpenAI model deployment that is
+not listed for that region in Microsoft's
+[Global Standard Americas availability table](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure-region-availability).
 These two legacy settings are also repository variables. Scripts accept the same
 names as environment variables. The selector's `RTC_AZURE_TEST_REGIONS` takes
 precedence over positional regions.
 
 Duplicates are removed without changing order. At most four distinct regions
 are allowed. An explicit one-region list prevents selection in another region.
-Before use, verify **all candidates**, including `centralus` and `westus2`, for
-subscription access, quota, policy, PostgreSQL 16, and the other `azure-aks`
-pack services. Check the exact OpenAI model and version. These defaults are
-candidates, not a claim that the subscription can use them.
+The default produces three regions x two sizes, or six candidate tuples. Before
+adding an explicit region override, verify **all candidates** for subscription
+access, quota, policy, PostgreSQL 16, and the other `azure-aks` pack services.
+Check the exact OpenAI model and version, especially if explicitly adding
+`westus2`. These defaults are candidates, not a claim that the subscription can
+use them.
 
 Repository variable `RTC_POSTGRES_TEST_SIZES` defaults to `S,M`. Only `S` and
 `M` are allowed; duplicates are removed. `S` maps to `Standard_B1ms`/`Burstable`;
 `M` maps to `Standard_D2ds_v5`/`GeneralPurpose`. Try the first size in every
-region before trying the next size. Thus the default order is all four `S`
-candidates, then all four `M` candidates. Empty or malformed script settings,
+region before trying the next size. Thus the default order is all three `S`
+candidates, then all three `M` candidates. Empty or malformed script settings,
 unsafe region values, and excessive lists fail before Azure calls.
 
 Probes use PostgreSQL 16, 32 GiB storage, no HA, no geo-redundant backup,
