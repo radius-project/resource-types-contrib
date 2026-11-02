@@ -12,6 +12,68 @@
 
 set -euo pipefail
 
+validate_run_context() {
+    run_id="${GITHUB_RUN_ID:-}"
+    run_attempt="${GITHUB_RUN_ATTEMPT:-}"
+    [[ "$run_id" =~ ^[0-9]+$ && "$run_attempt" =~ ^[1-9][0-9]{0,8}$ ]] ||
+        { echo "Error: invalid workflow run ownership context." >&2; return 1; }
+}
+
+run_bounded_azure_command() {
+    local requested_limit="$1" remaining
+    shift
+    if [[ -v cleanup_deadline ]]; then
+        remaining=$((cleanup_deadline - SECONDS))
+        ((remaining > 0)) || return 124
+        if ((requested_limit > remaining)); then requested_limit="$remaining"; fi
+    fi
+    timeout --kill-after=5 "$requested_limit" "$@"
+}
+
+validate_probe_group() {
+    local group="$1" group_attempt group_prefix
+    case "$group" in
+        "rrttest-nightly-${run_id}-"*-probe)
+            group_prefix="rrttest-nightly-${run_id}-"
+            group_attempt="${group#"$group_prefix"}"
+            group_attempt="${group_attempt%-probe}"
+            ;;
+        "rrttest-rc-${run_id}-"*-probe)
+            group_prefix="rrttest-rc-${run_id}-"
+            group_attempt="${group#"$group_prefix"}"
+            group_attempt="${group_attempt%-probe}"
+            ;;
+        *) echo "Error: refusing to delete a probe group not owned by this run." >&2; return 1 ;;
+    esac
+    if [[ ! "$group_attempt" =~ ^[1-9][0-9]{0,8}$ ]] ||
+        ((10#$group_attempt > 10#$run_attempt)); then
+        echo "Error: refusing a probe group from a future or invalid run attempt." >&2
+        return 1
+    fi
+}
+
+delete_and_confirm_resource_group() {
+    local group="$1" exists
+    exists="$(run_bounded_azure_command 30 az group exists --name "$group" \
+        --subscription "$AZURE_SUBSCRIPTION_ID" --output tsv)" || return 1
+    if [[ "$exists" == false ]]; then return 0; fi
+    [[ "$exists" == true ]] ||
+        { echo "Error: could not determine resource group state for '$group'." >&2; return 1; }
+    run_bounded_azure_command 840 az group delete --name "$group" \
+        --subscription "$AZURE_SUBSCRIPTION_ID" --yes --only-show-errors --output none || return 1
+    exists="$(run_bounded_azure_command 30 az group exists --name "$group" \
+        --subscription "$AZURE_SUBSCRIPTION_ID" --output tsv)" || return 1
+    [[ "$exists" == false ]] ||
+        { echo "Error: resource group deletion was not confirmed for '$group'." >&2; return 1; }
+    echo "Resource group deletion confirmed: $group"
+}
+
+cleanup_probe_group() {
+    local group="$1"
+    validate_probe_group "$group" || return 1
+    delete_and_confirm_resource_group "$group"
+}
+
 case "${1:-}" in
     regions)
         if [[ -v RTC_AZURE_TEST_REGIONS ]]; then
@@ -60,40 +122,48 @@ case "${1:-}" in
     cleanup-probe)
         group="${2:-}"
         [[ -n "$group" ]] || { echo "No probe group recorded; nothing to delete."; exit 0; }
-        run_id="${GITHUB_RUN_ID:-}"
-        run_attempt="${GITHUB_RUN_ATTEMPT:-}"
-        [[ "$run_id" =~ ^[0-9]+$ && "$run_attempt" =~ ^[1-9][0-9]{0,8}$ ]] ||
-            { echo "Error: invalid workflow run ownership context." >&2; exit 1; }
-        case "$group" in
-            "rrttest-nightly-${run_id}-"*-probe)
-                group_prefix="rrttest-nightly-${run_id}-"
-                group_attempt="${group#"$group_prefix"}"
-                group_attempt="${group_attempt%-probe}"
-                ;;
-            "rrttest-rc-${run_id}-"*-probe)
-                group_prefix="rrttest-rc-${run_id}-"
-                group_attempt="${group#"$group_prefix"}"
-                group_attempt="${group_attempt%-probe}"
-                ;;
-            *) echo "Error: refusing to delete a probe group not owned by this run." >&2; exit 1 ;;
-        esac
-        if [[ ! "$group_attempt" =~ ^[1-9][0-9]{0,8}$ ]] ||
-            ((10#$group_attempt > 10#$run_attempt)); then
-            echo "Error: refusing a probe group from a future or invalid run attempt." >&2
+        validate_run_context
+        : "${AZURE_SUBSCRIPTION_ID:?subscription is required}"
+        cleanup_probe_group "$group"
+        ;;
+    cleanup-run-groups)
+        kind="${2:-}"
+        [[ "$kind" == nightly || "$kind" == rc ]] ||
+            { echo "Error: cleanup kind must be nightly or rc." >&2; exit 1; }
+        validate_run_context
+        : "${AZURE_SUBSCRIPTION_ID:?subscription is required}"
+        prefix="rrttest-${kind}-${run_id}-"
+        cleanup_deadline=$((SECONDS + 1500))
+        if ! groups="$(run_bounded_azure_command 30 az group list --query '[].name' \
+            --subscription "$AZURE_SUBSCRIPTION_ID" --output tsv)"; then
+            echo "Error: could not list Azure resource groups for this run." >&2
             exit 1
         fi
-        : "${AZURE_SUBSCRIPTION_ID:?subscription is required}"
-        exists="$(timeout --kill-after=5 30 az group exists --name "$group" \
-            --subscription "$AZURE_SUBSCRIPTION_ID" --output tsv)"
-        if [[ "$exists" == false ]]; then exit 0; fi
-        [[ "$exists" == true ]] || { echo "Error: could not determine probe group state." >&2; exit 1; }
-        timeout --kill-after=5 840 az group delete --name "$group" \
-            --subscription "$AZURE_SUBSCRIPTION_ID" --yes --only-show-errors --output none
-        exists="$(timeout --kill-after=5 30 az group exists --name "$group" \
-            --subscription "$AZURE_SUBSCRIPTION_ID" --output tsv)"
-        [[ "$exists" == false ]] ||
-            { echo "Error: probe group deletion was not confirmed." >&2; exit 1; }
-        echo "Probe group deletion confirmed: $group"
+        cleanup_status=0
+        while IFS= read -r group; do
+            [[ "$group" == "$prefix"* ]] || continue
+            suffix="${group#"$prefix"}"
+            is_probe=false
+            if [[ "$suffix" == *-probe ]]; then
+                is_probe=true
+                suffix="${suffix%-probe}"
+            fi
+            [[ "$suffix" =~ ^[1-9][0-9]{0,8}$ ]] || continue
+            ((10#$suffix <= 10#$run_attempt)) || continue
+            if [[ "$is_probe" == true ]]; then
+                if ! cleanup_probe_group "$group"; then cleanup_status=1; fi
+            else
+                if ! delete_and_confirm_resource_group "$group"; then
+                    echo "Error: could not delete owned resource group '$group'." >&2
+                    cleanup_status=1
+                fi
+            fi
+            if ((SECONDS >= cleanup_deadline)); then
+                echo "Error: owned resource-group cleanup reached its time limit." >&2
+                exit 1
+            fi
+        done <<<"$groups"
+        exit "$cleanup_status"
         ;;
-    *) echo "Usage: $0 regions|summary|cleanup-probe [owned-group]" >&2; exit 1 ;;
+    *) echo "Usage: $0 regions|summary|cleanup-probe [owned-group]|cleanup-run-groups <nightly|rc>" >&2; exit 1 ;;
 esac

@@ -55,18 +55,38 @@ cat >"$temp/bin/az" <<'EOF'
 #!/bin/bash
 set -euo pipefail
 echo "$*" >>"$CALL_LOG"
-case "$2" in
-    exists) cat "$GROUP_STATE" ;;
+command="$2"
+group=""
+while (($#)); do
+    if [[ "$1" == --name && $# -ge 2 ]]; then
+        group="$2"
+        shift 2
+    else
+        shift
+    fi
+done
+case "$command" in
+    list)
+        if [[ "${LIST_FAILS:-}" == true ]]; then exit 1; fi
+        cat "$GROUP_STATE"
+        ;;
+    exists)
+        if grep -Fqx -- "$group" "$GROUP_STATE"; then echo true; else echo false; fi
+        ;;
     delete)
         if [[ "${DELETE_FAILS:-}" == true ]]; then exit 1; fi
-        if [[ "${DELETE_STUCK:-}" != true ]]; then echo false >"$GROUP_STATE"; fi ;;
+        if [[ "${DELETE_STUCK:-}" != true ]]; then
+            grep -Fvx -- "$group" "$GROUP_STATE" >"$GROUP_STATE.next" || true
+            mv "$GROUP_STATE.next" "$GROUP_STATE"
+        fi
+        ;;
     *) exit 1 ;;
 esac
 EOF
 chmod +x "$temp/bin/az"
 export PATH="$temp/bin:$PATH" GITHUB_RUN_ID=123 GITHUB_RUN_ATTEMPT=3 AZURE_SUBSCRIPTION_ID=test
 for kind in nightly rc; do
-    echo true >"$GROUP_STATE"
+    printf 'rrttest-%s-123-2-probe\n' "$kind" >"$GROUP_STATE"
     : >"$CALL_LOG"
     bash "$script" cleanup-probe "rrttest-$kind-123-2-probe"
     grep -q "group delete --name rrttest-$kind-123-2-probe --subscription test" "$CALL_LOG" ||
@@ -84,7 +104,7 @@ for group in caller-owned rrttest-nightly-124-2-probe rrttest-rc-123-4-probe \
     if bash "$script" cleanup-probe "$group" 2>/dev/null; then fail "ownership guard"; fi
 done
 [[ ! -s "$CALL_LOG" ]] || fail "must reject before Azure calls"
-echo true >"$GROUP_STATE"
+printf 'rrttest-nightly-123-2-probe\n' >"$GROUP_STATE"
 if DELETE_FAILS=true bash "$script" cleanup-probe rrttest-nightly-123-2-probe 2>/dev/null; then
     fail "delete error"
 fi
@@ -92,7 +112,7 @@ if DELETE_STUCK=true bash "$script" cleanup-probe rrttest-nightly-123-2-probe 2>
     fail "delete must be confirmed"
 fi
 for attempt in 1 2 3; do
-    echo false >"$GROUP_STATE"
+    : >"$GROUP_STATE"
     bash "$script" cleanup-probe "rrttest-nightly-123-$attempt-probe"
 done
 if GITHUB_RUN_ID=124 bash "$script" cleanup-probe rrttest-nightly-123-2-probe 2>/dev/null; then
@@ -101,4 +121,73 @@ fi
 if GITHUB_RUN_ATTEMPT=invalid bash "$script" cleanup-probe rrttest-nightly-123-2-probe 2>/dev/null; then
     fail "invalid current attempt"
 fi
+
+# Cleanup-only reruns have no producer outputs; discover exact earlier-attempt groups by run ID.
+for kind in nightly rc; do
+    cat >"$GROUP_STATE" <<EOF
+rrttest-$kind-123-2
+rrttest-$kind-123-2-probe
+rrttest-$kind-123-4
+rrttest-$kind-123-4-probe
+rrttest-$kind-123-5
+rrttest-$kind-123-5-probe
+rrttest-$kind-123-2-extra
+rrttest-$kind-123-x-probe
+rrttest-$kind-124-2
+rrttest-other-123-2
+EOF
+    : >"$CALL_LOG"
+    GITHUB_RUN_ATTEMPT=4 bash "$script" cleanup-run-groups "$kind"
+    for group in "rrttest-$kind-123-2" "rrttest-$kind-123-2-probe" \
+        "rrttest-$kind-123-4" "rrttest-$kind-123-4-probe"; do
+        grep -Fq "delete --name $group --subscription test" "$CALL_LOG" ||
+            fail "earlier-attempt cleanup discovery: $group"
+    done
+    ! grep -Fq -- --no-wait "$CALL_LOG" || fail "all owned group deletions must be confirmed"
+    for group in "rrttest-$kind-123-5" "rrttest-$kind-123-5-probe" \
+        "rrttest-$kind-123-2-extra" "rrttest-$kind-123-x-probe" \
+        "rrttest-$kind-124-2" "rrttest-other-123-2"; do
+        ! grep -Fq "delete --name $group " "$CALL_LOG" ||
+            fail "ignored unrelated group: $group"
+    done
+done
+
+# A full rerun may publish attempt-2 outputs while groups from attempt 1 remain.
+for kind in nightly rc; do
+    cat >"$GROUP_STATE" <<EOF
+rrttest-$kind-123-1
+rrttest-$kind-123-1-probe
+rrttest-$kind-123-2
+rrttest-$kind-123-2-probe
+rrttest-$kind-123-3
+rrttest-$kind-123-3-probe
+rrttest-$kind-124-1
+rrttest-other-123-1
+EOF
+    : >"$CALL_LOG"
+    AZURE_RESOURCE_GROUP="rrttest-$kind-123-2" \
+        PROBE_RESOURCE_GROUP="rrttest-$kind-123-2-probe" GITHUB_RUN_ATTEMPT=2 \
+        bash "$script" cleanup-run-groups "$kind"
+    for group in "rrttest-$kind-123-1" "rrttest-$kind-123-1-probe" \
+        "rrttest-$kind-123-2" "rrttest-$kind-123-2-probe"; do
+        grep -Fq "delete --name $group --subscription test" "$CALL_LOG" ||
+            fail "cleanup with current outputs missed earlier group: $group"
+    done
+    for group in "rrttest-$kind-123-3" "rrttest-$kind-123-3-probe" \
+        "rrttest-$kind-124-1" "rrttest-other-123-1"; do
+        ! grep -Fq "delete --name $group " "$CALL_LOG" ||
+            fail "cleanup deleted an unowned or future group: $group"
+    done
+done
+
+: >"$GROUP_STATE"
+LIST_FAILS=true bash "$script" cleanup-run-groups nightly 2>/dev/null &&
+    fail "resource group discovery failure"
+for kind in nightly rc; do
+    printf 'rrttest-%s-123-2\n' "$kind" >"$GROUP_STATE"
+    DELETE_FAILS=true GITHUB_RUN_ATTEMPT=3 bash "$script" cleanup-run-groups "$kind" \
+        2>/dev/null && fail "resource group delete failure"
+    DELETE_STUCK=true GITHUB_RUN_ATTEMPT=3 bash "$script" cleanup-run-groups "$kind" \
+        2>/dev/null && fail "resource group deletion must be confirmed"
+done
 echo "Azure PostgreSQL workflow tests passed"

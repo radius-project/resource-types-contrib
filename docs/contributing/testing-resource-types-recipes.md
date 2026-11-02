@@ -325,16 +325,17 @@ deployment parameters are not part of the selection report.
 Both owned group names are recorded as job outputs before Azure login.
 Probe groups carry creation-time, run-ID, and run-attempt tags.
 The selector deletes each server and requests group deletion on exit. Because
-traps cannot cover runner loss, the separate cleanup job checks and deletes
-the exact probe group for that run and attempt, then confirms it is gone.
-When the producing job's output is unavailable, the cleanup job builds the
-group name from the workflow run ID and attempt. On a cleanup-only rerun, it
-can also clean the exact group recorded by an earlier attempt of the same run.
-It rejects other run IDs, future attempts, malformed names, and unrelated
-prefixes. A group that is already absent is treated as cleaned. The same
-deterministic fallback applies to the main group. A cleanup error fails that
-step and leaves the target visible for operator or stale-resource recovery.
-Main-group cleanup keeps the existing asynchronous deletion behavior.
+traps cannot cover runner loss, the separate cleanup job lists resource groups
+and deletes only exact `rrttest-nightly-<run-id>-<attempt>` or
+`rrttest-nightly-<run-id>-<attempt>-probe` names (with the matching `rrttest-rc`
+prefix for release-candidate runs). It considers attempts from 1 through the
+current run attempt, so cleanup-only reruns can recover groups from a previous
+attempt even when the producer job never published outputs. Other run IDs,
+future attempts, malformed names, and unrelated prefixes are ignored. An absent
+group counts as cleaned. Deletion of both main and probe groups is bounded and
+confirmed. Cleanup has a 25-minute command budget within its 30-minute job, and
+a cleanup error fails the step while leaving any remaining groups visible for
+operator or stale-resource recovery.
 
 For example, after checking access and service support for `centralus`, constrain
 the next nightly run to that region and test the existing `M` mapping first:
