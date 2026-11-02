@@ -27,6 +27,14 @@ export SERVER_STATE="$TEST_ROOT/server"
 export RTC_POSTGRES_PROBE_RESULT_FILE="$TEST_ROOT/result.json"
 REAL_TIMEOUT="$(command -v timeout)"
 export REAL_TIMEOUT
+export REAL_PYTHON3
+REAL_PYTHON3="$(command -v python3)"
+export CATALOG_JSON
+CATALOG_JSON="$(jq -cn '{supportedServerVersions:[{name:"16",status:null}],supportedServerEditions:
+    [({name:"Burstable",supportedServerSkus:[{name:"Standard_B1ms"}]}),
+     ({name:"GeneralPurpose",supportedServerSkus:[{name:"Standard_D2ds_v5"}]})]
+    | map(. + {supportedStorageEditions:[{name:"ManagedDisk",supportedStorageMb:[{storageSizeMb:32768}]}]})}
+    | [. + {status:null,reason:null,restricted:null,supportedFeatures:[{name:"OfferRestricted",status:"Disabled"}]}]')"
 
 # Track ownership separately from the create result, including partial creates.
 cat >"$TEST_ROOT/bin/az" <<'EOF'
@@ -46,6 +54,11 @@ if [[ "$*" == "postgres flexible-server create --help" ]]; then
 fi
 echo "az $*" >>"$CALL_LOG"
 case "$3" in
+    list-skus)
+        [[ -z "${CATALOG_SLEEP:-}" ]] || sleep "$CATALOG_SLEEP"
+        if [[ -n "${CATALOG_FAIL:-}" ]]; then echo '(AuthorizationFailed) Denied' >&2; exit 1; fi
+        printf '%s\n' "$CATALOG_JSON"
+        exit 0 ;;
     delete)
         [[ -z "${DELETE_SLEEP:-}" ]] || sleep "$DELETE_SLEEP"
         if [[ -n "${DELETE_FAILS:-}" ]]; then echo '(Conflict) delete rejected' >&2; exit 1; fi
@@ -101,7 +114,7 @@ case "$result" in
     ok) exit 0 ;;
     capacity) echo '(SkuNotAvailable) SKU unavailable.' >&2 ;;
     busy) echo 'ERROR: (ServerIsBusy) Busy.' >&2 ;;
-    json) echo '{"error":{"code":"SkuNotAvailable","message":"Unavailable"}}' >&2 ;;
+    json) echo '{"error":{"code":"SkuNotAvailable","message":"Unavailable","details":[]}}' >&2 ;;
     mixed) printf '%s\n' '(SkuNotAvailable) Unavailable.' '(AuthorizationFailed) Denied.' >&2 ;;
     uncoded) printf '%s\n' 'ERROR: (SkuNotAvailable) SKU capacity unavailable' \
         'ERROR: The client is not authorized to perform this operation.' >&2 ;;
@@ -126,6 +139,13 @@ cat >"$TEST_ROOT/bin/timeout" <<'EOF'
 #!/bin/bash
 echo "timeout $1 $2" >>"$CALL_LOG"
 exec "$REAL_TIMEOUT" "$@"
+EOF
+cat >"$TEST_ROOT/bin/python3" <<'EOF'
+#!/bin/bash
+if [[ "$1" == */run-bounded-command.py ]]; then
+    echo "timeout --process-tree $2" >>"$CALL_LOG"
+fi
+exec "$REAL_PYTHON3" "$@"
 EOF
 chmod +x "$TEST_ROOT/bin/"*
 
@@ -198,14 +218,14 @@ reset capacity busy ok
 expect_status 0 run_probe
 [[ "$(count create)" == 3 && "$(count delete)" == 3 && "$(count show)" == 9 ]] || fail "retry cleanup"
 [[ "$(grep -oE -- '--name [^ ]+' "$CALL_LOG" | sort -u | wc -l)" -eq 3 ]] || fail "unique server names"
-[[ "$(awk '/^az / {print $4}' "$CALL_LOG" | paste -sd,)" == "show,create,show,delete,show,show,create,show,delete,show,show,create,show,delete,show" ]] ||
+[[ "$(awk '/^az / && !/list-skus/ {print $4}' "$CALL_LOG" | paste -sd,)" == "show,create,show,delete,show,show,create,show,delete,show,show,create,show,delete,show" ]] ||
     fail "must confirm deletion before next allocation"
 
 reset ok
 expect_status 1 env DELETE_MISSING=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
 reset ok
 expect_status 0 env AZURE_SUBSCRIPTION_ID=sub-123 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
-[[ "$(grep -c -- '--subscription sub-123' "$CALL_LOG")" == 5 ]] || fail "subscription on all calls"
+[[ "$(grep -c -- '--subscription sub-123' "$CALL_LOG")" == 6 ]] || fail "subscription on all calls"
 
 reset capacity capacity capacity
 expect_status 2 run_probe
@@ -237,12 +257,12 @@ reset timeout
 expect_status 3 run_probe
 [[ "$(count delete)" == 1 && "$(count show)" == 3 ]] || fail "timeout cleanup"
 jq -e '.outcome == "timeout" and .errorCode == "CreateTimeout"' "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "timeout result"
-grep -qE '^timeout --signal=KILL (89[0-9]|900)$' "$CALL_LOG" || fail "bounded create"
+grep -qE '^timeout --process-tree (89[0-9]|900)$' "$CALL_LOG" || fail "bounded create"
 reset slow
 expect_status 3 env RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS=2 AZURE_RESOURCE_GROUP=rg \
     AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
 [[ "$(count delete)" == 1 && "$(count show)" == 3 ]] || fail "real timeout must confirm cleanup"
-grep -qE '^timeout --signal=KILL [12]$' "$CALL_LOG" || fail "configured create timeout"
+grep -qE '^timeout --process-tree [12]$' "$CALL_LOG" || fail "configured create timeout"
 reset capacity ok
 expect_status 1 env RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS=1 DELETE_SLEEP=20 AZURE_RESOURCE_GROUP=rg \
     AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
@@ -337,7 +357,7 @@ for format in plain json; do
     done
 done
 reset ok
-expect_status 0 env PRECHECK_SLEEP=1 OWNERSHIP_SLEEP=1 \
+expect_status 0 env CATALOG_SLEEP=1 PRECHECK_SLEEP=1 OWNERSHIP_SLEEP=1 \
     RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS=10 RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS=10 \
     AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
 awk '
@@ -346,6 +366,92 @@ awk '
     /^az postgres flexible-server delete / { if (limit <= 0 || limit >= 10) exit 1; deletes++ }
     END { if (create != 1 || deletes != 1) exit 1 }
 ' "$CALL_LOG" || fail "absence and ownership reads must reduce the create and cleanup budgets"
+
+for field in Version Tier Sku Storage; do
+    case "$field" in
+        Version) catalog="$(jq '.[0].supportedServerVersions[0].name = "15"' <<<"$CATALOG_JSON")" ;;
+        Tier) catalog="$(jq '.[0].supportedServerEditions[0].name = "Other"' <<<"$CATALOG_JSON")" ;;
+        Sku) catalog="$(jq '.[0].supportedServerEditions[0].supportedServerSkus = []' <<<"$CATALOG_JSON")" ;;
+        Storage) catalog="$(jq '.[0].supportedServerEditions[0].supportedStorageEditions[0].supportedStorageMb[0].storageSizeMb = 65536' <<<"$CATALOG_JSON")" ;;
+    esac
+    reset ok
+    expect_status 4 env CATALOG_JSON="$catalog" AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \
+        PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+    [[ "$(count create)" == 0 ]] || fail "unsupported $field must not allocate"
+    jq -e --arg code "Unsupported$field" '.outcome == "unsupported" and .errorCode == $code' \
+        "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "unsupported $field result"
+done
+for catalog in 'not json' '[]' '[{}]' \
+    '[{"reason":"Subscription restriction","supportedServerVersions":[],"supportedServerEditions":[]}]' \
+    '[{"supportedServerVersions":[],"supportedServerEditions":[]}]'; do
+    reset ok
+    expect_status 1 env CATALOG_JSON="$catalog" AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \
+        PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+    [[ "$(count create)" == 0 ]] || fail "restricted or malformed catalog must not allocate"
+    jq -e '.outcome == "probe_error"' "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null ||
+        fail "restricted or malformed catalog result"
+done
+reset ok
+expect_status 1 env CATALOG_JSON="$(jq '.[0].supportedFeatures[0].status = "Enabled"' <<<"$CATALOG_JSON")" \
+    AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+[[ "$(count create)" == 0 ]] || fail "OfferRestricted must stop allocation"
+jq -e '.outcome == "probe_error" and .errorCode == "RegionRestricted"' \
+    "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "explicit catalog restriction result"
+reset ok
+expect_status 1 env CATALOG_FAIL=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \
+    PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+[[ "$(count create)" == 0 ]] || fail "catalog provider failure must not allocate"
+reset ok
+expect_status 3 env CATALOG_SLEEP=20 RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS=1 \
+    AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+[[ "$(count create)" == 0 ]] || fail "catalog timeout must not allocate"
+
+python3 - "$REPO_ROOT/.github/scripts/run-bounded-command.py" <<'PY'
+import signal
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+def assert_stopped(pids):
+    for pid in pids.split():
+        state_file = Path(f"/proc/{int(pid)}/stat")
+        for _ in range(50):
+            try:
+                state = state_file.read_text().split(") ", 1)[1].split()[0]
+            except FileNotFoundError:
+                break
+            if state == "Z":
+                break
+            time.sleep(0.01)
+        else:
+            raise AssertionError(f"descendant {pid} is still running")
+
+for command in (
+    'sleep 6 & child=$!; echo "$$ $child"; wait; echo false',
+    'trap "" TERM; sleep 6 & child=$!; echo "$$ $child"; wait; echo false',
+    'sleep 6 & echo "$!"; exit 0',
+):
+    started = time.monotonic()
+    result = subprocess.run(
+        [sys.executable, sys.argv[1], "1", "bash", "-c", command],
+        capture_output=True, text=True, timeout=3,
+    )
+    assert result.returncode in (0, 124), result
+    assert time.monotonic() - started < 3 and "false" not in result.stdout, result
+    assert_stopped(result.stdout.strip())
+
+process = subprocess.Popen(
+    [sys.executable, sys.argv[1], "20", "bash", "-c",
+     'trap "" TERM; sleep 6 & child=$!; echo "$$ $child"; wait; echo false'],
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+)
+pids = process.stdout.readline().strip()
+process.send_signal(signal.SIGTERM)
+output, errors = process.communicate(timeout=3)
+assert process.returncode == 143 and "false" not in output, (output, errors)
+assert_stopped(pids)
+PY
 
 for setting in RTC_POSTGRES_TEST_SIZE=L RTC_POSTGRES_TEST_SIZE=bad RTC_POSTGRES_TEST_SIZE= \
     RTC_POSTGRES_PROBE_ATTEMPTS=0 RTC_POSTGRES_PROBE_ATTEMPTS=4 RTC_POSTGRES_PROBE_ATTEMPTS=99999999999999999 \

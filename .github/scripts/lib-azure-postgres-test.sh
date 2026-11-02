@@ -53,6 +53,85 @@ rtc_postgres_positive_limit() {
     [[ "$value" =~ ^[1-9][0-9]{0,5}$ ]] && ((10#$value <= maximum))
 }
 
+rtc_postgres_catalog_result() {
+    python3 - "$1" "$2" "$3" <<'PY'
+import json
+import sys
+
+def available(item):
+    status = item.get("status")
+    return (
+        not item.get("reason") and item.get("restricted") in (None, False)
+        and (status is None or isinstance(status, str) and status.lower() in {"available", "enabled", "supported"})
+    )
+
+def objects(parent, key):
+    items = parent[key]
+    if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
+        raise ValueError(key)
+    return items
+
+def named(items):
+    if not all(isinstance(item.get("name"), str) for item in items):
+        raise ValueError("name")
+    return items
+
+def classify(catalog, tier, sku):
+    if not isinstance(catalog, list) or not all(isinstance(item, dict) for item in catalog):
+        return "InvalidCatalog"
+    if not catalog:
+        return "RegionRestricted"
+    if any(not available(item) for item in catalog):
+        return "RegionRestricted"
+    for root in catalog:
+        if "supportedFeatures" in root:
+            for feature in named(objects(root, "supportedFeatures")):
+                if feature["name"] == "OfferRestricted":
+                    if feature.get("status") == "Enabled":
+                        return "RegionRestricted"
+                    if feature.get("status") != "Disabled":
+                        return "InvalidCatalog"
+        versions = named(objects(root, "supportedServerVersions"))
+        editions = named(objects(root, "supportedServerEditions"))
+        if not versions and not editions:
+            return "RegionRestricted"
+        for edition in editions:
+            named(objects(edition, "supportedServerSkus"))
+            for storage in named(objects(edition, "supportedStorageEditions")):
+                for size in objects(storage, "supportedStorageMb"):
+                    if type(size.get("storageSizeMb")) is not int:
+                        raise ValueError("storageSizeMb")
+    roots = [root for root in catalog if any(
+        item["name"] == "16" and available(item) for item in root["supportedServerVersions"]
+    )]
+    if not roots:
+        return "UnsupportedVersion"
+    editions = [edition for root in roots for edition in root["supportedServerEditions"]
+                if edition["name"] == tier and available(edition)]
+    if not editions:
+        return "UnsupportedTier"
+    editions = [edition for edition in editions if any(
+        item["name"] == sku and available(item) for item in edition["supportedServerSkus"]
+    )]
+    if not editions:
+        return "UnsupportedSku"
+    if not any(
+        size["storageSizeMb"] == 32768 and available(size)
+        for edition in editions for storage in edition["supportedStorageEditions"]
+        if available(storage) for size in storage["supportedStorageMb"]
+    ):
+        return "UnsupportedStorage"
+    return ""
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as source:
+        result = classify(json.load(source), sys.argv[2], sys.argv[3])
+except (ValueError, KeyError, TypeError):
+    result = "InvalidCatalog"
+print(result)
+PY
+}
+
 # Read Azure CLI codes, not words in an error message. Reject mixed failures.
 rtc_postgres_error_codes() {
     python3 - "$1" <<'PY'
@@ -66,7 +145,7 @@ decoder = json.JSONDecoder()
 codes = set()
 
 def visit(value):
-    if isinstance(value, list) and value:
+    if isinstance(value, list):
         for item in value:
             visit(item)
     elif isinstance(value, dict):

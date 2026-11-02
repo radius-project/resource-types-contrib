@@ -23,7 +23,8 @@
 # Create/delete limits: RTC_POSTGRES_PROBE_{CREATE,DELETE}_TIMEOUT_SECONDS=900
 # (1..900 each). Cleanup has its own time reserve.
 # Optional RTC_POSTGRES_PROBE_RESULT_FILE receives a credential-free JSON record.
-# Exit: 0 available, 1 other/cleanup error, 2 capacity exhausted, 3 create timeout.
+# Exit: 0 available, 1 other/cleanup error, 2 capacity exhausted, 3 create timeout,
+# 4 verified unsupported tuple.
 
 set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -65,7 +66,7 @@ report_uncertain_create() {
 delete_server() {
     local status=0 remaining cleanup_deadline codes
     cleanup_deadline=$((SECONDS + delete_timeout))
-    timeout --signal=KILL "$delete_timeout" az postgres flexible-server show \
+    python3 "$script_dir/run-bounded-command.py" "$delete_timeout" az postgres flexible-server show \
         "${subscription_args[@]}" --resource-group "$resource_group" --name "$server_name" \
         --only-show-errors --output json >"$work_dir/server" 2>"$work_dir/show-error" || status=$?
     if ((status != 0)); then
@@ -73,6 +74,7 @@ delete_server() {
         ((status != 124 && status != 137)) && [[ "$codes" == "ResourceNotFound" ]]
         return
     fi
+    [[ ! -s "$work_dir/show-error" ]] || return 1
     if ! jq -e --arg owner "$probe_owner" '.tags["rtc-probe-owner"] == $owner' \
         "$work_dir/server" >/dev/null 2>&1; then
         echo "Error: ownership of probe server '$server_name' was not confirmed; refusing deletion." >&2
@@ -80,17 +82,19 @@ delete_server() {
     fi
     remaining=$((cleanup_deadline - SECONDS))
     ((remaining > 0)) || return 1
-    timeout --signal=KILL "$remaining" az postgres flexible-server delete \
+    python3 "$script_dir/run-bounded-command.py" "$remaining" az postgres flexible-server delete \
         "${subscription_args[@]}" --resource-group "$resource_group" --name "$server_name" \
         --yes --only-show-errors --output none > /dev/null 2>"$work_dir/delete-error" || status=$?
     if ((status != 0)); then
         codes="$(rtc_postgres_error_codes "$work_dir/delete-error")"
         [[ "$codes" == "ResourceNotFound" ]] || return 1
+    elif [[ -s "$work_dir/delete-error" ]]; then
+        return 1
     fi
     remaining=$((cleanup_deadline - SECONDS))
     ((remaining > 0)) || return 1
     status=0
-    timeout --signal=KILL "$remaining" az postgres flexible-server show \
+    python3 "$script_dir/run-bounded-command.py" "$remaining" az postgres flexible-server show \
         "${subscription_args[@]}" --resource-group "$resource_group" --name "$server_name" \
         --only-show-errors --output none > /dev/null 2>"$work_dir/show-error" || status=$?
     codes="$(rtc_postgres_error_codes "$work_dir/show-error")"
@@ -125,7 +129,7 @@ trap 'exit 1' INT TERM
 help_started=$SECONDS
 help_timeout="$create_timeout"
 help_status=0
-timeout --signal=KILL "$help_timeout" az postgres flexible-server create --help \
+python3 "$script_dir/run-bounded-command.py" "$help_timeout" az postgres flexible-server create --help \
     >"$work_dir/create-help" 2>/dev/null || help_status=$?
 help_elapsed=$((SECONDS - help_started))
 if ((help_status == 124 || help_status == 137)) && ((help_elapsed >= help_timeout)); then
@@ -162,6 +166,28 @@ if ((first_create_timeout <= 0)); then
     echo "Error: PostgreSQL probe used its create budget while reading CLI options." >&2
     exit 3
 fi
+catalog_status=0
+python3 "$script_dir/run-bounded-command.py" "$first_create_timeout" az postgres flexible-server list-skus \
+    "${subscription_args[@]}" --location "$location" --only-show-errors --output json \
+    >"$work_dir/catalog" 2>"$work_dir/catalog-error" || catalog_status=$?
+if ((catalog_status == 124 || catalog_status == 137)); then
+    outcome="timeout"; error_code="CreateTimeout"
+    echo "Error: PostgreSQL capability discovery exceeded the create budget." >&2
+    exit 3
+elif ((catalog_status != 0)) || [[ -s "$work_dir/catalog-error" ]]; then
+    error_code="CatalogReadFailed"
+    echo "Error: PostgreSQL capability discovery failed; refusing allocation." >&2
+    exit 1
+fi
+error_code="$(rtc_postgres_catalog_result "$work_dir/catalog" "$postgres_tier" "$postgres_sku")"
+if [[ -n "$error_code" ]]; then
+    echo "Error: PostgreSQL capability check failed: $error_code." >&2
+    case "$error_code" in
+        UnsupportedVersion|UnsupportedTier|UnsupportedSku|UnsupportedStorage) outcome="unsupported"; exit 4 ;;
+        *) exit 1 ;;
+    esac
+fi
+error_code="UnknownError"
 for ((attempt = 1; attempt <= attempts; attempt++)); do
     create_deadline=$((SECONDS + create_timeout))
     if ((attempt == 1)); then create_deadline=$((help_started + create_timeout)); fi
@@ -174,7 +200,7 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
         exit 3
     fi
     status=0
-    timeout --signal=KILL "$limit" az postgres flexible-server show \
+    python3 "$script_dir/run-bounded-command.py" "$limit" az postgres flexible-server show \
         "${subscription_args[@]}" --resource-group "$resource_group" --name "$candidate_name" \
         --only-show-errors --output json >/dev/null 2>"$work_dir/precreate-error" || status=$?
     codes="$(rtc_postgres_error_codes "$work_dir/precreate-error")"
@@ -205,7 +231,7 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
     # None enables public networking without a firewall rule. It does not disable
     # TLS. Leave zone unset for automatic placement, as in the pack.
     create_in_flight=true
-    timeout --signal=KILL "$limit" az postgres flexible-server create \
+    python3 "$script_dir/run-bounded-command.py" "$limit" az postgres flexible-server create \
         "${subscription_args[@]}" --resource-group "$resource_group" --name "$server_name" \
         --location "$location" --tier "$postgres_tier" --sku-name "$postgres_sku" \
         --storage-size 32 --version 16 "$ha_option" Disabled \

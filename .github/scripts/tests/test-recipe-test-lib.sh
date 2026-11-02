@@ -115,6 +115,49 @@ cat >"$MOCK_BIN/az" <<'EOF'
 #!/bin/bash
 echo "az $*" >>"$CALL_LOG"
 case "$1 $2" in
+    "group show")
+        printf '%s\n' "${AZ_GROUP_LOCATION:-westus3}"
+        exit "${AZ_GROUP_EXIT_CODE:-0}"
+        ;;
+    "postgres flexible-server")
+        case "$3" in
+            create)
+                if [[ "$4" == --help ]]; then
+                    echo '--zonal-resiliency --microsoft-entra-auth'
+                    exit 0
+                fi
+                if [[ "${PG_PROBE_EXIT_CODE:-0}" != 0 ]]; then
+                    echo '(SkuNotAvailable) capacity unavailable' >&2
+                    exit "$PG_PROBE_EXIT_CODE"
+                fi
+                ;;
+            list-skus)
+                if [[ "${PG_CATALOG_UNSUPPORTED:-0}" == 1 ]]; then
+                    echo '[{"supportedServerVersions":[{"name":"15"}],"supportedServerEditions":[]}]'
+                else
+                    jq -cn '{supportedServerVersions:[{name:"16",status:null}],supportedServerEditions:
+                        [{name:"Burstable",supportedServerSkus:[{name:"Standard_B1ms"}]},
+                         {name:"GeneralPurpose",supportedServerSkus:[{name:"Standard_D2ds_v5"}]}]
+                        | map(. + {supportedStorageEditions:[{name:"ManagedDisk",supportedStorageMb:[{storageSizeMb:32768}]}]})} | [.]'
+                fi
+                ;;
+            show)
+                creates=$(grep '^az postgres flexible-server create ' "$CALL_LOG" | grep -vc -- ' --help' || true)
+                deletes=$(grep -c '^az postgres flexible-server delete ' "$CALL_LOG" || true)
+                if ((creates > deletes)); then
+                    if [[ "${PG_PROBE_UNKNOWN_OWNER:-0}" == 1 ]]; then echo '{"tags":{}}'; exit 0; fi
+                    args=("$@")
+                    for ((i = 0; i < ${#args[@]}; i++)); do
+                        if [[ "${args[i]}" == --name ]]; then owner="${args[i+1]#pgprobe-}"; fi
+                    done
+                    printf '{"tags":{"rtc-probe-owner":"%s"}}\n' "$owner"
+                else
+                    echo '(ResourceNotFound) absent' >&2
+                    exit 1
+                fi
+                ;;
+        esac
+        ;;
     "resource list")
         if [[ "${AZ_RESOURCE_LIST_FAIL:-0}" == 1 ]]; then exit 1; fi
         if [[ -n "${AZ_RESOURCE_LIST_DELAY_SECONDS:-}" ]]; then sleep "$AZ_RESOURCE_LIST_DELAY_SECONDS"; fi
@@ -683,7 +726,8 @@ exec /usr/bin/timeout "$@"
 EOF
 chmod +x "$MOCK_BIN/timeout"
 run_postgres() {
-    AZURE_RESOURCE_GROUP=rg RTC_TEST_PLATFORM=azure run_lib rtc_test_azure_postgresql_app \
+    RTC_POSTGRES_VERIFIED_SIZE="${RTC_POSTGRES_TEST_SIZE:-S}" RTC_POSTGRES_VERIFIED_LOCATION=westus3 \
+        AZURE_RESOURCE_GROUP=rg RTC_TEST_PLATFORM=azure run_lib rtc_test_azure_postgresql_app \
         "$POSTGRES_TEST_APP_BICEP" /envs/myenv myws my-ns
 }
 
@@ -736,7 +780,10 @@ for pure_error in "$WRAPPED_TERRAFORM_ERROR" "$TERRAFORM_DOWNLOAD_ERROR" "$TRANS
         fail "$classifier must preserve Radius compatibility warnings and progress"
     : >"$CALL_LOG"
     DEPLOY_FAILURES=1 DEPLOY_ERROR="$RADIUS_PROGRESS"$'\n'"$pure_error" \
-        run_postgres >/dev/null 2>&1 || fail "pure errors with Radius progress must recover"
+        run_postgres >"$TEST_ROOT/progress-recovery.log" 2>&1 || {
+            cat "$TEST_ROOT/progress-recovery.log"
+            fail "pure errors with Radius progress must recover"
+        }
     assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "Radius progress recovery attempts"
 done
 
@@ -814,6 +861,55 @@ DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres >/dev/nul
 assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "PostgreSQL recovery attempts"
 grep -q -- '--parameters postgresSize=S' "$CALL_LOG" || fail "first deployment must use S"
 grep -q -- '--parameters postgresSize=M' "$CALL_LOG" || fail "recovery must use M"
+grep '^az postgres flexible-server create ' "$CALL_LOG" | grep -q -- '--sku-name Standard_D2ds_v5' ||
+    fail "M recovery must first probe the M tuple"
+awk '/^rad app delete / { cleaned = 1 }
+    /^az postgres flexible-server create / && !/--help/ { if (!cleaned) exit 1; probed = 1 }
+    /^az postgres flexible-server delete / { deleted = 1 }
+    /^rad deploy / { attempts++; if (attempts == 2 && (!probed || !deleted)) exit 1 }
+' "$CALL_LOG" || fail "alternate probe must follow app cleanup and finish before deployment"
+
+for selected in S M; do
+    : >"$CALL_LOG"
+    if RTC_POSTGRES_TEST_SIZE="$selected" RTC_POSTGRES_TEST_SIZES="$selected" \
+        DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres >/dev/null 2>&1; then
+        fail "single-size policy must not recover with an excluded size"
+    fi
+    assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "single-size deployment attempts"
+    if grep -q '^az postgres flexible-server create ' "$CALL_LOG"; then
+        fail "single-size policy must not probe an excluded size"
+    fi
+done
+for sizes in S,M M,S; do
+    for selected in S M; do
+        : >"$CALL_LOG"
+        RTC_POSTGRES_TEST_SIZE="$selected" RTC_POSTGRES_TEST_SIZES="$sizes" \
+            DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres >/dev/null 2>&1 ||
+            fail "both-size policy must recover in either configured order"
+        assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "both-size recovery attempts"
+        expected_sku=Standard_D2ds_v5
+        [[ "$selected" != M ]] || expected_sku=Standard_B1ms
+        grep '^az postgres flexible-server create ' "$CALL_LOG" | grep -q -- "--sku-name $expected_sku" ||
+            fail "recovery probe must match the alternate deployed size"
+    done
+done
+for setting in PG_PROBE_EXIT_CODE=1 PG_PROBE_EXIT_CODE=124 PG_PROBE_UNKNOWN_OWNER=1 AZ_GROUP_EXIT_CODE=1 PG_CATALOG_UNSUPPORTED=1; do
+    : >"$CALL_LOG"
+    if (
+        export "${setting?}"
+        DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres >/dev/null 2>&1
+    ); then fail "failed or uncertain alternate probe must stop recovery"; fi
+    assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "failed alternate probe deployment attempts"
+done
+for sizes in '' L S,L bad; do
+    : >"$CALL_LOG"
+    if RTC_POSTGRES_TEST_SIZES="$sizes" run_postgres >/dev/null 2>&1; then fail "invalid size list must fail"; fi
+    if grep -q '^rad deploy ' "$CALL_LOG"; then fail "invalid size policy must not allocate"; fi
+done
+
+: >"$CALL_LOG"
+DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres >/dev/null ||
+    fail "default recovery must remain available"
 assert_eq 2 "$(grep '^rad deploy ' "$CALL_LOG" | sed -E 's/.*applicationName=([^ ]+).*/\1/' | sort -u | wc -l | tr -d ' ')" \
     "recovery application names must be distinct"
 awk '/^rad app delete / { cleaned++ } /^az resource list / { snapshots++ }
@@ -972,6 +1068,31 @@ run_postgres_entry() {
 RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg RTC_POSTGRES_TEST_SIZE=M \
     run_postgres_entry >/dev/null || fail "single-entry Azure runner must pass selected M"
 grep -q -- '--parameters postgresSize=M' "$CALL_LOG" || fail "single-entry runner must pass M to Bicep"
+assert_eq 1 "$(grep '^az postgres flexible-server create ' "$CALL_LOG" | grep -vc -- ' --help')" \
+    "direct entry initial probe count"
+for location_hint in '' eastus; do
+    : >"$CALL_LOG"
+    RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg AZURE_LOCATION="$location_hint" \
+        DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres_entry >/dev/null 2>&1 ||
+        fail "direct entry must probe and recover in the group region"
+    assert_eq 2 "$(grep '^az postgres flexible-server create ' "$CALL_LOG" | grep -vc -- ' --help')" \
+        "direct initial and recovery probes"
+    if grep '^az postgres flexible-server create ' "$CALL_LOG" | grep -v -- ' --help' |
+        grep -qv -- '--location westus3'; then fail "probes must ignore caller location hints"; fi
+    grep '^az postgres flexible-server create ' "$CALL_LOG" | grep -q -- '--sku-name Standard_B1ms' ||
+        fail "direct S deployment must be probed as S"
+    grep '^az postgres flexible-server create ' "$CALL_LOG" | grep -q -- '--sku-name Standard_D2ds_v5' ||
+        fail "direct M recovery must be probed as M"
+done
+: >"$CALL_LOG"
+RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg RTC_POSTGRES_VERIFIED_SIZE=S \
+    RTC_POSTGRES_VERIFIED_LOCATION=westus3 run_postgres_entry >/dev/null ||
+    fail "verified orchestrator tuple must deploy without a duplicate initial probe"
+if grep -q '^az postgres flexible-server create ' "$CALL_LOG"; then fail "verified tuple must not be probed twice"; fi
+: >"$CALL_LOG"
+if RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg PG_CATALOG_UNSUPPORTED=1 \
+    run_postgres_entry >/dev/null 2>&1; then fail "unsupported initial tuple must fail"; fi
+if grep -q '^rad deploy ' "$CALL_LOG"; then fail "failed initial probe must prevent deployment"; fi
 : >"$CALL_LOG"
 RTC_TEST_PLATFORM=kubernetes RTC_POSTGRES_TEST_SIZE=M run_postgres_entry >/dev/null ||
     fail "Kubernetes entry must retain the default template size"

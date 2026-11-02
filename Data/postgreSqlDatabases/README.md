@@ -55,7 +55,21 @@ valid version 1 result with `status: selected` permits PostgreSQL deployment.
 The result must match the existing resource group's region and the approved
 size, SKU, and tier. A missing, invalid, exhausted, or failed result fails the
 PostgreSQL entry; later entries still run. Without a result file, the runner
-makes one bounded `S` probe in the existing group's region.
+makes one bounded probe of the first configured size in the existing group's
+region (`S` by default).
+
+Before any initial or recovery probe creates a server, it makes a bounded
+`az postgres flexible-server list-skus` call. The catalog must support
+PostgreSQL 16, the selected tier and SKU, and 32 GiB of storage. A verified
+unsupported tuple returns exit 4 with `outcome: unsupported` and an
+`UnsupportedVersion`, `UnsupportedTier`, `UnsupportedSku`, or
+`UnsupportedStorage` code. A restricted region, including `OfferRestricted`
+enabled, is a policy error (`RegionRestricted`), not capacity exhaustion.
+Malformed catalogs and failed reads stop allocation. Catalog reads share the
+create deadline.
+Probe commands and region reads run in a separate process group. Their
+watchdog kills that group on timeout, cancellation, or command exit so a
+wrapper's child cannot keep output handles open or outlive cleanup.
 
 The probe uses a 128-bit random server name and checks that the name is absent
 before creation. It sets an ownership tag at creation and verifies that tag
@@ -82,11 +96,21 @@ the size to the test app. Each deployment has a 15-minute limit, reduced to
 the remaining time when `deadlineEpochSeconds` is present in the selection
 result. Direct runs can set `RTC_POSTGRES_TEST_DEADLINE_EPOCH` to the same
 absolute Unix deadline. Without a deadline, the entry has a 30-minute budget.
+`RTC_POSTGRES_TEST_SIZES` limits allowed allocations (default `S,M`).
+The selected size must be in that list. A single-size list disables size
+recovery; an empty or invalid list fails before deployment.
+Direct entry calls first probe the requested size in the actual resource
+group's region, even if `AZURE_LOCATION` is unset or points elsewhere.
+The all-entry runner passes its verified size and region to avoid a duplicate
+initial probe.
 
 If a deployment reports a structured `SkuNotAvailable` or `ServerIsBusy`
 error for an Azure PostgreSQL server, the runner deletes the failed app and
 checks that no new Azure resource IDs remain in the group. Only after these
-checks pass can it retry once with the other approved size and a distinct
-app name. The region does not change. Mixed or unknown errors, timeouts,
+checks pass can it probe the other allowed size once in the existing group's
+region. The probe uses the remaining shared deadline and must confirm its
+own cleanup before a retry with that size and a distinct app name.
+An unsupported, failed, or uncertain probe stops recovery.
+The region does not change. Mixed or unknown errors, timeouts,
 assertion failures, and incomplete cleanup stop recovery. Cleanup has a
 separate time allowance and never deletes untracked Azure resources.

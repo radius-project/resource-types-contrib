@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+# ------------------------------------------------------------
+# Copyright 2026 The Radius Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ------------------------------------------------------------
+
+"""Bound a command and its process group, including inherited output handles."""
+
+import os
+import signal
+import subprocess
+import sys
+
+
+def main():
+    if len(sys.argv) < 3 or not sys.argv[1].isdigit() or int(sys.argv[1]) <= 0:
+        print("Error: expected a positive timeout and a command.", file=sys.stderr)
+        return 1
+    process = None
+    interrupted = 0
+
+    def kill_group():
+        if process is not None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    def interrupt(signum, _frame):
+        nonlocal interrupted
+        interrupted = signum
+        if process is None:
+            return
+        kill_group()
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, interrupt)
+    signal.signal(signal.SIGINT, interrupt)
+    try:
+        if interrupted:
+            return 128 + interrupted
+        process = subprocess.Popen(sys.argv[2:], start_new_session=True, stdin=subprocess.DEVNULL)
+        if interrupted:
+            return 128 + interrupted
+        try:
+            status = process.wait(timeout=int(sys.argv[1]))
+            return status if status >= 0 else 128 - status
+        except subprocess.TimeoutExpired:
+            return 124
+    except OSError as error:
+        print(f"Error: could not start bounded command: {error}", file=sys.stderr)
+        return 1
+    finally:
+        kill_group()
+        if process is not None:
+            process.wait()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

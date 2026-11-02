@@ -150,6 +150,8 @@ if [[ "$1" == Data/postgreSqlDatabases && "${RTC_TEST_PLATFORM:-}" == azure ]]; 
     [[ "${RTC_POSTGRES_TEST_SIZE:-}" == "${EXPECTED_POSTGRES_SIZE:-S}" ]] || exit 96
     [[ "${RTC_POSTGRES_TEST_DEADLINE_EPOCH:-}" =~ ^[0-9]+$ ]] || exit 95
     sleep "${POSTGRES_SLEEP:-0}"
+    [[ "${RTC_POSTGRES_VERIFIED_SIZE:-}" == "$RTC_POSTGRES_TEST_SIZE" &&
+        "${RTC_POSTGRES_VERIFIED_LOCATION:-}" == westus3 ]] || exit 93
 fi
 case "$2" in
     azure-ws) [[ "${RTC_TEST_PLATFORM:-}" == azure ]] || exit 97 ;;
@@ -181,7 +183,7 @@ cp "$TEST_ROOT/bin/test-recipe-pack-entry.sh" "$SCRIPTS_COPY/test-recipe-pack-en
 cat >"$SCRIPTS_COPY/probe-azure-postgres-capacity.sh" <<'EOF'
 #!/bin/bash
 echo "probe-azure-postgres-capacity.sh" >>"$CALL_LOG"
-[[ "${AZURE_LOCATION:-}" == westus3 && "${RTC_POSTGRES_TEST_SIZE:-}" == S &&
+[[ "${AZURE_LOCATION:-}" == westus3 && "${RTC_POSTGRES_TEST_SIZE:-}" == "${EXPECTED_POSTGRES_SIZE:-S}" &&
    "${RTC_POSTGRES_PROBE_ATTEMPTS:-}" == 1 && "${RTC_POSTGRES_PROBE_WAIT_SECONDS:-}" == 0 ]] || exit 94
 exit "${PROBE_EXIT_CODE:-0}"
 EOF
@@ -323,8 +325,19 @@ fi
 bash "$REPO_ROOT/.github/scripts/report-azure-test-failures.sh" \
     "PostgreSQL entry:success" "Unrelated entries:success" >/dev/null ||
     fail "successful phases must pass the overall job"
+: >"$CALL_LOG"
+if RTC_AZURE_SELECTION_FILE="$selection" RTC_POSTGRES_TEST_SIZES=S \
+    run_driver azure azure-ws azure-env >/dev/null 2>&1; then fail "excluded selected M must fail"; fi
+if grep -q '^test-recipe-pack-entry.sh Data/postgreSqlDatabases' "$CALL_LOG"; then
+    fail "excluded selection must not deploy"
+fi
+: >"$CALL_LOG"
+RTC_POSTGRES_TEST_SIZES=M EXPECTED_POSTGRES_SIZE=M AZURE_LOCATION=eastus \
+    run_driver azure azure-ws azure-env >/dev/null || fail "single-M standalone policy must probe M in group region"
+assert_probe_count="$(grep -c '^probe-' "$CALL_LOG")"
+[[ "$assert_probe_count" == 1 ]] || fail "single-M initial probe must run once"
 
-for state in missing malformed capacity_exhausted probe_error deadline_exceeded invalid_size invalid_tuple wrong_region expired invalid_deadline; do
+for state in missing malformed capacity_exhausted probe_error deadline_exceeded unsupported invalid_size invalid_tuple wrong_region expired invalid_deadline; do
     case "$state" in
         missing) rm -f "$selection" ;;
         malformed) echo '{' >"$selection" ;;

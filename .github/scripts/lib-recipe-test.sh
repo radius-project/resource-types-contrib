@@ -222,12 +222,42 @@ rtc_snapshot_azure_resource_ids() {
     ' <<<"$inventory"
 }
 
+# Probe a tuple in the existing group's region, never a caller's location hint.
+rtc_probe_azure_postgresql_size() {
+    local size="$1" deadline="$2" remaining location read_limit script_dir
+    local -a subscription_args=()
+    remaining=$((deadline - $(date +%s)))
+    if ((remaining <= 0)); then
+        echo "Error: PostgreSQL deadline has expired before the probe." >&2
+        return 1
+    fi
+    [[ -z "${AZURE_SUBSCRIPTION_ID:-}" ]] || subscription_args=(--subscription "$AZURE_SUBSCRIPTION_ID")
+    read_limit="$remaining"
+    if ((read_limit > 30)); then read_limit=30; fi
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ -z "${AZURE_RESOURCE_GROUP:-}" ]] ||
+        ! location=$(python3 "$script_dir/run-bounded-command.py" "$read_limit" az group show \
+            --name "$AZURE_RESOURCE_GROUP" "${subscription_args[@]}" --query location --output tsv) ||
+        [[ ! "$location" =~ ^[a-z0-9]+$ ]]; then
+        echo "Error: Could not establish the fixed region for the PostgreSQL probe." >&2
+        return 1
+    fi
+    remaining=$((deadline - $(date +%s)))
+    if ((remaining <= 0)); then
+        echo "Error: PostgreSQL deadline has expired before the probe." >&2
+        return 1
+    fi
+    if ((remaining > 900)); then remaining=900; fi
+    AZURE_LOCATION="$location" RTC_POSTGRES_TEST_SIZE="$size" RTC_POSTGRES_PROBE_ATTEMPTS=1 \
+        RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS="$remaining" \
+        "$script_dir/probe-azure-postgres-capacity.sh"
+}
+
 # Retry one untried size only when the shared helper confirms safe cleanup.
 rtc_test_azure_postgresql_app() (
     local test_file="$1" environment_path="$2" workspace_name="$3" kubernetes_namespace="$4"
     local size="${RTC_POSTGRES_TEST_SIZE:-S}" deadline="${RTC_POSTGRES_TEST_DEADLINE_EPOCH:-}"
-    local remaining status attempt test_harness script_dir
-    case "$size" in S|M) ;; *) echo "Error: PostgreSQL test size must be S or M." >&2; return 1 ;; esac
+    local test_harness script_dir
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
     test_harness=$(mktemp "${TMPDIR:-/tmp}/rtc-postgres-test-XXXXXX.bicep") || return 1
     trap 'rm -f -- "$test_harness"' EXIT
@@ -235,10 +265,30 @@ rtc_test_azure_postgresql_app() (
         return 1
     fi
     test_file="$test_harness"
+    local status attempt candidate alternate=""
+    local size_list="${RTC_POSTGRES_TEST_SIZES-S,M}"
+    local -a allowed_sizes
+    case "$size" in S|M) ;; *) echo "Error: PostgreSQL test size must be S or M." >&2; return 1 ;; esac
+    if [[ ! "$size_list" =~ ^[SM](,[SM])*$ || ${#size_list} -gt 63 ]]; then
+        echo "Error: Invalid PostgreSQL test size list." >&2
+        return 1
+    fi
+    IFS=',' read -r -a allowed_sizes <<<"$size_list"
+    if [[ ",$size_list," != *",$size,"* ]]; then
+        echo "Error: Selected PostgreSQL size $size is excluded by the configured size list." >&2
+        return 1
+    fi
     if [[ -z "$deadline" ]]; then deadline=$(( $(date +%s) + 1800 )); fi
     if [[ ! "$deadline" =~ ^[1-9][0-9]{0,10}$ ]]; then
         echo "Error: Invalid PostgreSQL test deadline." >&2
         return 1
+    fi
+    if [[ "${RTC_POSTGRES_VERIFIED_SIZE:-}" != "$size" ||
+        ! "${RTC_POSTGRES_VERIFIED_LOCATION:-}" =~ ^[a-z0-9]+$ ]]; then
+        if ! rtc_probe_azure_postgresql_size "$size" "$deadline"; then
+            echo "Error: Initial PostgreSQL probe failed; deployment is not allowed." >&2
+            return 1
+        fi
     fi
     for attempt in 1 2; do
         if ((deadline <= $(date +%s))); then
@@ -255,8 +305,19 @@ rtc_test_azure_postgresql_app() (
             echo "Error: PostgreSQL deployment failed (size $size, attempt $attempt, status $status)." >&2
             return 1
         fi
-        if [[ "$size" == S ]]; then size=M; else size=S; fi
-        echo "==> PostgreSQL capacity lost; cleanup confirmed. Retrying size $size in the same region."
+        for candidate in "${allowed_sizes[@]}"; do
+            if [[ "$candidate" != "$size" ]]; then alternate="$candidate"; break; fi
+        done
+        if [[ -z "$alternate" ]]; then
+            echo "Error: PostgreSQL capacity lost; no alternate size is allowed." >&2
+            return 1
+        fi
+        echo "==> PostgreSQL capacity lost; cleanup confirmed. Probing allowed size $alternate in the same region."
+        if ! rtc_probe_azure_postgresql_size "$alternate" "$deadline"; then
+            echo "Error: Alternate PostgreSQL probe failed; no deployment retry is allowed." >&2
+            return 1
+        fi
+        size="$alternate"
     done
 )
 
