@@ -202,6 +202,10 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
         --tags "rtc-probe-owner=$probe_owner" \
         --yes --only-show-errors --output none > /dev/null 2>"$work_dir/create-error" || status=$?
     unset password
+    if ((status == 124 || status == 137)); then
+        echo "Error: create request timed out for probe server '$server_name' in resource group '$resource_group' (ownership tag rtc-probe-owner=$probe_owner)." >&2
+        echo "A current ResourceNotFound response does not rule out later creation. Check this target again and verify its ownership tag before deletion." >&2
+    fi
     codes="$(rtc_postgres_error_codes "$work_dir/create-error")"
     if ! delete_server; then
         echo "Error: probe server '$server_name' deletion was not confirmed." >&2

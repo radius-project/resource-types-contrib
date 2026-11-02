@@ -273,6 +273,17 @@ for result in other timeout; do
         AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
     [[ "$(count create)" == 1 && "$(count delete)" == 0 ]] ||
         fail "$result without a server must confirm absence without deletion"
+    if [[ "$result" == timeout ]]; then
+        server="$(grep '^az postgres flexible-server create ' "$CALL_LOG" | grep -oE -- '--name [^ ]+' | cut -d' ' -f2)"
+        owner="${server#pgprobe-}"
+        grep -Fq "probe server '$server' in resource group 'rg'" <<<"$output" ||
+            fail "timeout must report the exact target for later inspection"
+        grep -Fq "rtc-probe-owner=$owner" <<<"$output" || fail "timeout must report the expected ownership tag"
+        grep -Fq 'does not rule out later creation' <<<"$output" ||
+            fail "timeout must not claim immediate absence prevents later creation"
+        jq -e '.outcome == "timeout" and .errorCode == "CreateTimeout"' \
+            "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "absent timeout result"
+    fi
 done
 reset ok
 expect_status 0 env PRECHECK_SLEEP=1 OWNERSHIP_SLEEP=1 \

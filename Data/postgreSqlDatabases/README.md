@@ -64,6 +64,14 @@ bounded: absence checks use the create budget; ownership checks and deletion
 use the cleanup reserve. Unknown ownership or unconfirmed cleanup stops the
 probe without another allocation.
 
+A timed-out create can finish after the client exits. An immediate
+`ResourceNotFound` response does not rule out later creation. On create
+timeout, the probe prints the exact server name, resource group, and expected
+`rtc-probe-owner` tag. Use `az postgres flexible-server show --resource-group
+<group> --name <server> --output json` with the original subscription to check
+the target again. Delete it only after its `tags["rtc-probe-owner"]` value
+matches the printed tag. If ownership cannot be verified, do not delete it.
+
 For a direct Azure entry test, set `RTC_TEST_PLATFORM=azure`,
 `AZURE_RESOURCE_GROUP`, and `RTC_POSTGRES_TEST_SIZE=S` or `M`. The runner passes
 the size to the test app. Each deployment has a 15-minute limit, reduced to
