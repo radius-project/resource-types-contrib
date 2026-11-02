@@ -83,8 +83,8 @@ A timed-out create can finish after the client exits. An immediate
 timeout or interruption during creation, the probe prints the exact server
 name, resource group, and expected `rtc-probe-owner` tag. It also logs this
 non-secret recovery target before creation, in case the process is killed
-before cleanup can run. Mixed or uncoded failure records cannot authorize
-another allocation or confirm absence during cleanup.
+before cleanup can run. Mixed failure records or records without an error code
+cannot authorize another allocation or confirm absence during cleanup.
 Azure CLI `Code:` and `Message:` lines are accepted only when they repeat
 the code and message in the error header. Contradictory fields stop allocation.
 Use `az postgres flexible-server show --resource-group
