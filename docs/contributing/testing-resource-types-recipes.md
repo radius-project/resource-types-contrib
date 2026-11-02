@@ -245,10 +245,10 @@ precedence over positional regions.
 Duplicates are removed without changing order. At most four distinct regions
 are allowed. An explicit one-region list prevents selection in another region.
 The default produces three regions x two sizes, or six candidate tuples. Before
-adding an explicit region override, verify **all candidates** for subscription
+use, verify **all candidates**, including automatic defaults, for subscription
 access, quota, policy, PostgreSQL 16, and the other `azure-aks` pack services.
 Check the exact OpenAI model and version, especially if explicitly adding
-`westus2`. These defaults are candidates, not a claim that the subscription can
+`westus2`. The defaults are candidates, not a claim that every subscription can
 use them.
 
 Repository variable `RTC_POSTGRES_TEST_SIZES` defaults to `S,M`. Only `S` and
