@@ -171,14 +171,15 @@ while text.strip():
         except ValueError:
             pass
     line, _, text = text.partition("\n")
-    match = re.fullmatch(r"\(([A-Za-z][A-Za-z0-9]*)\)(?:\s+.*)?", line.strip())
+    match = re.fullmatch(r"\(([A-Za-z][A-Za-z0-9]*)\)(?:[ \t]+(.*))?", line.strip())
     codes.add(match[1] if match else "UnknownError")
     if match:
         envelope = re.match(
             r"Code:[ \t]*([A-Za-z][A-Za-z0-9]*)[ \t]*\r?\n"
-            r"Message:[^\n]*(?:\n|$)", text
+            r"Message:[ \t]*([^\r\n]*)\r?(?:\n|$)", text
         )
-        if envelope and envelope[1] == match[1]:
+        if (envelope and envelope[1] == match[1]
+                and envelope[2].strip() == (match[2] or "").strip()):
             text = text[envelope.end():]
 
 print("\n".join(sorted(codes)))

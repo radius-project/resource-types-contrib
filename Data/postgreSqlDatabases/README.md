@@ -85,6 +85,8 @@ name, resource group, and expected `rtc-probe-owner` tag. It also logs this
 non-secret recovery target before creation, in case the process is killed
 before cleanup can run. Mixed or uncoded failure records cannot authorize
 another allocation or confirm absence during cleanup.
+Azure CLI `Code:` and `Message:` lines are accepted only when they repeat
+the code and message in the error header. Contradictory fields stop allocation.
 Use `az postgres flexible-server show --resource-group
 <group> --name <server> --output json` with the original subscription to check
 the target again. Delete it only after its `tags["rtc-probe-owner"]` value

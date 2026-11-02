@@ -73,6 +73,11 @@ case "$3" in
         }; then
             if [[ "${MIXED_FORMAT:-plain}" == json ]]; then
                 echo '{"error":{"code":"ResourceNotFound","message":"no server","details":[{"message":"Authorization denied."}]}}' >&2
+            elif [[ "${MIXED_FORMAT:-plain}" == envelope ]]; then
+                printf '%s\n' 'ERROR: (ResourceNotFound) no server' \
+                    'Code: ResourceNotFound' 'Message: no server' \
+                    'ERROR: (AuthorizationFailed) Denied.' \
+                    'Code: AuthorizationFailed' 'Message: Denied.' >&2
             else
                 printf '%s\n' 'ERROR: (ResourceNotFound) no server' 'ERROR: Authorization denied.' >&2
             fi
@@ -97,7 +102,7 @@ case "$3" in
         fi
         echo "(${SHOW_ERROR:-ResourceNotFound}) absent" >&2
         if [[ "${MULTILINE_SHOW:-0}" == 1 ]]; then
-            printf 'Code: %s\nMessage: The requested server was not found.\n' "${SHOW_ERROR:-ResourceNotFound}" >&2
+            printf 'Code: %s\nMessage: %s\n' "${SHOW_ERROR:-ResourceNotFound}" "${MULTILINE_SHOW_MESSAGE:-absent}" >&2
         fi
         exit 1 ;;
 esac
@@ -119,24 +124,27 @@ case "$result" in
     busy) echo 'ERROR: (ServerIsBusy) Busy.' >&2 ;;
     multiline-capacity)
         printf '%s\n' 'ERROR: (SkuNotAvailable) SKU unavailable.' \
-            'Code: SkuNotAvailable' 'Message: The requested SKU is unavailable.' >&2 ;;
+            'Code: SkuNotAvailable' 'Message: SKU unavailable.' >&2 ;;
     multiline-busy)
         printf '%s\n' 'ERROR: (ServerIsBusy) Busy.' \
-            'Code: ServerIsBusy' 'Message: The server is busy.' >&2 ;;
+            'Code: ServerIsBusy' 'Message: Busy.' >&2 ;;
     multiline-mixed)
         printf '%s\n' 'ERROR: (SkuNotAvailable) SKU unavailable.' \
-            'Code: SkuNotAvailable' 'Message: The requested SKU is unavailable.' \
+            'Code: SkuNotAvailable' 'Message: SKU unavailable.' \
             'ERROR: (AuthorizationFailed) Denied.' 'Code: AuthorizationFailed' 'Message: Denied.' >&2 ;;
     multiline-uncoded)
         printf '%s\n' 'ERROR: (SkuNotAvailable) SKU unavailable.' \
-            'Code: SkuNotAvailable' 'Message: The requested SKU is unavailable.' \
+            'Code: SkuNotAvailable' 'Message: SKU unavailable.' \
             'ERROR: Access denied.' >&2 ;;
     multiline-inconsistent)
         printf '%s\n' 'ERROR: (SkuNotAvailable) SKU unavailable.' \
             'Code: AuthorizationFailed' 'Message: Access denied.' >&2 ;;
+    multiline-contradictory)
+        printf '%s\n' 'ERROR: (SkuNotAvailable) SKU unavailable.' \
+            'Code: SkuNotAvailable' 'Message: Authorization denied.' >&2 ;;
     multiline-details)
         printf '%s\n' 'ERROR: (SkuNotAvailable) SKU unavailable.' \
-            'Code: SkuNotAvailable' 'Message: The requested SKU is unavailable.' \
+            'Code: SkuNotAvailable' 'Message: SKU unavailable.' \
             'Details: An unknown failure occurred.' >&2 ;;
     json) echo '{"error":{"code":"SkuNotAvailable","message":"Unavailable","details":[]}}' >&2 ;;
     mixed) printf '%s\n' '(SkuNotAvailable) Unavailable.' '(AuthorizationFailed) Denied.' >&2 ;;
@@ -253,11 +261,14 @@ reset multiline-capacity multiline-busy ok
 MULTILINE_SHOW=1 expect_status 0 run_probe
 [[ "$(count create)" == 3 && "$(count delete)" == 3 ]] ||
     fail "real CLI capacity envelopes must permit bounded fallback"
-for result in multiline-mixed multiline-uncoded multiline-inconsistent multiline-details; do
+for result in multiline-mixed multiline-uncoded multiline-inconsistent multiline-contradictory multiline-details; do
     reset "$result" ok
     MULTILINE_SHOW=1 expect_status 1 run_probe
     [[ "$(count create)" == 1 ]] || fail "mixed CLI envelopes must stop allocation"
 done
+reset ok
+MULTILINE_SHOW=1 MULTILINE_SHOW_MESSAGE='Authorization denied.' expect_status 1 run_probe
+[[ "$(count create)" == 0 ]] || fail "contradictory absence message must block allocation"
 
 reset ok
 expect_status 1 env DELETE_MISSING=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
@@ -375,7 +386,7 @@ grep -Fq 'does not rule out later creation' <<<"$output" ||
 jq -e '.outcome == "probe_error" and .errorCode == "CreateInterrupted"' \
     "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "interrupted create result"
 grep -Fq 'Recovery target:' <<<"$output" || fail "recovery target must be logged before create"
-for format in plain json; do
+for format in plain json envelope; do
     for stage in pre ownership deleted; do
         reset ok ok
         expect_status 1 env MIXED_SHOW_STAGE="$stage" MIXED_FORMAT="$format" \
