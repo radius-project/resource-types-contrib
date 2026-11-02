@@ -101,31 +101,15 @@ group_create_pid=""
 RUN_OUTPUT=""
 
 run_before_deadline() {
-    local deadline_at="$1" requested_limit="$2" remaining output_file end_at status=0
+    local deadline_at="$1" requested_limit="$2" remaining output_file status=0
     shift 2
     remaining=$((deadline_at - SECONDS))
     ((remaining > 0)) || return 124
     if ((requested_limit > remaining)); then requested_limit="$remaining"; fi
     output_file="$(mktemp "$work_dir/command.XXXXXX")"
-    setsid "$@" >"$output_file" &
+    python3 "$script_dir/run-bounded-command.py" "$requested_limit" "$@" >"$output_file" &
     group_create_pid=$!
-    end_at=$((SECONDS + requested_limit))
-    while kill -0 "$group_create_pid" 2>/dev/null; do
-        if ((SECONDS >= end_at)); then
-            status=124
-            break
-        fi
-        sleep 0.1 || true
-    done
-    if ((status == 0)); then
-        wait "$group_create_pid" || status=$?
-    fi
-    if kill -0 -- "-$group_create_pid" 2>/dev/null; then
-        terminate_process_group "$group_create_pid"
-    fi
-    if ((status == 124)); then
-        wait "$group_create_pid" 2>/dev/null || true
-    fi
+    wait "$group_create_pid" || status=$?
     group_create_pid=""
     RUN_OUTPUT="$(<"$output_file")"
     rm -f -- "$output_file"
@@ -133,13 +117,8 @@ run_before_deadline() {
 }
 
 terminate_process_group() {
-    local pid="$1" stop_at
-    kill -TERM -- "-$pid" 2>/dev/null || true
-    stop_at=$((SECONDS + 1))
-    while kill -0 -- "-$pid" 2>/dev/null && ((SECONDS < stop_at)); do
-        sleep 0.1 || true
-    done
-    kill -KILL -- "-$pid" 2>/dev/null || true
+    local pid="$1"
+    kill -TERM "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
 }
 

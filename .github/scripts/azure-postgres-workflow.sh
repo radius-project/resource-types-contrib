@@ -21,14 +21,20 @@ validate_run_context() {
 }
 
 run_bounded_azure_command() {
-    local requested_limit="$1" remaining
+    local requested_limit="$1" remaining command_pid status=0
     shift
     if [[ -v cleanup_deadline ]]; then
         remaining=$((cleanup_deadline - SECONDS))
         ((remaining > 0)) || return 124
         if ((requested_limit > remaining)); then requested_limit="$remaining"; fi
     fi
-    timeout --kill-after=5 "$requested_limit" "$@"
+    python3 "$script_dir/run-bounded-command.py" "$requested_limit" "$@" &
+    command_pid=$!
+    trap 'kill -TERM "$command_pid" 2>/dev/null || true; wait "$command_pid" 2>/dev/null || true; exit 143' TERM
+    trap 'kill -INT "$command_pid" 2>/dev/null || true; wait "$command_pid" 2>/dev/null || true; exit 130' INT
+    wait "$command_pid" || status=$?
+    trap - INT TERM
+    return "$status"
 }
 
 validate_probe_group() {
@@ -114,7 +120,7 @@ create_main_group() {
         return 1
     }
     echo "Creating main resource group '$group' with rtcAzureTestGroupOwner=$owner_token." >&2
-    if ! timeout --kill-after=5 180 az group create --only-show-errors --output none \
+    if ! run_bounded_azure_command 180 az group create --only-show-errors --output none \
         --location "$location" --name "$group" --subscription "$AZURE_SUBSCRIPTION_ID" \
         --tags "creationTime=$(date +%s)" "rtcRunId=$run_id" "rtcRunAttempt=$run_attempt" \
         "rtcAzureTestGroupOwner=$owner_token"; then

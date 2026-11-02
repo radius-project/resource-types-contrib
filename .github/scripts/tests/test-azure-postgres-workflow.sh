@@ -105,6 +105,9 @@ cat >"$temp/bin/az" <<'EOF'
 #!/bin/bash
 set -euo pipefail
 echo "$*" >>"$CALL_LOG"
+if [[ "${SLOW_AZ_COMMAND:-}" == "$2" ]]; then
+    exec "$SLOW_AZ_HELPER"
+fi
 command="$2"
 group=""
 query=""
@@ -169,9 +172,7 @@ case "$command" in
             absent) exit 1 ;;
             timeout) exit 124 ;;
             late)
-                (sleep "${CREATE_LATE_DELAY:-5}"
-                    printf '%s|%s|%s\n' "$group" "$owner_tag" "$owner_value" >>"$GROUP_STATE") \
-                    >/dev/null 2>&1 &
+                printf '%s|%s|%s\n' "$group" "$owner_tag" "$owner_value" >"$GROUP_STATE.pending"
                 exit 1
                 ;;
         esac
@@ -182,6 +183,21 @@ esac
 EOF
 chmod +x "$temp/bin/az"
 export PATH="$temp/bin:$PATH" GITHUB_RUN_ID=123 GITHUB_RUN_ATTEMPT=3 AZURE_SUBSCRIPTION_ID=test
+export SLOW_AZ_HELPER="$temp/slow-az.py" SLOW_AZ_PIDS="$temp/slow-az.pids"
+cat >"$SLOW_AZ_HELPER" <<'PY'
+#!/usr/bin/env python3
+import os
+import signal
+import time
+
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+child = os.fork()
+if child:
+    with open(os.environ["SLOW_AZ_PIDS"], "w", encoding="ascii") as output:
+        output.write(f"{os.getpid()}\n{child}\n")
+time.sleep(20)
+PY
+chmod +x "$SLOW_AZ_HELPER"
 token_a=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 token_b=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 for kind in nightly rc; do
@@ -364,7 +380,7 @@ done
 : >"$GROUP_STATE"
 late_group="rrttest-nightly-123-3-$token_a"
 late_log="$temp/late-create.log"
-if output=$(CREATE_FAILURE_MODE=late CREATE_LATE_DELAY=5 \
+if output=$(CREATE_FAILURE_MODE=late \
     bash "$script" create-main nightly "$late_group" westus3 "$token_a" 2>&1); then
     fail "late main-group create must be reported as uncertain"
 fi
@@ -374,7 +390,61 @@ grep -Fq "Creating main resource group '$late_group' with rtcAzureTestGroupOwner
 grep -Fq "Inspect '$late_group' and its ownership tag" <<<"$output" ||
     fail "uncertain main-group create must direct operators to the logged recovery target"
 [[ ! -s "$GROUP_STATE" ]] || fail "late-create fixture must initially remain absent"
-sleep 5
+# Complete the remote operation after the client exits, without a client orphan.
+cat "$GROUP_STATE.pending" >>"$GROUP_STATE"
 grep -Fq "$late_group|rtcAzureTestGroupOwner|$token_a" "$GROUP_STATE" ||
     fail "late Azure create must materialize the logged recovery target"
+
+assert_slow_processes_stopped() {
+    python3 - "$SLOW_AZ_PIDS" <<'PY' || fail "workflow watchdog left a process running"
+import pathlib
+import sys
+
+for pid in pathlib.Path(sys.argv[1]).read_text().splitlines():
+    try:
+        state = pathlib.Path(f"/proc/{pid}/stat").read_text().split(") ", 1)[1][0]
+    except FileNotFoundError:
+        continue
+    if state != "Z":
+        raise SystemExit(f"Process {pid} is still running ({state})")
+PY
+}
+for slow_command in exists show delete; do
+    : >"$CALL_LOG"
+    printf '%s|rtcAzureTestGroupOwner|%s\n' "$late_group" "$token_a" >"$GROUP_STATE"
+    rm -f -- "$SLOW_AZ_PIDS"
+    started_seconds=$SECONDS
+    if output=$({
+        export SLOW_AZ_COMMAND="$slow_command"
+        set -- regions
+        # shellcheck source=/dev/null
+        source "$script" >/dev/null
+        # shellcheck disable=SC2034 # Read by the sourced cleanup helper.
+        cleanup_deadline=$((SECONDS + 2))
+        delete_and_confirm_resource_group "$late_group" rtcAzureTestGroupOwner "$token_a"
+    } 2>&1); then fail "$slow_command timeout must fail cleanup"; fi
+    ((SECONDS - started_seconds < 8)) || fail "workflow $slow_command exceeded its cleanup budget"
+    [[ -s "$SLOW_AZ_PIDS" ]] || fail "workflow $slow_command must exercise the watchdog"
+    assert_slow_processes_stopped
+    grep -Fq "$late_group|rtcAzureTestGroupOwner|$token_a" "$GROUP_STATE" ||
+        fail "uncertain workflow cleanup must preserve the resource group"
+    if [[ "$slow_command" != delete ]] && grep -q '^group delete ' "$CALL_LOG"; then
+        fail "uncertain existence or ownership must not authorize deletion"
+    fi
+done
+
+: >"$CALL_LOG"
+: >"$GROUP_STATE"
+rm -f -- "$SLOW_AZ_PIDS"
+started_seconds=$SECONDS
+if output=$(SLOW_AZ_COMMAND=create timeout --signal=TERM --kill-after=4 2 \
+    bash "$script" create-main nightly "$late_group" westus3 "$token_a" 2>&1); then
+    fail "cancelled main-group creation must fail"
+fi
+((SECONDS - started_seconds < 8)) || fail "workflow cancellation must stop TERM-ignoring children"
+assert_slow_processes_stopped
+grep -Fq "Creating main resource group '$late_group' with rtcAzureTestGroupOwner=$token_a." <<<"$output" ||
+    fail "cancelled creation must log the exact recovery target"
+! grep -q '^group delete ' "$CALL_LOG" ||
+    fail "cancelled main creation must leave ownership verification to the cleanup job"
 echo "Azure PostgreSQL workflow tests passed"

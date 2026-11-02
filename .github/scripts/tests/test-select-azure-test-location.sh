@@ -20,6 +20,7 @@ TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/rtc-select-location-test-XXXXXX")"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 mkdir -p "$TEST_ROOT/bin" "$TEST_ROOT/scripts"
 cp "$REPO_ROOT/.github/scripts/"{select-azure-test-location,lib-azure-postgres-test}.sh "$TEST_ROOT/scripts/"
+cp "$REPO_ROOT/.github/scripts/run-bounded-command.py" "$TEST_ROOT/scripts/"
 export CALL_LOG="$TEST_ROOT/calls"
 export PROBE_RESULTS="$TEST_ROOT/probe-results"
 export RTC_AZURE_SELECTION_FILE="$TEST_ROOT/selection.json"
