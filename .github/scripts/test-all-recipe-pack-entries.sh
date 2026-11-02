@@ -43,9 +43,21 @@ fi
 platform_group="$1"
 workspace_name="${2:-default}"
 environment_name="${3:-default}"
+entry_phase="${RTC_AZURE_PACK_ENTRY_PHASE:-all}"
+
+if [[ "$platform_group" == azure && -n "${RTC_AZURE_SELECTION_FILE+x}" ]]; then
+    case "$entry_phase" in
+        all | postgres | unrelated) ;;
+        *) echo "Error: invalid Azure Recipe Pack entry phase '$entry_phase'." >&2; exit 1 ;;
+    esac
+elif [[ "$entry_phase" != all ]]; then
+    echo "Error: Azure entry phases require a PostgreSQL selection file." >&2
+    exit 1
+fi
 
 pack_list="$(rtc_recipe_packs_for_platform_group "$platform_group")"
-if [[ "$platform_group" == azure && -n "${RTC_AZURE_SELECTION_FILE+x}" ]]; then
+if [[ "$platform_group" == azure && -n "${RTC_AZURE_SELECTION_FILE+x}" &&
+    "$entry_phase" == all ]]; then
     # Use the shared PostgreSQL deadline before unrelated cloud deployments.
     pack_list="$(awk '$0 == "azure-aks" {print; next}
         {rest = rest $0 ORS} END {printf "%s", rest}' <<<"$pack_list")"
@@ -147,9 +159,20 @@ preflight() {
 for pack_id in "${packs[@]}"; do
     resource_types="$(rtc_list_recipe_pack_types "$pack_id")"
     if [[ "$platform_group" == azure && -n "${RTC_AZURE_SELECTION_FILE+x}" ]]; then
-        resource_types="$(awk '$0 == "Data/postgreSqlDatabases" {print; next}
-            {rest = rest $0 ORS} END {printf "%s", rest}' <<<"$resource_types")"
+        case "$entry_phase" in
+            all)
+                resource_types="$(awk '$0 == "Data/postgreSqlDatabases" {print; next}
+                    {rest = rest $0 ORS} END {printf "%s", rest}' <<<"$resource_types")"
+                ;;
+            postgres)
+                resource_types="$(awk '$0 == "Data/postgreSqlDatabases" {print}' <<<"$resource_types")"
+                ;;
+            unrelated)
+                resource_types="$(awk '$0 != "Data/postgreSqlDatabases" {print}' <<<"$resource_types")"
+                ;;
+        esac
     fi
+    [[ -n "$resource_types" ]] || continue
     template="$(rtc_recipe_pack_template "$pack_id")"
     pack_name="$(rtc_recipe_pack_name "$template")"
     if [[ -z "$pack_name" ]]; then

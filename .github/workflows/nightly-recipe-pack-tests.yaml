@@ -194,18 +194,48 @@ jobs:
       - name: Record owned Azure groups
         id: set-context
         run: |
-          RG="rrttest-nightly-${{ github.run_id }}-${{ github.run_attempt }}"
+          RG_BASE="rrttest-nightly-${{ github.run_id }}-${{ github.run_attempt }}"
+          OWNER_TOKEN="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+          [[ "$OWNER_TOKEN" =~ ^[a-f0-9]{32}$ ]] || {
+            echo "::error::Could not generate an Azure resource group ownership token."
+            exit 1
+          }
+          RG="${RG_BASE}-${OWNER_TOKEN}"
           {
             echo "resource_group=$RG"
-            echo "probe_resource_group=${RG}-probe"
+            echo "probe_resource_group=${RG_BASE}-probe"
           } >> "$GITHUB_OUTPUT"
           {
             echo "AZURE_RESOURCE_GROUP=$RG"
-            echo "AZURE_PROBE_RESOURCE_GROUP=${RG}-probe"
+            echo "AZURE_GROUP_OWNER_TOKEN=$OWNER_TOKEN"
+            echo "AZURE_PROBE_RESOURCE_GROUP=${RG_BASE}-probe"
             echo "AZURE_WORKSPACE_NAME=default"
             echo "AZURE_ENVIRONMENT_NAME=default"
             echo "RTC_AZURE_SELECTION_FILE=$GITHUB_WORKSPACE/azure-test-diagnostics/postgres-selection.json"
           } >> "$GITHUB_ENV"
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
+        with:
+          version: "1.2.0"
+
+      - name: Install Radius CLI
+        run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
+
+      - name: Create Radius Cluster
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          TEST_AZURE_OIDC_JSON: ${{ secrets.TEST_AZURE_OIDC_JSON }}
+        run: make create-radius-cluster
+
+      - name: Build Azure Recipes
+        run: make build-azure-recipes
 
       - name: Azure Login
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -221,7 +251,7 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: bash .github/scripts/azure-cli-with-refresh.sh --install
 
-      # 60 minutes for selection, setup and pack-entry recovery, plus cleanup.
+      # One 60-minute deadline covers PostgreSQL selection and deployment recovery.
       - name: Select Azure Test Context
         timeout-minutes: 76
         run: |
@@ -247,46 +277,8 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
           set -euo pipefail
-          RG="$AZURE_RESOURCE_GROUP"
-          LOCATION="$AZURE_LOCATION"
-          current_time=$(date +%s)
-          timeout --kill-after=5 180 az group create \
-            --only-show-errors \
-            --output none \
-            --location "$LOCATION" \
-            --name "$RG" \
-            --subscription "$AZURE_SUBSCRIPTION_ID" \
-            --tags "creationTime=$current_time" > /dev/null
-          deadline=$((SECONDS + 60))
-          while [[ "$(timeout 10 az group exists --name "$RG" --subscription "$AZURE_SUBSCRIPTION_ID")" != "true" ]]; do
-            if ((SECONDS >= deadline)); then
-              echo "::error::Resource group readiness timed out."
-              exit 1
-            fi
-            echo "Waiting for resource group '$RG' to be available..."
-            sleep 5
-          done
-          echo "Resource group '$RG' is ready"
-
-      - name: Setup Node
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .node-version
-
-      - name: Set up ORAS
-        uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
-        with:
-          version: "1.2.0"
-
-      - name: Install Radius CLI
-        run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
-
-      - name: Create Radius Cluster
-        env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          TEST_AZURE_OIDC_JSON: ${{ secrets.TEST_AZURE_OIDC_JSON }}
-        run: make create-radius-cluster
+          bash .github/scripts/azure-postgres-workflow.sh create-main nightly \
+            "$AZURE_RESOURCE_GROUP" "$AZURE_LOCATION" "$AZURE_GROUP_OWNER_TOKEN"
 
       - name: Configure Azure Provider
         env:
@@ -294,9 +286,6 @@ jobs:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: make configure-azure-provider
-
-      - name: Build Azure Recipes
-        run: make build-azure-recipes
 
       - name: Deploy checked-in Azure Recipe Packs
         id: azure_pack_deploy
@@ -306,13 +295,24 @@ jobs:
           RECIPE_PACK_USE_LOCAL_RECIPES: "true"
         run: .github/scripts/deploy-all-checked-in-recipe-packs.sh azure "$AZURE_ENVIRONMENT_NAME"
 
-      - name: Test all runnable Recipe Pack entries
-        id: azure_pack_entries
+      - name: Test PostgreSQL Recipe Pack entry
+        id: azure_postgres_entry
         continue-on-error: true
-        timeout-minutes: 90
+        timeout-minutes: 45
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
+          RTC_AZURE_PACK_ENTRY_PHASE: postgres
+        run: make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+
+      - name: Test unrelated Recipe Pack entries
+        id: azure_pack_entries
+        continue-on-error: true
+        timeout-minutes: 60
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
+          RTC_AZURE_PACK_ENTRY_PHASE: unrelated
         run: make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
 
       - name: Test Azure Bicep recipes
@@ -383,25 +383,18 @@ jobs:
       - name: Report Azure test failures
         if: ${{ !cancelled() }}
         env:
+          POSTGRES_OUTCOME: ${{ steps.azure_postgres_entry.outcome }}
           BICEP_OUTCOME: ${{ steps.azure_bicep.outcome }}
           TERRAFORM_OUTCOME: ${{ steps.azure_terraform.outcome }}
           PACK_DEPLOY_OUTCOME: ${{ steps.azure_pack_deploy.outcome }}
           PACK_ENTRIES_OUTCOME: ${{ steps.azure_pack_entries.outcome }}
         run: |
-          failures=0
-          for result in \
+          bash .github/scripts/report-azure-test-failures.sh \
+            "PostgreSQL entry:$POSTGRES_OUTCOME" \
             "Bicep recipes:$BICEP_OUTCOME" \
             "Terraform recipes:$TERRAFORM_OUTCOME" \
             "checked-in pack deployment:$PACK_DEPLOY_OUTCOME" \
-            "checked-in pack entries:$PACK_ENTRIES_OUTCOME"; do
-            name="${result%%:*}"
-            outcome="${result#*:}"
-            if [[ "$outcome" != "success" ]]; then
-              echo "::error::$name finished with outcome '$outcome'"
-              failures=1
-            fi
-          done
-          exit "$failures"
+            "unrelated pack entries:$PACK_ENTRIES_OUTCOME"
 
       - name: Collect Radius pod logs
         if: always()

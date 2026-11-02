@@ -149,6 +149,7 @@ echo "test-recipe-pack-entry.sh $*" >>"$CALL_LOG"
 if [[ "$1" == Data/postgreSqlDatabases && "${RTC_TEST_PLATFORM:-}" == azure ]]; then
     [[ "${RTC_POSTGRES_TEST_SIZE:-}" == "${EXPECTED_POSTGRES_SIZE:-S}" ]] || exit 96
     [[ "${RTC_POSTGRES_TEST_DEADLINE_EPOCH:-}" =~ ^[0-9]+$ ]] || exit 95
+    sleep "${POSTGRES_SLEEP:-0}"
 fi
 case "$2" in
     azure-ws) [[ "${RTC_TEST_PLATFORM:-}" == azure ]] || exit 97 ;;
@@ -282,6 +283,46 @@ rad env update azure-env --workspace azure-ws --recipe-packs azure-aci
 test-recipe-pack-entry.sh Compute/containers azure-ws azure-env"
 diff -u <(echo "$expected") "$CALL_LOG" ||
     fail "selected PostgreSQL must run before unrelated entries, without dropping any"
+
+# The workflow's separate PostgreSQL phase can use its full bounded budget without
+# preventing the later unrelated-entry phase from starting.
+: >"$CALL_LOG"
+RTC_AZURE_SELECTION_FILE="$selection" RTC_AZURE_PACK_ENTRY_PHASE=postgres POSTGRES_SLEEP=1 \
+    EXPECTED_POSTGRES_SIZE=M run_driver azure azure-ws azure-env >/dev/null ||
+    fail "long PostgreSQL phase must complete independently"
+grep -q '^test-recipe-pack-entry.sh Data/postgreSqlDatabases' "$CALL_LOG" ||
+    fail "PostgreSQL phase must run PostgreSQL"
+! grep -q '^test-recipe-pack-entry.sh Data/redisCaches' "$CALL_LOG" ||
+    fail "PostgreSQL phase must not consume the unrelated-entry phase"
+: >"$CALL_LOG"
+RTC_AZURE_SELECTION_FILE="$selection" RTC_AZURE_PACK_ENTRY_PHASE=unrelated \
+    EXPECTED_POSTGRES_SIZE=M run_driver azure azure-ws azure-env >/dev/null ||
+    fail "unrelated entries must run after the PostgreSQL phase"
+grep -q '^test-recipe-pack-entry.sh Compute/routes' "$CALL_LOG" ||
+    fail "later unrelated entries must still run"
+! grep -q '^test-recipe-pack-entry.sh Data/postgreSqlDatabases' "$CALL_LOG" ||
+    fail "unrelated phase must not repeat PostgreSQL"
+
+: >"$CALL_LOG"
+if RTC_AZURE_SELECTION_FILE="$selection" RTC_AZURE_PACK_ENTRY_PHASE=postgres \
+    POSTGRES_SLEEP=1 FAIL_TYPE=Data/postgreSqlDatabases \
+    run_driver azure azure-ws azure-env >/dev/null 2>&1; then
+    fail "PostgreSQL failure must fail its phase"
+fi
+: >"$CALL_LOG"
+RTC_AZURE_SELECTION_FILE="$selection" RTC_AZURE_PACK_ENTRY_PHASE=unrelated \
+    EXPECTED_POSTGRES_SIZE=M run_driver azure azure-ws azure-env >/dev/null ||
+    fail "unrelated entries must run after PostgreSQL failure"
+grep -q '^test-recipe-pack-entry.sh Compute/routes' "$CALL_LOG" ||
+    fail "later unrelated entries must run after PostgreSQL failure"
+
+if bash "$REPO_ROOT/.github/scripts/report-azure-test-failures.sh" \
+    "PostgreSQL entry:failure" "Unrelated entries:success" >/dev/null 2>&1; then
+    fail "failed PostgreSQL outcome must fail the overall job"
+fi
+bash "$REPO_ROOT/.github/scripts/report-azure-test-failures.sh" \
+    "PostgreSQL entry:success" "Unrelated entries:success" >/dev/null ||
+    fail "successful phases must pass the overall job"
 
 for state in missing malformed capacity_exhausted probe_error deadline_exceeded invalid_size invalid_tuple wrong_region expired invalid_deadline; do
     case "$state" in

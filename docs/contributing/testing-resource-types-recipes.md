@@ -227,6 +227,11 @@ The nightly and release-candidate Azure pack tests select a PostgreSQL region
 before they create the main resource group or configure the Azure provider.
 The release-candidate workflow keeps the released source and pack pins. A pack
 mapping that does not match the test tuple fails the PostgreSQL check.
+For older release pins whose PostgreSQL test app fixes `size: 'S'`, the workflow
+creates a temporary parameterized test harness outside the checkout. The harness
+lets the selected `S` or `M` reach the deployment without changing the pinned
+resource type, recipe, pack, or test app. Unsupported test-app shapes fail before
+deployment rather than silently testing the wrong size.
 
 ### Candidate settings and order
 
@@ -288,15 +293,22 @@ after confirmed cleanup. It does not move the shared resource group.
 Standalone entry tests without a selection file have a separate 30-minute
 entry budget in the group's existing region.
 
-Both Azure jobs retain the 330-minute limit. Selection has a 76-minute step
-limit (work, cleanup, and termination margin). Main-group creation has five
-minutes. Checked-in pack deployment (15 minutes) and entry tests (90 minutes)
-run before the Bicep and Terraform recipe suites (55 minutes each).
-When a selection file is present, the entry driver tests `azure-aks` first
-and PostgreSQL first within each pack. Other entries keep their relative order.
-Standalone and Kubernetes runs keep their existing order.
-Their limits total 296 minutes, leaving 34 minutes for setup and diagnostics
-within the job limit. The job limit remains the final bound. The separate
+Both Azure jobs retain the 330-minute limit. Node, ORAS, Radius CLI, and local
+cluster setup run before the selector starts its absolute deadline. Main-group
+creation and Azure provider configuration remain after selection. The selector
+step has a 76-minute limit (60-minute work budget, cleanup, and termination
+margin); main-group creation has five minutes. Checked-in pack deployment has
+15 minutes. Pack entries run in two steps: PostgreSQL first, with 45 minutes
+for deployment recovery and cleanup,
+then unrelated entries with a protected 60-minute window. A PostgreSQL failure
+does not skip the unrelated step; the final report still fails the job.
+Bicep and Terraform recipe suites have 55 minutes each. When a selection file
+is present, the entry driver tests PostgreSQL before unrelated entries within
+each pack. The workflows run the PostgreSQL-only phase before the unrelated
+phase, so `azure-aci` cannot use the PostgreSQL deadline first. Other entries
+keep their relative order. Standalone and Kubernetes runs keep their existing
+order. These limits total 311 minutes, leaving 19 minutes for setup and
+diagnostics within the job limit. The job limit remains the final bound. The separate
 30-minute cleanup job reserves ten minutes for main-group cleanup and 16 for
 probe cleanup, leaving four minutes for checkout and login.
 
@@ -328,20 +340,35 @@ Azure diagnostics artifact. Deployment recovery uses the entry runner's
 separate safe failure records. Passwords, tokens, connection strings, and raw
 deployment parameters are not part of the selection report.
 
-Both owned group names are recorded as job outputs before Azure login.
-Probe groups carry creation-time, run-ID, and run-attempt tags.
-The selector deletes each server and requests group deletion on exit. Because
-traps cannot cover runner loss, the separate cleanup job lists resource groups
-and deletes only exact `rrttest-nightly-<run-id>-<attempt>` or
-`rrttest-nightly-<run-id>-<attempt>-probe` names (with the matching `rrttest-rc`
-prefix for release-candidate runs). It considers attempts from 1 through the
-current run attempt, so cleanup-only reruns can recover groups from a previous
-attempt even when the producer job never published outputs. Other run IDs,
-future attempts, malformed names, and unrelated prefixes are ignored. An absent
-group counts as cleaned. Deletion of both main and probe groups is bounded and
-confirmed. Cleanup has a 25-minute command budget within its 30-minute job, and
-a cleanup error fails the step while leaving any remaining groups visible for
-operator or stale-resource recovery.
+The workflow records the main group name and the probe-group prefix as job
+outputs before Azure login. Both paths use a fresh 128-bit random token in the
+actual group name and set a matching ownership tag when creating the group.
+Before creation, the workflow rejects a name that Azure does not confirm absent.
+The selector also rejects an existing supplied probe prefix and creates a
+token-suffixed group. It deletes a group only when its ownership tag matches the
+token; it confirms deletion before reporting success. The token and absence
+check make accidental name collisions highly unlikely, but Azure group creation
+is an upsert, not an atomic create-only operation. If a create fails or times out
+and the tag cannot be verified, the script leaves the group untouched and prints
+a recovery message.
+
+Traps cannot cover runner loss, so the separate cleanup job lists resource
+groups. It considers only this run's exact main or probe name patterns, with a
+matching `rrttest-nightly` or `rrttest-rc` prefix, a numeric attempt, and a
+32-character ownership token. The main and probe tags are
+`rtcAzureTestGroupOwner` and `rtcPostgresSelectorOwner`, respectively. It
+considers attempts from 1 through the current
+run attempt, so cleanup-only reruns can recover earlier groups even when the
+producer job never published outputs. It deletes a group only when its matching
+main or probe ownership tag contains the same token from the group name. Exact
+legacy names, missing or mismatched tags, and other groups are never deleted.
+An unowned group matching this run's name pattern makes cleanup fail visibly
+instead of being removed. Other run IDs, future attempts, names outside the
+recognized formats, and unrelated prefixes are ignored. An absent group counts
+as cleaned. Deletion of both main and probe groups is bounded and confirmed.
+Cleanup has a 25-minute command budget within its 30-minute job, and a cleanup
+error fails the step while leaving any remaining groups visible for operator or
+stale-resource recovery.
 
 For example, after checking access and service support for `centralus`, constrain
 the next nightly run to that region and test the existing `M` mapping first:
