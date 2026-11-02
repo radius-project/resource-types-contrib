@@ -55,17 +55,33 @@ fi
 echo "az $*" >>"$CALL_LOG"
 case "$3" in
     list-skus)
+        if [[ -n "${CATALOG_INTERRUPTED_STATUS:-}" ]]; then
+            echo '(SkuNotAvailable) SKU unavailable.' >&2
+            exit "$CATALOG_INTERRUPTED_STATUS"
+        fi
         [[ -z "${CATALOG_SLEEP:-}" ]] || sleep "$CATALOG_SLEEP"
         if [[ -n "${CATALOG_FAIL:-}" ]]; then echo '(AuthorizationFailed) Denied' >&2; exit 1; fi
         printf '%s\n' "$CATALOG_JSON"
         exit 0 ;;
     delete)
+        if [[ -n "${INTERRUPTED_DELETE_STATUS:-}" ]]; then
+            echo '(ResourceNotFound) absent' >&2
+            exit "$INTERRUPTED_DELETE_STATUS"
+        fi
         [[ -z "${DELETE_SLEEP:-}" ]] || sleep "$DELETE_SLEEP"
         if [[ -n "${DELETE_FAILS:-}" ]]; then echo '(Conflict) delete rejected' >&2; exit 1; fi
         if [[ -n "${DELETE_MISSING:-}" ]]; then echo '(ResourceNotFound) absent' >&2; exit 1; fi
         [[ -n "${SERVER_REMAINS:-}" ]] || rm -f "$SERVER_STATE"
         exit 0 ;;
     show)
+        if [[ -n "${INTERRUPTED_SHOW_STAGE:-}" ]] && {
+            [[ "$INTERRUPTED_SHOW_STAGE" == pre && ! -f "$SERVER_STATE.attempted" ]] ||
+            [[ "$INTERRUPTED_SHOW_STAGE" == ownership && -f "$SERVER_STATE" ]] ||
+            [[ "$INTERRUPTED_SHOW_STAGE" == deleted && -f "$SERVER_STATE.attempted" && ! -f "$SERVER_STATE" ]]
+        }; then
+            echo '(ResourceNotFound) absent' >&2
+            exit "$INTERRUPTED_STATUS"
+        fi
         if [[ -n "${MIXED_SHOW_STAGE:-}" ]] && {
             [[ "$MIXED_SHOW_STAGE" == pre && ! -f "$SERVER_STATE.attempted" ]] ||
             [[ "$MIXED_SHOW_STAGE" == ownership && -f "$SERVER_STATE" ]] ||
@@ -157,7 +173,18 @@ case "$result" in
     policy) echo '(RequestDisallowedByPolicy) Policy denied.' >&2 ;;
     leak) echo "(AuthorizationFailed) Request arguments: $*" >&2 ;;
     timeout) exit 124 ;;
-    slow) sleep 20; exit 0 ;;
+    interrupted-int) exit 130 ;;
+    interrupted-term) exit 143 ;;
+    interrupted-capacity-int) echo '(SkuNotAvailable) SKU unavailable.' >&2; exit 130 ;;
+    interrupted-capacity-term) echo '(SkuNotAvailable) SKU unavailable.' >&2; exit 143 ;;
+    slow)
+        if [[ -n "${CREATE_READY_FILE:-}" ]]; then
+            printf '%s\n' "$$" >"$CREATE_READY_FILE"
+            sleep 60
+        else
+            sleep 20
+        fi
+        exit 0 ;;
     exists)
         echo '{"tags":{"rtc-probe-owner":"another-owner"}}' >"$SERVER_STATE"
         echo '(ServerNameAlreadyExists) Server already exists.' >&2 ;;
@@ -369,23 +396,105 @@ for result in other timeout; do
             "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "absent timeout result"
     fi
 done
-reset slow ok
-expect_status 124 "$REAL_TIMEOUT" --signal=TERM --kill-after=30 5 \
-    env CREATE_ABSENT=1 RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS=15 \
-    RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS=10 AZURE_RESOURCE_GROUP=rg \
-    AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
-[[ "$(count create)" == 1 && "$(count delete)" == 0 && "$(count show)" == 2 ]] ||
-    fail "interrupted create must check ownership without deletion or another allocation"
-server="$(grep '^az postgres flexible-server create ' "$CALL_LOG" | grep -oE -- '--name [^ ]+' | cut -d' ' -f2)"
-grep -Fq "probe server '$server' in resource group 'rg'" <<<"$output" ||
-    fail "interrupted create must report the exact recovery target"
-grep -Fq "rtc-probe-owner=${server#pgprobe-}" <<<"$output" ||
-    fail "interrupted create must report its expected ownership tag"
-grep -Fq 'does not rule out later creation' <<<"$output" ||
-    fail "interrupted create must warn about late creation"
-jq -e '.outcome == "probe_error" and .errorCode == "CreateInterrupted"' \
-    "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "interrupted create result"
-grep -Fq 'Recovery target:' <<<"$output" || fail "recovery target must be logged before create"
+for interruption_attempt in {1..10}; do
+    startup_delay=0
+    [[ "$interruption_attempt" != 10 ]] || startup_delay=6
+    reset slow ok
+    ready_file="$TEST_ROOT/create-ready"
+    rm -f -- "$ready_file"
+    # Signal only after create starts; fixed sleeps can interrupt setup on busy runners.
+    expect_status 1 env CREATE_ABSENT=1 CLI_HELP_SLEEP="$startup_delay" \
+        RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS=30 RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS=10 \
+        AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 CREATE_READY_FILE="$ready_file" \
+        PATH="$TEST_ROOT/bin:$PATH" "$REAL_PYTHON3" - "$PROBE" "$ready_file" <<'PY'
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
+
+process = subprocess.Popen([sys.argv[1]], start_new_session=True)
+try:
+    deadline = time.monotonic() + 20
+    ready_file = Path(sys.argv[2])
+    while not ready_file.exists() or not ready_file.read_text().strip():
+        if process.poll() is not None:
+            raise RuntimeError(f"probe exited before create readiness: {process.returncode}")
+        if time.monotonic() >= deadline:
+            raise TimeoutError("probe did not reach create readiness")
+        time.sleep(0.01)
+    os.killpg(process.pid, signal.SIGTERM)
+    status = process.wait(timeout=20)
+    state_file = Path(f"/proc/{int(ready_file.read_text())}/stat")
+    try:
+        state = state_file.read_text().split(") ", 1)[1][0]
+    except FileNotFoundError:
+        pass
+    else:
+        assert state == "Z", "create process still running"
+finally:
+    if process.poll() is None:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+sys.exit(status)
+PY
+    [[ "$(count create)" == 1 && "$(count delete)" == 0 && "$(count show)" == 2 ]] ||
+        fail "interrupted create must check ownership without deletion or another allocation"
+    server="$(grep '^az postgres flexible-server create ' "$CALL_LOG" | grep -oE -- '--name [^ ]+' | cut -d' ' -f2)"
+    grep -Fq "probe server '$server' in resource group 'rg'" <<<"$output" ||
+        fail "interrupted create must report the exact recovery target"
+    grep -Fq "rtc-probe-owner=${server#pgprobe-}" <<<"$output" ||
+        fail "interrupted create must report its expected ownership tag"
+    grep -Fq 'does not rule out later creation' <<<"$output" ||
+        fail "interrupted create must warn about late creation"
+    jq -e '.outcome == "probe_error" and .errorCode == "CreateInterrupted"' \
+        "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null ||
+        fail "interrupted create result: $(cat "$RTC_POSTGRES_PROBE_RESULT_FILE"); output: $output"
+    grep -Fq 'Recovery target:' <<<"$output" || fail "recovery target must be logged before create"
+done
+for interrupted_status in 130 143; do
+    for call in CLI_HELP_RESULT CATALOG_INTERRUPTED_STATUS; do
+        reset ok
+        expect_status 1 env "$call=$interrupted_status" AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \
+            PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+        [[ "$(count create)" == 0 ]] || fail "interrupted discovery must block allocation"
+    done
+    for stage in pre ownership deleted; do
+        reset capacity ok
+        expect_status 1 env INTERRUPTED_SHOW_STAGE="$stage" INTERRUPTED_STATUS="$interrupted_status" \
+            AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+        if [[ "$stage" == pre ]]; then
+            [[ "$(count create)" == 0 ]] || fail "interrupted absence check must block creation"
+        else
+            [[ "$(count create)" == 1 ]] || fail "interrupted cleanup must block another allocation"
+            jq -e '.outcome == "probe_error" and .errorCode == "CleanupFailed"' \
+                "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null ||
+                fail "interrupted cleanup must not confirm absence"
+        fi
+    done
+    reset capacity ok
+    expect_status 1 env INTERRUPTED_DELETE_STATUS="$interrupted_status" \
+        AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+    [[ "$(count create)" == 1 ]] || fail "interrupted deletion must block another allocation"
+done
+for result in interrupted-int interrupted-term interrupted-capacity-int interrupted-capacity-term; do
+    for absent in 0 1; do
+        reset "$result" ok
+        create_absent=()
+        [[ "$absent" == 0 ]] || create_absent=(CREATE_ABSENT=1)
+        expect_status 1 env "${create_absent[@]}" AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \
+            PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+        [[ "$(count create)" == 1 ]] || fail "interrupted child must block another allocation"
+        [[ "$absent" == 1 || "$(count delete)" == 1 ]] ||
+            fail "interrupted child must still clean up its owned partial server"
+        jq -e '.outcome == "probe_error" and .errorCode == "CreateInterrupted"' \
+            "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null ||
+            fail "interrupted child result: $(cat "$RTC_POSTGRES_PROBE_RESULT_FILE"); output: $output"
+        grep -Fq 'does not rule out later creation' <<<"$output" ||
+            fail "interrupted child must warn about late creation"
+    done
+done
 for format in plain json envelope; do
     for stage in pre ownership deleted; do
         reset ok ok

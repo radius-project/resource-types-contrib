@@ -71,7 +71,8 @@ delete_server() {
         --only-show-errors --output json >"$work_dir/server" 2>"$work_dir/show-error" || status=$?
     if ((status != 0)); then
         codes="$(rtc_postgres_error_codes "$work_dir/show-error")"
-        ((status != 124 && status != 137)) && [[ "$codes" == "ResourceNotFound" ]]
+        ((status != 124 && status != 130 && status != 137 && status != 143)) &&
+            [[ "$codes" == "ResourceNotFound" ]]
         return
     fi
     [[ ! -s "$work_dir/show-error" ]] || return 1
@@ -86,6 +87,7 @@ delete_server() {
         "${subscription_args[@]}" --resource-group "$resource_group" --name "$server_name" \
         --yes --only-show-errors --output none > /dev/null 2>"$work_dir/delete-error" || status=$?
     if ((status != 0)); then
+        if ((status == 130 || status == 143)); then return 1; fi
         codes="$(rtc_postgres_error_codes "$work_dir/delete-error")"
         [[ "$codes" == "ResourceNotFound" ]] || return 1
     elif [[ -s "$work_dir/delete-error" ]]; then
@@ -98,7 +100,8 @@ delete_server() {
         "${subscription_args[@]}" --resource-group "$resource_group" --name "$server_name" \
         --only-show-errors --output none > /dev/null 2>"$work_dir/show-error" || status=$?
     codes="$(rtc_postgres_error_codes "$work_dir/show-error")"
-    ((status != 0 && status != 124 && status != 137)) && [[ "$codes" == "ResourceNotFound" ]]
+    ((status != 0 && status != 124 && status != 130 && status != 137 && status != 143)) &&
+        [[ "$codes" == "ResourceNotFound" ]]
 }
 
 # Invoked by the EXIT trap, including after an interrupt.
@@ -212,7 +215,7 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
         outcome="timeout"; error_code="CreateTimeout"
         echo "Error: PostgreSQL probe server absence check timed out." >&2
         exit 3
-    elif [[ "$codes" != "ResourceNotFound" ]]; then
+    elif ((status == 130 || status == 143)) || [[ "$codes" != "ResourceNotFound" ]]; then
         error_code="ServerAbsenceUnknown"
         echo "Error: probe server absence was not confirmed; refusing creation." >&2
         exit 1
@@ -240,6 +243,9 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
         --tags "rtc-probe-owner=$probe_owner" \
         --yes --only-show-errors --output none > /dev/null 2>"$work_dir/create-error" || status=$?
     unset password
+    # A child signal can reach Bash before its deferred signal trap runs.
+    # Keep the in-flight target so the exit trap reports and cleans it safely.
+    if ((status == 130 || status == 143)); then exit 1; fi
     if ((status == 124 || status == 137)); then
         report_uncertain_create
     fi

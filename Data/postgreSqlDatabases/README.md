@@ -87,6 +87,8 @@ before cleanup can run. Mixed failure records or records without an error code
 cannot authorize another allocation or confirm absence during cleanup.
 Azure CLI `Code:` and `Message:` lines are accepted only when they repeat
 the code and message in the error header. Contradictory fields stop allocation.
+An interrupted command cannot confirm absence or allow a retry, even if its
+error text reports missing resources or unavailable capacity.
 Use `az postgres flexible-server show --resource-group
 <group> --name <server> --output json` with the original subscription to check
 the target again. Delete it only after its `tags["rtc-probe-owner"]` value
