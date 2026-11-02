@@ -96,6 +96,9 @@ case "$3" in
             exit 0
         fi
         echo "(${SHOW_ERROR:-ResourceNotFound}) absent" >&2
+        if [[ "${MULTILINE_SHOW:-0}" == 1 ]]; then
+            printf 'Code: %s\nMessage: The requested server was not found.\n' "${SHOW_ERROR:-ResourceNotFound}" >&2
+        fi
         exit 1 ;;
 esac
 touch "$SERVER_STATE.attempted"
@@ -114,6 +117,27 @@ case "$result" in
     ok) exit 0 ;;
     capacity) echo '(SkuNotAvailable) SKU unavailable.' >&2 ;;
     busy) echo 'ERROR: (ServerIsBusy) Busy.' >&2 ;;
+    multiline-capacity)
+        printf '%s\n' 'ERROR: (SkuNotAvailable) SKU unavailable.' \
+            'Code: SkuNotAvailable' 'Message: The requested SKU is unavailable.' >&2 ;;
+    multiline-busy)
+        printf '%s\n' 'ERROR: (ServerIsBusy) Busy.' \
+            'Code: ServerIsBusy' 'Message: The server is busy.' >&2 ;;
+    multiline-mixed)
+        printf '%s\n' 'ERROR: (SkuNotAvailable) SKU unavailable.' \
+            'Code: SkuNotAvailable' 'Message: The requested SKU is unavailable.' \
+            'ERROR: (AuthorizationFailed) Denied.' 'Code: AuthorizationFailed' 'Message: Denied.' >&2 ;;
+    multiline-uncoded)
+        printf '%s\n' 'ERROR: (SkuNotAvailable) SKU unavailable.' \
+            'Code: SkuNotAvailable' 'Message: The requested SKU is unavailable.' \
+            'ERROR: Access denied.' >&2 ;;
+    multiline-inconsistent)
+        printf '%s\n' 'ERROR: (SkuNotAvailable) SKU unavailable.' \
+            'Code: AuthorizationFailed' 'Message: Access denied.' >&2 ;;
+    multiline-details)
+        printf '%s\n' 'ERROR: (SkuNotAvailable) SKU unavailable.' \
+            'Code: SkuNotAvailable' 'Message: The requested SKU is unavailable.' \
+            'Details: An unknown failure occurred.' >&2 ;;
     json) echo '{"error":{"code":"SkuNotAvailable","message":"Unavailable","details":[]}}' >&2 ;;
     mixed) printf '%s\n' '(SkuNotAvailable) Unavailable.' '(AuthorizationFailed) Denied.' >&2 ;;
     uncoded) printf '%s\n' 'ERROR: (SkuNotAvailable) SKU capacity unavailable' \
@@ -220,6 +244,20 @@ expect_status 0 run_probe
 [[ "$(grep -oE -- '--name [^ ]+' "$CALL_LOG" | sort -u | wc -l)" -eq 3 ]] || fail "unique server names"
 [[ "$(awk '/^az / && !/list-skus/ {print $4}' "$CALL_LOG" | paste -sd,)" == "show,create,show,delete,show,show,create,show,delete,show,show,create,show,delete,show" ]] ||
     fail "must confirm deletion before next allocation"
+
+reset ok
+MULTILINE_SHOW=1 expect_status 0 run_probe
+[[ "$(count show)" == 3 && "$(count create)" == 1 && "$(count delete)" == 1 ]] ||
+    fail "real CLI absence envelopes must pass before creation and after deletion"
+reset multiline-capacity multiline-busy ok
+MULTILINE_SHOW=1 expect_status 0 run_probe
+[[ "$(count create)" == 3 && "$(count delete)" == 3 ]] ||
+    fail "real CLI capacity envelopes must permit bounded fallback"
+for result in multiline-mixed multiline-uncoded multiline-inconsistent multiline-details; do
+    reset "$result" ok
+    MULTILINE_SHOW=1 expect_status 1 run_probe
+    [[ "$(count create)" == 1 ]] || fail "mixed CLI envelopes must stop allocation"
+done
 
 reset ok
 expect_status 1 env DELETE_MISSING=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"

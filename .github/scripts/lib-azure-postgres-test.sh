@@ -173,6 +173,13 @@ while text.strip():
     line, _, text = text.partition("\n")
     match = re.fullmatch(r"\(([A-Za-z][A-Za-z0-9]*)\)(?:\s+.*)?", line.strip())
     codes.add(match[1] if match else "UnknownError")
+    if match:
+        envelope = re.match(
+            r"Code:[ \t]*([A-Za-z][A-Za-z0-9]*)[ \t]*\r?\n"
+            r"Message:[^\n]*(?:\n|$)", text
+        )
+        if envelope and envelope[1] == match[1]:
+            text = text[envelope.end():]
 
 print("\n".join(sorted(codes)))
 PY
