@@ -23,11 +23,12 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 mkdir -p "$TEST_ROOT/bin"
 export CALL_LOG="$TEST_ROOT/calls"
 export CREATE_RESULTS="$TEST_ROOT/create-results"
+export SERVER_STATE="$TEST_ROOT/server"
 export RTC_POSTGRES_PROBE_RESULT_FILE="$TEST_ROOT/result.json"
 REAL_TIMEOUT="$(command -v timeout)"
 export REAL_TIMEOUT
 
-# Each create consumes a result. Show must confirm absence after every delete.
+# Track ownership separately from the create result, including partial creates.
 cat >"$TEST_ROOT/bin/az" <<'EOF'
 #!/bin/bash
 set -euo pipefail
@@ -49,12 +50,39 @@ case "$3" in
         [[ -z "${DELETE_SLEEP:-}" ]] || sleep "$DELETE_SLEEP"
         if [[ -n "${DELETE_FAILS:-}" ]]; then echo '(Conflict) delete rejected' >&2; exit 1; fi
         if [[ -n "${DELETE_MISSING:-}" ]]; then echo '(ResourceNotFound) absent' >&2; exit 1; fi
+        [[ -n "${SERVER_REMAINS:-}" ]] || rm -f "$SERVER_STATE"
         exit 0 ;;
     show)
-        [[ -n "${SERVER_REMAINS:-}" ]] && exit 0
+        if [[ ! -f "$SERVER_STATE.attempted" ]]; then
+            [[ -z "${PRECHECK_SLEEP:-}" ]] || sleep "$PRECHECK_SLEEP"
+            if [[ -n "${EXISTING_SERVER:-}" ]]; then echo '{"tags":{}}'; exit 0; fi
+            if [[ -n "${PRECHECK_ERROR:-}" ]]; then echo "($PRECHECK_ERROR) failed" >&2; exit 1; fi
+        fi
+        if [[ -f "$SERVER_STATE" ]]; then
+            [[ -z "${OWNERSHIP_SLEEP:-}" ]] || sleep "$OWNERSHIP_SLEEP"
+            if [[ -n "${OWNERSHIP_ERROR:-}" ]]; then echo "($OWNERSHIP_ERROR) failed" >&2; exit 1; fi
+            if [[ -n "${SHOW_ERROR:-}" ]]; then echo "($SHOW_ERROR) failed" >&2; exit 1; fi
+            case "${OWNERSHIP:-owned}" in
+                foreign) echo '{"tags":{"rtc-probe-owner":"another-owner"}}' ;;
+                missing) echo '{"tags":{}}' ;;
+                malformed) echo 'not json' ;;
+                *) cat "$SERVER_STATE" ;;
+            esac
+            exit 0
+        fi
         echo "(${SHOW_ERROR:-ResourceNotFound}) absent" >&2
         exit 1 ;;
 esac
+touch "$SERVER_STATE.attempted"
+if [[ -z "${CREATE_ABSENT:-}" ]]; then
+    args=("$@")
+    for ((i = 0; i < ${#args[@]}; i++)); do
+        if [[ "${args[i]}" == --tags ]]; then
+            owner="${args[i+1]#rtc-probe-owner=}"
+            jq -n --arg owner "$owner" '{tags:{"rtc-probe-owner":$owner}}' >"$SERVER_STATE"
+        fi
+    done
+fi
 result="$(head -n 1 "$CREATE_RESULTS")"
 sed -i '1d' "$CREATE_RESULTS"
 case "$result" in
@@ -70,6 +98,9 @@ case "$result" in
     leak) echo "(AuthorizationFailed) Request arguments: $*" >&2 ;;
     timeout) exit 124 ;;
     slow) sleep 20; exit 0 ;;
+    exists)
+        echo '{"tags":{"rtc-probe-owner":"another-owner"}}' >"$SERVER_STATE"
+        echo '(ServerNameAlreadyExists) Server already exists.' >&2 ;;
     *) echo '(AuthorizationFailed) No authorization.' >&2 ;;
 esac
 exit 1
@@ -92,6 +123,7 @@ run_probe() {
 reset() {
     : >"$CALL_LOG"
     rm -f "$RTC_POSTGRES_PROBE_RESULT_FILE"
+    rm -f "$SERVER_STATE" "$SERVER_STATE.attempted"
     printf '%s\n' "$@" >"$CREATE_RESULTS"
 }
 count() { grep -c "^az postgres flexible-server $1 " "$CALL_LOG" || true; }
@@ -105,7 +137,9 @@ expect_status() {
 
 reset ok
 expect_status 0 run_probe
-[[ "$(count create)" == 1 && "$(count delete)" == 1 && "$(count show)" == 1 ]] || fail "create/delete/show sequence"
+[[ "$(count create)" == 1 && "$(count delete)" == 1 && "$(count show)" == 3 ]] || fail "absence/create/ownership/delete/show sequence"
+grep -qE -- '--name pgprobe-[0-9a-f]{32} ' "$CALL_LOG" || fail "128-bit random server name"
+grep -qE -- '--tags rtc-probe-owner=[0-9a-f]{32} ' "$CALL_LOG" || fail "creation-time ownership tag"
 for setting in '--sku-name Standard_B1ms' '--tier Burstable' '--location westus3' '--storage-size 32' \
     '--version 16' '--zonal-resiliency Disabled' '--geo-redundant-backup Disabled' \
     '--microsoft-entra-auth Enabled' '--password-auth Enabled' '--public-access None'; do
@@ -147,16 +181,16 @@ grep -q -- '--tier GeneralPurpose' "$CALL_LOG" || fail "M tier"
 
 reset capacity busy ok
 expect_status 0 run_probe
-[[ "$(count create)" == 3 && "$(count delete)" == 3 && "$(count show)" == 3 ]] || fail "retry cleanup"
+[[ "$(count create)" == 3 && "$(count delete)" == 3 && "$(count show)" == 9 ]] || fail "retry cleanup"
 [[ "$(grep -oE -- '--name [^ ]+' "$CALL_LOG" | sort -u | wc -l)" -eq 3 ]] || fail "unique server names"
-[[ "$(awk '/^az / {print $4}' "$CALL_LOG" | paste -sd,)" == "create,delete,show,create,delete,show,create,delete,show" ]] ||
+[[ "$(awk '/^az / {print $4}' "$CALL_LOG" | paste -sd,)" == "show,create,show,delete,show,show,create,show,delete,show,show,create,show,delete,show" ]] ||
     fail "must confirm deletion before next allocation"
 
 reset ok
-expect_status 0 env DELETE_MISSING=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+expect_status 1 env DELETE_MISSING=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
 reset ok
 expect_status 0 env AZURE_SUBSCRIPTION_ID=sub-123 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
-[[ "$(grep -c -- '--subscription sub-123' "$CALL_LOG")" == 3 ]] || fail "subscription on all calls"
+[[ "$(grep -c -- '--subscription sub-123' "$CALL_LOG")" == 5 ]] || fail "subscription on all calls"
 
 reset capacity capacity capacity
 expect_status 2 run_probe
@@ -168,7 +202,7 @@ expect_status 2 env RTC_POSTGRES_PROBE_ATTEMPTS=1 AZURE_RESOURCE_GROUP=rg AZURE_
 for result in other misleading text quota policy mixed; do
     reset "$result" ok
     expect_status 1 run_probe
-    [[ "$(count create)" == 1 && "$(count show)" == 1 ]] || fail "$result must stop after confirmed cleanup"
+    [[ "$(count create)" == 1 && "$(count show)" == 3 ]] || fail "$result must stop after confirmed cleanup"
 done
 reset leak
 expect_status 1 run_probe
@@ -186,19 +220,70 @@ for setting in SERVER_REMAINS=1 SHOW_ERROR=AuthorizationFailed; do
 done
 reset timeout
 expect_status 3 run_probe
-[[ "$(count delete)" == 1 && "$(count show)" == 1 ]] || fail "timeout cleanup"
+[[ "$(count delete)" == 1 && "$(count show)" == 3 ]] || fail "timeout cleanup"
 jq -e '.outcome == "timeout" and .errorCode == "CreateTimeout"' "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "timeout result"
-grep -q '^timeout --kill-after=10 900$' "$CALL_LOG" || fail "bounded create"
+grep -qE '^timeout --signal=KILL (89[0-9]|900)$' "$CALL_LOG" || fail "bounded create"
 reset slow
 expect_status 3 env RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS=2 AZURE_RESOURCE_GROUP=rg \
     AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
-[[ "$(count delete)" == 1 && "$(count show)" == 1 ]] || fail "real timeout must confirm cleanup"
-grep -qE '^timeout --kill-after=10 [12]$' "$CALL_LOG" || fail "configured create timeout"
+[[ "$(count delete)" == 1 && "$(count show)" == 3 ]] || fail "real timeout must confirm cleanup"
+grep -qE '^timeout --signal=KILL [12]$' "$CALL_LOG" || fail "configured create timeout"
 reset capacity ok
 expect_status 1 env RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS=1 DELETE_SLEEP=20 AZURE_RESOURCE_GROUP=rg \
     AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
 [[ "$(count create)" == 1 ]] || fail "delete timeout must prevent another create"
 jq -e '.errorCode == "CleanupFailed"' "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "delete timeout result"
+
+for setting in EXISTING_SERVER=1 PRECHECK_ERROR=AuthorizationFailed; do
+    reset ok
+    expect_status 1 env "$setting" AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \
+        PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+    [[ "$(count create)" == 0 && "$(count delete)" == 0 && "$(count show)" == 1 ]] ||
+        fail "existing or uncertain server must not be created or deleted"
+done
+reset ok
+expect_status 3 env PRECHECK_SLEEP=20 RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS=1 \
+    AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+[[ "$(count create)" == 0 && "$(count delete)" == 0 ]] || fail "absence timeout must stop allocation"
+reset exists ok
+expect_status 1 run_probe
+[[ "$(count create)" == 1 && "$(count delete)" == 0 ]] ||
+    fail "a create-name race must not delete the other owner's server or allocate again"
+
+for result in ok capacity other timeout slow; do
+    for setting in OWNERSHIP=foreign OWNERSHIP=missing OWNERSHIP=malformed \
+        OWNERSHIP_ERROR=AuthorizationFailed OWNERSHIP_SLEEP=20; do
+        reset "$result" ok
+        create_limit=10
+        [[ "$result" != slow ]] || create_limit=3
+        expect_status 1 env "$setting" RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS="$create_limit" \
+            RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS=1 AZURE_RESOURCE_GROUP=rg \
+            AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+        [[ "$(count create)" == 1 && "$(count delete)" == 0 ]] ||
+            fail "$result with $setting must not delete or allocate again"
+        jq -e '.errorCode == "CleanupFailed"' "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null ||
+            fail "ownership uncertainty must report cleanup failure"
+    done
+done
+for result in other timeout; do
+    reset "$result" ok
+    expected=1
+    [[ "$result" != timeout ]] || expected=3
+    expect_status "$expected" env CREATE_ABSENT=1 AZURE_RESOURCE_GROUP=rg \
+        AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+    [[ "$(count create)" == 1 && "$(count delete)" == 0 ]] ||
+        fail "$result without a server must confirm absence without deletion"
+done
+reset ok
+expect_status 0 env PRECHECK_SLEEP=1 OWNERSHIP_SLEEP=1 \
+    RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS=10 RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS=10 \
+    AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+awk '
+    /^timeout / { limit = $3 }
+    /^az postgres flexible-server create / { if (limit <= 0 || limit >= 10) exit 1; create++ }
+    /^az postgres flexible-server delete / { if (limit <= 0 || limit >= 10) exit 1; deletes++ }
+    END { if (create != 1 || deletes != 1) exit 1 }
+' "$CALL_LOG" || fail "absence and ownership reads must reduce the create and cleanup budgets"
 
 for setting in RTC_POSTGRES_TEST_SIZE=L RTC_POSTGRES_TEST_SIZE=bad RTC_POSTGRES_TEST_SIZE= \
     RTC_POSTGRES_PROBE_ATTEMPTS=0 RTC_POSTGRES_PROBE_ATTEMPTS=4 RTC_POSTGRES_PROBE_ATTEMPTS=99999999999999999 \

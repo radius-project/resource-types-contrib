@@ -52,13 +52,29 @@ if [[ -n "${AZURE_SUBSCRIPTION_ID:-}" ]]; then
 fi
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/rtc-postgres-probe-XXXXXX")"
 server_name=""
+probe_owner=""
 outcome="probe_error"
 error_code="UnknownError"
 
 delete_server() {
     local status=0 remaining cleanup_deadline codes
     cleanup_deadline=$((SECONDS + delete_timeout))
-    timeout --kill-after=10 "$delete_timeout" az postgres flexible-server delete \
+    timeout --signal=KILL "$delete_timeout" az postgres flexible-server show \
+        "${subscription_args[@]}" --resource-group "$resource_group" --name "$server_name" \
+        --only-show-errors --output json >"$work_dir/server" 2>"$work_dir/show-error" || status=$?
+    if ((status != 0)); then
+        codes="$(rtc_postgres_error_codes "$work_dir/show-error")"
+        ((status != 124 && status != 137)) && [[ "$codes" == "ResourceNotFound" ]]
+        return
+    fi
+    if ! jq -e --arg owner "$probe_owner" '.tags["rtc-probe-owner"] == $owner' \
+        "$work_dir/server" >/dev/null 2>&1; then
+        echo "Error: ownership of probe server '$server_name' was not confirmed; refusing deletion." >&2
+        return 1
+    fi
+    remaining=$((cleanup_deadline - SECONDS))
+    ((remaining > 0)) || return 1
+    timeout --signal=KILL "$remaining" az postgres flexible-server delete \
         "${subscription_args[@]}" --resource-group "$resource_group" --name "$server_name" \
         --yes --only-show-errors --output none > /dev/null 2>"$work_dir/delete-error" || status=$?
     if ((status != 0)); then
@@ -68,7 +84,7 @@ delete_server() {
     remaining=$((cleanup_deadline - SECONDS))
     ((remaining > 0)) || return 1
     status=0
-    timeout --kill-after=10 "$remaining" az postgres flexible-server show \
+    timeout --signal=KILL "$remaining" az postgres flexible-server show \
         "${subscription_args[@]}" --resource-group "$resource_group" --name "$server_name" \
         --only-show-errors --output none > /dev/null 2>"$work_dir/show-error" || status=$?
     codes="$(rtc_postgres_error_codes "$work_dir/show-error")"
@@ -137,21 +153,53 @@ if ((first_create_timeout <= 0)); then
     exit 3
 fi
 for ((attempt = 1; attempt <= attempts; attempt++)); do
-    server_name="pgprobe-${GITHUB_RUN_ID:-local}-${attempt}-${RANDOM}"
-    server_name="${server_name:0:63}"
+    create_deadline=$((SECONDS + create_timeout))
+    if ((attempt == 1)); then create_deadline=$((help_started + create_timeout)); fi
+    probe_owner="$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
+    candidate_name="pgprobe-$probe_owner"
+    limit=$((create_deadline - SECONDS))
+    if ((limit <= 0)); then
+        outcome="timeout"; error_code="CreateTimeout"
+        echo "Error: PostgreSQL probe used its create budget before the absence check." >&2
+        exit 3
+    fi
+    status=0
+    timeout --signal=KILL "$limit" az postgres flexible-server show \
+        "${subscription_args[@]}" --resource-group "$resource_group" --name "$candidate_name" \
+        --only-show-errors --output json >/dev/null 2>"$work_dir/precreate-error" || status=$?
+    codes="$(rtc_postgres_error_codes "$work_dir/precreate-error")"
+    if ((status == 0)); then
+        error_code="ServerAlreadyExists"
+        echo "Error: probe server name '$candidate_name' already exists; refusing creation." >&2
+        exit 1
+    elif ((status == 124 || status == 137)); then
+        outcome="timeout"; error_code="CreateTimeout"
+        echo "Error: PostgreSQL probe server absence check timed out." >&2
+        exit 3
+    elif [[ "$codes" != "ResourceNotFound" ]]; then
+        error_code="ServerAbsenceUnknown"
+        echo "Error: probe server absence was not confirmed; refusing creation." >&2
+        exit 1
+    fi
+    limit=$((create_deadline - SECONDS))
+    if ((limit <= 0)); then
+        outcome="timeout"; error_code="CreateTimeout"
+        echo "Error: PostgreSQL probe used its create budget during the absence check." >&2
+        exit 3
+    fi
+    server_name="$candidate_name"
     password="P$(openssl rand -hex 16)a1!"
     echo "==> PostgreSQL probe $attempt/$attempts: $postgres_sku ($postgres_tier) in $location" >&2
     status=0
-    limit="$create_timeout"
-    if ((attempt == 1)); then limit="$first_create_timeout"; fi
     # None enables public networking without a firewall rule. It does not disable
     # TLS. Leave zone unset for automatic placement, as in the pack.
-    timeout --kill-after=10 "$limit" az postgres flexible-server create \
+    timeout --signal=KILL "$limit" az postgres flexible-server create \
         "${subscription_args[@]}" --resource-group "$resource_group" --name "$server_name" \
         --location "$location" --tier "$postgres_tier" --sku-name "$postgres_sku" \
         --storage-size 32 --version 16 "$ha_option" Disabled \
         --geo-redundant-backup Disabled "$auth_option" Enabled --password-auth Enabled \
         --public-access None --admin-user probeadmin --admin-password "$password" \
+        --tags "rtc-probe-owner=$probe_owner" \
         --yes --only-show-errors --output none > /dev/null 2>"$work_dir/create-error" || status=$?
     unset password
     codes="$(rtc_postgres_error_codes "$work_dir/create-error")"

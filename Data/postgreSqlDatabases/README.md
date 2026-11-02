@@ -57,6 +57,13 @@ size, SKU, and tier. A missing, invalid, exhausted, or failed result fails the
 PostgreSQL entry; later entries still run. Without a result file, the runner
 makes one bounded `S` probe in the existing group's region.
 
+The probe uses a 128-bit random server name and checks that the name is absent
+before creation. It sets an ownership tag at creation and verifies that tag
+before deletion, including after a failed or timed-out create. Azure reads are
+bounded: absence checks use the create budget; ownership checks and deletion
+use the cleanup reserve. Unknown ownership or unconfirmed cleanup stops the
+probe without another allocation.
+
 For a direct Azure entry test, set `RTC_TEST_PLATFORM=azure`,
 `AZURE_RESOURCE_GROUP`, and `RTC_POSTGRES_TEST_SIZE=S` or `M`. The runner passes
 the size to the test app. Each deployment has a 15-minute limit, reduced to
