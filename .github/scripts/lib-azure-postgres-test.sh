@@ -26,6 +26,28 @@ rtc_postgres_test_tuple() {
     esac
 }
 
+# Fail closed when a release overlay changes the tuple or required features.
+rtc_validate_postgres_test_pack() {
+    local pack="$1" entry small_sku small_tier setting
+    entry="$(sed -n "/'Radius.Data\/postgreSqlDatabases': {/,/'Radius.Data\/sqlServerDatabases': {/p" "$pack")" || return 1
+    rtc_postgres_test_tuple S
+    small_sku="$postgres_sku"; small_tier="$postgres_tier"
+    rtc_postgres_test_tuple M
+    if ! grep -Fq "skuName: '{{context.resource.properties.size == \"S\" ? \"$small_sku\" : \"$postgres_sku\"}}'" <<<"$entry" ||
+        ! grep -Fq "tier: '{{context.resource.properties.size == \"S\" ? \"$small_tier\" : \"$postgres_tier\"}}'" <<<"$entry"; then
+        echo "Error: PostgreSQL selection policy differs from the pack SKU or tier mapping: $pack" >&2
+        return 1
+    fi
+    for setting in "version: '16'" "availabilityZone: -1" "highAvailability: 'Disabled'" \
+        "geoRedundantBackup: 'Disabled'" "storageSizeGB: 32" "publicNetworkAccess: 'Enabled'" \
+        "activeDirectoryAuth: 'Enabled'" "passwordAuth: 'Enabled'"; do
+        if ! grep -Fq "$setting" <<<"$entry"; then
+            echo "Error: PostgreSQL selection policy differs from pack setting $setting: $pack" >&2
+            return 1
+        fi
+    done
+}
+
 rtc_postgres_positive_limit() {
     local value="$1" maximum="$2"
     [[ "$value" =~ ^[1-9][0-9]{0,5}$ ]] && ((10#$value <= maximum))
