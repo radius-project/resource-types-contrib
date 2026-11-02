@@ -291,7 +291,7 @@ jobs:
       - name: Test PostgreSQL Recipe Pack entry
         id: azure_postgres_entry
         continue-on-error: true
-        timeout-minutes: 45
+        timeout-minutes: 76
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics

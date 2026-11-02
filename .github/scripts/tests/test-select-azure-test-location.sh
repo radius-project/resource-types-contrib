@@ -53,6 +53,15 @@ state_location() { awk -F'|' -v name="$1" '$1 == name { print $3; exit }' "$GROU
 case "$command" in
     exists)
         exists_count="$(grep -c '^az group exists' "$CALL_LOG" || true)"
+        if [[ -n "${GROUP_EXISTS_CHILD_SLEEP:-}" &&
+            ( -z "${GROUP_EXISTS_CHILD_SLEEP_AFTER:-}" || exists_count -ge GROUP_EXISTS_CHILD_SLEEP_AFTER ) ]]; then
+            if [[ -n "${GROUP_EXISTS_CHILD_IGNORE_TERM:-}" ]]; then
+                (trap '' TERM; exec sleep "$GROUP_EXISTS_CHILD_SLEEP") &
+            else
+                (sleep "$GROUP_EXISTS_CHILD_SLEEP"; echo false) &
+            fi
+            wait || true
+        fi
         if [[ -n "${GROUP_EXISTS_SLEEP:-}" &&
             ( -z "${GROUP_EXISTS_SLEEP_AFTER:-}" || exists_count -ge GROUP_EXISTS_SLEEP_AFTER ) ]]; then
             exec sleep "$GROUP_EXISTS_SLEEP"
@@ -61,6 +70,15 @@ case "$command" in
         ;;
     show)
         show_count="$(grep -c '^az group show' "$CALL_LOG" || true)"
+        if [[ -n "${GROUP_SHOW_CHILD_SLEEP:-}" &&
+            ( -z "${GROUP_SHOW_CHILD_SLEEP_AFTER:-}" || show_count -ge GROUP_SHOW_CHILD_SLEEP_AFTER ) ]]; then
+            if [[ -n "${GROUP_SHOW_CHILD_IGNORE_TERM:-}" ]]; then
+                (trap '' TERM; exec sleep "$GROUP_SHOW_CHILD_SLEEP") &
+            else
+                (sleep "$GROUP_SHOW_CHILD_SLEEP"; state_owner "$group") &
+            fi
+            wait || true
+        fi
         if [[ -n "${GROUP_SHOW_SLEEP:-}" &&
             ( -z "${GROUP_SHOW_SLEEP_AFTER:-}" || show_count -ge GROUP_SHOW_SLEEP_AFTER ) ]]; then
             exec sleep "$GROUP_SHOW_SLEEP"
@@ -98,6 +116,10 @@ case "$command" in
         if [[ -n "${GROUP_CREATE_SLEEP:-}" ]]; then
             if [[ -n "${GROUP_CREATE_PARTIAL:-}" ]]; then
                 printf '%s|%s|%s\n' "$group" "$owner" "$location" >>"$GROUP_STATE"
+            fi
+            if [[ -n "${GROUP_CREATE_IGNORE_TERM:-}" ]]; then
+                (trap '' TERM; sleep "$GROUP_CREATE_SLEEP") &
+                wait
             fi
             exec sleep "$GROUP_CREATE_SLEEP"
         fi
@@ -284,6 +306,30 @@ assert_json '.status == "deadline_exceeded" and (has("postgres") | not)'
 ! grep -q '^az group create' "$CALL_LOG" || fail "deadline expiry must prevent allocation"
 
 reset 0
+slow_read_started="$(date +%s)"
+if RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=1 GROUP_EXISTS_CHILD_SLEEP_AFTER=1 \
+    GROUP_EXISTS_CHILD_SLEEP=8 select_location westus3 >/dev/null 2>&1; then
+    fail "existence read with a child holding stdout must hit the selection deadline"
+fi
+slow_read_elapsed=$(( $(date +%s) - slow_read_started ))
+((slow_read_elapsed < 4)) || fail "deadline must terminate Azure CLI child processes holding stdout"
+[[ "$(grep -c '^az group exists' "$CALL_LOG")" == 1 ]] ||
+    fail "deadline expiry during child-held read must prevent further Azure calls"
+! grep -q '^az group create' "$CALL_LOG" || fail "deadline expiry must prevent allocation"
+
+reset 0
+slow_read_started="$(date +%s)"
+if RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=1 GROUP_EXISTS_CHILD_SLEEP_AFTER=1 \
+    GROUP_EXISTS_CHILD_IGNORE_TERM=1 GROUP_EXISTS_CHILD_SLEEP=8 \
+    select_location westus3 >/dev/null 2>&1; then
+    fail "TERM-ignoring existence-read descendants must hit the selection deadline"
+fi
+slow_read_elapsed=$(( $(date +%s) - slow_read_started ))
+((slow_read_elapsed < 4)) || fail "deadline must kill TERM-ignoring Azure CLI descendants"
+[[ "$(grep -c '^az group exists' "$CALL_LOG")" == 1 ]] ||
+    fail "deadline expiry during TERM-ignoring child-held read must stop Azure calls"
+
+reset 0
 cleanup_read_started="$(date +%s)"
 if RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=3 RTC_POSTGRES_CLEANUP_RESERVE_SECONDS=2 \
     PROBE_SLEEP=3 GROUP_EXISTS_SLEEP_AFTER=3 GROUP_EXISTS_SLEEP=8 \
@@ -303,6 +349,48 @@ assert_json '.status == "probe_error" and (has("postgres") | not)'
 
 reset 0
 cleanup_read_started="$(date +%s)"
+if RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=4 RTC_POSTGRES_CLEANUP_RESERVE_SECONDS=2 \
+    PROBE_SLEEP=1 GROUP_EXISTS_CHILD_SLEEP_AFTER=3 GROUP_EXISTS_CHILD_IGNORE_TERM=1 \
+    GROUP_EXISTS_CHILD_SLEEP=8 select_location westus3 >/dev/null 2>&1; then
+    fail "TERM-ignoring owned-group cleanup existence reads must be bounded"
+fi
+cleanup_read_elapsed=$(( $(date +%s) - cleanup_read_started ))
+((cleanup_read_elapsed < 8)) || fail "cleanup must kill TERM-ignoring Azure CLI descendants"
+[[ "$(grep -c '^az group exists' "$CALL_LOG")" == 3 ]] ||
+    fail "owned-group cleanup should stop at the bounded TERM-ignoring existence read"
+! grep -q '^az group delete' "$CALL_LOG" || fail "cleanup must not delete before bounded existence read"
+assert_json '.status == "probe_error" and (has("postgres") | not)'
+
+reset 0
+cleanup_read_started="$(date +%s)"
+if RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=4 RTC_POSTGRES_CLEANUP_RESERVE_SECONDS=2 \
+    PROBE_SLEEP=1 GROUP_EXISTS_CHILD_SLEEP_AFTER=3 GROUP_EXISTS_CHILD_SLEEP=8 \
+    select_location westus3 >/dev/null 2>&1; then
+    fail "owned-group cleanup existence read must be bounded"
+fi
+cleanup_read_elapsed=$(( $(date +%s) - cleanup_read_started ))
+((cleanup_read_elapsed < 8)) || fail "cleanup must terminate Azure CLI children holding stdout"
+[[ "$(grep -c '^az group exists' "$CALL_LOG")" == 3 ]] ||
+    fail "owned-group cleanup should stop at the bounded existence read"
+! grep -q '^az group delete' "$CALL_LOG" || fail "cleanup must not delete before ownership checks"
+assert_json '.status == "probe_error" and (has("postgres") | not)'
+
+reset 0
+cleanup_read_started="$(date +%s)"
+if RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=4 RTC_POSTGRES_CLEANUP_RESERVE_SECONDS=2 \
+    PROBE_SLEEP=1 GROUP_SHOW_CHILD_SLEEP_AFTER=2 GROUP_SHOW_CHILD_IGNORE_TERM=1 \
+    GROUP_SHOW_CHILD_SLEEP=8 select_location westus3 >/dev/null 2>&1; then
+    fail "TERM-ignoring owned-group cleanup ownership reads must be bounded"
+fi
+cleanup_read_elapsed=$(( $(date +%s) - cleanup_read_started ))
+((cleanup_read_elapsed < 8)) || fail "cleanup ownership read must kill TERM-ignoring Azure CLI descendants"
+[[ "$(grep -c '^az group show' "$CALL_LOG")" == 2 ]] ||
+    fail "owned-group cleanup should stop at the bounded TERM-ignoring ownership read"
+! grep -q '^az group delete' "$CALL_LOG" || fail "cleanup must not delete before bounded ownership read"
+assert_json '.status == "probe_error" and (has("postgres") | not)'
+
+reset 0
+cleanup_read_started="$(date +%s)"
 if RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=3 RTC_POSTGRES_CLEANUP_RESERVE_SECONDS=2 \
     PROBE_SLEEP=3 GROUP_SHOW_SLEEP_AFTER=2 GROUP_SHOW_SLEEP=8 \
     select_location westus3 >/dev/null 2>&1; then
@@ -312,6 +400,20 @@ cleanup_read_elapsed=$(( $(date +%s) - cleanup_read_started ))
 ((cleanup_read_elapsed < 7)) || fail "cleanup ownership read exceeded the shared reserve"
 [[ "$(grep -c '^az group show' "$CALL_LOG")" -le 2 ]] ||
     { cat "$CALL_LOG" >&2; cat "$TEST_ROOT/stderr" >&2; fail "expired cleanup reserve must stop before an ownership read"; }
+! grep -q '^az group delete' "$CALL_LOG" || fail "cleanup must not delete without verified ownership"
+assert_json '.status == "probe_error" and (has("postgres") | not)'
+
+reset 0
+cleanup_read_started="$(date +%s)"
+if RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=4 RTC_POSTGRES_CLEANUP_RESERVE_SECONDS=2 \
+    PROBE_SLEEP=1 GROUP_SHOW_CHILD_SLEEP_AFTER=2 GROUP_SHOW_CHILD_SLEEP=8 \
+    select_location westus3 >/dev/null 2>&1; then
+    fail "owned-group cleanup ownership read must be bounded"
+fi
+cleanup_read_elapsed=$(( $(date +%s) - cleanup_read_started ))
+((cleanup_read_elapsed < 8)) || fail "cleanup ownership read must terminate Azure CLI children"
+[[ "$(grep -c '^az group show' "$CALL_LOG")" == 2 ]] ||
+    fail "owned-group cleanup should stop at the bounded ownership read"
 ! grep -q '^az group delete' "$CALL_LOG" || fail "cleanup must not delete without verified ownership"
 assert_json '.status == "probe_error" and (has("postgres") | not)'
 
@@ -351,6 +453,23 @@ if ! grep -Fq "az group delete --name $interrupted_group" "$CALL_LOG"; then
 fi
 [[ ! -s "$GROUP_STATE" ]] || fail "interrupted owned group must be removed"
 assert_json '.status == "probe_error" and (has("postgres") | not)'
+
+reset 0
+interrupted_started="$(date +%s)"
+if RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=30 GROUP_CREATE_PARTIAL=1 \
+    GROUP_CREATE_IGNORE_TERM=1 GROUP_CREATE_SLEEP=30 \
+    PATH="$TEST_ROOT/bin:$PATH" timeout --signal=TERM --kill-after=5 1 \
+    "$TEST_ROOT/scripts/select-azure-test-location.sh" probe-rg westus3 \
+    >"$TEST_ROOT/interrupted-child.stdout" 2>"$TEST_ROOT/interrupted-child.stderr"; then
+    fail "TERM-ignoring Azure child must interrupt creation"
+fi
+interrupted_elapsed=$(( $(date +%s) - interrupted_started ))
+((interrupted_elapsed < 5)) || fail "signal handling must bound teardown of a TERM-ignoring Azure child"
+interrupted_child_group="$(sed -nE 's/^az group create --name ([^ ]+).*/\1/p' "$CALL_LOG")"
+[[ -n "$interrupted_child_group" ]] || fail "interrupted create must have a recovery target"
+grep -Fq "$interrupted_child_group" "$TEST_ROOT/interrupted-child.stderr" ||
+    fail "interrupted TERM-ignoring create must report its exact group"
+[[ ! -s "$GROUP_STATE" ]] || fail "owned partial group must be cleaned after bounded signal teardown"
 
 reset 0
 if RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=30 GROUP_CREATE_SLEEP=10 \

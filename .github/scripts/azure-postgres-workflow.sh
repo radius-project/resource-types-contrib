@@ -113,6 +113,7 @@ create_main_group() {
         echo "Error: main resource group '$group' is not confirmed absent; refusing to update or delete it." >&2
         return 1
     }
+    echo "Creating main resource group '$group' with rtcAzureTestGroupOwner=$owner_token." >&2
     if ! timeout --kill-after=5 180 az group create --only-show-errors --output none \
         --location "$location" --name "$group" --subscription "$AZURE_SUBSCRIPTION_ID" \
         --tags "creationTime=$(date +%s)" "rtcRunId=$run_id" "rtcRunAttempt=$run_attempt" \
@@ -271,10 +272,8 @@ case "${1:-}" in
         if [[ -v RTC_AZURE_TEST_REGIONS ]]; then
             list="$RTC_AZURE_TEST_REGIONS"
         else
-            regions=()
-            [[ -z "${AZURE_LOCATION:-}" ]] || regions+=("$AZURE_LOCATION")
-            [[ -z "${AZURE_FALLBACK_LOCATION:-}" ]] || regions+=("$AZURE_FALLBACK_LOCATION")
-            regions+=(centralus westus2)
+            regions=("${AZURE_LOCATION:-westus3}" "${AZURE_FALLBACK_LOCATION:-centralus}" \
+                westus3 centralus northcentralus southcentralus)
             list="$(IFS=','; echo "${regions[*]}")"
         fi
         [[ "$list" =~ ^[a-z0-9]+(,[a-z0-9]+)*$ ]] ||
@@ -286,6 +285,9 @@ case "${1:-}" in
         for region in "${regions[@]}"; do
             if [[ ! " ${candidates[*]} " == *" $region "* ]]; then candidates+=("$region"); fi
         done
+        if [[ ! -v RTC_AZURE_TEST_REGIONS ]] && ((${#candidates[@]} > 4)); then
+            candidates=("${candidates[@]:0:4}")
+        fi
         ((${#candidates[@]} <= 4)) ||
             { echo "Error: at most four distinct regions are allowed." >&2; exit 1; }
         (IFS=','; echo "${candidates[*]}")

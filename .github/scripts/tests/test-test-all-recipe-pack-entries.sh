@@ -337,7 +337,7 @@ RTC_POSTGRES_TEST_SIZES=M EXPECTED_POSTGRES_SIZE=M AZURE_LOCATION=eastus \
 assert_probe_count="$(grep -c '^probe-' "$CALL_LOG")"
 [[ "$assert_probe_count" == 1 ]] || fail "single-M initial probe must run once"
 
-for state in missing malformed capacity_exhausted probe_error deadline_exceeded unsupported invalid_size invalid_tuple wrong_region expired invalid_deadline; do
+for state in missing malformed capacity_exhausted unsupported probe_error deadline_exceeded invalid_size invalid_tuple wrong_region expired invalid_deadline; do
     case "$state" in
         missing) rm -f "$selection" ;;
         malformed) echo '{' >"$selection" ;;
@@ -355,6 +355,10 @@ for state in missing malformed capacity_exhausted probe_error deadline_exceeded 
         fail "$state selection must fail PostgreSQL"
     fi
     grep -qi 'PostgreSQL.*selection' <<<"$output" || fail "selection failure must be clear"
+    if [[ "$state" == unsupported ]]; then
+        grep -qi 'capacity selection failed: unsupported' <<<"$output" ||
+            fail "unsupported catalog result must be explicit"
+    fi
     if grep -q '^test-recipe-pack-entry.sh Data/postgreSqlDatabases' "$CALL_LOG"; then
         fail "$state selection must block PostgreSQL deployment"
     fi

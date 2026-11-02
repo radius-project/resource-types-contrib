@@ -237,14 +237,24 @@ deployment rather than silently testing the wrong size.
 
 Set repository variable `RTC_AZURE_TEST_REGIONS` to a comma-separated list of
 approved regions. It overrides all other region settings. If it is not set,
-the workflows use `AZURE_LOCATION`, then `AZURE_FALLBACK_LOCATION`, followed by
-`centralus` and `westus2`. With neither legacy variable set, the automatic list
-is `centralus,westus2`. The two legacy settings are also repository variables;
+the workflows keep `AZURE_LOCATION` and `AZURE_FALLBACK_LOCATION` first, when
+set, then fill remaining slots from the automatic list
+`westus3,centralus,northcentralus,southcentralus`. Defaults for the legacy
+settings are `westus3` and `centralus`, so the default list is
+`westus3,centralus,northcentralus,southcentralus`. For example, distinct legacy
+settings `eastus` and `northeurope` produce
+`eastus,northeurope,westus3,centralus`. Reported read-only catalog
+results from one subscription show PostgreSQL 16 and both approved sizes in all
+four, and the Azure AKS pack's `gpt-5-mini` Global Standard deployment and Basic
+Azure AI Search service are listed as available there. `westus2` and `westus`
+are not automatic candidates because one or more Azure AKS services are not
+listed there. The legacy settings are also repository variables;
 scripts accept the same names as environment variables. The selector's
 `RTC_AZURE_TEST_REGIONS` takes precedence over positional regions.
 
 Duplicates are removed without changing order. At most four distinct regions
-are allowed. An explicit one-region list prevents selection in another region.
+are used. An explicit list with more than four distinct regions is invalid; an
+explicit one-region list prevents selection in another region.
 Before use, verify **all candidates**, including automatic defaults, for
 subscription access, quota, policy, PostgreSQL 16, and the other `azure-aks`
 pack services. Check OpenAI model and version availability where those tests
@@ -255,7 +265,8 @@ Repository variable `RTC_POSTGRES_TEST_SIZES` defaults to `S,M`. Only `S` and
 `M` are allowed; duplicates are removed. `S` maps to `Standard_B1ms`/`Burstable`;
 `M` maps to `Standard_D2ds_v5`/`GeneralPurpose`. Try the first size in every
 region before trying the next size. Thus the default order is `S` in
-`centralus`, then `westus2`, followed by `M` in those regions. Empty or
+`westus3`, `centralus`, `northcentralus`, and `southcentralus`, then `M` in
+those regions. Empty or
 malformed script settings, unsafe region values, and excessive lists fail
 before Azure calls.
 
@@ -295,7 +306,7 @@ cluster setup run before the selector starts its absolute deadline. Main-group
 creation and Azure provider configuration remain after selection. The selector
 step has a 76-minute limit (60-minute work budget, cleanup, and termination
 margin); main-group creation has five minutes. Checked-in pack deployment has
-15 minutes. The PostgreSQL step has a 45-minute cap, but selection and deployment
+15 minutes. The PostgreSQL step has a 76-minute cap, but selection and deployment
 share the selector's single 60-minute absolute deadline plus its cleanup reserve;
 those two step limits are not additive. Pack entries run in two steps: PostgreSQL
 first, then unrelated entries with a protected 68-minute window. The unrelated

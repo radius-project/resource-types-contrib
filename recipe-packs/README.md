@@ -120,10 +120,21 @@ Before nightly or release-candidate Azure tests create the main resource group,
 [`select-azure-test-location.sh`](../.github/scripts/select-azure-test-location.sh)
 checks candidate regions in order. Set the repository variable
 `RTC_AZURE_TEST_REGIONS` to override the list (up to four distinct Azure region
-names). Otherwise, the workflows try `AZURE_LOCATION`, then
-`AZURE_FALLBACK_LOCATION`, followed by `centralus` and `westus2`; duplicates
-are removed without changing order. `RTC_POSTGRES_TEST_SIZES` controls the
-candidate sizes (`S,M` by default, at most two distinct sizes).
+names). Otherwise, the workflows keep `AZURE_LOCATION` and
+`AZURE_FALLBACK_LOCATION` first, when set, then fill remaining slots from the
+automatic candidates `westus3,centralus,northcentralus,southcentralus`. Their
+defaults are `westus3` and `centralus`, so the default list is
+`westus3,centralus,northcentralus,southcentralus`. Reported read-only catalog
+results from one subscription show PostgreSQL 16 and both approved sizes in all
+four. The Azure AKS pack's `gpt-5-mini` Global Standard deployment and Basic
+Azure AI Search service are listed as available there. `westus2` and `westus`
+are not automatic because an Azure AKS service is not listed in each region.
+Duplicates are removed without changing order, and automatic candidates fill
+the list to at most four regions. An explicit list with more than four distinct
+regions is invalid. For example, distinct legacy settings `eastus` and
+`northeurope` produce `eastus,northeurope,westus3,centralus`.
+`RTC_POSTGRES_TEST_SIZES` controls the candidate sizes (`S,M` by default, at
+most two distinct sizes).
 
 For each tuple, the test first checks the read-only PostgreSQL catalog for
 version 16, the mapped SKU and tier, and 32-GiB storage. Verified unsupported
@@ -149,8 +160,8 @@ The probe uses `AZURE_SUBSCRIPTION_ID` when it is set, and the Azure CLI
 default subscription otherwise. More candidates can improve reliability but
 cannot guarantee Azure capacity. Verify every configured region for
 subscription access, quota, policy, PostgreSQL 16, and the other Azure AKS pack
-services. In particular, verify `centralus` and `westus2` before relying on
-the default candidates.
+services. An explicit override may include `westus2` only if the required AI
+model deployment and other pack services are available there.
 
 MySQL pack entries that map `tls` to `require_secure_transport` run both
 `tls: required` and `tls: optional`. They pass `verifyTransport` through

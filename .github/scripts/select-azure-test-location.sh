@@ -98,38 +98,76 @@ probe_rg=""
 probe_owner_token=""
 group_create_attempted=false
 group_create_pid=""
+RUN_OUTPUT=""
 
 run_before_deadline() {
-    local deadline_at="$1" requested_limit="$2" remaining
+    local deadline_at="$1" requested_limit="$2" remaining output_file end_at status=0
     shift 2
     remaining=$((deadline_at - SECONDS))
     ((remaining > 0)) || return 124
     if ((requested_limit > remaining)); then requested_limit="$remaining"; fi
-    timeout --signal=KILL "$requested_limit" "$@"
+    output_file="$(mktemp "$work_dir/command.XXXXXX")"
+    setsid "$@" >"$output_file" &
+    group_create_pid=$!
+    end_at=$((SECONDS + requested_limit))
+    while kill -0 "$group_create_pid" 2>/dev/null; do
+        if ((SECONDS >= end_at)); then
+            status=124
+            break
+        fi
+        sleep 0.1 || true
+    done
+    if ((status == 0)); then
+        wait "$group_create_pid" || status=$?
+    fi
+    if kill -0 -- "-$group_create_pid" 2>/dev/null; then
+        terminate_process_group "$group_create_pid"
+    fi
+    if ((status == 124)); then
+        wait "$group_create_pid" 2>/dev/null || true
+    fi
+    group_create_pid=""
+    RUN_OUTPUT="$(<"$output_file")"
+    rm -f -- "$output_file"
+    return "$status"
+}
+
+terminate_process_group() {
+    local pid="$1" stop_at
+    kill -TERM -- "-$pid" 2>/dev/null || true
+    stop_at=$((SECONDS + 1))
+    while kill -0 -- "-$pid" 2>/dev/null && ((SECONDS < stop_at)); do
+        sleep 0.1 || true
+    done
+    kill -KILL -- "-$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
 }
 
 group_has_owner_tag() {
     local deadline_at="$1" owner_tag
-    owner_tag="$(run_before_deadline "$deadline_at" 30 az group show "${subscription_args[@]}" \
-        --name "$probe_rg" --query "tags.rtcPostgresSelectorOwner" --output tsv 2>/dev/null)" ||
+    run_before_deadline "$deadline_at" 30 az group show "${subscription_args[@]}" \
+        --name "$probe_rg" --query "tags.rtcPostgresSelectorOwner" --output tsv 2>/dev/null ||
         return 1
+    owner_tag="$RUN_OUTPUT"
     [[ "$owner_tag" == "$probe_owner_token" ]]
 }
 
 delete_owned_probe_group() {
     local remaining exists
-    exists="$(run_before_deadline "$cleanup_deadline" 30 az group exists "${subscription_args[@]}" \
-        --name "$probe_rg" --output tsv)" || return 1
+    run_before_deadline "$cleanup_deadline" 30 az group exists "${subscription_args[@]}" \
+        --name "$probe_rg" --output tsv || return 1
+    exists="$RUN_OUTPUT"
     [[ "$exists" == false ]] && return 0
     [[ "$exists" == true ]] || return 1
     group_has_owner_tag "$cleanup_deadline" || return 1
     remaining=$((cleanup_deadline - SECONDS))
     ((remaining > 0)) || return 1
     if ((remaining > delete_timeout)); then remaining="$delete_timeout"; fi
-    timeout --signal=KILL "$remaining" az group delete "${subscription_args[@]}" \
+    run_before_deadline "$cleanup_deadline" "$remaining" az group delete "${subscription_args[@]}" \
         --name "$probe_rg" --yes --only-show-errors --output none >&2 || return 1
-    exists="$(run_before_deadline "$cleanup_deadline" 30 az group exists "${subscription_args[@]}" \
-        --name "$probe_rg" --output tsv)" || return 1
+    run_before_deadline "$cleanup_deadline" 30 az group exists "${subscription_args[@]}" \
+        --name "$probe_rg" --output tsv || return 1
+    exists="$RUN_OUTPUT"
     [[ "$exists" == false ]]
 }
 
@@ -170,8 +208,7 @@ finish() {
 handle_signal() {
     trap - INT TERM
     if [[ -n "$group_create_pid" ]]; then
-        kill "$group_create_pid" 2>/dev/null || true
-        wait "$group_create_pid" 2>/dev/null || true
+        terminate_process_group "$group_create_pid"
         group_create_pid=""
     fi
     exit 1
@@ -180,8 +217,8 @@ trap finish EXIT
 trap handle_signal INT TERM
 
 # Refuse a supplied name that already exists. Azure group create is an upsert.
-if ! existing_group="$(run_before_deadline "$deadline" 30 az group exists "${subscription_args[@]}" \
-    --name "$requested_probe_rg" --output tsv)"; then
+if ! run_before_deadline "$deadline" 30 az group exists "${subscription_args[@]}" \
+    --name "$requested_probe_rg" --output tsv; then
     if ((SECONDS >= deadline)); then
         selection_status="deadline_exceeded"
         echo "Error: PostgreSQL selection deadline expired while checking the supplied probe group." >&2
@@ -190,6 +227,7 @@ if ! existing_group="$(run_before_deadline "$deadline" 30 az group exists "${sub
     fi
     exit 1
 fi
+existing_group="$RUN_OUTPUT"
 if ((SECONDS >= deadline)); then
     selection_status="deadline_exceeded"
     echo "Error: PostgreSQL selection deadline expired while checking the supplied probe group." >&2
@@ -211,8 +249,8 @@ if [[ ! "$probe_owner_token" =~ ^[a-f0-9]{32}$ ]]; then
     exit 1
 fi
 probe_rg="${requested_probe_rg}-${probe_owner_token}"
-if ! existing_group="$(run_before_deadline "$deadline" 30 az group exists "${subscription_args[@]}" \
-    --name "$probe_rg" --output tsv)"; then
+if ! run_before_deadline "$deadline" 30 az group exists "${subscription_args[@]}" \
+    --name "$probe_rg" --output tsv; then
     if ((SECONDS >= deadline)); then
         selection_status="deadline_exceeded"
         echo "Error: PostgreSQL selection deadline expired while checking the unique probe group." >&2
@@ -221,6 +259,7 @@ if ! existing_group="$(run_before_deadline "$deadline" 30 az group exists "${sub
     fi
     exit 1
 fi
+existing_group="$RUN_OUTPUT"
 if ((SECONDS >= deadline)); then
     selection_status="deadline_exceeded"
     echo "Error: PostgreSQL selection deadline expired while checking the unique probe group." >&2
@@ -240,15 +279,12 @@ if ((group_create_limit <= 0)); then
 fi
 echo "Creating PostgreSQL selector probe group '$probe_rg' with rtcPostgresSelectorOwner=$probe_owner_token." >&2
 group_create_attempted=true
-timeout --signal=KILL "$group_create_limit" az group create "${subscription_args[@]}" \
+group_create_status=0
+run_before_deadline "$deadline" "$group_create_limit" az group create "${subscription_args[@]}" \
     --name "$probe_rg" --location "${candidates[0]}" \
     --tags "creationTime=$(date +%s)" "rtcRunId=${GITHUB_RUN_ID:-local}" \
     "rtcRunAttempt=${GITHUB_RUN_ATTEMPT:-local}" "rtcPostgresSelectorOwner=$probe_owner_token" \
-    --only-show-errors --output none >&2 &
-group_create_pid=$!
-group_create_status=0
-wait "$group_create_pid" || group_create_status=$?
-group_create_pid=""
+    --only-show-errors --output none >&2 || group_create_status=$?
 if ((group_create_status != 0)); then
     if ((SECONDS >= deadline)); then selection_status="deadline_exceeded"; fi
     echo "Error: probe group creation failed or timed out for '$probe_rg'; the exit trap will verify ownership before cleanup." >&2

@@ -17,15 +17,15 @@ temp="$(mktemp -d)"
 trap 'rm -rf -- "$temp"' EXIT
 fail() { echo "FAIL: $1" >&2; exit 1; }
 unset RTC_AZURE_TEST_REGIONS AZURE_LOCATION AZURE_FALLBACK_LOCATION
-[[ "$(bash "$script" regions)" == centralus,westus2 ]] || fail defaults
+[[ "$(bash "$script" regions)" == westus3,centralus,northcentralus,southcentralus ]] || fail defaults
 [[ "$(AZURE_LOCATION=eastus AZURE_FALLBACK_LOCATION=northeurope bash "$script" regions)" == \
-    eastus,northeurope,centralus,westus2 ]] || fail "legacy settings"
+    eastus,northeurope,westus3,centralus ]] || fail "distinct legacy settings and automatic fill"
 [[ "$(AZURE_LOCATION=centralus AZURE_FALLBACK_LOCATION=centralus bash "$script" regions)" == \
-    centralus,westus2 ]] || fail "stable deduplication"
+    centralus,westus3,northcentralus,southcentralus ]] || fail "stable deduplication and automatic fill"
 [[ "$(RTC_AZURE_TEST_REGIONS=westus2,westus2,eastus2 AZURE_LOCATION=bad bash "$script" regions)" == \
     westus2,eastus2 ]] || fail "override precedence"
-[[ "$(RTC_AZURE_TEST_REGIONS=westus3,eastus2,centralus,westus2 bash "$script" regions)" == \
-    westus3,eastus2,centralus,westus2 ]] || fail "four-region override"
+[[ "$(RTC_AZURE_TEST_REGIONS=westus3,centralus,northcentralus,southcentralus bash "$script" regions)" == \
+    westus3,centralus,northcentralus,southcentralus ]] || fail "four-region override"
 [[ "$(RTC_AZURE_TEST_REGIONS=centralus bash "$script" regions)" == centralus ]] || fail "single region"
 for list in '' Westus3 'eastus2,' 'eastus2,,centralus' 'a,b,c,d,e' $'eastus2\r' $'eastus2\nwestus2'; do
     if RTC_AZURE_TEST_REGIONS="$list" bash "$script" regions >/dev/null 2>&1; then fail "invalid list"; fi
@@ -152,6 +152,11 @@ case "$command" in
                 rtcAzureTestGroupOwner=*) owner_tag=rtcAzureTestGroupOwner; owner_value="${tag#*=}" ;;
             esac
         done
+        if [[ -n "${ASSERT_CREATE_LOG:-}" && "$owner_tag" == rtcAzureTestGroupOwner ]] &&
+            ! grep -Fq "Creating main resource group '$group' with rtcAzureTestGroupOwner=$owner_value." \
+                "$ASSERT_CREATE_LOG"; then
+            exit 91
+        fi
         case "${CREATE_FAILURE_MODE:-}" in
             owned)
                 printf '%s|%s|%s\n' "$group" "$owner_tag" "$owner_value" >>"$GROUP_STATE"
@@ -163,6 +168,12 @@ case "$command" in
                 ;;
             absent) exit 1 ;;
             timeout) exit 124 ;;
+            late)
+                (sleep "${CREATE_LATE_DELAY:-5}"
+                    printf '%s|%s|%s\n' "$group" "$owner_tag" "$owner_value" >>"$GROUP_STATE") \
+                    >/dev/null 2>&1 &
+                exit 1
+                ;;
         esac
         printf '%s|%s|%s\n' "$group" "$owner_tag" "$owner_value" >>"$GROUP_STATE"
         ;;
@@ -303,7 +314,14 @@ done
 for kind in nightly rc; do
     : >"$GROUP_STATE"
     group="rrttest-$kind-123-3-$token_a"
-    bash "$script" create-main "$kind" "$group" westus3 "$token_a" >/dev/null
+    create_log="$temp/create-$kind.log"
+    : >"$create_log"
+    # The mock checks the log line before allowing the create request to proceed.
+    # shellcheck disable=SC2094
+    ASSERT_CREATE_LOG="$create_log" bash "$script" create-main "$kind" "$group" westus3 "$token_a" \
+        >"$create_log" 2>&1
+    grep -Fq "Creating main resource group '$group' with rtcAzureTestGroupOwner=$token_a." "$create_log" ||
+        fail "main group recovery target must be logged before create"
     grep -Fq "$group|rtcAzureTestGroupOwner|$token_a" "$GROUP_STATE" ||
         fail "main group ownership tag"
     : >"$CALL_LOG"
@@ -342,4 +360,21 @@ for kind in nightly rc; do
         esac
     done
 done
+
+: >"$GROUP_STATE"
+late_group="rrttest-nightly-123-3-$token_a"
+late_log="$temp/late-create.log"
+if output=$(CREATE_FAILURE_MODE=late CREATE_LATE_DELAY=5 \
+    bash "$script" create-main nightly "$late_group" westus3 "$token_a" 2>&1); then
+    fail "late main-group create must be reported as uncertain"
+fi
+printf '%s\n' "$output" >"$late_log"
+grep -Fq "Creating main resource group '$late_group' with rtcAzureTestGroupOwner=$token_a." <<<"$output" ||
+    fail "interrupted main-group create must log its exact recovery target before Azure work"
+grep -Fq "Inspect '$late_group' and its ownership tag" <<<"$output" ||
+    fail "uncertain main-group create must direct operators to the logged recovery target"
+[[ ! -s "$GROUP_STATE" ]] || fail "late-create fixture must initially remain absent"
+sleep 5
+grep -Fq "$late_group|rtcAzureTestGroupOwner|$token_a" "$GROUP_STATE" ||
+    fail "late Azure create must materialize the logged recovery target"
 echo "Azure PostgreSQL workflow tests passed"
