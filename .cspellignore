@@ -15,6 +15,7 @@ pgvector
 rrttest
 SLSA
 tmpfs
+trgm
 vnet
 westus
 ededed

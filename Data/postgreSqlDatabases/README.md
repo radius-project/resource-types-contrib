@@ -89,8 +89,8 @@ script in a transaction: earlier statements can remain after a failure.
 **Make Azure scripts safe to run again.** A changed script or database name
 forces another run. Azure also removes deployment-script records after their
 retention period, so a later deployment can run unchanged SQL again. Use
-`IF NOT EXISTS`, upserts, or a migration tool. This is not an exactly-once
-migration service. Removing `initSql` does not undo database changes.
+`IF NOT EXISTS`, insert-or-update statements, or a migration tool. This is not
+an exactly-once migration service. Removing `initSql` does not undo database changes.
 
 Azure uses a temporary Container Instance and storage account. The deployment
 principal needs permission to create those resources and
