@@ -21,6 +21,7 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 mkdir -p "$TEST_ROOT/bin" "$TEST_ROOT/scripts"
 cp "$REPO_ROOT/.github/scripts/"{select-azure-test-location,lib-azure-postgres-test}.sh "$TEST_ROOT/scripts/"
 cp "$REPO_ROOT/.github/scripts/run-bounded-command.py" "$TEST_ROOT/scripts/"
+cp "$REPO_ROOT/.github/scripts/run-command-in-process-group.py" "$TEST_ROOT/scripts/"
 export CALL_LOG="$TEST_ROOT/calls"
 export PROBE_RESULTS="$TEST_ROOT/probe-results"
 export RTC_AZURE_SELECTION_FILE="$TEST_ROOT/selection.json"
@@ -98,6 +99,7 @@ case "$command" in
         fi
         ;;
     create)
+        [[ -z "${GROUP_CREATE_PID_FILE:-}" ]] || printf '%s\n' "$$" >"$GROUP_CREATE_PID_FILE"
         owner=""
         for tag in "${tags[@]}"; do
             [[ "$tag" == rtcPostgresSelectorOwner=* ]] && owner="${tag#*=}"
@@ -161,8 +163,12 @@ if [[ -z "${NO_RECORD:-}" ]]; then
     [[ "$result" != 3 ]] || cleanup=uncertain
     [[ "$code" != CleanupFailed ]] || cleanup=failed
     cleanup="${PROBE_CLEANUP:-$cleanup}"
+    diagnostic="${PROBE_DIAGNOSTIC:-null}"
     jq -n --arg outcome "$outcome" --arg errorCode "$code" --arg cleanup "$cleanup" \
-        '{outcome:$outcome,errorCode:$errorCode,cleanup:$cleanup}' >"$RTC_POSTGRES_PROBE_RESULT_FILE"
+        --argjson diagnostic "$diagnostic" \
+        '{outcome:$outcome,errorCode:$errorCode,cleanup:$cleanup}
+         + (if $diagnostic == null then {} else {diagnostic:$diagnostic} end)' \
+        >"$RTC_POSTGRES_PROBE_RESULT_FILE"
 fi
 if [[ -n "${BAD_RECORD:-}" ]]; then printf '%s\n' '{}' >"$RTC_POSTGRES_PROBE_RESULT_FILE"; fi
 exit "$result"
@@ -441,13 +447,63 @@ if RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=5 GROUP_CREATE_PARTIAL=1 GROUP_CREATE
 }
 [[ ! -s "$GROUP_STATE" ]] || fail "timed-out partial group cleanup"
 
+for interrupted_signal in TERM INT; do
 reset 0
-if RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=30 GROUP_CREATE_PARTIAL=1 GROUP_CREATE_SLEEP=10 \
-    PATH="$TEST_ROOT/bin:$PATH" timeout --signal=TERM --kill-after=5 1 \
-    "$TEST_ROOT/scripts/select-azure-test-location.sh" probe-rg westus3 \
-    >"$TEST_ROOT/interrupted.stdout" 2>"$TEST_ROOT/interrupted.stderr"; then
-    fail "interrupted partial group creation must fail"
-fi
+rm -f -- "$TEST_ROOT/group-create.pid"
+RTC_POSTGRES_SELECTION_DEADLINE_SECONDS=30 GROUP_CREATE_PARTIAL=1 GROUP_CREATE_SLEEP=10 \
+    GROUP_CREATE_PID_FILE="$TEST_ROOT/group-create.pid" PARENT_SIGNAL="SIG$interrupted_signal" \
+    PATH="$TEST_ROOT/bin:$PATH" python3 - "$TEST_ROOT/scripts/select-azure-test-location.sh" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+environment = os.environ.copy()
+directory = Path(environment["CALL_LOG"]).parent
+calls_path = Path(environment["CALL_LOG"])
+provider_pid_file = Path(environment["GROUP_CREATE_PID_FILE"])
+process = subprocess.Popen(
+    ["bash", sys.argv[1], "probe-rg", "westus3"], env=environment,
+    start_new_session=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+)
+deadline = time.monotonic() + 10
+try:
+    while True:
+        if calls_path.exists() and "az group create " in calls_path.read_text(encoding="utf-8") \
+                and provider_pid_file.exists():
+            break
+        if process.poll() is not None or time.monotonic() >= deadline:
+            raise RuntimeError("selector did not reach group creation")
+        time.sleep(0.01)
+    provider_pid = int(provider_pid_file.read_text(encoding="ascii").strip())
+    if os.getpgid(provider_pid) != provider_pid:
+        raise RuntimeError("Azure command is not the expected process-group leader")
+    process.send_signal(getattr(signal, environment["PARENT_SIGNAL"]))
+    stdout, stderr = process.communicate(timeout=10)
+    if process.returncode == 0:
+        raise RuntimeError(f"parent-only {environment['PARENT_SIGNAL']} did not fail selector")
+    (directory / "interrupted.stdout").write_text(stdout, encoding="utf-8")
+    (directory / "interrupted.stderr").write_text(stderr, encoding="utf-8")
+    try:
+        state = Path(f"/proc/{provider_pid}/stat").read_text().split(") ", 1)[1][0]
+    except FileNotFoundError:
+        pass
+    else:
+        if state != "Z":
+            raise RuntimeError("parent-only TERM left the Azure child running")
+except Exception:
+    if provider_pid_file.exists():
+        try:
+            os.kill(int(provider_pid_file.read_text(encoding="ascii").strip()), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    if process.poll() is None:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+    raise
+PY
 interrupted_group="$(sed -nE 's/^az group create --name ([^ ]+).*/\1/p' "$CALL_LOG")"
 interrupted_owner="$(sed -nE 's/.*rtcPostgresSelectorOwner=([a-f0-9]{32}).*/\1/p' "$CALL_LOG")"
 [[ "$interrupted_group" =~ ^probe-rg-[a-f0-9]{32}$ && "$interrupted_owner" =~ ^[a-f0-9]{32}$ ]] ||
@@ -463,6 +519,7 @@ if ! grep -Fq "az group delete --name $interrupted_group" "$CALL_LOG"; then
 fi
 [[ ! -s "$GROUP_STATE" ]] || fail "interrupted owned group must be removed"
 assert_json '.status == "probe_error" and (has("postgres") | not)'
+done
 
 reset 0
 interrupted_started="$(date +%s)"
@@ -560,6 +617,17 @@ for cleanup in failed uncertain; do
     [[ "$(probe_count)" == 1 ]] || fail "unconfirmed cleanup must stop candidate allocation"
     assert_json ".status == \"probe_error\" and .attempts[0].cleanup == \"$cleanup\""
 done
+reset 1 0
+PROBE_ERROR_CODE=CleanupFailed \
+    PROBE_DIAGNOSTIC='{"stage":"delete","exitStatus":1,"errorCode":"Conflict","firstError":{"stage":"create","exitStatus":1,"errorCode":"SkuNotAvailable"},"outcomeBeforeCleanup":"capacity_exhausted","errorCodeBeforeCleanup":"SkuNotAvailable"}' \
+    select_location westus3 eastus2 >/dev/null
+[[ "$(probe_count)" == 1 ]] || fail "diagnostic cleanup failure must stop candidate allocation"
+assert_json '.status == "probe_error" and .attempts[0].cleanup == "failed" and
+    .attempts[0].errorCode == "CleanupUnconfirmed" and
+    .attempts[0].diagnostic.stage == "delete" and
+    .attempts[0].diagnostic.errorCode == "Conflict" and
+    .attempts[0].diagnostic.firstError.errorCode == "SkuNotAvailable" and
+    .attempts[0].diagnostic.outcomeBeforeCleanup == "capacity_exhausted"'
 
 for setting in RTC_POSTGRES_TEST_SIZES= RTC_POSTGRES_TEST_SIZES=L RTC_POSTGRES_TEST_SIZES=S,,M \
     'RTC_POSTGRES_TEST_SIZES=S,' RTC_POSTGRES_TEST_SIZES='S M' RTC_AZURE_TEST_REGIONS= \

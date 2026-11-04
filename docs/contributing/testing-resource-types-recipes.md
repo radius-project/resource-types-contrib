@@ -301,30 +301,38 @@ after confirmed cleanup. It does not move the shared resource group.
 Standalone entry tests without a selection file have a separate 30-minute
 entry budget in the group's existing region.
 
-Both Azure jobs retain the 330-minute limit. Node, ORAS, Radius CLI, and local
+Both Azure jobs have a 330-minute limit. Node, ORAS, Radius CLI, and local
 cluster setup run before the selector starts its absolute deadline. Main-group
-creation and Azure provider configuration remain after selection. The selector
-step has a 76-minute limit (60-minute work budget, cleanup, and termination
-margin); main-group creation has five minutes. Checked-in pack deployment has
-15 minutes. The PostgreSQL step has a 76-minute cap, but selection and deployment
-share the selector's single 60-minute absolute deadline plus its cleanup reserve;
-those two step limits are not additive. Pack entries run in two steps: PostgreSQL
+creation and Azure provider configuration run after selection. The selector
+step limit increases from 60 to 76 minutes to allow the 60-minute work budget,
+cleanup reserve, and termination margin. Main-group creation has five minutes;
+checked-in pack deployment has 15 minutes. The PostgreSQL step has a 76-minute
+cap, but selection and deployment share the selector's single 60-minute absolute
+deadline plus its cleanup reserve, so those two step limits are not additive.
+Pack entries run in two steps: PostgreSQL
 first, then unrelated entries with a protected 68-minute window. The unrelated
 window provides ten minutes beyond the roughly 58 minutes measured in a recent
-run. A PostgreSQL failure
-does not skip the unrelated step; the final report still fails the job.
-Bicep and Terraform recipe suites retain their 75-minute limits. When a
-selection file is present, the entry driver tests PostgreSQL before unrelated entries within
-each pack. The workflows run the PostgreSQL-only phase before the unrelated
-phase, so `azure-aci` cannot use the PostgreSQL deadline first. Other entries
-keep their relative order. Standalone and Kubernetes runs keep their existing
-order. The explicit phase and reporting limits total 315 minutes, counting the
-shared PostgreSQL selection/deployment allowance once, leaving at most 15 minutes
-for tool, cluster, provider, and workflow overhead within the job limit. This is
-the unavoidable tradeoff for preserving the 75-minute recipe suites and a
-10-minute margin for unrelated entries without extending the 330-minute job.
-If setup and overhead exceed that remainder, GitHub's job timeout can still stop
-later work. The separate 30-minute cleanup job gives `cleanup-run-groups` one
+run, but does not guarantee completion. In the Azure unrelated phase only, all
+non-MongoDB entries run first in their existing pack and entry order. The runner
+then activates each pack with a MongoDB entry and runs those entries last in
+their original pack order. MongoDB-only packs run in this final pass; duplicate
+MongoDB entries still run once per pack. MongoDB is not skipped, and failures
+remain failures. Standalone Azure and Kubernetes runs keep their existing order.
+The 68-minute timeout is a hard cap, not a completion guarantee: observed
+MongoDB deployments have run for about 120 minutes, and the previous 150-minute
+window did not reliably reach all later entries. A PostgreSQL failure does not
+skip the unrelated step; the final report still fails the job.
+Bicep and Terraform recipe suites remain at their 55-minute limits from `main`.
+When a selection file is present, the entry driver tests PostgreSQL before
+unrelated entries within each pack. The workflows run the PostgreSQL-only phase
+before the unrelated phase, so `azure-aci` cannot use the PostgreSQL deadline
+first. The explicit
+phase and reporting limits total 275 minutes, counting the shared PostgreSQL
+selection/deployment allowance once. This leaves 55 minutes for tool, cluster,
+provider, and workflow overhead within the unchanged job limit. The 68-minute
+unrelated-entry cap and MongoDB behavior also remain unchanged. If setup and
+overhead exceed that reserve, GitHub's job timeout can still stop later work.
+The separate 30-minute cleanup job gives `cleanup-run-groups` one
 shared 25-minute budget to
 discover and delete all owned groups. Its step has a 26-minute limit, leaving
 one minute for command shutdown; the job reserves four minutes for checkout and
@@ -357,6 +365,11 @@ cleanup failures become `probe_error`. It uses the first validated candidate as
 the main group's fallback location. PostgreSQL deployment remains blocked, unrelated
 entries continue, and the final report includes the selector failure. Cleanup
 failure stops further PostgreSQL allocations.
+Probe logs report the stage, exit status, and sanitized parsed error code for
+pre-create reads, creates, and cleanup operations. A cleanup diagnostic also
+retains the first probe error and the outcome before cleanup; raw Azure error
+text is not logged. The selection JSON and job summary retain these sanitized
+diagnostic fields when a probe fails.
 
 The job summary has a credential-free attempt table with region, size, SKU,
 tier, outcome, error code, duration, and cleanup, plus final selection status.

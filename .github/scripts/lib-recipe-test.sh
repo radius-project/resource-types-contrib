@@ -37,6 +37,8 @@ if [[ -n "${RTC_LIB_RECIPE_TEST_SOURCED:-}" ]]; then
     return 0 2>/dev/null || exit 0
 fi
 RTC_LIB_RECIPE_TEST_SOURCED=1
+# shellcheck source=.github/scripts/lib-azure-postgres-test.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-azure-postgres-test.sh"
 
 rtc_ensure_workspace_context() {
     local workspace_name="$1"
@@ -69,7 +71,7 @@ rtc_resolve_environment_path() {
 
 # Unrelated tests keep their existing command behavior.
 rtc_run_postgresql_test_command() {
-    local limit="$1" deadline remaining script_dir
+    local limit="$1" deadline remaining
     shift
     if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" != 1 ]]; then
         "$@"
@@ -86,8 +88,7 @@ rtc_run_postgresql_test_command() {
         return 124
     fi
     if ((limit > remaining)); then limit="$remaining"; fi
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
-    python3 "$script_dir/run-bounded-command.py" "$limit" "$@"
+    rtc_run_command --timeout "$limit" "$@"
 }
 
 # Only delete leftovers labelled for this test app, not shared resources.
@@ -258,14 +259,10 @@ rtc_postgresql_group_location() {
 
 # Probe a tuple in the existing group's region, never a caller's location hint.
 rtc_probe_azure_postgresql_size() {
-    local size="$1" deadline="$2" remaining location script_dir
-    local cleanup_reserve="${RTC_POSTGRES_CLEANUP_RESERVE_SECONDS-900}"
+    local size="$1" deadline="$2" remaining location cleanup_reserve
     local delete_timeout="${RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS-900}"
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
-    # shellcheck source=.github/scripts/lib-azure-postgres-test.sh
-    source "$script_dir/lib-azure-postgres-test.sh"
-    if ! rtc_postgres_positive_limit "$cleanup_reserve" 900 ||
-        ! rtc_postgres_positive_limit "$delete_timeout" 900; then
+    cleanup_reserve="$(rtc_postgres_cleanup_reserve_seconds)" || return 1
+    if ! rtc_postgres_positive_limit "$delete_timeout" 900; then
         echo "Error: Invalid PostgreSQL probe cleanup reserve or delete timeout." >&2
         return 1
     fi
@@ -280,7 +277,7 @@ rtc_probe_azure_postgresql_size() {
         RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS="$remaining" \
         RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS="$delete_timeout" \
         RTC_POSTGRES_PROBE_CLEANUP_DEADLINE_EPOCH="$((deadline + cleanup_reserve))" \
-        "$script_dir/probe-azure-postgres-capacity.sh"
+        rtc_run_command --quiet "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/probe-azure-postgres-capacity.sh"
 }
 
 # Retry one untried size only when the shared helper confirms safe cleanup.
@@ -288,6 +285,7 @@ rtc_test_azure_postgresql_app() (
     local test_file="$1" environment_path="$2" workspace_name="$3" kubernetes_namespace="$4"
     local size="${RTC_POSTGRES_TEST_SIZE:-S}" deadline="${RTC_POSTGRES_TEST_DEADLINE_EPOCH:-}"
     local test_harness script_dir workspace_root invocation_id
+    local interrupted_status=0
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
     workspace_root="${GITHUB_WORKSPACE:-$(cd "$script_dir/../.." && pwd)}"
     workspace_root="$(cd "$workspace_root" && pwd)" || return 1
@@ -297,18 +295,18 @@ rtc_test_azure_postgresql_app() (
         return 1
     fi
     test_file="$test_harness"
+    trap 'interrupted_status=130' INT
+    trap 'interrupted_status=143' TERM
+    ((interrupted_status == 0)) || return "$interrupted_status"
     if ! invocation_id="$(python3 -c 'import secrets; print(secrets.token_hex(16))')"; then
         echo "Error: Could not generate a unique PostgreSQL test application name." >&2
         return 1
     fi
     local status attempt candidate alternate=""
-    local size_list="${RTC_POSTGRES_TEST_SIZES-S,M}"
+    local size_list
     local -a allowed_sizes
     case "$size" in S|M) ;; *) echo "Error: PostgreSQL test size must be S or M." >&2; return 1 ;; esac
-    if [[ ! "$size_list" =~ ^[SM](,[SM])*$ || ${#size_list} -gt 63 ]]; then
-        echo "Error: Invalid PostgreSQL test size list." >&2
-        return 1
-    fi
+    size_list="$(rtc_postgres_normalize_test_sizes)" || return 1
     IFS=',' read -r -a allowed_sizes <<<"$size_list"
     if [[ ",$size_list," != *",$size,"* ]]; then
         echo "Error: Selected PostgreSQL size $size is excluded by the configured size list." >&2
@@ -322,6 +320,7 @@ rtc_test_azure_postgresql_app() (
     if [[ "${RTC_POSTGRES_VERIFIED_SIZE:-}" != "$size" ||
         ! "${RTC_POSTGRES_VERIFIED_LOCATION:-}" =~ ^[a-z0-9]+$ ]]; then
         if ! rtc_probe_azure_postgresql_size "$size" "$deadline"; then
+            ((interrupted_status == 0)) || return "$interrupted_status"
             echo "Error: Initial PostgreSQL probe failed; deployment is not allowed." >&2
             return 1
         fi
@@ -334,6 +333,7 @@ rtc_test_azure_postgresql_app() (
         fi
     fi
     for attempt in 1 2; do
+        ((interrupted_status == 0)) || return "$interrupted_status"
         if ((deadline <= $(date +%s))); then
             echo "Error: PostgreSQL deployment deadline has expired." >&2
             return 1
@@ -343,6 +343,7 @@ rtc_test_azure_postgresql_app() (
             rtc_deploy_and_assert_test_app "$test_file" Radius.Data/postgreSqlDatabases \
                 "rtcpg-$invocation_id-$size-$attempt" "$environment_path" "$workspace_name" "$kubernetes_namespace" \
                 --parameters "postgresSize=$size" || status=$?
+        ((interrupted_status == 0)) || return "$interrupted_status"
         if ((status == 0)); then return 0; fi
         if ((status != 42 || attempt == 2)); then
             echo "Error: PostgreSQL deployment failed (size $size, attempt $attempt, status $status)." >&2
@@ -798,12 +799,7 @@ rtc_deploy_and_assert_test_app() {
     app_name="${app_name_prefix}-$(date +%s)"
 
     if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
-        postgres_cleanup_reserve="${RTC_POSTGRES_CLEANUP_RESERVE_SECONDS:-900}"
-        if [[ ! "$postgres_cleanup_reserve" =~ ^[1-9][0-9]{0,2}$ ]] ||
-            ((postgres_cleanup_reserve > 900)); then
-            echo "Error: Invalid PostgreSQL cleanup reserve." >&2
-            return 1
-        fi
+        postgres_cleanup_reserve="$(rtc_postgres_cleanup_reserve_seconds)" || return 1
         app_name+="-$RANDOM"
         if ! azure_before=$(rtc_snapshot_azure_resource_ids); then
             echo "Error: Could not snapshot Azure resources before PostgreSQL deployment." >&2
@@ -884,7 +880,9 @@ rtc_deploy_and_assert_test_app() {
                 echo "Error: Azure container test deployment exceeded its 15-minute limit." >&2
             fi
         fi
-        if [[ "$deploy_status" != 42 ]]; then deploy_status=1; fi
+        if [[ "$deploy_status" != 42 && "$deploy_status" != 130 && "$deploy_status" != 143 ]]; then
+            deploy_status=1
+        fi
     fi
 
     if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then

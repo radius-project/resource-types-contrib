@@ -86,6 +86,12 @@ When the shared deadline expires, the result also lists each remaining
 configured region and size as `not_attempted`, with zero duration and
 `cleanup: not_required`. A valid deadline result remains `deadline_exceeded`
 when the selector exits with an error; a cleanup failure takes precedence.
+Probe logs include a credential-free stage, exit status, and parsed error code
+for failed pre-create reads, creates, and cleanup operations. A cleanup
+diagnostic also includes the first probe error and the outcome before cleanup,
+so `CleanupFailed` does not hide an earlier create failure. The sanitized
+diagnostic is also included in the selection JSON and job summary. Raw Azure
+error text is not logged.
 
 The probe uses a 128-bit random server name and checks that the name is absent
 before creation. It sets an ownership tag at creation and verifies that tag

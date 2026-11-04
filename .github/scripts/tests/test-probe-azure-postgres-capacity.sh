@@ -122,9 +122,11 @@ case "$3" in
             esac
             exit 0
         fi
+        if [[ ! -f "$SERVER_STATE.attempted" ]]; then SHOW_ERROR=""; fi
         echo "(${SHOW_ERROR:-ResourceNotFound}) absent" >&2
         if [[ "${MULTILINE_SHOW:-0}" == 1 ]]; then
-            printf 'Code: %s\nMessage: %s\n' "${SHOW_ERROR:-ResourceNotFound}" "${MULTILINE_SHOW_MESSAGE:-absent}" >&2
+            printf 'Code: %s\nMessage: %s\n' "${SHOW_ERROR:-ResourceNotFound}" \
+                "${MULTILINE_SHOW_MESSAGE:-absent}" >&2
         fi
         exit 1 ;;
 esac
@@ -322,21 +324,62 @@ for result in other misleading text quota policy mixed uncoded uncoded-json; do
     expect_status 1 run_probe
     [[ "$(count create)" == 1 && "$(count show)" == 3 ]] || fail "$result must stop after confirmed cleanup"
 done
+reset other
+expect_status 1 run_probe
+grep -q 'probe stage=create exit_status=1 error_codes=AuthorizationFailed' <<<"$output" ||
+    fail "create failure must report its stage, status, and parsed code"
 reset leak
 expect_status 1 run_probe
 password="$(grep -oE -- '--admin-password [^ ]+' "$CALL_LOG" | cut -d' ' -f2)"
 ! grep -qF "$password" <<<"$output" || fail "password leaked from Azure error"
-for result in ok capacity timeout; do
-    reset "$result"
-    expect_status 1 env DELETE_FAILS=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
-    [[ "$(count create)" == 1 ]] || fail "cleanup failure must stop"
-    jq -e '.errorCode == "CleanupFailed" and .cleanup == "failed"' \
-        "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "cleanup result"
-done
-for setting in SERVER_REMAINS=1 SHOW_ERROR=AuthorizationFailed; do
-    reset ok
-    expect_status 1 env "$setting" AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
-done
+reset ok
+expect_status 1 env SHOW_ERROR=AuthorizationFailed AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \
+    PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+grep -q 'cleanup stage=show exit_status=1 error_codes=AuthorizationFailed .*outcome_before_cleanup=available error_code_before_cleanup=none' \
+    <<<"$output" || fail "show cleanup failure diagnostics"
+
+reset ok
+expect_status 1 env OWNERSHIP=foreign AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \
+    PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+grep -q 'cleanup stage=show exit_status=0 error_codes=OwnershipUnconfirmed .*outcome_before_cleanup=available error_code_before_cleanup=none' \
+    <<<"$output" || fail "ownership cleanup failure diagnostics"
+[[ "$(count delete)" == 0 ]] || fail "unverified ownership must not delete"
+
+reset ok
+expect_status 1 env RTC_POSTGRES_PROBE_CLEANUP_DEADLINE_EPOCH=1 AZURE_RESOURCE_GROUP=rg \
+    AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+grep -q 'cleanup stage=deadline exit_status=124 error_codes=none .*outcome_before_cleanup=available error_code_before_cleanup=none' \
+    <<<"$output" || fail "deadline cleanup failure diagnostics"
+[[ "$(count delete)" == 0 ]] || fail "expired cleanup deadline must not delete"
+
+reset ok
+expect_status 1 env DELETE_FAILS=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \
+    PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+grep -q 'cleanup stage=delete exit_status=1 error_codes=Conflict .*outcome_before_cleanup=available error_code_before_cleanup=none' \
+    <<<"$output" || fail "delete cleanup failure diagnostics"
+
+reset ok
+expect_status 1 env SERVER_REMAINS=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \
+    PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+grep -q 'cleanup stage=confirm exit_status=0 error_codes=none .*outcome_before_cleanup=available error_code_before_cleanup=none' \
+    <<<"$output" || fail "confirmation cleanup failure diagnostics"
+
+reset capacity
+expect_status 1 env RTC_POSTGRES_PROBE_ATTEMPTS=1 DELETE_FAILS=1 AZURE_RESOURCE_GROUP=rg \
+    AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+grep -q 'probe stage=create exit_status=1 error_codes=SkuNotAvailable' <<<"$output" ||
+    fail "first create error must be retained"
+grep -q 'cleanup stage=delete exit_status=1 error_codes=Conflict first_error_stage=create first_error_status=1 first_error_code=SkuNotAvailable outcome_before_cleanup=capacity_exhausted error_code_before_cleanup=SkuNotAvailable' \
+    <<<"$output" || fail "cleanup failure must preserve the initial create error"
+jq -e '.errorCode == "CleanupFailed" and .cleanup == "failed"' \
+    "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "cleanup result"
+
+reset timeout
+expect_status 1 env DELETE_FAILS=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \
+    PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+grep -q 'cleanup stage=delete exit_status=1 error_codes=Conflict first_error_stage=create first_error_status=124 first_error_code=none outcome_before_cleanup=timeout error_code_before_cleanup=CreateTimeout' \
+    <<<"$output" || fail "cleanup failure must preserve the initial create timeout"
+
 reset timeout
 expect_status 3 run_probe
 [[ "$(count delete)" == 1 && "$(count show)" == 3 ]] || fail "timeout cleanup"
@@ -371,6 +414,22 @@ for setting in EXISTING_SERVER=1 PRECHECK_ERROR=AuthorizationFailed; do
     [[ "$(count create)" == 0 && "$(count delete)" == 0 && "$(count show)" == 1 ]] ||
         fail "existing or uncertain server must not be created or deleted"
 done
+reset ok
+expect_status 1 env PRECHECK_ERROR=AuthorizationFailed AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \
+    PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+grep -q 'probe stage=pre-create read exit_status=1 error_codes=AuthorizationFailed' <<<"$output" ||
+    fail "pre-create read failure must report its stage, status, and parsed code"
+reset ok
+expect_status 1 env PRECHECK_ERROR=FixtureSecretA912Q4 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \
+    PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+grep -q 'probe stage=pre-create read exit_status=1 error_codes=UnknownError' <<<"$output" ||
+    fail "unknown provider codes must be replaced with a safe marker"
+! grep -Fq FixtureSecretA912Q4 <<<"$output" ||
+    fail "unknown provider code leaked into probe diagnostics"
+jq -e '.diagnostic.errorCode == "UnknownError"' "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null ||
+    fail "unknown provider code must stay sanitized in the probe result"
+! grep -Fq FixtureSecretA912Q4 "$RTC_POSTGRES_PROBE_RESULT_FILE" ||
+    fail "unknown provider code leaked into the probe result"
 reset ok
 expect_status 3 env PRECHECK_SLEEP=20 RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS=1 \
     AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
@@ -418,6 +477,8 @@ done
 for interruption_attempt in {1..10}; do
     startup_delay=0
     [[ "$interruption_attempt" != 10 ]] || startup_delay=6
+    signal_name=TERM
+    ((interruption_attempt % 2 == 0)) && signal_name=INT
     reset slow ok
     ready_file="$TEST_ROOT/create-ready"
     rm -f -- "$ready_file"
@@ -425,7 +486,7 @@ for interruption_attempt in {1..10}; do
     expect_status 1 env CREATE_ABSENT=1 CLI_HELP_SLEEP="$startup_delay" \
         RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS=30 RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS=10 \
         AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 CREATE_READY_FILE="$ready_file" \
-        PATH="$TEST_ROOT/bin:$PATH" "$REAL_PYTHON3" - "$PROBE" "$ready_file" <<'PY'
+        PATH="$TEST_ROOT/bin:$PATH" "$REAL_PYTHON3" - "$PROBE" "$ready_file" "$signal_name" <<'PY'
 import os
 from pathlib import Path
 import signal
@@ -443,7 +504,7 @@ try:
         if time.monotonic() >= deadline:
             raise TimeoutError("probe did not reach create readiness")
         time.sleep(0.01)
-    os.killpg(process.pid, signal.SIGTERM)
+    process.send_signal(getattr(signal, f"SIG{sys.argv[3]}"))
     status = process.wait(timeout=20)
     state_file = Path(f"/proc/{int(ready_file.read_text())}/stat")
     try:

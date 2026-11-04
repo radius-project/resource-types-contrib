@@ -76,6 +76,33 @@ failures=0
 tested=0
 skipped=0
 empty_packs=0
+entry_passes=(all)
+if [[ "$platform_group" == azure && -n "${RTC_AZURE_SELECTION_FILE+x}" &&
+    "$entry_phase" == unrelated ]]; then
+    entry_passes=(non-mongodb mongodb)
+fi
+
+declare -A pack_resource_types=()
+declare -A pack_tested_counts=()
+for pack_id in "${packs[@]}"; do
+    resource_types="$(rtc_list_recipe_pack_types "$pack_id")"
+    if [[ "$platform_group" == azure && -n "${RTC_AZURE_SELECTION_FILE+x}" ]]; then
+        case "$entry_phase" in
+            all)
+                resource_types="$(awk '$0 == "Data/postgreSqlDatabases" {print; next}
+                    {rest = rest $0 ORS} END {printf "%s", rest}' <<<"$resource_types")"
+                ;;
+            postgres)
+                resource_types="$(awk '$0 == "Data/postgreSqlDatabases" {print}' <<<"$resource_types")"
+                ;;
+            unrelated)
+                resource_types="$(awk '$0 != "Data/postgreSqlDatabases" {print}' <<<"$resource_types")"
+                ;;
+        esac
+    fi
+    pack_resource_types["$pack_id"]="$resource_types"
+    pack_tested_counts["$pack_id"]=0
+done
 
 skip_reason() {
     case "$1" in
@@ -98,11 +125,8 @@ preflight() {
     case "$platform_group:$1" in
         azure:Data/postgreSqlDatabases)
             rtc_validate_postgres_test_pack "$template" || return 1
-            local location selection_status size_list="${RTC_POSTGRES_TEST_SIZES-S,M}"
-            if [[ ! "$size_list" =~ ^[SM](,[SM])*$ || ${#size_list} -gt 63 ]]; then
-                echo "Error: Invalid PostgreSQL test size list." >&2
-                return 1
-            fi
+            local location selection_status size_list
+            size_list="$(rtc_postgres_normalize_test_sizes)" || return 1
             local -a subscription_args=()
             [[ -z "${AZURE_SUBSCRIPTION_ID:-}" ]] || subscription_args=(--subscription "$AZURE_SUBSCRIPTION_ID")
             if [[ -z "${AZURE_RESOURCE_GROUP:-}" ]] ||
@@ -170,78 +194,77 @@ preflight() {
     esac
 }
 
-for pack_id in "${packs[@]}"; do
-    resource_types="$(rtc_list_recipe_pack_types "$pack_id")"
-    if [[ "$platform_group" == azure && -n "${RTC_AZURE_SELECTION_FILE+x}" ]]; then
-        case "$entry_phase" in
-            all)
-                resource_types="$(awk '$0 == "Data/postgreSqlDatabases" {print; next}
-                    {rest = rest $0 ORS} END {printf "%s", rest}' <<<"$resource_types")"
-                ;;
-            postgres)
-                resource_types="$(awk '$0 == "Data/postgreSqlDatabases" {print}' <<<"$resource_types")"
-                ;;
-            unrelated)
-                resource_types="$(awk '$0 != "Data/postgreSqlDatabases" {print}' <<<"$resource_types")"
-                ;;
-        esac
-    fi
-    [[ -n "$resource_types" ]] || continue
-    template="$(rtc_recipe_pack_template "$pack_id")"
-    pack_name="$(rtc_recipe_pack_name "$template")"
-    if [[ -z "$pack_name" ]]; then
-        echo "Error: could not determine the Recipe Pack name in $template." >&2
-        exit 1
-    fi
-
-    rad env update "$environment_name" --workspace "$workspace_name" --recipe-packs "$pack_name"
-    pack_tested=0
-
-    while IFS= read -r resource_type_dir; do
-        [[ -z "$resource_type_dir" ]] && continue
-        if reason="$(skip_reason "$resource_type_dir")"; then
-            echo "==> SKIPPED: $resource_type_dir from pack '$pack_id': $reason"
-            skipped=$((skipped + 1))
-            continue
+for entry_pass in "${entry_passes[@]}"; do
+    for pack_id in "${packs[@]}"; do
+        resource_types="${pack_resource_types[$pack_id]}"
+        if [[ "$entry_pass" == non-mongodb ]]; then
+            resource_types="$(awk '$0 != "Data/mongoDatabases" {print}' <<<"$resource_types")"
+        elif [[ "$entry_pass" == mongodb ]]; then
+            resource_types="$(awk '$0 == "Data/mongoDatabases" {print}' <<<"$resource_types")"
+        fi
+        [[ -n "$resource_types" ]] || continue
+        template="$(rtc_recipe_pack_template "$pack_id")"
+        pack_name="$(rtc_recipe_pack_name "$template")"
+        if [[ -z "$pack_name" ]]; then
+            echo "Error: could not determine the Recipe Pack name in $template." >&2
+            exit 1
         fi
 
-        if [[ ! -f "$resource_type_dir/test/app.bicep" ]]; then
-            echo "==> FAILED: $resource_type_dir from pack '$pack_id' has no test/app.bicep" >&2
-            failures=$((failures + 1))
-            continue
-        fi
+        rad env update "$environment_name" --workspace "$workspace_name" --recipe-packs "$pack_name"
 
-        tested=$((tested + 1))
-        pack_tested=$((pack_tested + 1))
-
-        test_args=("$resource_type_dir" "$workspace_name" "$environment_name")
-        if [[ "$resource_type_dir" == "Data/mySqlDatabases" ]]; then
-            mysql_test_mode="connection-only"
-            if rtc_recipe_pack_verifies_mysql_transport "$pack_id"; then
-                mysql_test_mode="verify-transport"
+        while IFS= read -r resource_type_dir; do
+            [[ -z "$resource_type_dir" ]] && continue
+            if reason="$(skip_reason "$resource_type_dir")"; then
+                echo "==> SKIPPED: $resource_type_dir from pack '$pack_id': $reason"
+                skipped=$((skipped + 1))
+                continue
             fi
-            test_args+=("$mysql_test_mode")
-        fi
 
-        echo "=============================================================="
-        echo "==> Recipe Pack entry test: $resource_type_dir (from pack '$pack_id')"
-        echo "=============================================================="
-        if ! preflight "$resource_type_dir"; then
-            echo "==> FAILED: $resource_type_dir (from pack '$pack_id'): preflight check failed" >&2
-            failures=$((failures + 1))
-            continue
-        fi
-        if ! RTC_TEST_PLATFORM="$platform_group" RTC_POSTGRES_TEST_SIZE="$postgres_test_size" \
-            RTC_POSTGRES_TEST_DEADLINE_EPOCH="$postgres_deadline" \
-            RTC_POSTGRES_VERIFIED_SIZE="$postgres_verified_size" \
-            RTC_POSTGRES_VERIFIED_LOCATION="$postgres_verified_location" \
-            "$SCRIPT_DIR/test-recipe-pack-entry.sh" "${test_args[@]}"; then
-            echo "==> FAILED: $resource_type_dir (from pack '$pack_id')" >&2
-            failures=$((failures + 1))
-        fi
-    done <<<"$resource_types"
+            if [[ ! -f "$resource_type_dir/test/app.bicep" ]]; then
+                echo "==> FAILED: $resource_type_dir from pack '$pack_id' has no test/app.bicep" >&2
+                failures=$((failures + 1))
+                continue
+            fi
 
-    if [[ "$pack_tested" -eq 0 ]]; then
+            tested=$((tested + 1))
+            pack_tested_counts["$pack_id"]=$((pack_tested_counts["$pack_id"] + 1))
+
+            test_args=("$resource_type_dir" "$workspace_name" "$environment_name")
+            if [[ "$resource_type_dir" == "Data/mySqlDatabases" ]]; then
+                mysql_test_mode="connection-only"
+                if rtc_recipe_pack_verifies_mysql_transport "$pack_id"; then
+                    mysql_test_mode="verify-transport"
+                fi
+                test_args+=("$mysql_test_mode")
+            fi
+
+            echo "=============================================================="
+            echo "==> Recipe Pack entry test: $resource_type_dir (from pack '$pack_id')"
+            echo "=============================================================="
+            if ! preflight "$resource_type_dir"; then
+                echo "==> FAILED: $resource_type_dir (from pack '$pack_id'): preflight check failed" >&2
+                failures=$((failures + 1))
+                continue
+            fi
+            entry_status=0
+            RTC_TEST_PLATFORM="$platform_group" RTC_POSTGRES_TEST_SIZE="$postgres_test_size" \
+                RTC_POSTGRES_TEST_DEADLINE_EPOCH="$postgres_deadline" \
+                RTC_POSTGRES_VERIFIED_SIZE="$postgres_verified_size" \
+                RTC_POSTGRES_VERIFIED_LOCATION="$postgres_verified_location" \
+                "$SCRIPT_DIR/test-recipe-pack-entry.sh" "${test_args[@]}" || entry_status=$?
+            if ((entry_status == 130 || entry_status == 143)); then
+                exit "$entry_status"
+            elif ((entry_status != 0)); then
+                echo "==> FAILED: $resource_type_dir (from pack '$pack_id')" >&2
+                failures=$((failures + 1))
+            fi
+        done <<<"$resource_types"
+    done
+done
+
+for pack_id in "${packs[@]}"; do
+    [[ -n "${pack_resource_types[$pack_id]}" ]] || continue
+    if [[ "${pack_tested_counts[$pack_id]}" -eq 0 ]]; then
         echo "Error: Recipe Pack '$pack_id' has no entries with test applications." >&2
         empty_packs=$((empty_packs + 1))
     fi

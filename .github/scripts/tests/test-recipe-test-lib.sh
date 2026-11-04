@@ -910,6 +910,15 @@ awk '/^rad app delete / { cleaned = 1 }
     /^az postgres flexible-server delete / { deleted = 1 }
     /^rad deploy / { attempts++; if (attempts == 2 && (!probed || !deleted)) exit 1 }
 ' "$CALL_LOG" || fail "alternate probe must follow app cleanup and finish before deployment"
+mapfile -t postgres_app_names < <(
+    sed -nE 's/^rad deploy .*--parameters applicationName=([^ ]+).*/\1/p' "$CALL_LOG"
+)
+[[ "${#postgres_app_names[@]}" -eq 2 ]] || fail "each PostgreSQL attempt must use an application name"
+for app_name in "${postgres_app_names[@]}"; do
+    [[ "${#app_name}" -le 63 &&
+        "$app_name" =~ ^rtcpg-[a-f0-9]{32}-[SM]-[12]-[0-9]{10}-[0-9]{1,5}$ ]] ||
+        fail "PostgreSQL application names must retain the 128-bit token and fit the 63-character limit"
+done
 
 for selected in S M; do
     : >"$CALL_LOG"

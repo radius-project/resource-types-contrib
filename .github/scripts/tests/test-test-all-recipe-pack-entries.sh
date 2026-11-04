@@ -193,6 +193,9 @@ run_driver() {
     (
         export RTC_REPO_ROOT="$FIXTURE_ROOT"
         export PATH="$TEST_ROOT/bin:$PATH"
+        if [[ "${CLEAR_SELECTION:-0}" == 1 ]]; then
+            unset RTC_AZURE_SELECTION_FILE RTC_AZURE_PACK_ENTRY_PHASE
+        fi
         unset RTC_LIB_NAMESPACES_SOURCED RTC_LIB_RECIPE_PACKS_SOURCED
         cd "$FIXTURE_ROOT"
         "$SCRIPTS_COPY/test-all-recipe-pack-entries.sh" "$@"
@@ -370,6 +373,7 @@ mkdir "$selector_scripts"
 cp "$REPO_ROOT/.github/scripts/azure-postgres-workflow.sh" \
     "$selector_scripts/azure-postgres-workflow.sh"
 cp "$REPO_ROOT/.github/scripts/lib-azure-postgres-test.sh" "$selector_scripts/"
+cp "$REPO_ROOT/.github/scripts/run-command-in-process-group.py" "$selector_scripts/"
 cat >"$selector_scripts/select-azure-test-location.sh" <<'EOF'
 #!/bin/bash
 printf '%s\n' "${RTC_AZURE_TEST_REGIONS%%,*}"
@@ -418,6 +422,77 @@ for code in 2 3; do
     grep -q '^test-recipe-pack-entry.sh Compute/routes' "$CALL_LOG" || fail "later entries must run after probe failure"
 done
 
+# In the Azure unrelated phase, move every MongoDB entry after all other packs.
+# The duplicate resource type across packs must still run once per pack.
+mkdir -p "$FIXTURE_ROOT/Data/mongoDatabases/test" "$FIXTURE_ROOT/recipe-packs/azure-mongo-only"
+echo "param applicationName string" >"$FIXTURE_ROOT/Data/mongoDatabases/test/app.bicep"
+cat >"$FIXTURE_ROOT/recipe-packs/azure-mongo-only/azure-mongo-only.bicep" <<'EOF'
+resource pack 'Radius.Core/recipePacks@2025-08-01-preview' = {
+  name: 'azure-mongo-only'
+  properties: {
+    recipes: {
+      'Radius.Data/mongoDatabases': {
+        kind: 'bicep'
+        source: 'mcr.microsoft.com/bicep/avm/res/document-db/mongo-cluster:1.0.0'
+      }
+    }
+  }
+}
+EOF
+sed -i 's/azure-aks | azure-aci)/azure-aks | azure-aci | azure-mongo-only)/' \
+    "$SCRIPTS_COPY/lib-recipe-packs.sh"
+cp "$FIXTURE_ROOT/recipe-packs/azure-aci/azure-aci.bicep" "$TEST_ROOT/original-aci-pack.bicep"
+sed -i "/'Radius.Compute\\/containers': {/i\\      'Radius.Data/mongoDatabases': {\\n        kind: 'bicep'\\n        source: 'mcr.microsoft.com/bicep/avm/res/document-db/mongo-cluster:1.0.0'\\n      }" \
+    "$FIXTURE_ROOT/recipe-packs/azure-aci/azure-aci.bicep"
+sed -i "/'Radius.Compute\\/persistentVolumes': {/i\\      'Radius.Data/mongoDatabases': {\\n        kind: 'bicep'\\n        source: 'mcr.microsoft.com/bicep/avm/res/document-db/mongo-cluster:1.0.0'\\n      }" \
+    "$FIXTURE_ROOT/recipe-packs/azure-aks/azure-aks.bicep"
+
+: >"$CALL_LOG"
+CLEAR_SELECTION=1 run_driver azure azure-ws azure-env >/dev/null ||
+    fail "standalone Azure runs must retain pack entry order and include MongoDB"
+standalone_aks_mongo="$(awk '
+    /rad env update azure-env --workspace azure-ws --recipe-packs azure-aks/ { in_aks=1; next }
+    /^rad env update / { in_aks=0 }
+    in_aks && /test-recipe-pack-entry.sh Data\/mongoDatabases/ { print NR; exit }
+' "$CALL_LOG")"
+standalone_aks_pv="$(awk '
+    /rad env update azure-env --workspace azure-ws --recipe-packs azure-aks/ { in_aks=1; next }
+    /^rad env update / { in_aks=0 }
+    in_aks && /test-recipe-pack-entry.sh Compute\/persistentVolumes/ { print NR; exit }
+' "$CALL_LOG")"
+[[ -n "$standalone_aks_mongo" && "$standalone_aks_mongo" -lt "$standalone_aks_pv" ]] ||
+    fail "standalone Azure must not defer MongoDB"
+
+: >"$CALL_LOG"
+output=$(RTC_AZURE_SELECTION_FILE="$selection" RTC_AZURE_PACK_ENTRY_PHASE=unrelated \
+    EXPECTED_POSTGRES_SIZE=M run_driver azure azure-ws azure-env) ||
+    fail "unrelated Azure entries including deferred MongoDB must all run"
+mapfile -t unrelated_entries < <(grep '^test-recipe-pack-entry.sh ' "$CALL_LOG")
+[[ "${#unrelated_entries[@]}" -eq 9 ]] || fail "all unrelated entries, including MongoDB duplicates, must run"
+for index in "${!unrelated_entries[@]}"; do
+    [[ "${unrelated_entries[index]}" != *'Data/mongoDatabases'* ]] ||
+        [[ "$index" -ge 6 ]] || fail "all non-MongoDB pack entries must run before MongoDB"
+done
+[[ "${unrelated_entries[6]}" == 'test-recipe-pack-entry.sh Data/mongoDatabases azure-ws azure-env' &&
+    "${unrelated_entries[7]}" == 'test-recipe-pack-entry.sh Data/mongoDatabases azure-ws azure-env' &&
+    "${unrelated_entries[8]}" == 'test-recipe-pack-entry.sh Data/mongoDatabases azure-ws azure-env' ]] ||
+    fail "duplicate MongoDB entries and the MongoDB-only pack must run last"
+grep -q "9 tested, 1 skipped, 0 failed" <<<"$output" ||
+    fail "MongoDB reordering must preserve tested and skip counts"
+
+: >"$CALL_LOG"
+if RTC_AZURE_SELECTION_FILE="$selection" RTC_AZURE_PACK_ENTRY_PHASE=unrelated \
+    FAIL_TYPE=Data/mongoDatabases EXPECTED_POSTGRES_SIZE=M \
+    run_driver azure azure-ws azure-env >"$TEST_ROOT/mongodb-failure.log" 2>&1; then
+    fail "MongoDB failures must fail the unrelated Azure phase"
+fi
+[[ "$(grep -c '^test-recipe-pack-entry.sh Data/mongoDatabases ' "$CALL_LOG")" == 3 ]] ||
+    fail "all duplicate MongoDB entries must run even when they fail"
+[[ "$(grep -c '==> FAILED: Data/mongoDatabases' "$TEST_ROOT/mongodb-failure.log")" == 3 ]] ||
+    fail "all MongoDB failures must be counted and reported"
+grep -q '9 tested, 1 skipped, 3 failed' "$TEST_ROOT/mongodb-failure.log" ||
+    fail "MongoDB failure must retain the full tested and skip counts"
+
 pack="$FIXTURE_ROOT/recipe-packs/azure-aks/azure-aks.bicep"
 cp "$pack" "$TEST_ROOT/original-pack.bicep"
 sed 's/Standard_B1ms/Standard_B2ms/g' "$TEST_ROOT/original-pack.bicep" >"$pack"
@@ -437,6 +512,7 @@ if grep -q '^test-recipe-pack-entry.sh' "$CALL_LOG"; then
     fail "no entry tests should run after activation fails"
 fi
 
+cp "$TEST_ROOT/original-aci-pack.bicep" "$FIXTURE_ROOT/recipe-packs/azure-aci/azure-aci.bicep"
 rm -f "$FIXTURE_ROOT/Compute/containers/test/app.bicep"
 : >"$CALL_LOG"
 if output=$(run_driver azure azure-ws azure-env 2>&1); then

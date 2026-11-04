@@ -37,6 +37,7 @@ selector_scripts="$temp/selector-scripts"
 mkdir "$selector_scripts"
 cp "$script" "$selector_scripts/azure-postgres-workflow.sh"
 cp "$root/.github/scripts/lib-azure-postgres-test.sh" "$selector_scripts/"
+cp "$root/.github/scripts/run-command-in-process-group.py" "$selector_scripts/"
 export SIZE_LOG="$temp/selector-sizes"
 cat >"$selector_scripts/select-azure-test-location.sh" <<'EOF'
 #!/bin/bash
@@ -97,6 +98,19 @@ RTC_AZURE_SELECTION_FILE="$cleanup_selection" GITHUB_STEP_SUMMARY="$cleanup_summ
 for cleanup in confirmed failed not_required uncertain; do
     grep -Fq "| 0 | $cleanup |" "$cleanup_summary" || fail "summary must show each cleanup state"
 done
+jq -n '{version:1,status:"probe_error",location:"centralus",attempts:[{
+    region:"centralus",size:"S",skuName:"Standard_B1ms",tier:"Burstable",
+    outcome:"probe_error",errorCode:"CleanupUnconfirmed",durationSeconds:12,cleanup:"failed",
+    diagnostic:{stage:"delete",exitStatus:1,errorCode:"Conflict",
+      firstError:{stage:"create",exitStatus:1,errorCode:"SkuNotAvailable"},
+      outcomeBeforeCleanup:"capacity_exhausted",errorCodeBeforeCleanup:"SkuNotAvailable"},
+    untrusted:"DO_NOT_PRINT"}]}' >"$cleanup_selection"
+: >"$cleanup_summary"
+RTC_AZURE_SELECTION_FILE="$cleanup_selection" GITHUB_STEP_SUMMARY="$cleanup_summary" \
+    bash "$script" summary
+grep -Fq 'stage=delete,status=1,code=Conflict,first=create/1/SkuNotAvailable,before=capacity_exhausted/SkuNotAvailable' \
+    "$cleanup_summary" || { cat "$cleanup_summary" >&2; fail "summary must retain sanitized cleanup and first-error details"; }
+! grep -q DO_NOT_PRINT "$cleanup_summary" || fail "summary must not print untrusted fields"
 
 single_selection="$temp/single-size-selection.json"
 single_env="$temp/single-size.env"
@@ -465,18 +479,60 @@ for slow_command in exists show delete; do
     fi
 done
 
+for interrupted_signal in TERM INT; do
 : >"$CALL_LOG"
 : >"$GROUP_STATE"
 rm -f -- "$SLOW_AZ_PIDS"
-started_seconds=$SECONDS
-if output=$(SLOW_AZ_COMMAND=create timeout --signal=TERM --kill-after=4 2 \
-    bash "$script" create-main nightly "$late_group" westus3 "$token_a" 2>&1); then
-    fail "cancelled main-group creation must fail"
-fi
-((SECONDS - started_seconds < 8)) || fail "workflow cancellation must stop TERM-ignoring children"
+PARENT_SIGNAL="SIG$interrupted_signal" python3 - "$script" "$late_group" "$token_a" \
+    "$temp/parent-only-signal-$interrupted_signal.log" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+script, group, token, log_path = sys.argv[1:]
+environment = os.environ.copy()
+environment["SLOW_AZ_COMMAND"] = "create"
+parent_signal = getattr(signal, environment["PARENT_SIGNAL"])
+started = time.monotonic()
+process = subprocess.Popen(
+    ["bash", script, "create-main", "nightly", group, "westus3", token],
+    env=environment, start_new_session=True, stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT, text=True,
+)
+try:
+    deadline = started + 10
+    pid_file = Path(environment["SLOW_AZ_PIDS"])
+    while not pid_file.exists() or not pid_file.read_text().strip():
+        if process.poll() is not None or time.monotonic() >= deadline:
+            raise RuntimeError("workflow did not reach main-group creation")
+        time.sleep(0.01)
+    process.send_signal(parent_signal)
+    output, _ = process.communicate(timeout=8)
+    Path(log_path).write_text(output, encoding="utf-8")
+    if process.returncode == 0:
+        raise RuntimeError(f"parent-only {environment['PARENT_SIGNAL']} reported success")
+    if time.monotonic() - started >= 8:
+        raise RuntimeError("workflow cancellation exceeded the shutdown bound")
+except Exception:
+    pid_file = Path(environment["SLOW_AZ_PIDS"])
+    for pid in pid_file.read_text().splitlines() if pid_file.exists() else []:
+        try:
+            os.kill(int(pid), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    if process.poll() is None:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+    raise
+PY
+output="$(cat "$temp/parent-only-signal-$interrupted_signal.log")"
 assert_slow_processes_stopped
 grep -Fq "Creating main resource group '$late_group' with rtcAzureTestGroupOwner=$token_a." <<<"$output" ||
     fail "cancelled creation must log the exact recovery target"
 ! grep -q '^group delete ' "$CALL_LOG" ||
     fail "cancelled main creation must leave ownership verification to the cleanup job"
+done
 echo "Azure PostgreSQL workflow tests passed"

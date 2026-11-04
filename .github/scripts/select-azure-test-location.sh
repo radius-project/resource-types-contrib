@@ -50,14 +50,12 @@ if [[ -v RTC_AZURE_TEST_REGIONS ]]; then
         { echo "Error: invalid region list." >&2; exit 1; }
     IFS=',' read -r -a regions <<<"$RTC_AZURE_TEST_REGIONS"
 fi
-size_list="${RTC_POSTGRES_TEST_SIZES-S,M}"
-[[ "$size_list" =~ ^[SM](,[SM])*$ ]] ||
-    { echo "Error: invalid size list." >&2; exit 1; }
+size_list="$(rtc_postgres_normalize_test_sizes)" || exit 1
 IFS=',' read -r -a sizes <<<"$size_list"
 deadline_seconds="${RTC_POSTGRES_SELECTION_DEADLINE_SECONDS-3600}"
 create_timeout="${RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS-900}"
 delete_timeout="${RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS-900}"
-cleanup_reserve="${RTC_POSTGRES_CLEANUP_RESERVE_SECONDS-900}"
+cleanup_reserve="$(rtc_postgres_cleanup_reserve_seconds)" || exit 1
 if [[ ! "$requested_probe_rg" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
     ((${#requested_probe_rg} + 33 > 90)) ||
     ((${#regions[@]} == 0 || ${#regions[@]} > 32 || ${#sizes[@]} == 0 || ${#sizes[@]} > 32)) ||
@@ -97,29 +95,17 @@ cleanup_deadline=$((deadline + cleanup_reserve))
 probe_rg=""
 probe_owner_token=""
 group_create_attempted=false
-group_create_pid=""
 RUN_OUTPUT=""
 
 run_before_deadline() {
-    local deadline_at="$1" requested_limit="$2" remaining output_file status=0
+    local deadline_at="$1" requested_limit="$2" remaining status=0
     shift 2
     remaining=$((deadline_at - SECONDS))
     ((remaining > 0)) || return 124
     if ((requested_limit > remaining)); then requested_limit="$remaining"; fi
-    output_file="$(mktemp "$work_dir/command.XXXXXX")"
-    python3 "$script_dir/run-bounded-command.py" "$requested_limit" "$@" >"$output_file" &
-    group_create_pid=$!
-    wait "$group_create_pid" || status=$?
-    group_create_pid=""
-    RUN_OUTPUT="$(<"$output_file")"
-    rm -f -- "$output_file"
+    rtc_run_command --timeout "$requested_limit" --quiet "$@" || status=$?
+    RUN_OUTPUT="$RTC_COMMAND_OUTPUT"
     return "$status"
-}
-
-terminate_process_group() {
-    local pid="$1"
-    kill -TERM "$pid" 2>/dev/null || true
-    wait "$pid" 2>/dev/null || true
 }
 
 group_has_owner_tag() {
@@ -200,10 +186,6 @@ finish() {
 }
 handle_signal() {
     trap - INT TERM
-    if [[ -n "$group_create_pid" ]]; then
-        terminate_process_group "$group_create_pid"
-        group_create_pid=""
-    fi
     exit 1
 }
 trap finish EXIT
@@ -309,7 +291,8 @@ for size in "${test_sizes[@]}"; do
             RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS="$cleanup_limit" \
             RTC_POSTGRES_PROBE_CLEANUP_DEADLINE_EPOCH="$((deadline_epoch + cleanup_reserve))" \
             RTC_POSTGRES_PROBE_RESULT_FILE="$work_dir/probe.json" \
-            "$script_dir/probe-azure-postgres-capacity.sh" >&2 || status=$?
+            rtc_run_command --quiet bash \
+                "$script_dir/probe-azure-postgres-capacity.sh" >&2 || status=$?
         duration=$((SECONDS - started))
         case "$status" in
             0) outcome="available" ;;
@@ -320,12 +303,36 @@ for size in "${test_sizes[@]}"; do
         esac
         error_code="UnknownError"
         cleanup="uncertain"
+        diagnostic="null"
         if [[ -f "$work_dir/probe.json" ]] && jq -e --arg outcome "$outcome" \
             '.outcome == $outcome and (.errorCode | type == "string") and
              (.cleanup == "not_required" or .cleanup == "confirmed" or
-              .cleanup == "failed" or .cleanup == "uncertain")' "$work_dir/probe.json" >/dev/null; then
+              .cleanup == "failed" or .cleanup == "uncertain") and
+             (if has("diagnostic") then
+                 .diagnostic == null or (
+                   (.diagnostic | type == "object") and
+                   (.diagnostic.stage | type == "string" and
+                     test("^(pre-create read|create|show|delete|confirm|deadline)$")) and
+                   (.diagnostic.exitStatus | type == "number" and floor == .) and
+                   (.diagnostic.errorCode | type == "string" and
+                     test("^(none|[A-Za-z][A-Za-z0-9]*(,[A-Za-z][A-Za-z0-9]*)*)$")) and
+                   (.diagnostic.firstError == null or (
+                     (.diagnostic.firstError.stage | type == "string" and
+                       test("^(pre-create read|create|show|delete|confirm|deadline)$")) and
+                     (.diagnostic.firstError.exitStatus | type == "number" and floor == .) and
+                     (.diagnostic.firstError.errorCode | type == "string" and
+                       test("^(none|[A-Za-z][A-Za-z0-9]*(,[A-Za-z][A-Za-z0-9]*)*)$"))
+                   )) and
+                   (.diagnostic.outcomeBeforeCleanup == null or
+                     (.diagnostic.outcomeBeforeCleanup | type == "string")) and
+                   (.diagnostic.errorCodeBeforeCleanup == null or
+                     (.diagnostic.errorCodeBeforeCleanup | type == "string" and
+                       test("^(none|[A-Za-z][A-Za-z0-9]*(,[A-Za-z][A-Za-z0-9]*)*)$")))
+                 )
+               else true end)' "$work_dir/probe.json" >/dev/null; then
             error_code="$(jq -er '.errorCode | select(type == "string")' "$work_dir/probe.json")" || status=1
             cleanup="$(jq -r '.cleanup' "$work_dir/probe.json")"
+            diagnostic="$(jq -c '.diagnostic // null' "$work_dir/probe.json")"
         else
             status=1; outcome="probe_error"
         fi
@@ -341,10 +348,12 @@ for size in "${test_sizes[@]}"; do
         fi
         attempt_records="$(jq -c --arg region "$location" --arg size "$size" --arg skuName "$postgres_sku" \
             --arg tier "$postgres_tier" --arg outcome "$outcome" --arg errorCode "$error_code" --arg cleanup "$cleanup" \
-            --argjson durationSeconds "$duration" \
+            --argjson durationSeconds "$duration" --argjson diagnostic "$diagnostic" \
             '. + [{region: $region, size: $size, skuName: $skuName, tier: $tier,
                    outcome: $outcome, errorCode: $errorCode, durationSeconds: $durationSeconds,
-                   cleanup:$cleanup}]' <<<"$attempt_records")"
+                   cleanup:$cleanup}
+                 + (if $diagnostic == null then {} else {diagnostic:$diagnostic} end)]' \
+            <<<"$attempt_records")"
         echo "==> $location/$size ($postgres_sku): $outcome, code=$error_code, ${duration}s" >&2
         # Cleanup failure and other provider errors must not be hidden by a deadline.
         if ((status != 0 && status != 2 && status != 3 && status != 4)); then

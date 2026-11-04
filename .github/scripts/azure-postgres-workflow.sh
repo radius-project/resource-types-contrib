@@ -23,20 +23,14 @@ validate_run_context() {
 }
 
 run_bounded_azure_command() {
-    local requested_limit="$1" remaining command_pid status=0
+    local requested_limit="$1" remaining
     shift
     if [[ -v cleanup_deadline ]]; then
         remaining=$((cleanup_deadline - SECONDS))
         ((remaining > 0)) || return 124
         if ((requested_limit > remaining)); then requested_limit="$remaining"; fi
     fi
-    python3 "$script_dir/run-bounded-command.py" "$requested_limit" "$@" &
-    command_pid=$!
-    trap 'kill -TERM "$command_pid" 2>/dev/null || true; wait "$command_pid" 2>/dev/null || true; exit 143' TERM
-    trap 'kill -INT "$command_pid" 2>/dev/null || true; wait "$command_pid" 2>/dev/null || true; exit 130' INT
-    wait "$command_pid" || status=$?
-    trap - INT TERM
-    return "$status"
+    rtc_run_command --timeout "$requested_limit" --quiet "$@"
 }
 
 validate_probe_group() {
@@ -63,11 +57,12 @@ resource_group_has_owner_tag() {
         echo "Error: no verifiable ownership token for resource group '$group'; refusing deletion." >&2
         return 1
     }
-    actual="$(run_bounded_azure_command 30 az group show --name "$group" \
-        --subscription "$AZURE_SUBSCRIPTION_ID" --query "tags.${tag_name}" --output tsv)" || {
+    run_bounded_azure_command 30 az group show --name "$group" \
+        --subscription "$AZURE_SUBSCRIPTION_ID" --query "tags.${tag_name}" --output tsv || {
         echo "Error: could not verify ownership of resource group '$group'." >&2
         return 1
     }
+    actual="$RTC_COMMAND_OUTPUT"
     [[ "$actual" == "$tag_value" ]] || {
         echo "Error: resource group '$group' has no matching $tag_name ownership tag; refusing deletion." >&2
         return 1
@@ -76,16 +71,18 @@ resource_group_has_owner_tag() {
 
 delete_and_confirm_resource_group() {
     local group="$1" owner_tag="$2" owner_token="$3" exists
-    exists="$(run_bounded_azure_command 30 az group exists --name "$group" \
-        --subscription "$AZURE_SUBSCRIPTION_ID" --output tsv)" || return 1
+    run_bounded_azure_command 30 az group exists --name "$group" \
+        --subscription "$AZURE_SUBSCRIPTION_ID" --output tsv || return 1
+    exists="$RTC_COMMAND_OUTPUT"
     if [[ "$exists" == false ]]; then return 0; fi
     [[ "$exists" == true ]] ||
         { echo "Error: could not determine resource group state for '$group'." >&2; return 1; }
     resource_group_has_owner_tag "$group" "$owner_tag" "$owner_token" || return 1
     run_bounded_azure_command 840 az group delete --name "$group" \
         --subscription "$AZURE_SUBSCRIPTION_ID" --yes --only-show-errors --output none || return 1
-    exists="$(run_bounded_azure_command 30 az group exists --name "$group" \
-        --subscription "$AZURE_SUBSCRIPTION_ID" --output tsv)" || return 1
+    run_bounded_azure_command 30 az group exists --name "$group" \
+        --subscription "$AZURE_SUBSCRIPTION_ID" --output tsv || return 1
+    exists="$RTC_COMMAND_OUTPUT"
     [[ "$exists" == false ]] ||
         { echo "Error: resource group deletion was not confirmed for '$group'." >&2; return 1; }
     echo "Resource group deletion confirmed: $group"
@@ -112,11 +109,12 @@ create_main_group() {
         echo "Error: refusing unexpected main resource group name '$group'." >&2
         return 1
     }
-    existing="$(run_bounded_azure_command 30 az group exists --name "$group" \
-        --subscription "$AZURE_SUBSCRIPTION_ID" --output tsv)" || {
+    run_bounded_azure_command 30 az group exists --name "$group" \
+        --subscription "$AZURE_SUBSCRIPTION_ID" --output tsv || {
         echo "Error: could not verify main resource group '$group'; refusing to create or delete it." >&2
         return 1
     }
+    existing="$RTC_COMMAND_OUTPUT"
     [[ "$existing" == false ]] || {
         echo "Error: main resource group '$group' is not confirmed absent; refusing to update or delete it." >&2
         return 1
@@ -140,8 +138,9 @@ create_main_group() {
     }
     deadline=$((SECONDS + 60))
     while :; do
-        existing="$(run_bounded_azure_command 10 az group exists --name "$group" \
-            --subscription "$AZURE_SUBSCRIPTION_ID" --output tsv)" || return 1
+        run_bounded_azure_command 10 az group exists --name "$group" \
+            --subscription "$AZURE_SUBSCRIPTION_ID" --output tsv || return 1
+        existing="$RTC_COMMAND_OUTPUT"
         [[ "$existing" == true ]] && break
         if [[ "$existing" != false ]] || ((SECONDS >= deadline)); then
             echo "Error: main resource group '$group' did not become ready in time." >&2
@@ -210,9 +209,8 @@ write_failed_selection() {
 }
 
 select_context() {
-    local probe_group="$1" regions location fallback deadline selector_status deadline_seconds
-    local size_list size
-    local -a sizes normalized_sizes
+    local probe_group="$1" regions location fallback deadline selector_status=0 deadline_seconds
+    local size_list
     : "${RTC_AZURE_SELECTION_FILE:?selection file is required}"
     : "${GITHUB_ENV:?workflow environment file is required}"
     fallback="$(fallback_location)"
@@ -223,21 +221,12 @@ select_context() {
         deadline_seconds=3600
     fi
     deadline=$(( $(date +%s) + deadline_seconds ))
-    size_list="${RTC_POSTGRES_TEST_SIZES-S,M}"
-    if [[ ! "$size_list" =~ ^[SM](,[SM])*$ ]]; then
+    if ! size_list="$(rtc_postgres_normalize_test_sizes)"; then
         printf 'AZURE_LOCATION=%s\n' "$fallback" >>"$GITHUB_ENV"
         write_failed_selection "$fallback" "$deadline" || return 1
         echo "::error::Azure PostgreSQL size configuration is invalid; continuing unrelated entries in $fallback without PostgreSQL allocation."
         return 1
     fi
-    normalized_sizes=()
-    IFS=',' read -r -a sizes <<<"$size_list"
-    for size in "${sizes[@]}"; do
-        if [[ ! " ${normalized_sizes[*]} " == *" $size "* ]]; then
-            normalized_sizes+=("$size")
-        fi
-    done
-    size_list="$(IFS=','; echo "${normalized_sizes[*]}")"
     export RTC_POSTGRES_TEST_SIZES="$size_list"
     printf 'RTC_POSTGRES_TEST_SIZES=%s\n' "$size_list" >>"$GITHUB_ENV"
     if [[ -n "${REGION_OVERRIDE:-}" ]]; then
@@ -254,8 +243,9 @@ select_context() {
         echo "::error::Azure PostgreSQL region configuration is invalid; continuing unrelated entries in $fallback without PostgreSQL allocation."
         return 1
     fi
-    if location="$(bash "$script_dir/select-azure-test-location.sh" "$probe_group")" &&
-        [[ "$location" =~ ^[a-z0-9]+$ && ",$regions," == *",$location,"* ]] &&
+    if rtc_run_command --quiet bash "$script_dir/select-azure-test-location.sh" "$probe_group"; then
+        location="$RTC_COMMAND_OUTPUT"
+        if [[ "$location" =~ ^[a-z0-9]+$ && ",$regions," == *",$location,"* ]] &&
         [[ -f "$RTC_AZURE_SELECTION_FILE" ]] && jq -e '
             type == "object" and .version == 1 and
             (.status == "selected" or .status == "capacity_exhausted" or
@@ -263,8 +253,9 @@ select_context() {
              .status == "deadline_exceeded") and
             (.location | type == "string") and (.attempts | type == "array")
         ' "$RTC_AZURE_SELECTION_FILE" >/dev/null 2>&1; then
-        printf 'AZURE_LOCATION=%s\n' "$location" >>"$GITHUB_ENV"
-        return 0
+            printf 'AZURE_LOCATION=%s\n' "$location" >>"$GITHUB_ENV"
+            return 0
+        fi
     else
         selector_status=$?
     fi
@@ -273,7 +264,7 @@ select_context() {
         echo "::error::Azure PostgreSQL selection failed and its failure record could not be written."
         return 1
     }
-    echo "::error::Azure PostgreSQL capacity selection failed (status $selector_status); continuing unrelated entries in $fallback without PostgreSQL allocation."
+    echo "::error::Azure PostgreSQL selection did not produce a valid result (selector exit status $selector_status); continuing unrelated entries in $fallback without PostgreSQL allocation."
     return 1
 }
 
@@ -323,13 +314,45 @@ case "${1:-}" in
                  .status != "deadline_exceeded") then
                 error("invalid selection record")
             else . end |
-            def cell: tostring | gsub("[^A-Za-z0-9_., -]"; "?");
+            def cell: tostring | gsub("[^A-Za-z0-9_., /=-]"; "?");
+            def valid_stage: test("^(pre-create read|create|show|delete|confirm|deadline)$");
+            def valid_code: test("^(none|[A-Za-z][A-Za-z0-9]*(,[A-Za-z][A-Za-z0-9]*)*)$");
+            def diagnostic:
+                if .diagnostic == null then "none"
+                elif (.diagnostic | type) == "object" and
+                    (.diagnostic.stage | type == "string" and valid_stage) and
+                    (.diagnostic.exitStatus | type == "number" and floor == .) and
+                    (.diagnostic.errorCode | type == "string" and valid_code) and
+                    (.diagnostic.firstError == null or (
+                        (.diagnostic.firstError.stage | type == "string" and valid_stage) and
+                        (.diagnostic.firstError.exitStatus | type == "number" and floor == .) and
+                        (.diagnostic.firstError.errorCode | type == "string" and valid_code)
+                    )) and
+                    (.diagnostic.outcomeBeforeCleanup == null or
+                        (.diagnostic.outcomeBeforeCleanup | type == "string" and
+                         test("^[A-Za-z][A-Za-z0-9_]*$"))) and
+                    (.diagnostic.errorCodeBeforeCleanup == null or
+                        (.diagnostic.errorCodeBeforeCleanup | type == "string" and valid_code))
+                then
+                    "stage=" + .diagnostic.stage +
+                    ",status=" + (.diagnostic.exitStatus | tostring) +
+                    ",code=" + .diagnostic.errorCode +
+                    (if .diagnostic.firstError == null then "" else
+                        ",first=" + .diagnostic.firstError.stage + "/" +
+                        (.diagnostic.firstError.exitStatus | tostring) + "/" +
+                        .diagnostic.firstError.errorCode
+                    end) +
+                    (if .diagnostic.outcomeBeforeCleanup == null then "" else
+                        ",before=" + .diagnostic.outcomeBeforeCleanup + "/" +
+                        (.diagnostic.errorCodeBeforeCleanup // "none")
+                    end)
+                else error("invalid diagnostic") end;
             "## PostgreSQL capacity selection\n",
             ("Final selection status: **" + (.status | cell) + "**\n"),
             ("Shared work deadline (Unix seconds): " + (.deadlineEpochSeconds | cell) + "\n"),
-            "| Region | Size | SKU | Tier | Outcome | Error code | Duration (s) | Cleanup |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- |",
-            (.attempts[] | "| " + ([.region,.size,.skuName,.tier,.outcome,.errorCode,.durationSeconds,.cleanup]
+            "| Region | Size | SKU | Tier | Outcome | Error code | Duration (s) | Cleanup | Diagnostic |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            (.attempts[] | "| " + ([.region,.size,.skuName,.tier,.outcome,.errorCode,.durationSeconds,.cleanup,(diagnostic | cell)]
                 | map(cell) | join(" | ")) + " |")
         ' "$RTC_AZURE_SELECTION_FILE" >>"$GITHUB_STEP_SUMMARY"
         ;;
@@ -355,11 +378,12 @@ case "${1:-}" in
         : "${AZURE_SUBSCRIPTION_ID:?subscription is required}"
         prefix="rrttest-${kind}-${run_id}-"
         cleanup_deadline=$((SECONDS + 1500))
-        if ! groups="$(run_bounded_azure_command 30 az group list --query '[].name' \
-            --subscription "$AZURE_SUBSCRIPTION_ID" --output tsv)"; then
+        if ! run_bounded_azure_command 30 az group list --query '[].name' \
+            --subscription "$AZURE_SUBSCRIPTION_ID" --output tsv; then
             echo "Error: could not list Azure resource groups for this run." >&2
             exit 1
         fi
+        groups="$RTC_COMMAND_OUTPUT"
         cleanup_status=0
         while IFS= read -r group; do
             [[ "$group" == "$prefix"* ]] || continue

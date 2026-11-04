@@ -60,27 +60,76 @@ work_dir="$(mktemp -d "${TMPDIR:-/tmp}/rtc-postgres-probe-XXXXXX")"
 server_name=""
 probe_owner=""
 create_in_flight=false
+create_status=0
 outcome="probe_error"
 error_code="UnknownError"
 cleanup_result="not_required"
 create_uncertain=false
+first_error_stage=""
+first_error_status=""
+first_error_code=""
+diagnostic_stage=""
+diagnostic_status=""
+diagnostic_error_code=""
+diagnostic_outcome_before_cleanup=""
+diagnostic_code_before_cleanup=""
 
 report_uncertain_create() {
     echo "Error: create request timed out or was interrupted for probe server '$server_name' in resource group '$resource_group' (ownership tag rtc-probe-owner=$probe_owner)." >&2
     echo "A current ResourceNotFound response does not rule out later creation. Check this target again and verify its ownership tag before deletion." >&2
 }
 
+record_first_error() {
+    local stage="$1" status="$2" codes="${3:-none}"
+    [[ -n "$codes" ]] || codes="none"
+    if [[ -z "$first_error_stage" ]]; then
+        first_error_stage="$stage"
+        first_error_status="$status"
+        first_error_code="$codes"
+    fi
+}
+
+report_probe_error() {
+    local stage="$1" status="$2" codes="${3:-none}"
+    [[ -n "$codes" ]] || codes="none"
+    codes="${codes//$'\n'/,}"
+    record_first_error "$stage" "$status" "$codes"
+    diagnostic_stage="$stage"
+    diagnostic_status="$status"
+    diagnostic_error_code="$codes"
+    printf 'Error: probe stage=%s exit_status=%s error_codes=%s\n' "$stage" "$status" "$codes" >&2
+}
+
+report_cleanup_failure() {
+    local stage="$1" status="$2" codes="${3:-none}" prior_code="${error_code:-none}"
+    [[ -n "$codes" ]] || codes="none"
+    codes="${codes//$'\n'/,}"
+    prior_code="${prior_code//$'\n'/,}"
+    diagnostic_stage="$stage"
+    diagnostic_status="$status"
+    diagnostic_error_code="$codes"
+    diagnostic_outcome_before_cleanup="$outcome"
+    diagnostic_code_before_cleanup="$prior_code"
+    printf 'Error: cleanup stage=%s exit_status=%s error_codes=%s first_error_stage=%s first_error_status=%s first_error_code=%s outcome_before_cleanup=%s error_code_before_cleanup=%s\n' \
+        "$stage" "$status" "$codes" "${first_error_stage:-none}" "${first_error_status:-none}" \
+        "${first_error_code:-none}" "$outcome" "$prior_code" >&2
+}
+
 delete_server() {
     local status=0 remaining cleanup_deadline codes cleanup_limit="$delete_timeout"
     if [[ -n "$cleanup_deadline_epoch" ]]; then
         remaining=$((cleanup_deadline_epoch - $(date +%s)))
-        ((remaining > 0)) || return 1
+        if ((remaining <= 0)); then
+            report_cleanup_failure deadline 124
+            return 1
+        fi
         if ((remaining < cleanup_limit)); then cleanup_limit="$remaining"; fi
     fi
     cleanup_deadline=$((SECONDS + cleanup_limit))
-    python3 "$script_dir/run-bounded-command.py" "$cleanup_limit" az postgres flexible-server show \
+    rtc_run_command --timeout "$cleanup_limit" --quiet --stdout "$work_dir/server" \
+        --stderr "$work_dir/show-error" az postgres flexible-server show \
         "${subscription_args[@]}" --resource-group "$resource_group" --name "$server_name" \
-        --only-show-errors --output json >"$work_dir/server" 2>"$work_dir/show-error" || status=$?
+        --only-show-errors --output json || status=$?
     if ((status != 0)); then
         codes="$(rtc_postgres_error_codes "$work_dir/show-error")"
         if ((status != 124 && status != 130 && status != 137 && status != 143)) &&
@@ -88,35 +137,60 @@ delete_server() {
             # Bash 5.2 bare return can restore the failure from before an EXIT trap.
             return 0
         fi
+        report_cleanup_failure show "$status" "$codes"
         return 1
     fi
-    [[ ! -s "$work_dir/show-error" ]] || return 1
+    if [[ -s "$work_dir/show-error" ]]; then
+        codes="$(rtc_postgres_error_codes "$work_dir/show-error")"
+        report_cleanup_failure show "$status" "$codes"
+        return 1
+    fi
     if ! jq -e --arg owner "$probe_owner" '.tags["rtc-probe-owner"] == $owner' \
         "$work_dir/server" >/dev/null 2>&1; then
+        report_cleanup_failure show "$status" OwnershipUnconfirmed
         echo "Error: ownership of probe server '$server_name' was not confirmed; refusing deletion." >&2
         return 1
     fi
     remaining=$((cleanup_deadline - SECONDS))
-    ((remaining > 0)) || return 1
-    python3 "$script_dir/run-bounded-command.py" "$remaining" az postgres flexible-server delete \
+    if ((remaining <= 0)); then
+        report_cleanup_failure deadline 124
+        return 1
+    fi
+    rtc_run_command --timeout "$remaining" --quiet --stdout /dev/null \
+        --stderr "$work_dir/delete-error" az postgres flexible-server delete \
         "${subscription_args[@]}" --resource-group "$resource_group" --name "$server_name" \
-        --yes --only-show-errors --output none > /dev/null 2>"$work_dir/delete-error" || status=$?
+        --yes --only-show-errors --output none || status=$?
+    codes="$(rtc_postgres_error_codes "$work_dir/delete-error")"
     if ((status != 0)); then
-        if ((status == 124 || status == 130 || status == 137 || status == 143)); then return 1; fi
-        codes="$(rtc_postgres_error_codes "$work_dir/delete-error")"
-        [[ "$codes" == "ResourceNotFound" ]] || return 1
+        if ((status == 124 || status == 130 || status == 137 || status == 143)); then
+            report_cleanup_failure delete "$status" "$codes"
+            return 1
+        fi
+        if [[ "$codes" != "ResourceNotFound" ]]; then
+            report_cleanup_failure delete "$status" "$codes"
+            return 1
+        fi
     elif [[ -s "$work_dir/delete-error" ]]; then
+        report_cleanup_failure delete "$status" "$codes"
         return 1
     fi
     remaining=$((cleanup_deadline - SECONDS))
-    ((remaining > 0)) || return 1
+    if ((remaining <= 0)); then
+        report_cleanup_failure deadline 124
+        return 1
+    fi
     status=0
-    python3 "$script_dir/run-bounded-command.py" "$remaining" az postgres flexible-server show \
+    rtc_run_command --timeout "$remaining" --quiet --stdout /dev/null \
+        --stderr "$work_dir/show-error" az postgres flexible-server show \
         "${subscription_args[@]}" --resource-group "$resource_group" --name "$server_name" \
-        --only-show-errors --output none > /dev/null 2>"$work_dir/show-error" || status=$?
+        --only-show-errors --output none || status=$?
     codes="$(rtc_postgres_error_codes "$work_dir/show-error")"
-    ((status != 0 && status != 124 && status != 130 && status != 137 && status != 143)) &&
-        [[ "$codes" == "ResourceNotFound" ]]
+    if ((status != 0 && status != 124 && status != 130 && status != 137 && status != 143)) &&
+        [[ "$codes" == "ResourceNotFound" ]]; then
+        return 0
+    fi
+    report_cleanup_failure confirm "$status" "$codes"
+    return 1
 }
 
 # Invoked by the EXIT trap, including after an interrupt.
@@ -128,6 +202,7 @@ finish() {
         create_uncertain=true
         report_uncertain_create
         outcome="probe_error"; error_code="CreateInterrupted"; status=1
+        if [[ -z "$first_error_stage" ]]; then report_probe_error create "$create_status"; fi
     fi
     if [[ -n "$server_name" ]] && ! delete_server; then
         cleanup_result="failed"
@@ -138,21 +213,54 @@ finish() {
     fi
     if [[ -n "${RTC_POSTGRES_PROBE_RESULT_FILE:-}" ]]; then
         jq -n --arg outcome "$outcome" --arg errorCode "$error_code" --arg cleanup "$cleanup_result" \
-            '{outcome: $outcome, errorCode: $errorCode, cleanup: $cleanup}' >"$RTC_POSTGRES_PROBE_RESULT_FILE" || status=1
+            --arg diagnosticStage "$diagnostic_stage" --arg diagnosticStatus "$diagnostic_status" \
+            --arg diagnosticErrorCode "$diagnostic_error_code" \
+            --arg outcomeBeforeCleanup "$diagnostic_outcome_before_cleanup" \
+            --arg errorCodeBeforeCleanup "$diagnostic_code_before_cleanup" \
+            --arg firstErrorStage "$first_error_stage" --arg firstErrorStatus "$first_error_status" \
+            --arg firstErrorCode "$first_error_code" '
+            {outcome: $outcome, errorCode: $errorCode, cleanup: $cleanup}
+            + (if $diagnosticStage == "" then {} else
+                {diagnostic: {
+                    stage: $diagnosticStage,
+                    exitStatus: ($diagnosticStatus | tonumber),
+                    errorCode: $diagnosticErrorCode,
+                    firstError: (if $firstErrorStage == "" then null else {
+                        stage: $firstErrorStage,
+                        exitStatus: ($firstErrorStatus | tonumber),
+                        errorCode: $firstErrorCode
+                    } end),
+                    outcomeBeforeCleanup: (if $outcomeBeforeCleanup == "" then null else $outcomeBeforeCleanup end),
+                    errorCodeBeforeCleanup: (if $errorCodeBeforeCleanup == "" then null else $errorCodeBeforeCleanup end)
+                }}
+            end)' >"$RTC_POSTGRES_PROBE_RESULT_FILE" || status=1
     fi
     rm -rf -- "$work_dir"
     exit "$status"
 }
+# shellcheck disable=SC2329
+handle_probe_signal() {
+    local signal="$1" status codes=""
+    if [[ "$signal" == INT ]]; then status=130; else status=143; fi
+    if [[ "$create_in_flight" == true ]]; then
+        create_status="$status"
+        codes="$(rtc_postgres_error_codes "$work_dir/create-error")"
+        outcome="probe_error"; error_code="CreateInterrupted"
+        report_probe_error create "$status" "$codes"
+    fi
+    exit "$status"
+}
 trap finish EXIT
-trap 'exit 1' INT TERM
+trap 'handle_probe_signal INT' INT
+trap 'handle_probe_signal TERM' TERM
 
 # Azure CLI renamed these switches. Read local help, not a cloud capability list.
 # Charge the full remaining create/selection budget to this check.
 help_started=$SECONDS
 help_timeout="$create_timeout"
 help_status=0
-python3 "$script_dir/run-bounded-command.py" "$help_timeout" az postgres flexible-server create --help \
-    >"$work_dir/create-help" 2>/dev/null || help_status=$?
+rtc_run_command --timeout "$help_timeout" --quiet --stdout "$work_dir/create-help" \
+    --stderr /dev/null az postgres flexible-server create --help || help_status=$?
 help_elapsed=$((SECONDS - help_started))
 if ((help_status == 124 || help_status == 137)) && ((help_elapsed >= help_timeout)); then
     outcome="timeout"; error_code="CreateTimeout"
@@ -189,9 +297,10 @@ if ((first_create_timeout <= 0)); then
     exit 3
 fi
 catalog_status=0
-python3 "$script_dir/run-bounded-command.py" "$first_create_timeout" az postgres flexible-server list-skus \
+rtc_run_command --timeout "$first_create_timeout" --quiet --stdout "$work_dir/catalog" \
+    --stderr "$work_dir/catalog-error" az postgres flexible-server list-skus \
     "${subscription_args[@]}" --location "$location" --only-show-errors --output json \
-    >"$work_dir/catalog" 2>"$work_dir/catalog-error" || catalog_status=$?
+    || catalog_status=$?
 if ((catalog_status == 124 || catalog_status == 137)); then
     outcome="timeout"; error_code="CreateTimeout"
     echo "Error: PostgreSQL capability discovery exceeded the create budget." >&2
@@ -222,20 +331,24 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
         exit 3
     fi
     status=0
-    python3 "$script_dir/run-bounded-command.py" "$limit" az postgres flexible-server show \
+    rtc_run_command --timeout "$limit" --quiet --stdout /dev/null \
+        --stderr "$work_dir/precreate-error" az postgres flexible-server show \
         "${subscription_args[@]}" --resource-group "$resource_group" --name "$candidate_name" \
-        --only-show-errors --output json >/dev/null 2>"$work_dir/precreate-error" || status=$?
+        --only-show-errors --output json || status=$?
     codes="$(rtc_postgres_error_codes "$work_dir/precreate-error")"
     if ((status == 0)); then
         error_code="ServerAlreadyExists"
+        report_probe_error "pre-create read" "$status" "$error_code"
         echo "Error: probe server name '$candidate_name' already exists; refusing creation." >&2
         exit 1
     elif ((status == 124 || status == 137)); then
         outcome="timeout"; error_code="CreateTimeout"
+        report_probe_error "pre-create read" "$status" "$codes"
         echo "Error: PostgreSQL probe server absence check timed out." >&2
         exit 3
     elif ((status == 130 || status == 143)) || [[ "$codes" != "ResourceNotFound" ]]; then
         error_code="ServerAbsenceUnknown"
+        report_probe_error "pre-create read" "$status" "$codes"
         echo "Error: probe server absence was not confirmed; refusing creation." >&2
         exit 1
     fi
@@ -254,24 +367,40 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
     # None enables public networking without a firewall rule. It does not disable
     # TLS. Leave zone unset for automatic placement, as in the pack.
     create_in_flight=true
-    python3 "$script_dir/run-bounded-command.py" "$limit" az postgres flexible-server create \
+    rtc_run_command --timeout "$limit" --quiet --stdout /dev/null \
+        --stderr "$work_dir/create-error" az postgres flexible-server create \
         "${subscription_args[@]}" --resource-group "$resource_group" --name "$server_name" \
         --location "$location" --tier "$postgres_tier" --sku-name "$postgres_sku" \
         --storage-size 32 --version 16 "$ha_option" Disabled \
         --geo-redundant-backup Disabled "$auth_option" Enabled --password-auth Enabled \
         --public-access None --admin-user probeadmin --admin-password "$password" \
         --tags "rtc-probe-owner=$probe_owner" \
-        --yes --only-show-errors --output none > /dev/null 2>"$work_dir/create-error" || status=$?
+        --yes --only-show-errors --output none || status=$?
+    create_status="$status"
     unset password
+    codes="$(rtc_postgres_error_codes "$work_dir/create-error")"
     # A child signal can reach Bash before its deferred signal trap runs.
     # Keep the in-flight target so the exit trap reports and cleans it safely.
-    if ((status == 130 || status == 143)); then exit 1; fi
+    if ((status == 130 || status == 143)); then
+        outcome="probe_error"; error_code="CreateInterrupted"
+        report_probe_error create "$status" "$codes"
+        exit 1
+    fi
     if ((status == 124 || status == 137)); then
         create_uncertain=true
         report_uncertain_create
     fi
     create_in_flight=false
-    codes="$(rtc_postgres_error_codes "$work_dir/create-error")"
+    if ((status == 0)); then
+        outcome="available"; error_code=""
+    elif ((status == 124 || status == 137)); then
+        outcome="timeout"; error_code="CreateTimeout"
+    elif [[ -n "$codes" ]] && ! grep -qvE '^(SkuNotAvailable|ServerIsBusy)$' <<<"$codes"; then
+        outcome="capacity_exhausted"; error_code="$codes"
+    else
+        outcome="probe_error"; error_code="${codes:-UnknownError}"
+    fi
+    if ((status != 0)); then report_probe_error create "$status" "$codes"; fi
     if ! delete_server; then
         cleanup_result="failed"
         echo "Error: probe server '$server_name' deletion was not confirmed." >&2

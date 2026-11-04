@@ -311,7 +311,7 @@ jobs:
       - name: Test Azure Bicep recipes
         id: azure_bicep
         continue-on-error: true
-        timeout-minutes: 75
+        timeout-minutes: 55
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
@@ -337,7 +337,7 @@ jobs:
       - name: Test Azure Terraform recipes
         id: azure_terraform
         continue-on-error: true
-        timeout-minutes: 75
+        timeout-minutes: 55
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics

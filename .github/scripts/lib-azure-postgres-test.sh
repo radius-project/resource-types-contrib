@@ -57,6 +57,116 @@ rtc_postgres_positive_limit() {
     [[ "$value" =~ ^[1-9][0-9]{0,5}$ ]] && ((10#$value <= maximum))
 }
 
+rtc_postgres_normalize_test_sizes() {
+    local size_list="${RTC_POSTGRES_TEST_SIZES-S,M}" size
+    local -a sizes=() normalized=()
+    if [[ ! "$size_list" =~ ^[SM](,[SM])*$ || ${#size_list} -gt 63 ]]; then
+        echo "Error: Invalid PostgreSQL test size list." >&2
+        return 1
+    fi
+    IFS=',' read -r -a sizes <<<"$size_list"
+    for size in "${sizes[@]}"; do
+        if [[ ! " ${normalized[*]} " == *" $size "* ]]; then
+            normalized+=("$size")
+        fi
+    done
+    (IFS=','; printf '%s\n' "${normalized[*]}")
+}
+
+rtc_postgres_cleanup_reserve_seconds() {
+    local value="${RTC_POSTGRES_CLEANUP_RESERVE_SECONDS-900}"
+    if ! rtc_postgres_positive_limit "$value" 900; then
+        echo "Error: Invalid PostgreSQL cleanup reserve." >&2
+        return 1
+    fi
+    printf '%s\n' "$value"
+}
+
+rtc_forward_command_signal() {
+    local signal="$1"
+    rtc_command_signal="$signal"
+    if [[ -n "${rtc_command_pid:-}" ]]; then
+        kill -s "$signal" "$rtc_command_pid" 2>/dev/null || true
+    fi
+}
+
+rtc_run_command() {
+    local timeout="" quiet=false stdout_file="" stderr_file="" output_file
+    local previous_int previous_term status=0 signal=""
+    while (($#)); do
+        case "$1" in
+            --timeout)
+                (($# >= 2)) || { echo "Error: --timeout requires a limit." >&2; return 1; }
+                timeout="$2"
+                shift 2
+                ;;
+            --quiet)
+                quiet=true
+                shift
+                ;;
+            --stdout)
+                (($# >= 2)) || { echo "Error: --stdout requires a file." >&2; return 1; }
+                stdout_file="$2"
+                shift 2
+                ;;
+            --stderr)
+                (($# >= 2)) || { echo "Error: --stderr requires a file." >&2; return 1; }
+                stderr_file="$2"
+                shift 2
+                ;;
+            *) break ;;
+        esac
+    done
+    if (($# == 0)) || { [[ -n "$timeout" ]] && ! rtc_postgres_positive_limit "$timeout" 999999; }; then
+        echo "Error: bounded command requires a command and a positive time limit." >&2
+        return 1
+    fi
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
+    previous_int="$(trap -p INT)"
+    previous_term="$(trap -p TERM)"
+    local rtc_command_pid="" rtc_command_signal=""
+    if [[ -n "$stdout_file" ]]; then
+        output_file="$stdout_file"
+    else
+        output_file="$(mktemp "${TMPDIR:-/tmp}/rtc-command-XXXXXX")" || return 1
+    fi
+    trap 'rtc_forward_command_signal INT' INT
+    trap 'rtc_forward_command_signal TERM' TERM
+    if [[ -n "$timeout" ]]; then
+        if [[ -n "$stderr_file" ]]; then
+            python3 "$script_dir/run-bounded-command.py" "$timeout" "$@" \
+                >"$output_file" 2>"$stderr_file" &
+        else
+            python3 "$script_dir/run-bounded-command.py" "$timeout" "$@" >"$output_file" &
+        fi
+    else
+        if [[ -n "$stderr_file" ]]; then
+            python3 "$script_dir/run-command-in-process-group.py" "$@" \
+                >"$output_file" 2>"$stderr_file" &
+        else
+            python3 "$script_dir/run-command-in-process-group.py" "$@" >"$output_file" &
+        fi
+    fi
+    rtc_command_pid=$!
+    if wait "$rtc_command_pid"; then status=0; else status=$?; fi
+    if [[ -n "$rtc_command_signal" ]]; then
+        wait "$rtc_command_pid" 2>/dev/null || true
+        signal="$rtc_command_signal"
+        if [[ "$signal" == INT ]]; then status=130; else status=143; fi
+    fi
+    rtc_command_pid=""
+    RTC_COMMAND_OUTPUT="$(<"$output_file")"
+    if [[ "$quiet" != true ]]; then cat -- "$output_file"; fi
+    [[ -n "$stdout_file" ]] || rm -f -- "$output_file"
+    if [[ -n "$previous_int" ]]; then eval "$previous_int"; else trap - INT; fi
+    if [[ -n "$previous_term" ]]; then eval "$previous_term"; else trap - TERM; fi
+    if [[ -n "$signal" ]]; then
+        kill -s "$signal" "$BASHPID" 2>/dev/null || true
+    fi
+    return "$status"
+}
+
 rtc_postgres_catalog_result() {
     python3 - "$1" "$2" "$3" <<'PY'
 import json
@@ -143,6 +253,24 @@ import json
 import re
 import sys
 
+# Azure error-code fields are provider-controlled; emit only known identifiers.
+SAFE_CODES = {
+    "AuthenticationFailed", "AuthorizationFailed", "BadRequest", "Conflict",
+    "FeatureNotSupported", "InsufficientPrivileges", "InternalServerError",
+    "InvalidAuthenticationToken", "InvalidParameterValue", "InvalidResourceLocation",
+    "InvalidServerName", "InvalidTemplateDeployment", "MissingSubscriptionRegistration",
+    "OperationNotAllowed", "OperationTimedOut", "OperationPreempted", "QuotaExceeded",
+    "RegionRestricted", "RequestDisallowedByPolicy", "ResourceDeploymentFailure",
+    "ResourceGroupNotFound", "ResourceNotFound", "ResourceTypeNotSupported",
+    "RetryableError", "ServerIsBusy", "ServiceUnavailable", "SkuNotAvailable",
+    "SubscriptionNotFound", "SubscriptionNotRegistered", "SubscriptionNotAuthorizedForFeature",
+    "TooManyRequests", "UnsupportedSku", "UnsupportedStorage", "UnsupportedTier",
+    "UnsupportedVersion",
+}
+
+def safe_code(value):
+    return value if isinstance(value, str) and value in SAFE_CODES else "UnknownError"
+
 with open(sys.argv[1], encoding="utf-8", errors="replace") as log:
     text = log.read()
 decoder = json.JSONDecoder()
@@ -155,9 +283,9 @@ def visit(value):
     elif isinstance(value, dict):
         code = value.get("code")
         children = [value[key] for key in ("error", "details", "innererror") if key in value]
-        if isinstance(code, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9]*", code):
-            codes.add(code)
-        elif code is not None or not children or "message" in value:
+        if code is not None:
+            codes.add(safe_code(code))
+        elif not children or "message" in value:
             codes.add("UnknownError")
         for child in children:
             visit(child)
@@ -176,7 +304,7 @@ while text.strip():
             pass
     line, _, text = text.partition("\n")
     match = re.fullmatch(r"\(([A-Za-z][A-Za-z0-9]*)\)(?:[ \t]+(.*))?", line.strip())
-    codes.add(match[1] if match else "UnknownError")
+    codes.add(safe_code(match[1]) if match else "UnknownError")
     if match:
         envelope = re.match(
             r"Code:[ \t]*([A-Za-z][A-Za-z0-9]*)[ \t]*\r?\n"
