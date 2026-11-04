@@ -189,12 +189,12 @@ for state in retained stale-generation unchanged-generation changed-deployment s
     }]}' >"$tmp/pods.json"
     jq -n --arg state "$state" '{items: [{
       metadata: {ownerReferences: [{kind: "Service", uid: (if $state == "wrong-service" then "other" else "service" end)}]},
-      endpoints: [
+      endpoints: ([
         {targetRef: {kind: "Pod", uid: "old-pod"}, addresses: ["10.0.0.1"], conditions: {ready: true}},
         {targetRef: {kind: "Pod", uid: "new-pod"}, addresses: ["10.0.0.2"],
           conditions: {ready: ($state == "ready-new-endpoint")}}
       ] + (if $state == "extra-endpoint" then
-        [{targetRef: {kind: "Pod", uid: "other"}, addresses: ["10.0.0.3"], conditions: {ready: true}}] else [] end)
+        [{targetRef: {kind: "Pod", uid: "other"}, addresses: ["10.0.0.3"], conditions: {ready: true}}] else [] end))
     }]}' >"$tmp/endpoints.json"
     if [[ "$state" == wrong-log ]]; then
         echo unrelated >"$tmp/init.log"
