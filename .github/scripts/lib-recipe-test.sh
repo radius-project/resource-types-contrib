@@ -477,7 +477,19 @@ rtc_assert_recipe_result() {
             rtc_assert_containers_result "$app_name" "$workspace_name"
             ;;
         Radius.Data/postgreSqlDatabases)
-            rtc_assert_postgresql_result "$app_name" "$workspace_name"
+            rtc_assert_postgresql_result "$app_name" "$workspace_name" || return 1
+            local kubernetes_namespace="${4:-}"
+            if [[ -z "$kubernetes_namespace" ]]; then
+                echo "Error: PostgreSQL readiness assertion requires the environment Kubernetes namespace." >&2
+                return 1
+            fi
+            if ! kubectl wait deployment \
+                -n "$kubernetes_namespace" \
+                -l "radapp.io/application=$app_name,radapp.io/resource=postgresclient" \
+                --for=condition=Available --timeout=180s; then
+                echo "Error: PostgreSQL prerequisite readiness assertion failed." >&2
+                return 1
+            fi
             ;;
         *)
             return 0

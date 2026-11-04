@@ -102,6 +102,7 @@ test-recipe-pack-entries-unit: ## Run fixture-based unit tests for all Recipe Pa
 	@node --test ./.github/scripts/tests/test-azure-test-diagnostics.js
 	@bash ./.github/scripts/tests/test-azure-diagnostics-integration.sh
 	@./.github/scripts/tests/test-mysql-transport.sh
+	@bash ./.github/scripts/tests/test-postgresql-settings.sh
 	@./.github/scripts/tests/test-recipe-test-lib.sh
 	@./.github/scripts/tests/test-test-direct-module-recipe.sh
 	@./.github/scripts/tests/test-test-all-direct-module-recipes.sh
@@ -117,6 +118,15 @@ test-azure-secret-inputs: ## Run Azure secret input tests in a temporary directo
 	test_dir=$$(mktemp -d "$${TMPDIR:-/tmp}/rtc-azure-secret-inputs-XXXXXX"); \
 	trap 'rm -rf "$$test_dir"' EXIT; \
 	cp -R Security/secrets/recipes/azure/terraform/. "$$test_dir/"; \
+	terraform -chdir="$$test_dir" init -backend=false -input=false; \
+	terraform -chdir="$$test_dir" test -no-color
+
+.PHONY: test-postgresql-inputs
+test-postgresql-inputs: ## Test PostgreSQL Kubernetes settings with a mock provider (requires Terraform 1.7+)
+	@set -eu; \
+	test_dir=$$(mktemp -d "$${TMPDIR:-/tmp}/rtc-postgresql-inputs-XXXXXX"); \
+	trap 'rm -rf "$$test_dir"' EXIT; \
+	cp -R Data/postgreSqlDatabases/recipes/kubernetes/terraform/. "$$test_dir/"; \
 	terraform -chdir="$$test_dir" init -backend=false -input=false; \
 	terraform -chdir="$$test_dir" test -no-color
 

@@ -16,7 +16,9 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `password` | string (`x-radius-sensitive`) | Required | The administrator password. Encrypted at rest, redacted on reads, and injected decrypted into the Recipe as `{{context.resource.properties.password}}`. |
 | `database` | string | Optional | The name of the database. Defaults to `postgres_db`. |
 | `size` | string (`S`, `M`, `L`) | Optional | The size of the PostgreSQL database. Defaults to `S`. The Recipe maps the size onto a concrete cloud SKU/tier. |
-| `initSql` | string | Optional | Optional SQL script executed on first initialization to create tables, indexes, and seed data. |
+| `initSql` | string (`x-radius-sensitive`) | Optional | SQL script for schemas, users, and seed data. Azure runs it after provisioning. Kubernetes runs it when the data directory is empty. See [Database initialization](#database-initialization). |
+| `extensions` | string array | Optional | Required PostgreSQL extensions, such as `pg_trgm` or `vector`. Defaults to `[]`. Azure allow-lists them; migrations create them. Kubernetes creates extensions that are included in its image. |
+| `serverSettings` | object of strings | Optional | PostgreSQL server parameter names and values, such as `{ log_min_duration_statement: '1000' }`. Defaults to `{}`. Invalid or unsupported settings fail deployment or server startup. Do not include credentials. |
 | `tls` | string (`required`, `optional`) | Optional | The requested transport policy for connections to the database server. Defaults to `required`. Use `optional`, which permits non-TLS connections, only when the server is not publicly reachable. See below for platform behavior and operator overrides. |
 | `host` | string | Read only | The host name used to connect to the database. Set from the Recipe module's output. |
 | `port` | integer | Optional | The TCP port used to connect to the database. Defaults to `5432`, the standard port every Recipe in this repository provisions. A Recipe that provisions the database on a different port overwrites this value from its own output. Setting it in an application definition changes only the value reported to connected containers, never the port the server listens on. |
@@ -27,7 +29,7 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 | Platform | Recipe Pack | Recipe source |
 | --- | --- | --- |
-| Azure | [`recipe-packs/azure-aks/azure-aks.bicep`](../../recipe-packs/azure-aks/azure-aks.bicep) | Direct module — Azure Verified Module `avm/res/db-for-postgre-sql/flexible-server` |
+| Azure | [`recipe-packs/azure-aks/azure-aks.bicep`](../../recipe-packs/azure-aks/azure-aks.bicep) | [`azure-postgresql.bicep`](recipes/azure/bicep/azure-postgresql.bicep), which wraps Azure Verified Module `avm/res/db-for-postgre-sql/flexible-server` |
 | Kubernetes | [`recipe-packs/kubernetes/default.bicep`](../../recipe-packs/kubernetes/default.bicep) | `ghcr.io/radius-project/kube-recipes/postgresqldatabases` |
 
 ## Using the resource type
@@ -37,6 +39,74 @@ Add a `postgreSqlDatabases` resource to your application and connect a container
 Because `tls` defaults to `required`, configure your PostgreSQL client for TLS — for example, by passing `ssl: { rejectUnauthorized: true }` to the Node.js `pg` driver. `tls` states the policy the application requests, and each Recipe honors it where the platform allows: the Azure Recipe enforces it on the flexible server, while the Kubernetes Recipe runs a PostgreSQL container that serves plaintext. Setting `required` does not enable TLS in that Kubernetes Recipe. A platform engineer can also pin the Azure server's transport policy to `ON` or `OFF`; the connection variable still reports the application's request. See [PostgreSQL transport policy](../../recipe-packs/azure-aks/README.md#postgresql-transport-policy) for precedence and public-network restrictions.
 
 Use `optional` only when the server is not publicly reachable. Non-TLS connections can expose administrator credentials and query traffic in transit. Private reachability does not encrypt traffic, so TLS remains preferred; keep it required with the Azure pack as written.
+
+## Extensions and server settings
+
+Declare application requirements on the database:
+
+```bicep
+extensions: [
+  'pg_trgm'
+  'vector'
+]
+serverSettings: {
+  log_min_duration_statement: '1000'
+}
+```
+
+Use lowercase extension names from the target platform's supported list.
+Azure maps `extensions` to `azure.extensions`. This permits extension creation;
+it does not run `CREATE EXTENSION` in each database. Your migrations or `initSql`
+must do that. Kubernetes runs quoted `CREATE EXTENSION IF NOT EXISTS` statements
+before `initSql`, when the data directory is empty. The default `postgres:16-alpine`
+image includes `pg_trgm`, but not `vector`. A missing extension fails startup;
+use an operator-supplied Recipe with an image that includes it. The Recipe does
+not download extension packages at database startup.
+
+On Azure, `postgreSqlServerConfigurations` overrides matching application
+settings. An operator `azure.extensions` entry replaces the app's extension
+allow-list, so it must include every extension the app needs. The `tls` and
+`extensions` properties take precedence over `serverSettings.require_secure_transport`
+and `serverSettings['azure.extensions']`; use the dedicated properties instead.
+Other settings pass to Azure unchanged. On Kubernetes, settings become separate
+`postgres -c name=value` arguments, without a shell. A Kubernetes `port` setting
+also changes the Service port and reported connection port.
+Azure settings that require a server restart still need an operator-managed
+restart; this Recipe does not grant itself permission to restart the server.
+
+## Database initialization
+
+`initSql` can create schemas, users, and seed rows. Radius encrypts this property
+and redacts it on reads. Pass scripts that contain credentials through a secure
+Bicep parameter, not a checked-in string.
+
+Azure runs the script against the requested database after the server, settings,
+and database are ready. The step uses `psql` with TLS and stops at the first SQL
+error. SQL results and error text are not printed because they can contain
+credentials. Failure stops the Recipe deployment. The Recipe does not wrap the
+script in a transaction: earlier statements can remain after a failure.
+
+**Make Azure scripts safe to run again.** A changed script or database name
+forces another run. Azure also removes deployment-script records after their
+retention period, so a later deployment can run unchanged SQL again. Use
+`IF NOT EXISTS`, upserts, or a migration tool. This is not an exactly-once
+migration service. Removing `initSql` does not undo database changes.
+
+Azure uses a temporary Container Instance and storage account. The deployment
+principal needs permission to create those resources and
+`Microsoft.Resources/deploymentScripts`; no extra managed identity is created.
+The stock Recipe uses public server access. Custom private-network Recipes must
+provide a script runner with database access. Large scripts are subject to
+Azure Container Instance environment-variable limits; use an application
+migration job for large data imports.
+
+Both Kubernetes Recipes mount init SQL from a Secret. They run it only when
+`PGDATA` is empty, after extension creation. With the default ephemeral storage,
+this can happen on every pod restart. With an existing persistent volume,
+changed SQL and new extensions do not run again; use application migrations.
+
+The shared test app checks extension creation, the server setting, and a seed
+row through a PostgreSQL client readiness probe on both platforms.
 
 ## Migrating Kubernetes consumers
 

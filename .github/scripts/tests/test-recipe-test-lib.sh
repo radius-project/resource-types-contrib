@@ -217,8 +217,13 @@ run_lib rtc_assert_recipe_result "Radius.Compute/containers" testapp myws >/dev/
     || fail "rtc_assert_recipe_result should pass when containers hosts differ"
 
 # ... and to the postgresql-specific assertion.
-run_lib rtc_assert_recipe_result "Radius.Data/postgreSqlDatabases" testapp myws >/dev/null \
+run_lib rtc_assert_recipe_result "Radius.Data/postgreSqlDatabases" testapp myws test-ns >/dev/null \
     || fail "rtc_assert_recipe_result should pass for a valid postgresql result"
+grep -q 'kubectl wait deployment -n test-ns -l radapp.io/application=testapp,radapp.io/resource=postgresclient' "$CALL_LOG" ||
+    fail "PostgreSQL assertions must wait for the real prerequisite probe"
+if KUBECTL_EXIT_CODE=1 run_lib rtc_assert_recipe_result "Radius.Data/postgreSqlDatabases" testapp myws test-ns >/dev/null 2>&1; then
+    fail "PostgreSQL readiness failures must fail the test"
+fi
 
 if PEER_HOST=host-a run_lib rtc_assert_recipe_result "Radius.Compute/containers" testapp myws >/dev/null; then
     fail "equal container hosts must fail"
@@ -236,7 +241,7 @@ for invalid_result in \
     '{"properties":{"host":"pg","port":"5432","database":"appdb"}}' \
     '{"properties":{"host":"pg","port":5432,"database":"wrong"}}' \
     '{"properties":{"host":"pg","port":5432,"database":"appdb","secrets":{}}}'; do
-    if POSTGRES_JSON="$invalid_result" run_lib rtc_assert_recipe_result "Radius.Data/postgreSqlDatabases" testapp myws >/dev/null; then
+    if POSTGRES_JSON="$invalid_result" run_lib rtc_assert_recipe_result "Radius.Data/postgreSqlDatabases" testapp myws test-ns >/dev/null; then
         fail "invalid PostgreSQL output must fail the real jq assertion"
     fi
 done

@@ -58,6 +58,9 @@ jobs:
       - name: Test Azure secret inputs
         run: make test-azure-secret-inputs
 
+      - name: Test PostgreSQL inputs
+        run: make test-postgresql-inputs
+
       - name: Run release automation tests
         run: make test-release-automation
 
@@ -113,6 +116,10 @@ jobs:
       - name: Validate MySQL Recipe result contract
         if: matrix.recipe == 'bicep'
         run: Data/mySqlDatabases/test/assert-recipe-result.sh
+
+      - name: Test Azure PostgreSQL recipe settings
+        if: matrix.recipe == 'bicep'
+        run: node --test .github/scripts/tests/test-postgresql-azure.js
 
       - name: Validate containerImages local context resolver
         if: matrix.recipe == 'terraform'

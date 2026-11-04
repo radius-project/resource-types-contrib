@@ -14,6 +14,13 @@ types:
             username: 'myadmin'
             // From a @secure() password parameter passed in via the CLI
             password: password
+            extensions: [
+              'pg_trgm'
+              'btree_gin'
+            ]
+            serverSettings: {
+              log_min_duration_statement: '1000'
+            }
           }
         }
       ```
@@ -82,12 +89,27 @@ types:
               description: "(Optional) The name of the database. Defaults to `postgres_db` if not provided."
             initSql:
               type: string
-              description: "(Optional) SQL script mounted into the PostgreSQL container's `/docker-entrypoint-initdb.d/` directory and executed whenever PGDATA is empty. With the default ephemeral storage this runs on every pod restart. If a PersistentVolumeClaim is used, the script runs only on the very first startup and subsequent changes to initSql are ignored on existing volumes. Limited to ~1 MiB. Useful for creating tables, indexes, and inserting seed data."
+              x-radius-sensitive: true
+              description: "(Optional) SQL script for schemas, users, and seed data. Encrypted by Radius. Azure runs it after server configuration and database creation, using a deployment script; it must be safe to run again. Kubernetes mounts it from a Secret and runs it when PGDATA is empty, after creating requested extensions. Changes do not run against existing Kubernetes volumes. Limited by platform script and environment-variable sizes."
             tls:
               type: string
               enum: ['required', 'optional']
               default: 'required'
               description: "(Optional) The requested transport policy for database connections. Configure your client using `CONNECTION_POSTGRESQL_TLS`. Defaults to `required`. Use `optional` only when the server is not publicly reachable; it permits connections without TLS."
+            extensions:
+              type: array
+              default: []
+              items:
+                type: string
+                minLength: 1
+                pattern: '^[a-z][a-z0-9_-]*$'
+              description: "(Optional) Required PostgreSQL extension names, such as pg_trgm or vector. Azure allow-lists them; application migrations must create them in each database. Kubernetes creates them on first database initialization; the container image must include each extension."
+            serverSettings:
+              type: object
+              default: {}
+              additionalProperties:
+                type: string
+              description: "(Optional) PostgreSQL server parameter names and string values. Azure operator settings override matching application settings. The extensions and tls properties control azure.extensions and require_secure_transport unless the operator overrides them. Kubernetes passes settings to postgres with -c; invalid or unavailable settings fail startup. Do not put credentials in this object."
             host:
               type: string
               description: "(Read Only) The host name used to connect to the database. Mapped from the recipe module's output."

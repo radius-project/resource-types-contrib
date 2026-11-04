@@ -26,8 +26,13 @@ var database = context.resource.properties.?database ?? 'postgres_db'
 var sizeValue = context.resource.properties.?size ?? 'S'
 var initSql = context.resource.properties.?initSql ?? ''
 var hasInitSql = initSql != ''
+var extensions = context.resource.properties.?extensions ?? []
+var hasInitScripts = hasInitSql || !empty(extensions)
+var extensionSql = join(map(extensions, name => 'CREATE EXTENSION IF NOT EXISTS "${replace(name, '"', '""')}";'), '\n')
+var serverSettings = context.resource.properties.?serverSettings ?? {}
+var serverArgs = flatten(map(items(serverSettings), setting => ['-c', '${setting.key}=${setting.value}']))
 var tag string = '16-alpine'
-var port = 5432
+var port = int(serverSettings.?port ?? '5432')
 var memory ={
   S: {
     memoryRequest: '512Mi'
@@ -49,18 +54,19 @@ var labels = {
 }  
 
 //////////////////////////////////////////
-// Init SQL ConfigMap (optional)
+// Init SQL Secret (optional)
 //////////////////////////////////////////
 
-resource initSqlConfigMap 'core/ConfigMap@v1' = if (hasInitSql) {
+resource initSqlSecret 'core/Secret@v1' = if (hasInitScripts) {
   metadata: {
     name: '${resourceName}-init-sql'
     namespace: namespace
     labels: labels
   }
-  data: {
-    '01-init.sql': initSql
-  }
+  stringData: union(
+    empty(extensions) ? {} : { '00-extensions.sql': extensionSql },
+    hasInitSql ? { '01-init.sql': initSql } : {}
+  )
 }
 
 //////////////////////////////////////////
@@ -112,6 +118,7 @@ resource postgresql 'apps/Deployment@v1' = {
             // This container is the running postgresql instance.
             name: 'postgres'
             image: 'postgres:${tag}'
+            args: concat(['postgres'], serverArgs)
             ports: [
               {
                 containerPort: port 
@@ -146,7 +153,7 @@ resource postgresql 'apps/Deployment@v1' = {
                 value: database
               }
             ]
-            volumeMounts: hasInitSql ? [
+            volumeMounts: hasInitScripts ? [
               {
                 name: 'init-sql'
                 mountPath: '/docker-entrypoint-initdb.d'
@@ -155,11 +162,11 @@ resource postgresql 'apps/Deployment@v1' = {
             ] : []
           }
         ]
-        volumes: hasInitSql ? [
+        volumes: hasInitScripts ? [
           {
             name: 'init-sql'
-            configMap: {
-              name: initSqlConfigMap!.metadata.name
+            secret: {
+              secretName: initSqlSecret!.metadata.name
             }
           }
         ] : []
@@ -207,8 +214,8 @@ output result object = {
       '/planes/kubernetes/local/namespaces/${svc.metadata.namespace}/providers/core/Service/${svc.metadata.name}'
       '/planes/kubernetes/local/namespaces/${postgresql.metadata.namespace}/providers/apps/Deployment/${postgresql.metadata.name}'
     ],
-    hasInitSql ? [
-      '/planes/kubernetes/local/namespaces/${initSqlConfigMap!.metadata.namespace}/providers/core/ConfigMap/${initSqlConfigMap!.metadata.name}'
+    hasInitScripts ? [
+      '/planes/kubernetes/local/namespaces/${initSqlSecret!.metadata.namespace}/providers/core/Secret/${initSqlSecret!.metadata.name}'
     ] : []
   )
   values: {

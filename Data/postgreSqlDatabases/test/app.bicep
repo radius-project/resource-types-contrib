@@ -50,7 +50,84 @@ resource postgresql 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
     database: 'appdb'
     username: 'radadmin'
     password: password
+    extensions: [
+      'pg_trgm'
+    ]
+    serverSettings: {
+      log_min_duration_statement: '1000'
+    }
+    initSql: '''
+CREATE SCHEMA IF NOT EXISTS radius_test;
+CREATE TABLE IF NOT EXISTS radius_test.seed (id integer PRIMARY KEY, value text NOT NULL);
+INSERT INTO radius_test.seed VALUES (1, 'ready') ON CONFLICT (id) DO UPDATE SET value = EXCLUDED.value;
+'''
     // `tls` is omitted so this test exercises the schema default (`required`).
+  }
+}
+
+resource postgresclient 'Radius.Compute/containers@2025-08-01-preview' = {
+  name: 'postgresclient'
+  properties: {
+    environment: environment
+    application: app.id
+    containers: {
+      client: {
+        image: 'postgres:16-alpine'
+        command: [
+          '/bin/sh'
+          '-c'
+        ]
+        args: [
+          'while true; do sleep 3600; done'
+        ]
+        env: {
+          PGHOST: {
+            value: postgresql.properties.host
+          }
+          PGPORT: {
+            value: string(postgresql.properties.port)
+          }
+          PGDATABASE: {
+            value: 'appdb'
+          }
+          PGUSER: {
+            value: 'radadmin'
+          }
+          PGSSLMODE: {
+            value: 'prefer'
+          }
+          PGCONNECT_TIMEOUT: {
+            value: '5'
+          }
+          PGPASSWORD: {
+            valueFrom: {
+              secretKeyRef: {
+                secretName: dbCreds.name
+                key: 'password'
+              }
+            }
+          }
+        }
+        readinessProbe: {
+          exec: {
+            command: [
+              '/bin/sh'
+              '-c'
+              loadTextContent('verify-database.sh')
+            ]
+          }
+          periodSeconds: 5
+          timeoutSeconds: 10
+          failureThreshold: 30
+        }
+      }
+    }
+    connections: {
+      postgresql: {
+        source: postgresql.id
+        disableDefaultEnvVars: true
+      }
+    }
   }
 }
 

@@ -182,6 +182,10 @@ jobs:
             run: ./.github/scripts/publish-bicep-recipe.sh mysqldatabases Data/mySqlDatabases/recipes/kubernetes/bicep/kubernetes-mysql.bicep
           - name: Publish postgresqldatabases
             run: ./.github/scripts/publish-bicep-recipe.sh postgresqldatabases Data/postgreSqlDatabases/recipes/kubernetes/bicep/kubernetes-postgresql.bicep
+          - name: Publish postgresqldatabases-azure
+            env:
+              REGISTRY: ghcr.io/radius-project/azure-aks-recipes
+            run: ./.github/scripts/publish-bicep-recipe.sh postgresqldatabases Data/postgreSqlDatabases/recipes/azure/bicep/azure-postgresql.bicep
           - name: Publish rediscaches
             run: ./.github/scripts/publish-bicep-recipe.sh rediscaches Data/redisCaches/recipes/kubernetes/bicep/kubernetes-redis.bicep
           - name: Publish rabbitmq
