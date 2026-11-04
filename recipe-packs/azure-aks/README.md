@@ -48,6 +48,29 @@ Defaults are applied when a resource is written, not when a Resource Type is reg
 | `Radius.Compute/routes` | Bicep | `ghcr.io/radius-project/kube-recipes/routes` |
 | `Radius.Compute/containerImages` | Bicep | `ghcr.io/radius-project/kube-recipes/containerimages` |
 
+### Redis connection credentials
+
+The Redis Recipe enables TLS and access-key authentication. It maps three
+secure AVM outputs into the managed Radius secret:
+
+| Secret key | AVM output | Client format |
+| --- | --- | --- |
+| `url` | `primaryConnectionString` | `rediss://:<key>@<host>:<port>` |
+| `accessKey` | `primaryAccessKey` | Password for a TLS client that uses separate host and port values. |
+| `connectionString` | `primaryStackExchangeRedisConnectionString` | StackExchange.Redis connection string, with TLS settings. |
+
+These are the output names and formats in the pinned
+[`redis-enterprise:0.5.1` module](https://github.com/Azure/bicep-registry-modules/blob/avm/res/cache/redis-enterprise/0.5.1/avm/res/cache/redis-enterprise/database/main.bicep).
+Do not treat `primaryConnectionString` as the StackExchange.Redis format.
+Use `secretKeyRef` to bind the key each client needs. Connected containers
+that support secret projection also receive `CONNECTION_<NAME>_URL`,
+`CONNECTION_<NAME>_ACCESSKEY`, and `CONNECTION_<NAME>_CONNECTIONSTRING`.
+
+To update an existing deployment, register a `Radius.Data` namespace that
+declares `secrets.connectionString`, deploy this pack, then redeploy the
+application and its connected containers. The Kubernetes Redis Recipe
+still returns only `url` and needs no password.
+
 ### MySQL versions
 
 The `Radius.Data/mySqlDatabases` Recipe preserves the requested MySQL major version. The Resource Type's `8.0` value maps to the Azure module's `8.0.21` version token; `5.7` and `8.4` map directly to the corresponding Azure versions.
