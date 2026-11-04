@@ -16,6 +16,7 @@ rrttest
 SLSA
 tmpfs
 trgm
+urandom
 vnet
 westus
 ededed
