@@ -977,6 +977,10 @@ if grep -q '^rad deploy ' "$CALL_LOG"; then
 fi
 
 # Exercise the actual single-entry caller with the same mock cloud commands.
+grep -q "^param createExtensions string = 'false'$" "$POSTGRES_TEST_APP_BICEP" ||
+    fail "the extension test switch must accept string values from rad deploy"
+grep -q "^@allowed(\['true', 'false'\])$" "$POSTGRES_TEST_APP_BICEP" ||
+    fail "the extension test switch must allow only true and false"
 run_postgres_entry() {
     (
         cd "$REPO_ROOT"

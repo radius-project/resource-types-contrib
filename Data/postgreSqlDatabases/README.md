@@ -109,8 +109,9 @@ The shared test app checks extension creation, the server setting, and a seed
 row through a PostgreSQL client readiness probe on both platforms.
 On Kubernetes, the probe only checks that the Recipe created the extension.
 Azure test runners pass `createExtensions=true` so the client tests the server
-allow-list with `CREATE EXTENSION`. Older released test apps without the client
-keep their existing result checks.
+allow-list with `CREATE EXTENSION`. The test switch accepts the strings `true`
+and `false` because `rad deploy --parameters` passes string values.
+Older released test apps without the client keep their existing result checks.
 
 ## Migrating Kubernetes consumers
 

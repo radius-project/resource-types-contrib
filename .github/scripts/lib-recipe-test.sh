@@ -766,7 +766,7 @@ rtc_deploy_and_assert_test_app() {
     fi
     params+=(--parameters "applicationName=$app_name")
     if [[ "$resource_type" == Radius.Data/postgreSqlDatabases && "${RTC_TEST_PLATFORM:-}" == azure ]] &&
-        grep -qE '^[[:space:]]*param[[:space:]]+createExtensions[[:space:]]+bool([[:space:]]|$)' "$test_file"; then
+        grep -qE '^[[:space:]]*param[[:space:]]+createExtensions[[:space:]]+string([[:space:]]|$)' "$test_file"; then
         params+=(--parameters createExtensions=true)
     fi
 
