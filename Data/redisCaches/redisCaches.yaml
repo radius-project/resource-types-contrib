@@ -59,11 +59,14 @@ types:
       The Azure Recipe also returns `connectionString`, which injects
       `CONNECTION_REDIS_CONNECTIONSTRING` for StackExchange.Redis clients.
       Its `url` key is a `rediss://` URL, not a StackExchange.Redis connection string.
+      The Azure URL contains the raw access key without percent-encoding.
+      Prefer host, port, and `accessKey` with TLS. If a client requires a URL,
+      construct it at runtime and percent-encode only the password component.
 
       For custom, older, or mixed-version Kubernetes deployments, bind the key
       explicitly with `secretKeyRef`, using `cache.properties.secrets.name` as the
-      `secretName`. Use `url` for a client that parses a connection URL, or
-      `accessKey` for a client that takes host, port, and password separately:
+      `secretName`. Use `accessKey` for a client that takes host, port, and
+      password separately. Enable TLS when connecting to Azure:
 
       ```bicep
       env: {
@@ -124,7 +127,7 @@ types:
                 url:
                   type: string
                   readOnly: true
-                  description: "(Read Only) The Redis connection URL, delivered via the managed secret. The Azure Recipe maps `primaryConnectionString`, a TLS URL in the form `rediss://:<access-key>@<host>:<port>`. The Kubernetes Recipe returns `redis://<host>:<port>` without a password."
+                  description: "(Read Only) The Redis connection URL, delivered via the managed secret. The Azure Recipe maps `primaryConnectionString` as `rediss://:<access-key>@<host>:<port>` without percent-encoding the key. Prefer separate host, port, and accessKey values with TLS, or construct a URL at runtime with a percent-encoded password. The Kubernetes Recipe returns `redis://<host>:<port>` without a password."
                 accessKey:
                   type: string
                   readOnly: true
@@ -132,5 +135,5 @@ types:
                 connectionString:
                   type: string
                   readOnly: true
-                  description: "(Read Only) The StackExchange.Redis connection string, including the access key and TLS settings. The Azure Recipe maps this key from `primaryStackExchangeRedisConnectionString`; delivered via the managed secret. Use `url` for clients that require a redis:// or rediss:// URL. The Kubernetes Recipe does not map this key."
+                  description: "(Read Only) The StackExchange.Redis connection string, including the access key and TLS settings. The Azure Recipe maps this key from `primaryStackExchangeRedisConnectionString`; delivered via the managed secret. For clients that require a URL, construct one from host, port, and accessKey with a percent-encoded password. The Kubernetes Recipe does not map this key."
           required: [environment]

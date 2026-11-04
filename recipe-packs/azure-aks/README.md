@@ -62,6 +62,10 @@ secure AVM outputs into the managed Radius secret:
 These are the output names and formats in the pinned
 [`redis-enterprise:0.5.1` module](https://github.com/Azure/bicep-registry-modules/blob/avm/res/cache/redis-enterprise/0.5.1/avm/res/cache/redis-enterprise/database/main.bicep).
 Do not treat `primaryConnectionString` as the StackExchange.Redis format.
+Its access key is not percent-encoded, so the raw URL is not safe for all
+URI parsers. Prefer `host`, `port`, and the secret `accessKey` with TLS.
+If a client requires a URL, construct it at runtime with a URL builder or
+percent-encode only the password component. Do not encode the whole URL.
 Use `secretKeyRef` to bind the key each client needs. Connected containers
 that support secret projection also receive `CONNECTION_<NAME>_URL`,
 `CONNECTION_<NAME>_ACCESSKEY`, and `CONNECTION_<NAME>_CONNECTIONSTRING`.

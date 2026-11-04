@@ -21,7 +21,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 
 | Key | Description | Mapped by |
 | --- | --- | --- |
-| `url` | Full connection URL including the access key, for clients that parse one. | All Recipes. |
+| `url` | Redis connection URL, with an access key when required. Azure returns the raw key without percent-encoding; see the client guidance below. | All Recipes. |
 | `accessKey` | The access key on its own, for clients that take host, port, and password separately — it is the password such a client authenticates with. | Recipes that provision an authenticated cache. The in-cluster Kubernetes Recipe provisions a cache with no credential and does not map this key. |
 | `connectionString` | StackExchange.Redis connection string with the access key and TLS settings. This is not a Redis URL. | Azure Recipe only. |
 
@@ -32,11 +32,21 @@ maps `primaryAccessKey` to `accessKey`, and maps
 `primaryStackExchangeRedisConnectionString` to `connectionString`.
 TLS and access-key authentication are enabled.
 
-Use `url` for Spring Data Redis, ioredis, redis-rb, and other URL clients.
-Use `host`, `port`, and the secret `accessKey` for clients that accept a
-separate password; enable TLS on Azure. Use `connectionString` for
-StackExchange.Redis. Bind each secret with `secretKeyRef`; do not put its
-value in application properties or logs.
+For Azure, prefer `host`, `port`, and the secret `accessKey` as a separate
+password, with TLS enabled. The AVM output puts the raw access key in `url`;
+it does not percent-encode characters such as `/`, `+`, and `=`.
+Some URI parsers cannot read that value correctly.
+
+If a client requires a URL, construct it at runtime from `host`, `port`,
+and `accessKey`. Use a URL builder or percent-encode the password component
+before placing it in `rediss://:<encoded-password>@<host>:<port>`. Encode
+only the password, not the whole URL. Do not pass the raw Azure `url`
+directly to Spring Data Redis, ioredis, redis-rb, or another URI-parsing
+client without checking its parsing rules. The Kubernetes `url` has no
+password and needs no credential encoding.
+
+Use `connectionString` for StackExchange.Redis. Bind each secret with
+`secretKeyRef`; do not put its value in application properties or logs.
 
 ## Recipe Packs
 
@@ -55,6 +65,8 @@ The Azure Recipe also injects `CONNECTION_REDIS_CONNECTIONSTRING` for
 StackExchange.Redis clients. The test app checks the URL with `redis-cli`.
 Azure Recipe Pack tests also check the URL format, the StackExchange.Redis
 format, and a TLS connection with the separate access key.
+The URL probe checks `redis-cli`; it does not prove that other clients can
+parse the raw Azure URL.
 
 To run this check against an existing Azure Environment with the updated
 namespace and Recipe Pack:

@@ -25,10 +25,14 @@ fail() {
 
 case "$REDIS_PLATFORM" in
     azure)
-        test -n "${REDIS_ACCESS_KEY:-}" || fail "access key is missing"
+        # Braced shell expansions are also parsed as Terraform interpolation.
+        REDIS_ACCESS_KEY=$(printenv REDIS_ACCESS_KEY) || fail "access key is missing"
+        test -n "$REDIS_ACCESS_KEY" || fail "access key is missing"
+        REDIS_CONNECTION_STRING=$(printenv REDIS_CONNECTION_STRING) ||
+            fail "StackExchange.Redis connection string is missing"
         test "$REDIS_URL" = "rediss://:$REDIS_ACCESS_KEY@$REDIS_HOST:$REDIS_PORT" ||
             fail "URL must contain the access key and use TLS"
-        test "${REDIS_CONNECTION_STRING:-}" = "$REDIS_HOST:$REDIS_PORT,password=$REDIS_ACCESS_KEY,ssl=True,abortConnect=False" ||
+        test "$REDIS_CONNECTION_STRING" = "$REDIS_HOST:$REDIS_PORT,password=$REDIS_ACCESS_KEY,ssl=True,abortConnect=False" ||
             fail "StackExchange.Redis connection string is invalid"
         pong=$(REDISCLI_AUTH="$REDIS_ACCESS_KEY" timeout 4 redis-cli --no-auth-warning \
             --tls -h "$REDIS_HOST" -p "$REDIS_PORT" PING 2>/dev/null) ||

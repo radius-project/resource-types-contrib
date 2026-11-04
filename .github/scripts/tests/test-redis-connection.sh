@@ -63,10 +63,12 @@ reject() {
 }
 
 reject REDIS_ACCESS_KEY=
+reject -u REDIS_ACCESS_KEY
 reject REDIS_URL="$REDIS_CONNECTION_STRING"
 reject REDIS_URL="redis://:$REDIS_ACCESS_KEY@$REDIS_HOST:$REDIS_PORT"
 reject REDIS_URL="rediss://:wrong@$REDIS_HOST:$REDIS_PORT"
 reject REDIS_CONNECTION_STRING=
+reject -u REDIS_CONNECTION_STRING
 reject REDIS_CONNECTION_STRING="$REDIS_URL"
 reject FAIL_ACCESS_KEY=1
 reject FAIL_URL=1
@@ -85,5 +87,8 @@ for mapping in "accessKey: 'primaryAccessKey'" "url: 'primaryConnectionString'" 
 done
 grep -Fq "loadTextContent('verify-connection.sh')" "$REPO_ROOT/Data/redisCaches/test/app.bicep" ||
     fail "the deployed test must run the checked connection probe"
+if grep -Fq "\${" "$probe"; then
+    fail "the embedded probe must not contain Terraform interpolation sequences"
+fi
 
 echo "Redis connection tests passed"
