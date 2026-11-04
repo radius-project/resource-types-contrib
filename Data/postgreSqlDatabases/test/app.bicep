@@ -45,7 +45,7 @@ resource dbCreds 'Radius.Security/secrets@2025-08-01-preview' = {
   }
 }
 
-resource postgresql 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
+resource postgresql 'postgreSqlDatabases:Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
   name: 'postgresql'
   properties: {
     environment: environment

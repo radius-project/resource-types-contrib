@@ -40,7 +40,7 @@ if len(re.findall(r"(?m)^[ \t]*param applicationName string\b", text)) != 1:
     fail("expected one applicationName string parameter")
 
 resource_pattern = re.compile(
-    r"(?m)^resource[ \t]+postgresql[ \t]+'Radius\.Data/postgreSqlDatabases@[A-Za-z0-9-]+'[ \t]*=[ \t]*\{"
+    r"(?m)^resource[ \t]+postgresql[ \t]+'(?:[A-Za-z_][A-Za-z0-9_]*:)?Radius\.Data/postgreSqlDatabases@[A-Za-z0-9-]+'[ \t]*=[ \t]*\{"
 )
 resources = list(resource_pattern.finditer(text))
 if len(resources) != 1:

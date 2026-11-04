@@ -31,7 +31,11 @@ root = pathlib.Path(sys.argv[1])
 expected = (root / "released source's/verify-database.sh").read_bytes()
 for relative in ("release candidate/app.bicep", "deployment/app.bicep"):
     template = root / relative
-    references = re.findall(r"loadTextContent\('((?:[^'\\]|\\.)*)'\)", template.read_text(encoding="utf-8"))
+    text = template.read_text(encoding="utf-8")
+    assert re.search(r"resource postgresql 'postgreSqlDatabases:Radius\.Data/postgreSqlDatabases@", text), (
+        f"PostgreSQL must select its local schema explicitly in {template}"
+    )
+    references = re.findall(r"loadTextContent\('((?:[^'\\]|\\.)*)'\)", text)
     assert len(references) == 1, f"Expected one probe file reference in {template}"
     file_path = references[0].replace("\\'", "'").replace("\\\\", "\\")
     loaded = (template.parent / file_path).resolve()
