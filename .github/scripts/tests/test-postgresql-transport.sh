@@ -78,6 +78,8 @@ echo "PostgreSQL transport probe tests passed."
 
 sed -n '/^settle_deployment()/,/^}/p; /^wait_for_certificate_failure()/,/^}/p' \
     "$root/Data/postgreSqlDatabases/test/test-kubernetes.sh" >"$tmp/lifecycle-functions"
+sed -n '/^capture_update_baseline()/,/^}/p; /^assert_old_server()/,/^}/p; /^wait_for_failed_update()/,/^}/p; /^probe_old_server()/,/^}/p' \
+    "$root/Data/postgreSqlDatabases/test/test-kubernetes.sh" >>"$tmp/lifecycle-functions"
 # shellcheck source=/dev/null
 source "$tmp/lifecycle-functions"
 export OBSERVER_FIXTURE="$tmp"
@@ -87,6 +89,22 @@ case "$1 $2" in
     "get deployment") cat "$OBSERVER_FIXTURE/observed-deployment.json" ;;
     "get replicasets") cat "$OBSERVER_FIXTURE/replicasets.json" ;;
     "get pods") cat "$OBSERVER_FIXTURE/pods.json" ;;
+    "get pod") cat "$OBSERVER_FIXTURE/old-pod.json.fixture" ;;
+    "get service") cat "$OBSERVER_FIXTURE/service.json" ;;
+    "get endpointslices") cat "$OBSERVER_FIXTURE/endpoints.json" ;;
+    "cp "*) echo cp >>"$OBSERVER_FIXTURE/probe-calls" ;;
+    "exec "*)
+        if [[ "$*" == *sha256sum* ]]; then
+            sha256sum "$OBSERVER_FIXTURE/ca.crt"
+        else
+            echo sql >>"$OBSERVER_FIXTURE/probe-calls"
+            [[ "${SQL_FAIL:-0}" != 1 ]] || exit 1
+            if [[ "${POST_SQL_RESTART:-0}" == 1 ]]; then
+                jq '.status.containerStatuses[0].restartCount = 1' "$OBSERVER_FIXTURE/healthy-old-pod.json" \
+                    >"$OBSERVER_FIXTURE/old-pod.json.fixture"
+            fi
+            printf '%s\n' "${SQL_RESULT:-f|10.0.0.1}"
+        fi ;;
     "logs "*) cat "$OBSERVER_FIXTURE/init.log" ;;
     *) echo "Error: unexpected Kubernetes observation: $*" >&2; exit 1 ;;
 esac
@@ -129,6 +147,123 @@ for state in failed-init stale-generation ready wrong-revision wrong-owner delet
         exit 1
     fi
 done
+export app_name=fixture hostname=postgresql.isolated.svc.cluster.local
+cat >"$tmp/update-baseline.json" <<'EOF'
+{"deployment":"deployment","generation":1,"revision":1,"replicaSet":"old-set",
+ "pod":"old-pod","podName":"old-pod-name","ip":"10.0.0.1","restarts":0,"service":"service"}
+EOF
+for state in retained stale-generation unchanged-generation changed-deployment same-revision missing-revision wrong-owner \
+    changed-old-set changed-old-pod deleting-old unready-old restarted-old extra-endpoint wrong-service \
+    ready-new ready-new-endpoint deleting-new image-pull wrong-log; do
+    jq -n --arg state "$state" '{
+      metadata: {uid: (if $state == "changed-deployment" then "unrelated" else "deployment" end),
+        generation: (if $state == "unchanged-generation" then 1 else 2 end),
+        annotations: {"deployment.kubernetes.io/revision":
+          (if $state == "same-revision" then "1" else "2" end)}},
+      status: {observedGeneration: (if $state == "stale-generation" then 1 else 2 end)}
+    }' >"$tmp/observed-deployment.json"
+    jq -n --arg state "$state" '{items: [
+      {metadata: {uid: (if $state == "changed-old-set" then "other-set" else "old-set" end),
+        ownerReferences: [{uid: "deployment", controller: true}],
+        annotations: {"deployment.kubernetes.io/revision": "1"}}},
+      {metadata: {uid: "new-set",
+        ownerReferences: [{uid: (if $state == "wrong-owner" then "unrelated" else "deployment" end), controller: true}],
+        annotations: {"deployment.kubernetes.io/revision":
+          (if $state == "missing-revision" then "3" else "2" end)}}}
+    ]}' >"$tmp/replicasets.json"
+    jq -n --arg state "$state" '{
+      metadata: {name: "old-pod-name", uid: (if $state == "changed-old-pod" then "other-pod" else "old-pod" end),
+        deletionTimestamp: (if $state == "deleting-old" then "now" else null end),
+        ownerReferences: [{uid: "old-set", controller: true}]},
+      status: {podIP: "10.0.0.1", conditions: [{type: "Ready",
+        status: (if $state == "unready-old" then "False" else "True" end)}],
+        containerStatuses: [{name: "postgres", ready: true,
+          restartCount: (if $state == "restarted-old" then 1 else 0 end)}]}
+    }' >"$tmp/old-pod.json.fixture"
+    jq -n --slurpfile old "$tmp/old-pod.json.fixture" --arg state "$state" '{items: [$old[0], {
+      metadata: {name: "new-pod-name", uid: "new-pod", ownerReferences: [{uid: "new-set", controller: true}],
+        deletionTimestamp: (if $state == "deleting-new" then "now" else null end)},
+      status: {conditions: [{type: "Ready", status: (if $state == "ready-new" then "True" else "False" end)}],
+        initContainerStatuses: [{name: "prepare-tls", restartCount: 0,
+          state: {waiting: {reason: (if $state == "image-pull" then "ImagePullBackOff" else "CrashLoopBackOff" end)}}}]}
+    }]}' >"$tmp/pods.json"
+    jq -n --arg state "$state" '{items: [{
+      metadata: {ownerReferences: [{kind: "Service", uid: (if $state == "wrong-service" then "other" else "service" end)}]},
+      endpoints: [
+        {targetRef: {kind: "Pod", uid: "old-pod"}, addresses: ["10.0.0.1"], conditions: {ready: true}},
+        {targetRef: {kind: "Pod", uid: "new-pod"}, addresses: ["10.0.0.2"],
+          conditions: {ready: ($state == "ready-new-endpoint")}}
+      ] + (if $state == "extra-endpoint" then
+        [{targetRef: {kind: "Pod", uid: "other"}, addresses: ["10.0.0.3"], conditions: {ready: true}}] else [] end)
+    }]}' >"$tmp/endpoints.json"
+    if [[ "$state" == wrong-log ]]; then
+        echo unrelated >"$tmp/init.log"
+    else
+        echo 'Error: PostgreSQL TLS Secret postgresql-tls contains an invalid certificate/key pair.' >"$tmp/init.log"
+    fi
+    if wait_for_failed_update >"$tmp/observer.log" 2>&1; then
+        [[ "$state" == retained ]] || { echo "Error: Failed-update observer accepted $state." >&2; exit 1; }
+        [[ "$failed_pod" == new-pod-name && "$failed_pod_uid" == new-pod ]]
+        cp "$tmp/old-pod.json.fixture" "$tmp/healthy-old-pod.json"
+        cp "$tmp/endpoints.json" "$tmp/healthy-endpoints.json"
+    elif [[ "$state" == retained ]]; then
+        cat "$tmp/observer.log" >&2
+        exit 1
+    fi
+done
+cp "$tmp/healthy-old-pod.json" "$tmp/old-pod.json.fixture"
+cp "$tmp/healthy-endpoints.json" "$tmp/endpoints.json"
+echo '{"metadata":{"uid":"service"}}' >"$tmp/service.json"
+jq -n --slurpfile old "$tmp/healthy-old-pod.json" '{items:$old}' >"$tmp/pods.json"
+cp "$tmp/update-baseline.json" "$tmp/baseline.fixture"
+for strategy in percentage integer unavailable no-surge multiple-replicas recreate; do
+    jq -n --arg strategy "$strategy" '{
+      metadata: {uid:"deployment",generation:1,annotations:{"deployment.kubernetes.io/revision":"1"}},
+      status: {observedGeneration:1},
+      spec: {replicas:(if $strategy == "multiple-replicas" then 2 else 1 end),
+        strategy: {type:(if $strategy == "recreate" then "Recreate" else "RollingUpdate" end),
+          rollingUpdate:{
+            maxUnavailable:(if $strategy == "unavailable" then 1 elif $strategy == "integer" then 0 else "25%" end),
+            maxSurge:(if $strategy == "no-surge" then "0%" elif $strategy == "integer" then 1 else "25%" end)}}}
+    }' >"$tmp/observed-deployment.json"
+    if capture_update_baseline >"$tmp/strategy.log" 2>&1; then
+        [[ "$strategy" == percentage || "$strategy" == integer ]] || {
+            echo "Error: Baseline accepted unsupported rolling-update strategy $strategy." >&2
+            exit 1
+        }
+    elif [[ "$strategy" == percentage || "$strategy" == integer ]]; then
+        cat "$tmp/strategy.log" >&2
+        exit 1
+    fi
+done
+cp "$tmp/baseline.fixture" "$tmp/update-baseline.json"
+echo public-test-ca >"$tmp/ca.crt"
+echo '{"items":[{"metadata":{"name":"ready-client"},"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}' >"$tmp/pods.json"
+probe_old_server disable f
+SQL_RESULT='t|10.0.0.1' probe_old_server verify-full t
+for result in 'f|10.0.0.2' 't|10.0.0.1'; do
+    if SQL_RESULT="$result" probe_old_server disable f; then
+        echo "Error: Failed-update probe accepted incorrect server/transport attribution." >&2
+        exit 1
+    fi
+done
+if SQL_FAIL=1 probe_old_server disable f; then
+    echo "Error: Failed-update probe accepted an SQL error." >&2
+    exit 1
+fi
+if POST_SQL_RESTART=1 probe_old_server disable f; then
+    echo "Error: Failed-update probe accepted a Pod restart during SQL." >&2
+    exit 1
+fi
+jq '.status.containerStatuses[0].restartCount = 1' "$tmp/healthy-old-pod.json" >"$tmp/old-pod.json.fixture"
+if probe_old_server disable f; then
+    echo "Error: Failed-update probe accepted an old Pod restart." >&2
+    exit 1
+fi
+[[ "$(grep -c '^cp$' "$tmp/probe-calls")" == 7 ]]
+[[ "$(grep -c '^sql$' "$tmp/probe-calls")" == 6 ]]
+echo "PostgreSQL failed-update observer and Service SQL attribution tests passed."
+
 export deployment_pid=""
 for outcome in success terminal-error timeout killed unknown; do
     deployment_pending=true

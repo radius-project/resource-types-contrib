@@ -330,3 +330,204 @@ for failure in partial malformed; do
     kubectl delete configmap -n "$namespace" -l "radapp.io/application=$app_name"
 done
 echo "PostgreSQL $recipe_kind certificate failure checks passed."
+
+capture_update_baseline() {
+    kubectl get deployment postgresql -n "$namespace" -o json >"$tmp/update-deployment.json" || return 1
+    kubectl get pods -n "$namespace" -l radapp.io/resource=postgresql -o json >"$tmp/update-pods.json" || return 1
+    kubectl get service postgresql -n "$namespace" -o json >"$tmp/update-service.json" || return 1
+    jq -e --slurpfile pods "$tmp/update-pods.json" --slurpfile service "$tmp/update-service.json" '
+      def count($replicas; $round):
+        if type == "number" then .
+        elif endswith("%") then (rtrimstr("%") | tonumber) * $replicas / 100 |
+          if $round == "up" then ceil else floor end
+        else tonumber end;
+      select(.spec.replicas == 1 and .spec.strategy.type == "RollingUpdate") |
+      select((.spec.strategy.rollingUpdate.maxUnavailable | count(1; "down")) == 0 and
+             (.spec.strategy.rollingUpdate.maxSurge | count(1; "up")) >= 1) |
+      select(.status.observedGeneration == .metadata.generation) |
+      select($pods[0].items | length == 1) |
+      $pods[0].items[0] as $pod |
+      {deployment: .metadata.uid, generation: .metadata.generation,
+       revision: (.metadata.annotations["deployment.kubernetes.io/revision"] | tonumber),
+       pod: $pod.metadata.uid, podName: $pod.metadata.name, ip: $pod.status.podIP,
+       restarts: ($pod.status.containerStatuses[] | select(.name == "postgres") | .restartCount),
+       replicaSet: ($pod.metadata.ownerReferences[] | select(.controller == true) | .uid),
+       service: $service[0].metadata.uid}
+    ' "$tmp/update-deployment.json" >"$tmp/update-baseline.json" || {
+        echo "Error: Failed-update test requires one replica and a RollingUpdate allowing surge with zero unavailable Pods." >&2
+        return 1
+    }
+    assert_old_server || return 1
+    echo "Failed-update baseline (object identities and serving address):"
+    jq -c . "$tmp/update-baseline.json"
+}
+
+assert_old_server() {
+    local pod_name
+    pod_name="$(jq -er .podName "$tmp/update-baseline.json")" || return 1
+    kubectl get pod "$pod_name" -n "$namespace" -o json >"$tmp/old-pod.json" || return 1
+    kubectl get endpointslices -n "$namespace" -l kubernetes.io/service-name=postgresql \
+        -o json >"$tmp/update-endpoints.json" || return 1
+    jq -e --slurpfile baseline "$tmp/update-baseline.json" '
+      $baseline[0] as $b |
+      .metadata.uid == $b.pod and .metadata.deletionTimestamp == null and
+      .status.podIP == $b.ip and
+      any(.metadata.ownerReferences[]?; .uid == $b.replicaSet and .controller == true) and
+      any(.status.conditions[]?; .type == "Ready" and .status == "True") and
+      any(.status.containerStatuses[]?; .name == "postgres" and .ready == true and .restartCount == $b.restarts)
+    ' "$tmp/old-pod.json" >/dev/null || return 1
+    jq -e --slurpfile baseline "$tmp/update-baseline.json" '
+      $baseline[0] as $b |
+      (.items | length > 0) and
+      all(.items[]; any(.metadata.ownerReferences[]?; .uid == $b.service and .kind == "Service")) and
+      ([.items[].endpoints[]? | select(.conditions.ready == true)] |
+       length == 1 and all(.[];
+         .targetRef.kind == "Pod" and .targetRef.uid == $b.pod and
+         .conditions.terminating != true and (.addresses | index($b.ip) != null)))
+    ' "$tmp/update-endpoints.json" >/dev/null
+}
+
+wait_for_failed_update() {
+    local deadline=$((SECONDS + certificate_timeout)) candidate
+    while (( SECONDS < deadline )); do
+        kubectl get deployment postgresql -n "$namespace" -o json >"$tmp/update-deployment.json" || return 1
+        kubectl get replicasets -n "$namespace" -l radapp.io/resource=postgresql \
+            -o json >"$tmp/update-replicasets.json" || return 1
+        kubectl get pods -n "$namespace" -l radapp.io/resource=postgresql -o json >"$tmp/update-pods.json" || return 1
+        candidate="$(jq -cer --slurpfile b "$tmp/update-baseline.json" \
+            --slurpfile sets "$tmp/update-replicasets.json" --slurpfile pods "$tmp/update-pods.json" '
+          $b[0] as $b |
+          select(.metadata.uid == $b.deployment and .metadata.generation > $b.generation and
+            .status.observedGeneration == .metadata.generation) |
+          (.metadata.annotations["deployment.kubernetes.io/revision"] | tonumber) as $revision |
+          select($revision > $b.revision) |
+          select(any($sets[0].items[]; .metadata.uid == $b.replicaSet and
+            (.metadata.annotations["deployment.kubernetes.io/revision"] | tonumber) == $b.revision and
+            any(.metadata.ownerReferences[]?; .uid == $b.deployment and .controller == true))) |
+          [$sets[0].items[] | select(.metadata.uid != $b.replicaSet and
+            (.metadata.annotations["deployment.kubernetes.io/revision"] | tonumber) == $revision and
+            any(.metadata.ownerReferences[]?; .uid == $b.deployment and .controller == true))] |
+          select(length == 1) | .[0].metadata.uid as $newSet |
+          select([$pods[0].items[] | select(any(.status.conditions[]?; .type == "Ready" and .status == "True")) |
+            .metadata.uid] == [$b.pod]) |
+          [$pods[0].items[] | select(.metadata.deletionTimestamp == null and
+            any(.metadata.ownerReferences[]?; .uid == $newSet and .controller == true)) |
+            select(any(.status.initContainerStatuses[]?; .name == "prepare-tls" and
+              (.state.waiting.reason == "CrashLoopBackOff" or
+                (.restartCount > 0 and (.lastState.terminated.exitCode // 0) != 0))))] |
+          select(length == 1) | .[0] | {name: .metadata.name, uid: .metadata.uid}
+        ' "$tmp/update-deployment.json")" || candidate=""
+        if [[ -n "$candidate" ]] && assert_old_server; then
+            failed_pod="$(jq -r .name <<<"$candidate")"
+            failed_pod_uid="$(jq -r .uid <<<"$candidate")"
+            if kubectl logs -n "$namespace" "$failed_pod" -c prepare-tls --tail=40 >"$tmp/update-init.log" &&
+                grep -q 'Error: PostgreSQL TLS Secret postgresql-tls' "$tmp/update-init.log"; then
+                echo "Observed certificate failure in replacement Pod; the original optional Pod remains the sole ready Service endpoint."
+                jq -c '{deployment: .metadata.uid, generation: .metadata.generation,
+                  revision: .metadata.annotations["deployment.kubernetes.io/revision"]}' "$tmp/update-deployment.json"
+                printf 'Failed replacement: %s\n' "$candidate"
+                return 0
+            fi
+        fi
+        sleep 2
+    done
+    echo "Error: Did not observe the expected failed update with the unchanged old serving Pod." >&2
+    return 1
+}
+
+probe_old_server() {
+    local mode="$1" expected="$2" client result deadline=$((SECONDS + 30)) old_ip
+    old_ip="$(jq -er .ip "$tmp/update-baseline.json")" || return 1
+    # Bicep can replace the client even when the database update cannot roll out.
+    while :; do
+        client="$(kubectl get pods -n "$namespace" \
+            -l "radapp.io/application=$app_name,radapp.io/resource=democontainer" -o json |
+            jq -r '[.items[] | select(.metadata.deletionTimestamp == null and
+              any(.status.conditions[]?; .type == "Ready" and .status == "True"))] |
+              first | .metadata.name // empty')" || return 1
+        [[ -z "$client" ]] || break
+        if (( SECONDS >= deadline )); then echo "Error: No ready client for failed-update probe." >&2; return 1; fi
+        sleep 2
+    done
+    kubectl cp -n "$namespace" "$tmp/ca.crt" "$client:/tmp/postgresql-test-ca.crt" || return 1
+    result="$(kubectl exec -n "$namespace" "$client" -- sha256sum /tmp/postgresql-test-ca.crt)" || return 1
+    [[ "${result%% *}" == "$(sha256sum "$tmp/ca.crt" | cut -d' ' -f1)" ]] || return 1
+    assert_old_server || return 1
+    result="$(kubectl exec -n "$namespace" "$client" -- sh -ec '
+        export PGHOST="$1" PGSSLMODE="$2" PGPORT="$CONNECTION_POSTGRESQL_PORT"
+        export PGUSER="$CONNECTION_POSTGRESQL_USERNAME" PGDATABASE="$CONNECTION_POSTGRESQL_DATABASE"
+        export PGPASSWORD="$CONNECTION_POSTGRESQL_PASSWORD" PGCONNECT_TIMEOUT=5
+        export PGOPTIONS="-c statement_timeout=5000" PGSSLROOTCERT=/tmp/postgresql-test-ca.crt
+        timeout 10 psql -X -w -Atc "SELECT ssl, inet_server_addr() FROM pg_stat_ssl WHERE pid = pg_backend_pid()"
+    ' -- "$hostname" "$mode")" || return 1
+    assert_old_server || return 1
+    if [[ "$result" != "$expected|$old_ip" ]]; then
+        echo "Error: Failed-update SQL did not confirm $mode transport from the recorded old Pod." >&2
+        return 1
+    fi
+    echo "Service SQL confirmed $mode ssl=$expected and inet_server_addr=$old_ip from the unchanged old Pod."
+}
+
+echo "==> Checking failed optional-to-required update retains the old serving policy"
+app_deleted=false
+deployment_pid=""
+deployment_pending=false
+failed_pod=""
+failed_pod_uid=""
+deploy optional
+assert_transport optional
+capture_update_baseline
+secret_identity="$(kubectl get secret postgresql-tls -n "$namespace" -o json |
+    jq -c '{uid: .metadata.uid, version: .metadata.resourceVersion, type, owner: .metadata.labels["rtc-postgresql-test"]}')"
+# Keep the Secret object, its type, and both key names; mutate only its material.
+kubectl patch secret postgresql-tls -n "$namespace" --type merge \
+    -p '{"data":{"tls.crt":"aW52YWxpZA==","tls.key":"aW52YWxpZA=="}}'
+kubectl get secret postgresql-tls -n "$namespace" -o json |
+    jq -e --argjson old "$secret_identity" --arg app "$app_name" '
+      .metadata.uid == $old.uid and .metadata.resourceVersion != $old.version and .type == $old.type and
+      .metadata.labels["rtc-postgresql-test"] == $old.owner and $old.owner == $app
+    ' >/dev/null
+deploy required >"$tmp/failed-deployment.log" 2>&1 &
+deployment_pid=$!
+deployment_pending=true
+failure_status=0
+if wait_for_failed_update; then
+    probe_old_server disable f || failure_status=1
+    probe_old_server verify-full t || failure_status=1
+else
+    failure_status=1
+fi
+# Recovery is unconditional, even when observation or SQL attribution failed.
+recovery_status=0
+install_certificate || recovery_status=1
+if [[ -n "$failed_pod" ]]; then
+    live_uid="$(kubectl get pod "$failed_pod" -n "$namespace" --ignore-not-found -o jsonpath='{.metadata.uid}')" || recovery_status=1
+    if [[ "$live_uid" == "$failed_pod_uid" ]]; then
+        kubectl delete pod "$failed_pod" -n "$namespace" --wait=false || recovery_status=1
+    fi
+fi
+settle_deployment || exit 1
+if [[ "$(cat "$tmp/deploy-status")" != 0 ]]; then
+    deploy required >"$tmp/failed-deployment.log" 2>&1 &
+    deployment_pid=$!
+    deployment_pending=true
+    settle_deployment || exit 1
+    [[ "$(cat "$tmp/deploy-status")" == 0 ]] || {
+        echo "Error: Required-policy recovery deployment failed." >&2
+        exit 1
+    }
+fi
+assert_transport required
+old_pod_name="$(jq -r .podName "$tmp/update-baseline.json")"
+[[ -z "$(kubectl get pod "$old_pod_name" -n "$namespace" --ignore-not-found -o name)" ]]
+kubectl get secret postgresql-tls -n "$namespace" -o json |
+    jq -e --argjson old "$secret_identity" '.metadata.uid == $old.uid and .type == $old.type and
+      .metadata.labels["rtc-postgresql-test"] == $old.owner' >/dev/null
+rad app delete "$app_name" --workspace "$workspace" --yes
+app_deleted=true
+kubectl get secret postgresql-tls -n "$namespace" -o name
+[[ "$failure_status" == 0 && "$recovery_status" == 0 ]] || {
+    echo "Error: Failed-update observation/probe or repair failed, despite completing recovery." >&2
+    exit 1
+}
+echo "PostgreSQL $recipe_kind failed-update retention and required-policy recovery passed."

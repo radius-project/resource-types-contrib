@@ -162,6 +162,8 @@ Partial and malformed operator material must produce a failed/restarting certifi
 
 The fixture target also requires Python 3 and OpenSSL. It executes the certificate-preparation scripts extracted from both Recipes and checks their parity, generated certificates, RSA/EC operator keys, malformed inputs, and private-key permissions. Release-candidate runs with pinned sources that predate the lifecycle script retain the legacy application test and explicitly report that transport coverage is unavailable.
 
+Both drivers also test a failed update from a healthy `optional` database to requested `required` policy after corrupting the same operator Secret in place. The new Pod must fail certificate initialization while the original ready Pod remains the only ready Service endpoint. Service-addressed plaintext and verified-TLS SQL queries check both `pg_stat_ssl` and `inet_server_addr()` to attribute traffic to that old Pod, with UID, restart-count, readiness, and EndpointSlice checks around each query. The test reselects a ready client and copies its public CA before each probe because Bicep can replace the client during the failed update. It repairs the Secret, settles the original apply before any explicit `required` recovery deployment, and requires a healthy required-policy rollout with the old Pod removed. This bounded observation does not prove indefinite availability or live IPv6 connectivity.
+
 Build all resource types and recipes at once:
 
 ```bash
