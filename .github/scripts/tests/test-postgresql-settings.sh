@@ -17,6 +17,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 
 cat >"$TEST_ROOT/psql" <<'EOF'
 #!/bin/sh
+printf '%s\n' "$*" >>"$PSQL_CALL_LOG"
 if [ "$1" = --no-psqlrc ] && [ "$2" = --quiet ] && [ "$3" = --set=ON_ERROR_STOP=1 ] && [ "$4" = --file=- ]; then
     cat >"$SQL_CAPTURE"
 else
@@ -26,7 +27,7 @@ echo "fixture SQL output that must not leak" >&2
 exit "${PSQL_EXIT_CODE:-0}"
 EOF
 chmod +x "$TEST_ROOT/psql"
-export PATH="$TEST_ROOT:$PATH" SQL_CAPTURE="$TEST_ROOT/sql"
+export PATH="$TEST_ROOT:$PATH" SQL_CAPTURE="$TEST_ROOT/sql" PSQL_CALL_LOG="$TEST_ROOT/psql-calls"
 export INIT_SQL=$'CREATE SCHEMA "app";\nSELECT \'literal $value; `not a command`\';'
 initialize="$REPO_ROOT/Data/postgreSqlDatabases/recipes/azure/bicep/initialize-database.sh"
 probe="$REPO_ROOT/Data/postgreSqlDatabases/test/verify-database.sh"
@@ -40,7 +41,15 @@ fi
 [[ "$output" == "Error: PostgreSQL initSql failed."* ]] || fail "SQL failure must have an explicit error"
 [[ "$output" != *"fixture SQL output"* ]] || fail "SQL errors must not leak"
 
+: >"$PSQL_CALL_LOG"
 QUERY_RESULT=t sh "$probe" || fail "successful database checks must pass"
+if grep -q 'CREATE EXTENSION' "$PSQL_CALL_LOG"; then
+    fail "Kubernetes checks must not create the extension they verify"
+fi
+: >"$PSQL_CALL_LOG"
+POSTGRES_CREATE_EXTENSIONS=true QUERY_RESULT=t sh "$probe" ||
+    fail "Azure checks must permit the explicit extension-creation test"
+grep -q 'CREATE EXTENSION' "$PSQL_CALL_LOG" || fail "Azure checks must test the extension allow-list"
 for result in f '' garbage; do
     if QUERY_RESULT="$result" sh "$probe" >/dev/null 2>&1; then
         fail "missing prerequisites must fail"
@@ -48,5 +57,11 @@ for result in f '' garbage; do
 done
 if PSQL_EXIT_CODE=1 sh "$probe" >/dev/null 2>&1; then
     fail "query failures must fail"
+fi
+if POSTGRES_CREATE_EXTENSIONS=true PSQL_EXIT_CODE=1 sh "$probe" >/dev/null 2>&1; then
+    fail "extension creation failures must fail Azure checks"
+fi
+if POSTGRES_CREATE_EXTENSIONS=invalid sh "$probe" >/dev/null 2>&1; then
+    fail "invalid probe modes must fail"
 fi
 echo "PostgreSQL settings and initialization tests passed"

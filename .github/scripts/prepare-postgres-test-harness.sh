@@ -18,6 +18,7 @@ if (($# != 2)); then
 fi
 
 python3 - "$1" "$2" <<'PY'
+import os
 import pathlib
 import re
 import sys
@@ -91,6 +92,17 @@ else:
         + text[insert_at:]
     )
 
+def rebase_loaded_file(match):
+    file_path = re.sub(r"\\(['\\])", r"\1", match.group(2))
+    loaded_file = (source.parent / file_path).resolve()
+    if not loaded_file.is_file():
+        fail(f"loaded file not found: {loaded_file}")
+    relative_path = os.path.relpath(loaded_file, destination.parent.resolve()).replace(os.sep, "/")
+    escaped_path = relative_path.replace("\\", "\\\\").replace("'", "\\'")
+    return f"{match.group(1)}'{escaped_path}'"
+
+# Both the release-candidate job and the deployment helper can move this file.
+text = re.sub(r"(\bloadTextContent\(\s*)'((?:[^'\\]|\\.)*)'", rebase_loaded_file, text)
 destination.parent.mkdir(parents=True, exist_ok=True)
 destination.write_text(text, encoding="utf-8")
 PY

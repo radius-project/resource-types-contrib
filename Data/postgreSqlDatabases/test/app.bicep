@@ -11,6 +11,9 @@ param applicationName string = 'postgresql-test'
 @allowed(['S', 'M', 'L'])
 param postgresSize string = 'S'
 
+@description('Create extensions from the client when testing the Azure allow-list. Keep false on Kubernetes to verify Recipe-owned extension creation.')
+param createExtensions bool = false
+
 @description('Database admin password. Set on the `password` property of the database (x-radius-sensitive, so Radius encrypts it at rest and injects it decrypted into the Recipe) and stored in a Radius.Security/secrets resource for the consuming container to bind by reference.')
 @secure()
 param password string
@@ -82,6 +85,9 @@ resource postgresclient 'Radius.Compute/containers@2025-08-01-preview' = {
           'while true; do sleep 3600; done'
         ]
         env: {
+          POSTGRES_CREATE_EXTENSIONS: {
+            value: string(createExtensions)
+          }
           PGHOST: {
             value: postgresql.properties.host
           }

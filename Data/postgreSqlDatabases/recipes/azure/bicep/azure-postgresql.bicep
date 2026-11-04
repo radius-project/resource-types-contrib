@@ -40,7 +40,7 @@ var extensionConfiguration = contains(operatorNames, 'azure.extensions') ? [] : 
 ]
 
 module server 'br/public:avm/res/db-for-postgre-sql/flexible-server:0.15.2' = {
-  name: 'postgresql'
+  name: name
   params: {
     name: name
     administratorLogin: properties.username

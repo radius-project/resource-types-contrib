@@ -103,6 +103,7 @@ test-recipe-pack-entries-unit: ## Run fixture-based unit tests for all Recipe Pa
 	@bash ./.github/scripts/tests/test-azure-diagnostics-integration.sh
 	@./.github/scripts/tests/test-mysql-transport.sh
 	@bash ./.github/scripts/tests/test-postgresql-settings.sh
+	@bash ./.github/scripts/tests/test-postgresql-harness.sh
 	@./.github/scripts/tests/test-recipe-test-lib.sh
 	@./.github/scripts/tests/test-test-direct-module-recipe.sh
 	@./.github/scripts/tests/test-test-all-direct-module-recipes.sh

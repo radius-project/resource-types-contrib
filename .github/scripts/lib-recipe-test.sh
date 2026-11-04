@@ -478,6 +478,17 @@ rtc_assert_recipe_result() {
             ;;
         Radius.Data/postgreSqlDatabases)
             rtc_assert_postgresql_result "$app_name" "$workspace_name" || return 1
+            local test_file="${5:-}" client_status=0
+            if [[ ! -f "$test_file" ]]; then
+                echo "Error: PostgreSQL assertions require the deployed test template." >&2
+                return 1
+            fi
+            grep -qE '^[[:space:]]*resource[[:space:]]+postgresclient[[:space:]]' "$test_file" || client_status=$?
+            case "$client_status" in
+                0) ;;
+                1) return 0 ;; # Released templates may not include the client probe.
+                *) echo "Error: Could not read the PostgreSQL test template." >&2; return 1 ;;
+            esac
             local kubernetes_namespace="${4:-}"
             if [[ -z "$kubernetes_namespace" ]]; then
                 echo "Error: PostgreSQL readiness assertion requires the environment Kubernetes namespace." >&2
@@ -741,6 +752,10 @@ rtc_deploy_and_assert_test_app() {
         echo "==> Detected 'password' parameter in test template, auto-generating value"
     fi
     params+=(--parameters "applicationName=$app_name")
+    if [[ "$resource_type" == Radius.Data/postgreSqlDatabases && "${RTC_TEST_PLATFORM:-}" == azure ]] &&
+        grep -qE '^[[:space:]]*param[[:space:]]+createExtensions[[:space:]]+bool([[:space:]]|$)' "$test_file"; then
+        params+=(--parameters createExtensions=true)
+    fi
 
     if [[ "${RTC_AZURE_LOCK_GUARD:-0}" == "1" ]]; then
         if ! locks_before=$(rtc_snapshot_azure_management_locks); then
@@ -772,7 +787,7 @@ rtc_deploy_and_assert_test_app() {
     if "${deploy_command[@]}" "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
         echo "==> Test deployment successful"
 
-        if ! rtc_assert_recipe_result "$resource_type" "$app_name" "$workspace_name" "$kubernetes_namespace"; then
+        if ! rtc_assert_recipe_result "$resource_type" "$app_name" "$workspace_name" "$kubernetes_namespace" "$test_file"; then
             deploy_status=1
         fi
     else

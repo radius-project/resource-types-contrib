@@ -217,12 +217,23 @@ run_lib rtc_assert_recipe_result "Radius.Compute/containers" testapp myws >/dev/
     || fail "rtc_assert_recipe_result should pass when containers hosts differ"
 
 # ... and to the postgresql-specific assertion.
-run_lib rtc_assert_recipe_result "Radius.Data/postgreSqlDatabases" testapp myws test-ns >/dev/null \
+POSTGRES_TEST_APP_BICEP="$REPO_ROOT/Data/postgreSqlDatabases/test/app.bicep"
+FIXED_POSTGRES_TEST_APP="$REPO_ROOT/.github/scripts/tests/fixtures/postgresql-test-app-fixed-s.bicep"
+run_lib rtc_assert_recipe_result "Radius.Data/postgreSqlDatabases" testapp myws test-ns "$POSTGRES_TEST_APP_BICEP" >/dev/null \
     || fail "rtc_assert_recipe_result should pass for a valid postgresql result"
 grep -q 'kubectl wait deployment -n test-ns -l radapp.io/application=testapp,radapp.io/resource=postgresclient' "$CALL_LOG" ||
     fail "PostgreSQL assertions must wait for the real prerequisite probe"
-if KUBECTL_EXIT_CODE=1 run_lib rtc_assert_recipe_result "Radius.Data/postgreSqlDatabases" testapp myws test-ns >/dev/null 2>&1; then
+if KUBECTL_EXIT_CODE=1 run_lib rtc_assert_recipe_result "Radius.Data/postgreSqlDatabases" testapp myws test-ns "$POSTGRES_TEST_APP_BICEP" >/dev/null 2>&1; then
     fail "PostgreSQL readiness failures must fail the test"
+fi
+: >"$CALL_LOG"
+KUBECTL_EXIT_CODE=1 run_lib rtc_assert_recipe_result "Radius.Data/postgreSqlDatabases" testapp myws test-ns "$FIXED_POSTGRES_TEST_APP" >/dev/null ||
+    fail "released PostgreSQL templates without the client must keep their result checks"
+if grep -q '^kubectl wait' "$CALL_LOG"; then
+    fail "released PostgreSQL templates without the client must not wait for it"
+fi
+if run_lib rtc_assert_recipe_result "Radius.Data/postgreSqlDatabases" testapp myws test-ns "$TEST_ROOT/missing.bicep" >/dev/null 2>&1; then
+    fail "missing PostgreSQL test templates must not bypass readiness checks"
 fi
 
 if PEER_HOST=host-a run_lib rtc_assert_recipe_result "Radius.Compute/containers" testapp myws >/dev/null; then
@@ -241,7 +252,7 @@ for invalid_result in \
     '{"properties":{"host":"pg","port":"5432","database":"appdb"}}' \
     '{"properties":{"host":"pg","port":5432,"database":"wrong"}}' \
     '{"properties":{"host":"pg","port":5432,"database":"appdb","secrets":{}}}'; do
-    if POSTGRES_JSON="$invalid_result" run_lib rtc_assert_recipe_result "Radius.Data/postgreSqlDatabases" testapp myws test-ns >/dev/null; then
+    if POSTGRES_JSON="$invalid_result" run_lib rtc_assert_recipe_result "Radius.Data/postgreSqlDatabases" testapp myws test-ns "$POSTGRES_TEST_APP_BICEP" >/dev/null; then
         fail "invalid PostgreSQL output must fail the real jq assertion"
     fi
 done
@@ -679,7 +690,6 @@ if grep -q '^rad recipe ' "$CALL_LOG"; then
 fi
 
 POSTGRES_CAPACITY_ERROR='Error: {"code":"DeploymentFailed","details":[{"code":"ResourceDeploymentFailure","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg","message":"{\"code\":\"SkuNotAvailable\",\"message\":\"capacity unavailable\"}"}]}'
-POSTGRES_TEST_APP_BICEP="$REPO_ROOT/Data/postgreSqlDatabases/test/app.bicep"
 cat >"$MOCK_BIN/timeout" <<'EOF'
 #!/bin/bash
 echo "timeout $*" >>"$CALL_LOG"
@@ -977,14 +987,24 @@ run_postgres_entry() {
 RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg RTC_POSTGRES_TEST_SIZE=M \
     run_postgres_entry >/dev/null || fail "single-entry Azure runner must pass selected M"
 grep -q -- '--parameters postgresSize=M' "$CALL_LOG" || fail "single-entry runner must pass M to Bicep"
+grep -q -- '--parameters createExtensions=true' "$CALL_LOG" ||
+    fail "Azure runners must test the extension allow-list"
 : >"$CALL_LOG"
 RTC_TEST_PLATFORM=kubernetes RTC_POSTGRES_TEST_SIZE=M run_postgres_entry >/dev/null ||
     fail "Kubernetes entry must retain the default template size"
 if grep -q 'postgresSize=' "$CALL_LOG"; then fail "Kubernetes must not get an Azure size override"; fi
+if grep -q 'createExtensions=true' "$CALL_LOG"; then
+    fail "Kubernetes runners must verify extension creation without creating it"
+fi
+: >"$CALL_LOG"
+if RTC_TEST_PLATFORM=kubernetes KUBECTL_EXIT_CODE=1 run_postgres_entry >/dev/null 2>&1; then
+    fail "a missing or unready client must fail updated PostgreSQL templates"
+fi
+grep -q 'radapp.io/resource=postgresclient' "$CALL_LOG" ||
+    fail "updated PostgreSQL templates must require client readiness"
 grep -q "^param postgresSize string = 'S'$" "$REPO_ROOT/Data/postgreSqlDatabases/test/app.bicep" ||
     fail "test template default must remain S"
 
-FIXED_POSTGRES_TEST_APP="$REPO_ROOT/.github/scripts/tests/fixtures/postgresql-test-app-fixed-s.bicep"
 POSTGRES_TEST_HARNESS="$TEST_ROOT/postgresql-test-harness.bicep"
 bash "$REPO_ROOT/.github/scripts/prepare-postgres-test-harness.sh" \
     "$FIXED_POSTGRES_TEST_APP" "$POSTGRES_TEST_HARNESS" ||
@@ -1008,6 +1028,9 @@ for selected_size in S M; do
         fail "deployment must pass selected size $selected_size to Bicep"
     if grep '^rad deploy ' "$CALL_LOG" | grep -Fq "$FIXED_POSTGRES_TEST_APP"; then
         fail "deployment must use a temporary parameterized harness, not the pinned test app"
+    fi
+    if grep -qE 'createExtensions=true|radapp.io/resource=postgresclient' "$CALL_LOG"; then
+        fail "legacy harnesses must not receive new parameters or client readiness checks"
     fi
 done
 

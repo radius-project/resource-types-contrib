@@ -107,6 +107,10 @@ changed SQL and new extensions do not run again; use application migrations.
 
 The shared test app checks extension creation, the server setting, and a seed
 row through a PostgreSQL client readiness probe on both platforms.
+On Kubernetes, the probe only checks that the Recipe created the extension.
+Azure test runners pass `createExtensions=true` so the client tests the server
+allow-list with `CREATE EXTENSION`. Older released test apps without the client
+keep their existing result checks.
 
 ## Migrating Kubernetes consumers
 

@@ -10,8 +10,22 @@
 
 set -eu
 
+case "${POSTGRES_CREATE_EXTENSIONS:-false}" in
+    false) ;;
+    true)
+        if ! psql --no-psqlrc --quiet --set=ON_ERROR_STOP=1 \
+            --command='CREATE EXTENSION IF NOT EXISTS pg_trgm;' >/dev/null 2>&1; then
+            echo "Error: PostgreSQL extension creation failed." >&2
+            exit 1
+        fi
+        ;;
+    *)
+        echo "Error: POSTGRES_CREATE_EXTENSIONS must be true or false." >&2
+        exit 1
+        ;;
+esac
+
 if ! result=$(psql --no-psqlrc --quiet --tuples-only --no-align --set=ON_ERROR_STOP=1 \
-    --command='CREATE EXTENSION IF NOT EXISTS pg_trgm;' \
     --command="SELECT EXISTS (SELECT FROM pg_extension WHERE extname = 'pg_trgm')
 AND current_setting('log_min_duration_statement') = '1s'
 AND EXISTS (SELECT FROM radius_test.seed WHERE id = 1 AND value = 'ready');" 2>/dev/null); then

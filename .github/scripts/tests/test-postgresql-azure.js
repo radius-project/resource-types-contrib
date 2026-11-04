@@ -26,10 +26,21 @@ test('Azure PostgreSQL settings, precedence, and initialization', () => {
     fs.writeFileSync(path.join(dir, 'recipe.bicep'),
       fs.readFileSync(path.join(recipe, 'azure-postgresql.bicep'), 'utf8').replace(/^@secure\(\)\r?\n/m, ''));
     fs.copyFileSync(path.join(recipe, 'initialize-database.sh'), path.join(dir, 'initialize-database.sh'));
-    const snapshot = (properties = '', configurations = '[]') => {
+    const build = spawnSync(bicep, ['build', path.join(dir, 'recipe.bicep'), '--outfile', path.join(dir, 'recipe.json')],
+      { encoding: 'utf8' });
+    assert.equal(build.status, 0, `${build.error || ''}\n${build.stdout}\n${build.stderr}`);
+    const template = JSON.parse(fs.readFileSync(path.join(dir, 'recipe.json'), 'utf8'));
+    const deployment = template.resources.find(r => r.type === 'Microsoft.Resources/deployments');
+    assert.equal(deployment.name, "[parameters('name')]", 'Nested deployments must use the unique server name');
+    const deploymentReference = "resourceId('Microsoft.Resources/deployments', parameters('name'))";
+    const initialize = template.resources.find(r => r.type === 'Microsoft.Resources/deploymentScripts');
+    assert.ok(initialize.properties.environmentVariables.find(v => v.name === 'PGHOST').value.includes(deploymentReference));
+    assert.ok(template.outputs.result.value.resources.includes(deploymentReference), 'Cleanup must use this server deployment');
+    assert.ok(template.outputs.result.value.values.host.includes(deploymentReference), 'Connections must use this server deployment');
+    const snapshot = (properties = '', configurations = '[]', serverName = 'pgsql-fixture') => {
       const params = path.join(dir, 'test.bicepparam');
       fs.writeFileSync(params, `using './recipe.bicep'
-param name = 'pgsql-fixture'
+param name = '${serverName}'
 param context = { resource: { properties: {
   username: 'fixture'
   password: 'fixture-only'
@@ -52,6 +63,11 @@ param configurations = ${configurations}
     let resources = snapshot();
     assert.equal(setting(resources, 'require_secure_transport'), 'ON');
     assert.equal(setting(resources, 'azure.extensions'), '');
+    for (const serverName of ['pgsql-first', 'pgsql-second']) {
+      const serverResources = snapshot("initSql: 'SELECT 1;'", '[]', serverName);
+      assert.equal(serverResources.find(r => r.type === 'Microsoft.DBforPostgreSQL/flexibleServers').name, serverName);
+      assert.equal(serverResources.find(r => r.type === 'Microsoft.Resources/deploymentScripts').name, `${serverName}-init`);
+    }
     assert.equal(resources.some(r => r.type === 'Microsoft.Resources/deploymentScripts'), false);
 
     resources = snapshot(`extensions: ['pg_trgm', 'vector']
