@@ -434,6 +434,10 @@ Offline fixtures need Bash, Node.js, `jq`, and GNU `timeout`:
 make test-recipe-pack-entries-unit
 ```
 
+This target runs three offline fixture groups in parallel, each with its own
+temporary files and mock commands. All groups must pass. This does not change
+live test concurrency or workflow time limits.
+
 ## Azure CLI login renewal in CI
 
 Azure validation, nightly tests, and release candidate tests install

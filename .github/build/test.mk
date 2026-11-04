@@ -98,6 +98,14 @@ test-direct-module-recipes-unit: test-recipe-pack-entries-unit ## Compatibility 
 
 .PHONY: test-recipe-pack-entries-unit
 test-recipe-pack-entries-unit: ## Run fixture-based unit tests for all Recipe Pack entry test scripts (no live environment needed)
+	@$(MAKE) --no-print-directory --output-sync=target -j3 \
+		test-recipe-pack-entries-unit-shared \
+		test-recipe-pack-entries-unit-probe \
+		test-recipe-pack-entries-unit-selection
+
+# These suites use separate temporary directories and mock all cloud commands.
+.PHONY: test-recipe-pack-entries-unit-shared
+test-recipe-pack-entries-unit-shared:
 	@bash ./.github/scripts/tests/test-azure-cli-with-refresh.sh
 	@node --test ./.github/scripts/tests/test-azure-test-diagnostics.js
 	@bash ./.github/scripts/tests/test-azure-diagnostics-integration.sh
@@ -106,10 +114,16 @@ test-recipe-pack-entries-unit: ## Run fixture-based unit tests for all Recipe Pa
 	@./.github/scripts/tests/test-test-direct-module-recipe.sh
 	@./.github/scripts/tests/test-test-all-direct-module-recipes.sh
 	@./.github/scripts/tests/test-test-all-recipe-pack-entries.sh
+
+.PHONY: test-recipe-pack-entries-unit-probe
+test-recipe-pack-entries-unit-probe:
 	@./.github/scripts/tests/test-probe-azure-postgres-capacity.sh
-	@./.github/scripts/tests/test-select-azure-test-location.sh
 	@bash ./.github/scripts/tests/test-select-azure-postgres-integration.sh
 	@bash ./.github/scripts/tests/test-azure-postgres-test-policy.sh
+
+.PHONY: test-recipe-pack-entries-unit-selection
+test-recipe-pack-entries-unit-selection:
+	@./.github/scripts/tests/test-select-azure-test-location.sh
 	@bash ./.github/scripts/tests/test-azure-postgres-workflow.sh
 
 .PHONY: test-azure-secret-inputs
