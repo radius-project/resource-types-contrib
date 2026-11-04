@@ -32,6 +32,10 @@ export INIT_SQL=$'CREATE SCHEMA "app";\nSELECT \'literal $value; `not a command`
 initialize="$REPO_ROOT/Data/postgreSqlDatabases/recipes/azure/bicep/initialize-database.sh"
 probe="$REPO_ROOT/Data/postgreSqlDatabases/test/verify-database.sh"
 
+if grep -qF -e "\${" -e '%{' "$probe"; then
+    fail "the embedded probe must not contain Terraform template openers"
+fi
+
 output="$(sh "$initialize" 2>&1)" || fail "initialization failed"
 [[ -z "$output" ]] || fail "successful SQL must not print results or SQL"
 [[ "$(cat "$SQL_CAPTURE")" == "$INIT_SQL" ]] || fail "SQL must reach psql without shell evaluation"
@@ -64,4 +68,14 @@ fi
 if POSTGRES_CREATE_EXTENSIONS=invalid sh "$probe" >/dev/null 2>&1; then
     fail "invalid probe modes must fail"
 fi
+cat >"$TEST_ROOT/printenv" <<'EOF'
+#!/bin/sh
+exit 2
+EOF
+chmod +x "$TEST_ROOT/printenv"
+if output="$(sh "$probe" 2>&1)"; then
+    fail "probe mode lookup errors must fail"
+fi
+[[ "$output" == "Error: Could not read the PostgreSQL probe mode." ]] ||
+    fail "probe mode lookup errors must be explicit"
 echo "PostgreSQL settings and initialization tests passed"

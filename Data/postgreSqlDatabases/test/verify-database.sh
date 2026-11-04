@@ -10,8 +10,20 @@
 
 set -eu
 
-case "${POSTGRES_CREATE_EXTENSIONS:-false}" in
-    false) ;;
+# Terraform also parses the embedded script, so avoid braced shell expansions.
+if create_extensions=$(printenv POSTGRES_CREATE_EXTENSIONS); then
+    :
+else
+    status=$?
+    if [ "$status" -ne 1 ]; then
+        echo "Error: Could not read the PostgreSQL probe mode." >&2
+        exit "$status"
+    fi
+    create_extensions=false
+fi
+
+case "$create_extensions" in
+    ''|false) ;;
     true)
         if ! psql --no-psqlrc --quiet --set=ON_ERROR_STOP=1 \
             --command='CREATE EXTENSION IF NOT EXISTS pg_trgm;' >/dev/null 2>&1; then

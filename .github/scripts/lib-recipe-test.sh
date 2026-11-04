@@ -499,6 +499,19 @@ rtc_assert_recipe_result() {
                 -l "radapp.io/application=$app_name,radapp.io/resource=postgresclient" \
                 --for=condition=Available --timeout=180s; then
                 echo "Error: PostgreSQL prerequisite readiness assertion failed." >&2
+                kubectl get pods -n "$kubernetes_namespace" \
+                    -l "radapp.io/application=$app_name" --request-timeout=10s \
+                    -o 'custom-columns=NAME:.metadata.name,PHASE:.status.phase,READY:.status.containerStatuses[*].ready,WAITING:.status.containerStatuses[*].state.waiting.reason' ||
+                    echo "Error: Could not inspect PostgreSQL test pod status." >&2
+                echo "==> PostgreSQL checks (extension | server setting | seed table)"
+                kubectl exec -n "$kubernetes_namespace" --request-timeout=10s \
+                    deployment/postgresclient -c client -- \
+                    psql --no-psqlrc --quiet --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+                    --command="SET statement_timeout = '5s'; SELECT
+EXISTS (SELECT FROM pg_extension WHERE extname = 'pg_trgm'),
+current_setting('log_min_duration_statement') = '1s',
+to_regclass('radius_test.seed') IS NOT NULL;" ||
+                    echo "Error: Could not query PostgreSQL prerequisites from the client." >&2
                 return 1
             fi
             ;;

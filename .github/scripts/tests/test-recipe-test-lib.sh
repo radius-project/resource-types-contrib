@@ -226,6 +226,8 @@ grep -q 'kubectl wait deployment -n test-ns -l radapp.io/application=testapp,rad
 if KUBECTL_EXIT_CODE=1 run_lib rtc_assert_recipe_result "Radius.Data/postgreSqlDatabases" testapp myws test-ns "$POSTGRES_TEST_APP_BICEP" >/dev/null 2>&1; then
     fail "PostgreSQL readiness failures must fail the test"
 fi
+grep -q 'kubectl exec -n test-ns .*deployment/postgresclient' "$CALL_LOG" ||
+    fail "PostgreSQL readiness failures must report prerequisite state before cleanup"
 : >"$CALL_LOG"
 KUBECTL_EXIT_CODE=1 run_lib rtc_assert_recipe_result "Radius.Data/postgreSqlDatabases" testapp myws test-ns "$FIXED_POSTGRES_TEST_APP" >/dev/null ||
     fail "released PostgreSQL templates without the client must keep their result checks"
