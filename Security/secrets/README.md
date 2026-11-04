@@ -72,6 +72,17 @@ Keep this workaround for
 Older Terraform state needs a valid-input redeploy on the fixed runtime before
 deletion can use saved inputs.
 
+To consume this fix, update the registered Terraform Recipe source to a Git
+revision containing the change in
+[`recipes/azure/terraform/main.tf`](recipes/azure/terraform/main.tf), or rebuild
+and redistribute the module package through your existing delivery channel.
+The `Radius.Security` release archive contains YAML manifests and READMEs,
+not Terraform modules, and the namespace release workflow publishes Bicep
+recipes only. Registering that archive alone does not update a Terraform
+Recipe. The repository's Terraform ZIP publishing helper serves a test-cluster
+module server; it is not a public release channel. This Terraform change also
+does not fix separate Radius Bicep runtime issues.
+
 Run the focused tests with Terraform 1.7 or later:
 
 ```sh

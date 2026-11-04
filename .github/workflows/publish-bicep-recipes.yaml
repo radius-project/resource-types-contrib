@@ -29,8 +29,17 @@ name: Publish Bicep Recipes
 #                  `main`, matching the CLI's edge channel.
 #   * <version> -> manual dispatch with `release_version`, run alongside a
 #                  Radius release. Immutable; never republished.
-#   * latest    -> moves only with a stable `release_version`, so `latest`
-#                  always resolves to the newest stable release.
+#   * latest    -> promoted by digest after successful stable publication and
+#                  attestation; a newer full-version tag prevents rollback.
+#
+# Namespace release pins (`pin_only`) and `release_version` runs also sign SLSA
+# build provenance for every digest they publish. Signing runs in a separate job,
+# so neither the downloaded CLI nor Bicep can request its OIDC token. Edge
+# pushes are not attested. Verify a recipe Radius pins with:
+#   gh attestation verify oci://ghcr.io/radius-project/kube-recipes/<recipe>:<sha> \
+#     --repo radius-project/resource-types-contrib \
+#     --signer-workflow radius-project/resource-types-contrib/.github/workflows/publish-bicep-recipes.yaml \
+#     --source-digest <sha>
 
 on:
   push:
@@ -62,13 +71,13 @@ env:
   REGISTRY: ghcr.io/radius-project/kube-recipes
 
 concurrency:
-  # Keyed on the ref to avoid unbounded parallel publishes on busy branches.
+  # All entry points share the same alias writer, including manual releases.
   # `queue: max` rather than the default `queue: single`, which cancels the
   # pending run whenever a newer one queues -- that would leave some advertised
   # main commit SHA tags unpublished.
   # `cancel-in-progress` stays at its default of false; setting it true is a
   # validation error alongside `queue: max`.
-  group: publish-bicep-recipes-${{ github.event_name }}-${{ github.ref }}
+  group: publish-bicep-recipes
   queue: max
 
 jobs:
@@ -84,14 +93,31 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      ATTEST_RECIPES: ${{ (inputs.pin_only || inputs.release_version) && 'true' || 'false' }}
+    outputs:
+      subjects: ${{ steps.subjects.outputs.checksums }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
+      - name: Verify the requested Radius release
+        if: inputs.release_version && !inputs.pin_only
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ github.sha }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: |
+          ./.github/scripts/resolve-recipe-tags.sh >/dev/null
+          gh api "repos/radius-project/radius/releases/tags/v${RELEASE_VERSION}" |
+            jq -e --arg tag "v${RELEASE_VERSION}" \
+              '.tag_name == $tag and .draft == false and
+              .prerelease == ($tag | contains("-"))'
+
       - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -101,6 +127,17 @@ jobs:
         run: |
           wget -q "https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh" -O - | /bin/bash
 
+      - name: Install ORAS
+        uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
+        with:
+          version: 1.3.4
+
+      - name: Prepare provenance subjects
+        if: env.ATTEST_RECIPES == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/recipe-subjects"
+          echo "RECIPE_SUBJECTS_DIR=$RUNNER_TEMP/recipe-subjects" >>"$GITHUB_ENV"
+
       - name: Resolve tags
         # Exported through $GITHUB_ENV so every publish step below pushes the
         # same tag set, including the commit SHA Radius pins against.
@@ -109,8 +146,23 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
           RELEASE_VERSION: ${{ inputs.release_version }}
           PIN_ONLY: ${{ inputs.pin_only }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          echo "TAGS=$(./.github/scripts/resolve-recipe-tags.sh)" >>"$GITHUB_ENV"
+          tags="$(./.github/scripts/resolve-recipe-tags.sh)"
+          if [[ -z "$RELEASE_VERSION" && "$PIN_ONLY" != true ]]; then
+            current="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
+            [[ "$current" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid main commit." >&2; exit 1; }
+            if [[ "$current" != "$COMMIT_SHA" ]]; then
+              echo "Publishing only the source pin; this main commit was superseded."
+              tags="$COMMIT_SHA"
+            fi
+          fi
+          echo "TAGS=$tags" >>"$GITHUB_ENV"
+
+      # AWS recipes use `extension aws`, which Bicep resolves through a
+      # bicepconfig.json in the recipe's directory or an ancestor.
+      - name: Create bicepconfig.json
+        run: ./.github/scripts/update-bicepconfig.sh
 
       # Publishing every recipe from one job means checkout, login and the CLI
       # install happen once instead of once per recipe. At most 10 of these run
@@ -142,6 +194,19 @@ jobs:
             run: REGISTRY=ghcr.io/radius-project/azure-aci-recipes ./.github/scripts/publish-bicep-recipe.sh persistentvolumes Compute/persistentVolumes/recipes/azure/bicep/azure-file-volumes.bicep
           - name: Publish azure-aci secrets
             run: REGISTRY=ghcr.io/radius-project/azure-aci-recipes ./.github/scripts/publish-bicep-recipe.sh secrets Security/secrets/recipes/azure/bicep/azure-keyvault-secrets.bicep
+          # AWS recipes wired by the aws-eks recipe pack.
+          - name: Publish aws-eks mysqldatabases
+            run: REGISTRY=ghcr.io/radius-project/aws-eks-recipes ./.github/scripts/publish-bicep-recipe.sh mysqldatabases Data/mySqlDatabases/recipes/aws/bicep/aws-rds-mysql.bicep
+
+      - name: Record published digests
+        id: subjects
+        if: env.ATTEST_RECIPES == 'true'
+        run: |
+          {
+            echo 'checksums<<EOF'
+            sort -u "$RECIPE_SUBJECTS_DIR"/*
+            echo 'EOF'
+          } >>"$GITHUB_OUTPUT"
 
       - name: Summarize
         run: |
@@ -150,3 +215,63 @@ jobs:
             echo ""
             echo "Radius pins these recipes by commit SHA, so \`$GITHUB_SHA\` is now a resolvable tag for every recipe above."
           } >>"$GITHUB_STEP_SUMMARY"
+
+  attest-bicep-recipes:
+    name: Attest published Bicep recipes
+    needs: publish-bicep-recipes
+    if: inputs.pin_only || inputs.release_version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      id-token: write # Required to sign the provenance with Sigstore
+      attestations: write # Required to store the provenance attestation
+    steps:
+      - name: Write attestation subjects
+        env:
+          SUBJECTS: ${{ needs.publish-bicep-recipes.outputs.subjects }}
+        run: |
+          if [[ -z "$SUBJECTS" ]]; then
+            echo "No published recipe digests were recorded." >&2
+            exit 1
+          fi
+          printf '%s\n' "$SUBJECTS" >"$RUNNER_TEMP/recipe-subjects.txt"
+
+      - name: Attest recipe provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: ${{ runner.temp }}/recipe-subjects.txt
+
+  promote-recipe-aliases:
+    name: Promote stable recipe aliases
+    needs: [publish-bicep-recipes, attest-bicep-recipes]
+    if: inputs.release_version && !contains(inputs.release_version, '-') && !inputs.pin_only
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install ORAS
+        uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
+        with:
+          version: 1.3.4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote verified recipe digests
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SUBJECTS: ${{ needs.publish-bicep-recipes.outputs.subjects }}
+        run: |
+          printf '%s\n' "$SUBJECTS" >"$RUNNER_TEMP/recipe-subjects.txt"
+          bash .github/scripts/recipe-oci.sh promote "$RELEASE_VERSION" "$RUNNER_TEMP/recipe-subjects.txt"

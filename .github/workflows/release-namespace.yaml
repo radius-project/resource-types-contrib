@@ -182,6 +182,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write # Required to sign the published recipes' provenance
+      attestations: write # Required to store the published recipes' provenance
     uses: ./.github/workflows/publish-bicep-recipes.yaml
     with:
       pin_only: true

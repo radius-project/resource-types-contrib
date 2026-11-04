@@ -3,5 +3,6 @@
 
 # Local release bundle output (see .github/build/release.mk)
 /dist/
+/radius-pod-logs/
 
 .DS_Store

@@ -53,6 +53,14 @@ RESOURCE_TYPE_PATH="$(realpath --relative-to="$(pwd)" "$RESOURCE_TYPE_PATH" 2>/d
 RESOURCE_TYPE_PATH="${RESOURCE_TYPE_PATH#./}"
 
 TEST_FILE="$RESOURCE_TYPE_PATH/test/app.bicep"
+if [[ "$RESOURCE_TYPE_PATH" == "Data/postgreSqlDatabases" &&
+    -n "${RTC_POSTGRES_TEST_HARNESS+x}" ]]; then
+    if [[ -z "${RTC_POSTGRES_TEST_HARNESS:-}" || ! -f "$RTC_POSTGRES_TEST_HARNESS" ]]; then
+        echo "Error: PostgreSQL test harness is missing or invalid." >&2
+        exit 1
+    fi
+    TEST_FILE="$RTC_POSTGRES_TEST_HARNESS"
+fi
 if [[ ! -f "$TEST_FILE" ]]; then
     echo "==> No test file found at $TEST_FILE, skipping deployment test"
     exit 0
@@ -94,6 +102,8 @@ elif [[ "$RESOURCE_TYPE" == "Radius.Data/mySqlDatabases" && "$TEST_MODE" == "ver
 elif [[ "$RESOURCE_TYPE" == "Radius.Data/mySqlDatabases" && "$TEST_MODE" != "connection-only" ]]; then
     echo "Error: unsupported MySQL test mode '$TEST_MODE'. Use connection-only or verify-transport." >&2
     exit 1
+elif [[ "$RESOURCE_TYPE" == "Radius.Data/postgreSqlDatabases" && "${RTC_TEST_PLATFORM:-}" == azure ]]; then
+    rtc_test_azure_postgresql_app "$TEST_FILE" "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE" || exit 1
 else
     rtc_deploy_and_assert_test_app "$TEST_FILE" "$RESOURCE_TYPE" "recipepacktest" \
         "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE" || exit 1

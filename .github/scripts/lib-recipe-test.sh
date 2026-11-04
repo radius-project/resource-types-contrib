@@ -70,19 +70,195 @@ rtc_resolve_environment_path() {
 # Only delete leftovers labelled for this test app, not shared resources.
 rtc_cleanup_kubernetes_resources() {
     local kubernetes_namespace="$1" app_name="$2" kind status=0
+    local -a limit=()
+    if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
+        limit=(timeout --kill-after=5s 30s)
+    fi
     if [[ -z "$kubernetes_namespace" ]]; then
         return
     fi
 
     echo "==> Cleaning up leftover K8s resources for $app_name in $kubernetes_namespace"
     for kind in secrets deployments services; do
-        if ! kubectl delete "$kind" -l "radapp.io/application=$app_name" -n "$kubernetes_namespace"; then
+        if ! "${limit[@]}" kubectl delete "$kind" -l "radapp.io/application=$app_name" -n "$kubernetes_namespace"; then
             echo "Error: Could not clean up $kind for '$app_name'." >&2
             status=1
         fi
     done
     return "$status"
 }
+
+# Accept only structured capacity errors tied to an Azure PostgreSQL server.
+# Wrapper codes are not evidence; every leaf failure must be a capacity code.
+rtc_has_postgresql_capacity_failure() {
+    python3 - "$1" <<'PY'
+import json
+import re
+import sys
+
+with open(sys.argv[1], encoding="utf-8", errors="replace") as log:
+    transcript = log.read()
+decoder = json.JSONDecoder()
+server = re.compile(
+    r"^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/"
+    r"Microsoft\.DBforPostgreSQL/flexibleServers/[^/]+$", re.I
+)
+wrappers = {
+    "RecipeDeploymentFailed",
+    "ResourceDeploymentFailure",
+    "DeploymentFailed",
+    "ResourceOperationFailure",
+}
+codes = []
+invalid = False
+json_spans = []
+
+def objects(text):
+    found = []
+    offset = 0
+    while (offset := text.find("{", offset)) != -1:
+        try:
+            start = offset
+            value, end = decoder.raw_decode(text, offset)
+            found.append((value, start, end))
+            offset = end
+        except ValueError:
+            offset += 1
+    return found
+
+def visit(value, target="", failure_context=False):
+    global invalid
+    if isinstance(value, list):
+        for item in value:
+            visit(item, target, failure_context)
+    elif isinstance(value, dict):
+        before = len(codes)
+        target = value.get("target", target)
+        code = value.get("code")
+        status = value.get("status", "")
+        is_failure = failure_context or (
+            isinstance(status, str) and status.lower() in {"failed", "failure", "error"}
+        )
+        if code:
+            if code in {"SkuNotAvailable", "ServerIsBusy"}:
+                if isinstance(target, str) and server.fullmatch(target):
+                    codes.append(code)
+                else:
+                    invalid = True
+            elif code not in wrappers:
+                invalid = True
+        elif is_failure or ("target" in value and "message" in value):
+            invalid = True
+        if is_failure and not code:
+            invalid = True
+
+        children = []
+        for key, item in value.items():
+            if isinstance(item, (dict, list)):
+                children.append((item, is_failure or (code in wrappers and key == "details")))
+        embedded = []
+        if isinstance(value.get("message"), str):
+            for item, start, end in objects(value["message"]):
+                embedded.append((item, True))
+        for item, child_failure in children + embedded:
+            if isinstance(item, (dict, list)):
+                visit(item, target, child_failure)
+        if code in wrappers and len(codes) == before:
+            invalid = True
+
+for root, start, end in objects(transcript):
+    json_spans.append((start, end))
+    visit(root)
+
+# CLI progress output may contain normal Error-prefixed JSON records, which are
+# classified above. A second plain error line is not safe to ignore.
+failure_prefix = re.compile(r"^\s*(?:error|fatal|failure|failed):", re.IGNORECASE)
+bare_failure = re.compile(
+    r"^\s*(?:[A-Za-z_][A-Za-z0-9_.-]*|\([A-Za-z_][A-Za-z0-9_.-]*\))\s*:\s*\S"
+    r"|^\s*(?i:unknown|unclassified|unexpected)\b.*\b(?i:error|failure)\b"
+)
+harmless_progress = re.compile(
+    r"\s*(?:Location:\s*[a-z][a-z0-9-]*|Status:\s*(?:Running|Accepted|Succeeded)"
+    r"|WARNING: Radius type compatibility is not verified\.)\s*"
+)
+line_start = 0
+for line in transcript.splitlines(keepends=True):
+    line_body = line.rstrip("\r\n")
+    residual = list(line_body)
+    line_end = line_start + len(line_body)
+    for start, end in json_spans:
+        overlap_start = max(start, line_start)
+        overlap_end = min(end, line_end)
+        if overlap_start < overlap_end:
+            residual[overlap_start - line_start:overlap_end - line_start] = \
+                [" "] * (overlap_end - overlap_start)
+    residual = "".join(residual)
+    if (bare_failure.search(residual) and not harmless_progress.fullmatch(residual)) or (
+        failure_prefix.search(residual) and failure_prefix.sub("", residual).strip()
+    ):
+        invalid = True
+    line_start += len(line)
+
+sys.exit(0 if codes and not invalid else 1)
+PY
+}
+
+# Compare group-wide IDs, not just Radius outputs: a failed recipe can allocate
+# a server before it records any output. Never delete an untracked resource here.
+rtc_snapshot_azure_resource_ids() {
+    local inventory
+    local -a subscription_args=()
+    [[ -z "${AZURE_SUBSCRIPTION_ID:-}" ]] || subscription_args=(--subscription "$AZURE_SUBSCRIPTION_ID")
+    [[ -n "${AZURE_RESOURCE_GROUP:-}" ]] || {
+        echo "Error: PostgreSQL cleanup requires AZURE_RESOURCE_GROUP." >&2
+        return 1
+    }
+    inventory=$(timeout --kill-after=5s 30s az resource list --resource-group "$AZURE_RESOURCE_GROUP" \
+        "${subscription_args[@]}" --output json) || return 1
+    jq -er '
+        if type == "array" and all(.[]; .id | type == "string" and startswith("/subscriptions/"))
+        then map(.id | ascii_downcase) | unique | join("\n")
+        else error("invalid Azure resource inventory") end
+    ' <<<"$inventory"
+}
+
+# Retry one untried size only when the shared helper confirms safe cleanup.
+rtc_test_azure_postgresql_app() (
+    local test_file="$1" environment_path="$2" workspace_name="$3" kubernetes_namespace="$4"
+    local size="${RTC_POSTGRES_TEST_SIZE:-S}" deadline="${RTC_POSTGRES_TEST_DEADLINE_EPOCH:-}"
+    local remaining status attempt test_harness script_dir
+    case "$size" in S|M) ;; *) echo "Error: PostgreSQL test size must be S or M." >&2; return 1 ;; esac
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
+    test_harness=$(mktemp "${TMPDIR:-/tmp}/rtc-postgres-test-XXXXXX.bicep") || return 1
+    trap 'rm -f -- "$test_harness"' EXIT
+    if ! bash "$script_dir/prepare-postgres-test-harness.sh" "$test_file" "$test_harness"; then
+        return 1
+    fi
+    test_file="$test_harness"
+    if [[ -z "$deadline" ]]; then deadline=$(( $(date +%s) + 1800 )); fi
+    if [[ ! "$deadline" =~ ^[1-9][0-9]{0,10}$ ]]; then
+        echo "Error: Invalid PostgreSQL test deadline." >&2
+        return 1
+    fi
+    for attempt in 1 2; do
+        if ((deadline <= $(date +%s))); then
+            echo "Error: PostgreSQL deployment deadline has expired." >&2
+            return 1
+        fi
+        status=0
+        RTC_POSTGRES_CAPACITY_RECOVERY=1 RTC_POSTGRES_TEST_DEADLINE_EPOCH="$deadline" \
+            rtc_deploy_and_assert_test_app "$test_file" Radius.Data/postgreSqlDatabases \
+                "recipepacktest-pg-$size-$attempt" "$environment_path" "$workspace_name" "$kubernetes_namespace" \
+                --parameters "postgresSize=$size" || status=$?
+        if ((status == 0)); then return 0; fi
+        if ((status != 42 || attempt == 2)); then
+            echo "Error: PostgreSQL deployment failed (size $size, attempt $attempt, status $status)." >&2
+            return 1
+        fi
+        if [[ "$size" == S ]]; then size=M; else size=S; fi
+        echo "==> PostgreSQL capacity lost; cleanup confirmed. Retrying size $size in the same region."
+    done
+)
 
 # Best-effort cleanup for fast-fail paths. The request timeout and non-blocking
 # delete keep cleanup bounded when the cluster or resource controllers are unhealthy.
@@ -151,8 +327,32 @@ rtc_report_azure_lock_failure() {
     fi
 }
 
+rtc_save_azure_lock_diagnostics() {
+    local locks_before="$1" locks_after="$2" inventory_locks="$3" app_name="$4"
+    local root="${RTC_AZURE_DIAGNOSTICS_DIR:-}" directory
+    if [[ "${GITHUB_ACTIONS:-}" == true && -z "${RTC_AZURE_DIAGNOSTICS_DIR+x}" ]]; then
+        root="radius-pod-logs/azure-test-diagnostics"
+    fi
+    [[ -n "$root" ]] || return 0
+    if ! mkdir -p "$root" || ! directory=$(mktemp -d "$root/lock-failure-XXXXXXXX"); then
+        echo "Error: Could not create Azure lock diagnostic directory." >&2
+        return 1
+    fi
+    # Save only the IDs, never the raw Radius inventory or recipe secrets.
+    if ! jq -n --arg app "$app_name" --arg before "$locks_before" \
+        --arg after "$locks_after" --arg inventory "$inventory_locks" '
+        def ids: split("\n") | map(select(length > 0));
+        {app: $app, azureLocksBefore: ($before | ids),
+         azureLocksAfter: ($after | ids), radiusLockInventory: ($inventory | ids)}
+    ' >"$directory/locks.json"; then
+        echo "Error: Could not save Azure lock diagnostics." >&2
+        return 1
+    fi
+    echo "==> Saved Azure lock inventory evidence to $directory/locks.json"
+}
+
 rtc_delete_owned_new_azure_management_locks() {
-    local locks_before="$1" inventory_locks="$2" locks_after lock_id delete_output status=0
+    local locks_before="$1" inventory_locks="$2" app_name="$3" locks_after lock_id delete_output status=0
     local -a subscription_args=()
     if [[ -n "${AZURE_SUBSCRIPTION_ID:-}" ]]; then
         subscription_args=(--subscription "$AZURE_SUBSCRIPTION_ID")
@@ -192,10 +392,15 @@ rtc_delete_owned_new_azure_management_locks() {
             continue
         fi
         echo "Error: Radius recorded an Azure management lock that Azure did not list." >&2
-        rtc_report_azure_lock_failure "$lock_id"
+        echo "Error: Unexpected Radius output resource: $lock_id" >&2
+        echo "Error: Check Deployment Engine skipped-resource inventory; this is not evidence of a missing locks/delete permission." >&2
         status=1
     done < <(printf '%s\n' "$inventory_locks" | sed '/^$/d' | sort -u)
 
+    if [[ "$status" -ne 0 ]]; then
+        rtc_save_azure_lock_diagnostics "$locks_before" "$locks_after" "$inventory_locks" "$app_name" ||
+            echo "Error: Azure lock diagnostic collection failed." >&2
+    fi
     return "$status"
 }
 
@@ -280,6 +485,190 @@ rtc_assert_recipe_result() {
     esac
 }
 
+# CLI progress text can surround JSON errors; inspect each decoded object separately.
+rtc_deployment_retry_reason() {
+    python3 - "$1" <<'PY'
+import json
+import re
+import sys
+
+with open(sys.argv[1], encoding="utf-8", errors="replace") as log:
+    transcript = log.read()
+decoder = json.JSONDecoder()
+provider_reset = re.compile(
+    r'Failed to install provider\s+'
+    r'Error while installing [\w./-]+ v[\w.+-]+:\s+'
+    r'releases\.hashicorp\.com:\s+Get\s+'
+    r'"https://releases\.hashicorp\.com/terraform-provider-[^"\s]+\.zip":\s+'
+    r'read tcp [^\n]+: read: connection reset by peer\s*'
+)
+failure_prefix = re.compile(r"^\s*(?:error|fatal|failure|failed):", re.IGNORECASE | re.MULTILINE)
+bare_failure = re.compile(
+    r"^\s*(?:[A-Za-z_][A-Za-z0-9_.-]*|\([A-Za-z_][A-Za-z0-9_.-]*\))\s*:\s*\S"
+    r"|^\s*(?i:unknown|unclassified|unexpected)\b.*\b(?i:error|failure)\b"
+)
+harmless_progress = re.compile(
+    r"\s*(?:Location:\s*[a-z][a-z0-9-]*|Status:\s*(?:Running|Accepted|Succeeded)"
+    r"|WARNING: Radius type compatibility is not verified\.)\s*"
+)
+wrappers = {"DeploymentFailed", "RecipeDeploymentFailed", "ResourceDeploymentFailure", "ResourceOperationFailure"}
+reasons = []
+invalid = False
+
+def objects(text):
+    offset = 0
+    while (offset := text.find("{", offset)) != -1:
+        try:
+            start = offset
+            value, offset = decoder.raw_decode(text, offset)
+            yield value, start, offset
+        except ValueError:
+            offset += 1
+
+def is_provider_reset(message):
+    preamble, marker, failure = message.partition("terraform init failure: exit status 1")
+    if not marker:
+        return False
+    for line in preamble.splitlines():
+        if (bare_failure.search(line) and not harmless_progress.fullmatch(line)) or (
+            failure_prefix.search(line) and failure_prefix.sub("", line).strip()
+        ):
+            return False
+    diagnostics = re.split(r'(?mi)^\s*Error:\s*', failure)
+    return (
+        not diagnostics[0].strip() and len(diagnostics) >= 2
+        and all(provider_reset.fullmatch(item) for item in diagnostics[1:])
+    )
+
+def visit(value, failure_context=False):
+    global invalid
+    if isinstance(value, list):
+        for item in value:
+            visit(item, failure_context)
+    elif isinstance(value, dict):
+        before = len(reasons)
+        code = value.get("code")
+        message = value.get("message")
+        target = value.get("target")
+        status = value.get("status", "")
+        is_failure = failure_context or (
+            isinstance(status, str) and status.lower() in {"failed", "failure", "error"}
+        )
+        if code:
+            if code not in wrappers:
+                invalid = True
+            elif code == "RecipeDeploymentFailed" and isinstance(message, str) and is_provider_reset(message):
+                reasons.append("Terraform provider download connection reset")
+            elif (
+                code == "ResourceDeploymentFailure"
+                and isinstance(message, str) and "Connection reset by peer" in message
+                and isinstance(target, str)
+                and re.match(r'/subscriptions/[^"]*/providers/Microsoft\.', target)
+            ):
+                reasons.append("Azure deployment connection reset")
+        elif is_failure or (
+            "message" in value and status not in {"Succeeded", "Running", "Accepted"}
+        ):
+            invalid = True
+        for key, item in value.items():
+            if isinstance(item, (dict, list)):
+                visit(item, is_failure or (code in wrappers and key in {"details", "error"}))
+        if isinstance(message, str):
+            for item, _, _ in objects(message):
+                visit(item, True)
+        if code in wrappers and len(reasons) == before:
+            invalid = True
+    elif failure_context:
+        invalid = True
+
+records = list(objects(transcript))
+if not records:
+    if is_provider_reset(transcript):
+        reasons.append("Terraform provider download connection reset")
+else:
+    residual = list(transcript)
+    for root, start, end in records:
+        visit(root)
+        residual[start:end] = ["\n" if char == "\n" else " " for char in transcript[start:end]]
+    for line in "".join(residual).splitlines():
+        if (bare_failure.search(line) and not harmless_progress.fullmatch(line)) or (
+            failure_prefix.search(line) and failure_prefix.sub("", line).strip()
+        ):
+            invalid = True
+
+if reasons and not invalid:
+    print("; ".join(dict.fromkeys(reasons)))
+    sys.exit(0)
+sys.exit(1)
+PY
+}
+
+# Retry confirmed download or Azure transport failures without deleting partially
+# deployed resources. Terraform init fails before apply; keep deployment arguments.
+rtc_deploy_with_retry() (
+    local deploy_log retry_reason attempt=1 max_attempts=3
+    local -a pipeline_status
+    deploy_log=$(mktemp "${TMPDIR:-/tmp}/rtc-deploy-XXXXXX") || return 1
+    trap 'rm -f "$deploy_log"' EXIT
+    set -o pipefail
+
+    while true; do
+        if rad deploy "$@" 2>&1 | tee "$deploy_log"; then
+            return 0
+        else
+            pipeline_status=("${PIPESTATUS[@]}")
+        fi
+
+        if [[ "${pipeline_status[1]}" -ne 0 ]]; then
+            return 1
+        fi
+        if [[ "$attempt" -ge "$max_attempts" ]] ||
+            ! retry_reason=$(rtc_deployment_retry_reason "$deploy_log"); then
+            if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 &&
+                  "${pipeline_status[0]}" != 124 && "${pipeline_status[0]}" != 137 ]]; then
+                if rtc_has_postgresql_capacity_failure "$deploy_log"; then return 42; fi
+                return 1
+            fi
+            return "${pipeline_status[0]}"
+        fi
+
+        echo "==> $retry_reason; retrying in $((attempt * 10)) seconds (attempt $((attempt + 1))/$max_attempts)"
+        sleep "$((attempt * 10))" || return 1
+        attempt=$((attempt + 1))
+    done
+)
+
+rtc_collect_azure_test_diagnostics() {
+    local resource_type="$1" app_name="$2" started="$3" directory status script_dir dependency
+    local diagnostics_root="${RTC_AZURE_DIAGNOSTICS_DIR:-}"
+    if [[ "${RTC_TEST_PLATFORM:-}" != azure || "$resource_type" != Radius.Compute/containers ||
+          -z "$diagnostics_root" ]]; then
+        return 0
+    fi
+    if ! mkdir -p "$diagnostics_root" ||
+       ! directory=$(mktemp -d "$diagnostics_root/failure-XXXXXXXX"); then
+        echo "Error: Could not create Azure diagnostic directory." >&2
+        return 1
+    fi
+    for dependency in node timeout az; do
+        if ! command -v "$dependency" >/dev/null 2>&1; then
+            echo "Error: Azure diagnostics require $dependency." | tee "$directory/collector-status.txt" >&2
+            return 1
+        fi
+    done
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    echo "==> Collecting Azure failure diagnostics before test app cleanup"
+    if timeout --kill-after=5s 100s node "$script_dir/collect-azure-test-diagnostics.js" \
+        "$directory" "${AZURE_SUBSCRIPTION_ID:-}" "${AZURE_RESOURCE_GROUP:-}" "$app_name" "$started"; then
+        echo "Azure diagnostic collection completed." >"$directory/collector-status.txt"
+    else
+        status=$?
+        echo "Error: Azure diagnostics incomplete (collector exit $status); test failure and cleanup are unchanged." |
+            tee "$directory/collector-status.txt" >&2
+        return "$status"
+    fi
+}
+
 # Deploy a Resource Type's test/app.bicep against an already-ready
 # environment and run its post-deploy assertion, then clean up. The
 # environment must already be able to satisfy the type (either a
@@ -296,11 +685,32 @@ rtc_assert_recipe_result() {
 #            <kubernetes-namespace> [additional rad deploy arguments...]
 rtc_deploy_and_assert_test_app() {
     local test_file="$1" resource_type="$2" app_name_prefix="$3" environment_path="$4" workspace_name="$5" kubernetes_namespace="$6"
-    local app_name locks_before="" inventory_locks="" deploy_status=0
-    local -a params=()
+    local app_name started locks_before="" inventory_locks="" deploy_status=0 azure_before="" azure_after=""
+    local -a params=() deploy_timeout=() cleanup_timeout=()
+    local -a deploy_command=(rtc_deploy_with_retry)
     shift 6
 
     app_name="${app_name_prefix}-$(date +%s)"
+
+    if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
+        app_name+="-$RANDOM"
+        if ! azure_before=$(rtc_snapshot_azure_resource_ids); then
+            echo "Error: Could not snapshot Azure resources before PostgreSQL deployment." >&2
+            return 1
+        fi
+        cleanup_timeout=(timeout --kill-after=5s 12m)
+    elif [[ "${GITHUB_ACTIONS:-}" == true && "${RTC_TEST_PLATFORM:-}" == azure &&
+          "$resource_type" == Radius.Compute/containers ]]; then
+        if ! command -v timeout >/dev/null 2>&1; then
+            echo "Error: Azure container CI tests require GNU timeout." >&2
+            return 1
+        fi
+        deploy_timeout=(timeout --kill-after=5s 15m)
+        # shellcheck disable=SC2016 # Expanded by the child shell.
+        deploy_command=("${deploy_timeout[@]}" bash -c \
+            'source "$1"; shift; rtc_deploy_with_retry "$@"' \
+            bash "${BASH_SOURCE[0]}")
+    fi
 
     if ! grep -qE '^param applicationName string' "$test_file"; then
         echo "Error: Test template must declare an applicationName parameter for cleanup." >&2
@@ -328,24 +738,60 @@ rtc_deploy_and_assert_test_app() {
     fi
 
     echo "==> Deploying test application from $test_file"
-    if rad deploy "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
+    started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
+        local deadline="${RTC_POSTGRES_TEST_DEADLINE_EPOCH:-}" remaining
+        if [[ ! "$deadline" =~ ^[1-9][0-9]{0,10}$ ]]; then
+            echo "Error: Invalid PostgreSQL test deadline." >&2
+            return 1
+        fi
+        remaining=$((deadline - $(date +%s)))
+        if ((remaining <= 0)); then
+            echo "Error: PostgreSQL deployment deadline expired before allocation." >&2
+            return 1
+        fi
+        if ((remaining > 900)); then remaining=900; fi
+        deploy_timeout=(timeout --kill-after=5s "${remaining}s")
+        # shellcheck disable=SC2016 # Expanded by the child shell.
+        deploy_command=("${deploy_timeout[@]}" bash -c \
+            'source "$1"; shift; rtc_deploy_with_retry "$@"' \
+            bash "${BASH_SOURCE[0]}")
+    fi
+    if "${deploy_command[@]}" "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
         echo "==> Test deployment successful"
 
         if ! rtc_assert_recipe_result "$resource_type" "$app_name" "$workspace_name" "$kubernetes_namespace"; then
             deploy_status=1
         fi
     else
+        deploy_status=$?
         echo "==> Test deployment failed"
-        deploy_status=1
+        if [[ -n "${deploy_timeout[*]:-}" && ( "$deploy_status" == 124 || "$deploy_status" == 137 ) ]]; then
+            if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
+                echo "Error: PostgreSQL test deployment exceeded its time limit." >&2
+            else
+                echo "Error: Azure container test deployment exceeded its 15-minute limit." >&2
+            fi
+        fi
+        if [[ "$deploy_status" != 42 ]]; then deploy_status=1; fi
+    fi
+
+    if [[ "$deploy_status" -ne 0 ]]; then
+        if [[ -n "${deploy_timeout[*]:-}" && "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" != 1 ]]; then
+            cleanup_timeout=(timeout --kill-after=5s 3m)
+        fi
+        rtc_collect_azure_test_diagnostics "$resource_type" "$app_name" "$started" ||
+            echo "Error: Azure diagnostic collection failed; continuing cleanup." >&2
     fi
 
     if [[ "${RTC_AZURE_LOCK_GUARD:-0}" == "1" ]]; then
         if ! inventory_locks=$(rtc_snapshot_application_azure_lock_inventory "$app_name" "$workspace_name"); then
             echo "Error: Continuing with bounded Radius application deletion without lock ownership data." >&2
             inventory_locks=""
+            if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then deploy_status=1; fi
         fi
-        if ! rtc_delete_owned_new_azure_management_locks "$locks_before" "$inventory_locks"; then
-            echo "Error: Skipping Radius application deletion because a test-owned Azure management lock remains." >&2
+        if ! rtc_delete_owned_new_azure_management_locks "$locks_before" "$inventory_locks" "$app_name"; then
+            echo "Error: Skipping Radius application deletion because Azure lock cleanup or Radius lock inventory validation failed." >&2
             rtc_cleanup_kubernetes_resources_bounded "$kubernetes_namespace" "$app_name"
             return 1
         fi
@@ -353,10 +799,19 @@ rtc_deploy_and_assert_test_app() {
 
     echo "==> Cleaning up test application"
     local cleanup_status=0
-    rad app delete "$app_name" --workspace "$workspace_name" --yes || cleanup_status=1
+    ${cleanup_timeout[@]+"${cleanup_timeout[@]}"} rad app delete "$app_name" --workspace "$workspace_name" --yes || cleanup_status=1
     rtc_cleanup_kubernetes_resources "$kubernetes_namespace" "$app_name" || cleanup_status=1
     if [[ "$cleanup_status" -ne 0 ]]; then
         echo "Error: Test app cleanup failed." >&2
+        return 1
+    fi
+    if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
+        if ! azure_after=$(rtc_snapshot_azure_resource_ids) ||
+            [[ -n "$(comm -13 <(printf '%s\n' "$azure_before" | sed '/^$/d') \
+                <(printf '%s\n' "$azure_after" | sed '/^$/d'))" ]]; then
+            echo "Error: PostgreSQL Azure resource deletion was not confirmed; recovery is blocked." >&2
+            return 1
+        fi
     fi
     if [[ "$deploy_status" -ne 0 ]]; then
         return "$deploy_status"

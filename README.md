@@ -37,9 +37,9 @@ resource-types-contrib/
     ├── azure-aci/                      # Azure ACI recipe pack (containers on ACI; Azure Files + Key Vault)
     │       ├── README.md               # Documentation for the Azure ACI recipe pack
     │       └── azure-aci.bicep         # Recipe pack wiring the Bicep recipes
-    ├── aws-eks/                        # AWS recipe pack (planned; containers on EKS, with aws-ecs for ECS to follow)
-    │       ├── README.md
-    │       └── aws-eks.bicep
+    ├── aws-eks/                        # AWS EKS recipe pack (AWS services; containers on EKS)
+    │       ├── README.md               # Documentation for the AWS EKS recipe pack
+    │       └── aws-eks.bicep           # Recipe pack wiring the Bicep recipes
     ├── kubernetes/                     # Kubernetes recipe pack (zero-config, in-cluster)
             ├── README.md
             └── default.bicep

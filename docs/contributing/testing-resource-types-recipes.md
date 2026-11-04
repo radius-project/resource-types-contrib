@@ -103,6 +103,25 @@ The `test-recipe` command:
 - Deploys the `test/app.bicep` file (if it exists)
 - Cleans up resources after testing
 
+If Azure reports `ResourceDeploymentFailure` with `Connection reset by peer`,
+the test runner retries the deployment up to three attempts, waiting 10 and 20
+seconds before retrying. Retries reuse the same application name and parameters;
+cleanup runs only after the final attempt. Other deployment errors, assertion
+failures, and cleanup failures still fail the test.
+
+The same retry limit and delays apply when `terraform init` fails to download
+a provider package from `releases.hashicorp.com` with `connection reset by peer`.
+This includes errors inside a Radius `RecipeDeploymentFailed` JSON response.
+Each retry logs the reason and the next attempt number. No other Terraform
+download errors qualify. Invalid versions, checksum or signature errors,
+authorization errors, and invalid configuration fail without a retry.
+
+Radius returns an initialization failure before it calls Terraform apply.
+The runner repeats the same deployment, with the same application name and
+parameters, so Radius can reuse resources from earlier work. It does not delete
+partially deployed resources between attempts. These rules apply to both
+per-recipe and Recipe Pack entry tests.
+
 ### 6. Test All Recipes
 
 Run tests for all recipes in the repository:
@@ -219,6 +238,302 @@ Delete your test cluster when done:
 ```bash
 make delete-radius-cluster
 ```
+
+## Azure PostgreSQL pack-test capacity
+
+The nightly and release-candidate Azure pack tests select a PostgreSQL region
+before they create the main resource group or configure the Azure provider.
+The release-candidate workflow keeps the released source and pack pins. A pack
+mapping that does not match the test tuple fails the PostgreSQL check.
+For older release pins whose PostgreSQL test app fixes `size: 'S'`, the workflow
+creates a temporary parameterized test harness outside the checkout. The harness
+lets the selected `S` or `M` reach the deployment without changing the pinned
+resource type, recipe, pack, or test app. Unsupported test-app shapes fail before
+deployment rather than silently testing the wrong size.
+
+### Candidate settings and order
+
+Set repository variable `RTC_AZURE_TEST_REGIONS` to a comma-separated list of
+approved regions. It overrides all other region settings. If it is not set,
+the workflows use `AZURE_LOCATION` (default `westus3`), then
+`AZURE_FALLBACK_LOCATION` (default `eastus2`), then `centralus`. The automatic
+default list is `westus3,eastus2,centralus`; it avoids `westus2` because the
+unrelated `azure-aks` AI models test requires an OpenAI model deployment that is
+not listed for that region in Microsoft's
+[Global Standard Americas availability table](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure-region-availability).
+These two legacy settings are also repository variables. Scripts accept the same
+names as environment variables. The selector's `RTC_AZURE_TEST_REGIONS` takes
+precedence over positional regions.
+
+Duplicates are removed without changing order. At most four distinct regions
+are allowed. An explicit one-region list prevents selection in another region.
+The default produces three regions x two sizes, or six candidate tuples. Before
+use, verify **all candidates**, including automatic defaults, for subscription
+access, quota, policy, PostgreSQL 16, and the other `azure-aks` pack services.
+Check the exact OpenAI model and version, especially if explicitly adding
+`westus2`. The defaults are candidates, not a claim that every subscription can
+use them.
+
+Repository variable `RTC_POSTGRES_TEST_SIZES` defaults to `S,M`. Only `S` and
+`M` are allowed; duplicates are removed. `S` maps to `Standard_B1ms`/`Burstable`;
+`M` maps to `Standard_D2ds_v5`/`GeneralPurpose`. Try the first size in every
+region before trying the next size. Thus the default order is all three `S`
+candidates, then all three `M` candidates. Empty or malformed script settings,
+unsafe region values, and excessive lists fail before Azure calls.
+
+Probes use PostgreSQL 16, 32 GiB storage, no HA, no geo-redundant backup,
+automatic zone placement, password and Entra authentication, and public
+networking without a firewall rule. They do not disable TLS. The pack's public
+size contract and production defaults do not change.
+
+### Deadlines, recovery, and cost
+
+The selector writes version 1 JSON to `RTC_AZURE_SELECTION_FILE`. It includes
+`deadlineEpochSeconds`, an absolute Unix deadline set once at selection start.
+The default and maximum work budget is **60 minutes**, shared by selection,
+setup between steps, the actual PostgreSQL deployment, and recovery. Scripts
+can reduce it with `RTC_POSTGRES_SELECTION_DEADLINE_SECONDS` (1..3600).
+Nested attempts do not reset it. Cleanup can use up to 15 additional minutes.
+If selection or setup uses the work budget, PostgreSQL fails; a successful probe
+does not grant a new deployment budget.
+
+There are at most eight probe tuples, one create per tuple, and at most two
+actual deployment attempts. Create and delete limits default to 900 seconds
+and cannot exceed 900. Set `RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS` and
+`RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS` for shorter probe limits. Remaining
+work time can reduce the create limit further. Selection counts completed
+cleanup against elapsed time and bounds final cleanup by its reserve.
+
+Only one owned PostgreSQL server may be allocated at a time. Deletion must be
+confirmed before another allocation. If real deployment loses capacity, the
+entry runner can try the other approved size **once in the same region**, only
+after confirmed cleanup. It does not move the shared resource group.
+Standalone entry tests without a selection file have a separate 30-minute
+entry budget in the group's existing region.
+
+Both Azure jobs retain the 330-minute limit. Node, ORAS, Radius CLI, and local
+cluster setup run before the selector starts its absolute deadline. Main-group
+creation and Azure provider configuration remain after selection. The selector
+step has a 76-minute limit (60-minute work budget, cleanup, and termination
+margin); main-group creation has five minutes. Checked-in pack deployment has
+15 minutes. Pack entries run in two steps: PostgreSQL first, with 45 minutes
+for deployment recovery and cleanup,
+then unrelated entries with a protected 60-minute window. A PostgreSQL failure
+does not skip the unrelated step; the final report still fails the job.
+Bicep and Terraform recipe suites have 55 minutes each. When a selection file
+is present, the entry driver tests PostgreSQL before unrelated entries within
+each pack. The workflows run the PostgreSQL-only phase before the unrelated
+phase, so `azure-aci` cannot use the PostgreSQL deadline first. Other entries
+keep their relative order. Standalone and Kubernetes runs keep their existing
+order. These limits total 311 minutes, leaving 19 minutes for setup and
+diagnostics within the job limit. The job limit remains the final bound. The separate
+30-minute cleanup job reserves ten minutes for main-group cleanup and 16 for
+probe cleanup, leaving four minutes for checkout and login.
+
+These are cost-exposure limits, not a guaranteed currency limit. Review current
+regional prices and set subscription budget alerts. **More candidates improve
+reliability but cannot guarantee Azure capacity.** A successful probe does not
+reserve capacity for deployment.
+
+### Failures, diagnostics, and cleanup
+
+Only JSON status `selected` is a valid PostgreSQL selection. `capacity_exhausted`
+means approved candidates returned capacity errors such as `SkuNotAvailable`
+or `ServerIsBusy`. `deadline_exceeded` means the shared work time expired.
+`probe_error` covers other errors, including authorization, policy, quota,
+invalid configuration, CLI errors, create timeout, and unconfirmed deletion.
+The attempt's outcome and error code distinguish these cases. Unknown or mixed
+errors stop selection; they do not trigger another allocation.
+
+The legacy selector still prints a region on failure. That region is for
+unrelated entries only; it is not evidence of PostgreSQL capacity.
+PostgreSQL remains a failed check, unrelated entries can continue, and the job
+reports failure. Cleanup failure stops further PostgreSQL allocations; failure
+to request probe-group deletion also stops setup.
+
+The job summary has a credential-free attempt table with region, size, SKU,
+tier, outcome, error code, and duration, plus final selection status.
+`azure-test-diagnostics/postgres-selection.json` is included in the existing
+Azure diagnostics artifact. Deployment recovery uses the entry runner's
+separate safe failure records. Passwords, tokens, connection strings, and raw
+deployment parameters are not part of the selection report.
+
+The workflow records the main group name and the probe-group prefix as job
+outputs before Azure login. Both paths use a fresh 128-bit random token in the
+actual group name and set a matching ownership tag when creating the group.
+Before creation, the workflow rejects a name that Azure does not confirm absent.
+The selector also rejects an existing supplied probe prefix and creates a
+token-suffixed group. It deletes a group only when its ownership tag matches the
+token; it confirms deletion before reporting success. The token and absence
+check make accidental name collisions highly unlikely, but Azure group creation
+is an upsert, not an atomic create-only operation. If a create fails or times out
+and the tag cannot be verified, the script leaves the group untouched and prints
+a recovery message.
+
+Traps cannot cover runner loss, so the separate cleanup job lists resource
+groups. It considers only this run's exact main or probe name patterns, with a
+matching `rrttest-nightly` or `rrttest-rc` prefix, a numeric attempt, and a
+32-character ownership token. The main and probe tags are
+`rtcAzureTestGroupOwner` and `rtcPostgresSelectorOwner`, respectively. It
+considers attempts from 1 through the current
+run attempt, so cleanup-only reruns can recover earlier groups even when the
+producer job never published outputs. It deletes a group only when its matching
+main or probe ownership tag contains the same token from the group name. Exact
+legacy names, missing or mismatched tags, and other groups are never deleted.
+An unowned group matching this run's name pattern makes cleanup fail visibly
+instead of being removed. Other run IDs, future attempts, names outside the
+recognized formats, and unrelated prefixes are ignored. An absent group counts
+as cleaned. Deletion of both main and probe groups is bounded and confirmed.
+Cleanup has a 25-minute command budget within its 30-minute job, and a cleanup
+error fails the step while leaving any remaining groups visible for operator or
+stale-resource recovery.
+
+For example, after checking access and service support for `centralus`, constrain
+the next nightly run to that region and test the existing `M` mapping first:
+
+```bash
+gh variable set RTC_AZURE_TEST_REGIONS --body centralus
+gh variable set RTC_POSTGRES_TEST_SIZES --body M,S
+gh workflow run nightly-recipe-pack-tests.yaml -f version=edge
+```
+
+These are persistent repository settings. Restore or remove them after the run
+if they were only for diagnosis. Inspect the summary and diagnostics rather than
+treating a probe as a passing deployment test.
+
+Offline fixtures need Bash, Node.js, `jq`, and GNU `timeout`:
+
+```bash
+make test-recipe-pack-entries-unit
+```
+
+## Azure CLI login renewal in CI
+
+Azure validation, nightly tests, and release candidate tests install
+`azure-cli-with-refresh.sh` after `azure/login`. The wrapper requests a fresh
+GitHub OIDC assertion and logs in again before an Azure CLI call when the last
+login is at least four minutes old. A file lock prevents concurrent callers
+from renewing the same login at once. It also sets the test subscription.
+This covers capacity probes, lock checks, cleanup, and diagnostic child
+processes throughout a long test step, not just between workflow steps.
+
+The five-minute GitHub assertion is not an Azure access token. Cached access
+tokens can work for about an hour, then fail when Azure CLI tries to exchange
+the expired assertion. Renewing only at job start does not prevent that error.
+The wrapper fails the command if renewal fails. It does not retry deployments
+or change Radius pods' separate Azure workload identity.
+
+## Azure lock inventory diagnostics
+
+Recipe Pack entry tests compare Azure management locks before and after each
+deployment with the lock IDs in the test application's Radius inventory.
+A new, test-owned lock must be deleted before Radius application cleanup.
+A lock ID recorded by Radius but absent from Azure is an inventory error,
+not proof that the test identity lacks `Microsoft.Authorization/locks/delete`.
+The test still fails and skips application deletion in that case.
+
+On either lock failure, the test saves `locks.json` with the application name,
+the two Azure lock lists, and the Radius lock ID list. It does not save raw
+Radius resource properties or secrets. Download
+`azure-test-diagnostics-nightly-azure` or `azure-test-diagnostics-rc-azure`.
+Set `RTC_AZURE_DIAGNOSTICS_DIR` for local collection.
+
+Nightly and release candidate pod-log artifacts also include
+`deployment-engine.log`, alongside Dynamic RP logs that record the resource
+IDs returned by the Deployment Engine. These logs help identify conditional
+resources that the engine skipped but still returned as output resources.
+If no Deployment Engine pod is found, the file states that explicitly.
+
+## Azure container failure diagnostics
+
+Azure validation, nightly tests, and release candidate tests save diagnostics **before** they delete
+a failed `Radius.Compute/containers` test app. This applies to deployment and
+assertion failures, for both per-recipe tests and checked-in Recipe Pack tests.
+The collector does not retry a deployment or turn a failed test into a pass.
+It does not run for successful tests, other resource types, or non-Azure tests.
+
+Download `azure-test-diagnostics-bicep` from Azure validation, or
+`azure-test-diagnostics-nightly-azure` from the nightly run. Each failure has a
+separate directory with `azure.json` and `collector-status.txt`. There is no
+artifact when no applicable test fails. A Terraform artifact uses the suffix
+`-terraform` if a future Azure container Terraform test fails.
+Release candidate tests use `azure-test-diagnostics-rc-azure`.
+
+Azure validation and all three nightly Azure test steps set
+`RTC_AZURE_DIAGNOSTICS_DIR` to `azure-test-diagnostics`. An unset or empty value
+disables collection in both CI and local runs.
+
+In GitHub Actions, the Azure container test limits `rad deploy` to 15 minutes
+and `rad app delete` to 3 minutes after a deployment or assertion failure,
+with a further 5-second kill limit for each. App cleanup after a successful
+test has no timeout.
+This leaves time to collect evidence when provisioning stalls, instead of
+waiting for the 30-minute job limit. A timeout remains a test failure.
+Collection runs before app cleanup, and Kubernetes cleanup is still attempted.
+These limits do not apply to local runs, other resource types, or non-Azure
+tests. They do not cancel an Azure operation or fix the cause of a provider
+stall; the workflow still performs its final resource-group cleanup.
+
+The JSON file contains an allowlist of resource IDs, provisioning states,
+container image references, container states, event names/counts/timestamps,
+subnet and NAT links, and Activity Log operation/status/correlation/request IDs
+when Azure returns them. This is a snapshot of the test's dedicated resource
+group, not proof that every resource belongs to the failed app. It includes
+NGroups, container group profiles, standard container groups, VNets, NAT
+gateways, load balancers, and public IP resource states.
+
+The `2024-11-01-preview` API has no NGroups child-list endpoint or NGroup
+instance view. Standard container-group reads can return instance-view events,
+but might not expose NGroups-managed children. The collector reports empty
+collections and missing instance views. Activity Log records can arrive late.
+Their absence does not prove that an operation did not occur. Direct provider
+operations do not require an Azure ARM deployment record.
+
+The collector does **not** save raw resource JSON, CLI stderr, free-text event
+messages, detailed status text, container commands or logs, environment values,
+tags, credentials, or deployment parameters/outputs. It does not enable CLI
+debug output. Thus original PUT/poll response headers, registry HTTP responses,
+and free-text image-pull detail remain unavailable. Use the saved resource IDs,
+timestamps, and correlation IDs for a provider investigation. These diagnostics
+do not establish or fix the cause of a registry failure.
+
+Resource collection uses only GET requests, scoped to the configured
+subscription and test resource group. For local runs without
+`AZURE_SUBSCRIPTION_ID`, the collector first reads the selected account ID with
+`az account show --query id`. It does not list accounts or read credentials.
+That lookup uses the same time and request budget.
+Each request has a 10-second limit and a 2 MiB response
+limit. Each collection has a 90-second request budget and at most 24 requests.
+The shell stops the collector after 100 seconds, with a further 5-second kill
+limit. Only the first page and at most 20 items per list are kept; pagination
+URLs are never followed. Partial results are saved after each request.
+`errors`, `truncations`, and `collector-status.txt` report failed API calls,
+invalid responses, and bounds. Missing permissions and unsupported APIs produce
+a failed-call entry with the CLI exit code. Raw provider errors are withheld
+to prevent secret exposure, so the artifact cannot distinguish those two causes.
+
+For local Azure tests, set `RTC_AZURE_DIAGNOSTICS_DIR` and `AZURE_RESOURCE_GROUP`
+to an output directory and the dedicated test resource group. Set
+`AZURE_SUBSCRIPTION_ID` to use a subscription other than the selected account's.
+The per-recipe runner derives the platform from the recipe path. The pack test
+driver derives it from `PLATFORM_GROUP`; for a direct invocation of
+`test-recipe-pack-entry.sh`, also set `RTC_TEST_PLATFORM=azure`.
+Collection requires Node.js, Azure CLI with an existing login, and GNU `timeout`.
+It does not change permissions. In CI, its Azure CLI calls use the same login
+renewal wrapper as the tests. Missing tools are reported and cleanup still runs.
+
+Offline checks require Node.js, Bash, `jq`, and GNU `timeout`; no Azure login is needed:
+
+```bash
+node --test .github/scripts/tests/test-azure-test-diagnostics.js
+bash .github/scripts/tests/test-azure-diagnostics-integration.sh
+make test-recipe-pack-entries-unit
+```
+
+The focused checks cover allowed fields, secret exclusion, read-only scope,
+API errors, time and size limits, collection before cleanup, unchanged failure
+status, and unchanged non-Azure behavior. Run them repeatedly to check the
+diagnostic code; this does not measure or validate an ACI flake fix.
 
 ## Manual Testing (Advanced)
 
