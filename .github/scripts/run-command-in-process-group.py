@@ -23,6 +23,8 @@ import subprocess
 import sys
 import time
 
+from command_launch import CommandLaunch
+
 
 def main():
     if len(sys.argv) < 2:
@@ -30,6 +32,7 @@ def main():
         return 1
     process = None
     interrupted = 0
+    launch = CommandLaunch()
 
     def kill_group():
         if process is not None:
@@ -42,6 +45,7 @@ def main():
         nonlocal interrupted
         if interrupted == 0:
             interrupted = signum
+        launch.cancel()
         if process is not None:
             try:
                 os.killpg(process.pid, signum)
@@ -50,14 +54,20 @@ def main():
 
     signal.signal(signal.SIGTERM, forward_signal)
     signal.signal(signal.SIGINT, forward_signal)
-    if interrupted:
-        return 128 + interrupted
     try:
-        process = subprocess.Popen(
-            sys.argv[1:], start_new_session=True, stdin=subprocess.DEVNULL,
-        )
+        # A background shell can ignore SIGINT before Python installs handlers.
+        signal_fd = os.environ.pop("RTC_COMMAND_SIGNAL_FD", None)
+        if signal_fd is not None:
+            with os.fdopen(int(signal_fd), encoding="ascii") as pending:
+                pending_signal = pending.read().strip()
+            if pending_signal:
+                return 128 + {"INT": signal.SIGINT, "TERM": signal.SIGTERM}[pending_signal]
+        if interrupted:
+            return 128 + interrupted
+        process = launch.start(sys.argv[1:])
         if interrupted:
             forward_signal(interrupted, None)
+        launch.release()
         deadline = time.monotonic() + 2 if interrupted else None
         escalated = False
         while True:
@@ -74,6 +84,7 @@ def main():
         print(f"Error: could not start command: {error}", file=sys.stderr)
         return 1
     finally:
+        launch.close()
         kill_group()
         if process is not None:
             process.wait()

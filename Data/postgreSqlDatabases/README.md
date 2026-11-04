@@ -70,6 +70,15 @@ create deadline.
 Probe commands and region reads run in a separate process group. Their
 watchdog kills that group on timeout, cancellation, or command exit so a
 wrapper's child cannot keep output handles open or outlive cleanup.
+The shared command wrapper records cancellation before the helper is ready,
+checks it before launch, and forwards it once the helper PID is known. Each
+helper checks for a pending signal after it installs its handlers. This also
+covers INT received during Python startup, when a background process can still
+ignore that signal. Existing caller traps and interruption status are preserved.
+The helper starts a waiting launcher first, then releases the target command
+only after it records the child PID. Cancellation before release closes the
+launch pipe without starting the target, including cancellation during process
+creation.
 
 The selection JSON reports fixed server settings once in `settings`: version
 16, 32 GiB storage, disabled HA and geo-redundant backup, automatic zone

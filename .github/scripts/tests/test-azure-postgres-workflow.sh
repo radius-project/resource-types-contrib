@@ -38,6 +38,7 @@ mkdir "$selector_scripts"
 cp "$script" "$selector_scripts/azure-postgres-workflow.sh"
 cp "$root/.github/scripts/lib-azure-postgres-test.sh" "$selector_scripts/"
 cp "$root/.github/scripts/run-command-in-process-group.py" "$selector_scripts/"
+cp "$root/.github/scripts/command_launch.py" "$selector_scripts/"
 export SIZE_LOG="$temp/selector-sizes"
 cat >"$selector_scripts/select-azure-test-location.sh" <<'EOF'
 #!/bin/bash

@@ -374,6 +374,7 @@ cp "$REPO_ROOT/.github/scripts/azure-postgres-workflow.sh" \
     "$selector_scripts/azure-postgres-workflow.sh"
 cp "$REPO_ROOT/.github/scripts/lib-azure-postgres-test.sh" "$selector_scripts/"
 cp "$REPO_ROOT/.github/scripts/run-command-in-process-group.py" "$selector_scripts/"
+cp "$REPO_ROOT/.github/scripts/command_launch.py" "$selector_scripts/"
 cat >"$selector_scripts/select-azure-test-location.sh" <<'EOF'
 #!/bin/bash
 printf '%s\n' "${RTC_AZURE_TEST_REGIONS%%,*}"

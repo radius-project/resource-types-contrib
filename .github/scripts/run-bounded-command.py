@@ -22,6 +22,8 @@ import signal
 import subprocess
 import sys
 
+from command_launch import CommandLaunch
+
 
 def main():
     if len(sys.argv) < 3 or not sys.argv[1].isdigit() or int(sys.argv[1]) <= 0:
@@ -29,6 +31,7 @@ def main():
         return 1
     process = None
     interrupted = 0
+    launch = CommandLaunch()
 
     def kill_group():
         if process is not None:
@@ -40,6 +43,7 @@ def main():
     def interrupt(signum, _frame):
         nonlocal interrupted
         interrupted = signum
+        launch.cancel()
         if process is None:
             return
         kill_group()
@@ -48,6 +52,13 @@ def main():
     signal.signal(signal.SIGTERM, interrupt)
     signal.signal(signal.SIGINT, interrupt)
     try:
+        # A background shell can ignore SIGINT before Python installs handlers.
+        signal_fd = os.environ.pop("RTC_COMMAND_SIGNAL_FD", None)
+        if signal_fd is not None:
+            with os.fdopen(int(signal_fd), encoding="ascii") as pending:
+                pending_signal = pending.read().strip()
+            if pending_signal:
+                return 128 + {"INT": signal.SIGINT, "TERM": signal.SIGTERM}[pending_signal]
         if interrupted:
             return 128 + interrupted
         pass_fds = ()
@@ -57,12 +68,10 @@ def main():
                 print("Error: invalid Azure login log descriptor.", file=sys.stderr)
                 return 1
             pass_fds = (int(login_log_fd),)
-        process = subprocess.Popen(
-            sys.argv[2:], start_new_session=True, stdin=subprocess.DEVNULL,
-            pass_fds=pass_fds,
-        )
+        process = launch.start(sys.argv[2:], pass_fds=pass_fds)
         if interrupted:
             return 128 + interrupted
+        launch.release()
         try:
             status = process.wait(timeout=int(sys.argv[1]))
             return status if status >= 0 else 128 - status
@@ -72,6 +81,7 @@ def main():
         print(f"Error: could not start bounded command: {error}", file=sys.stderr)
         return 1
     finally:
+        launch.close()
         kill_group()
         if process is not None:
             process.wait()

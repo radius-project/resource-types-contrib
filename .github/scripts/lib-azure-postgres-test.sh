@@ -85,6 +85,7 @@ rtc_postgres_cleanup_reserve_seconds() {
 rtc_forward_command_signal() {
     local signal="$1"
     rtc_command_signal="$signal"
+    printf '%s\n' "$signal" >"$rtc_command_signal_file"
     if [[ -n "${rtc_command_pid:-}" ]]; then
         kill -s "$signal" "$rtc_command_pid" 2>/dev/null || true
     fi
@@ -125,35 +126,53 @@ rtc_run_command() {
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
     previous_int="$(trap -p INT)"
     previous_term="$(trap -p TERM)"
-    local rtc_command_pid="" rtc_command_signal=""
+    local rtc_command_pid="" rtc_command_signal="" rtc_command_signal_file rtc_command_signal_fd
     if [[ -n "$stdout_file" ]]; then
         output_file="$stdout_file"
     else
         output_file="$(mktemp "${TMPDIR:-/tmp}/rtc-command-XXXXXX")" || return 1
     fi
+    rtc_command_signal_file="$(mktemp "${TMPDIR:-/tmp}/rtc-command-signal-XXXXXX")" || {
+        [[ -n "$stdout_file" ]] || rm -f -- "$output_file"
+        return 1
+    }
+    if ! exec {rtc_command_signal_fd}<"$rtc_command_signal_file"; then
+        rm -f -- "$rtc_command_signal_file"
+        [[ -n "$stdout_file" ]] || rm -f -- "$output_file"
+        return 1
+    fi
     trap 'rtc_forward_command_signal INT' INT
     trap 'rtc_forward_command_signal TERM' TERM
-    if [[ -n "$timeout" ]]; then
-        if [[ -n "$stderr_file" ]]; then
-            python3 "$script_dir/run-bounded-command.py" "$timeout" "$@" \
-                >"$output_file" 2>"$stderr_file" &
+    if [[ -z "$rtc_command_signal" ]]; then
+        if [[ -n "$timeout" ]]; then
+            if [[ -n "$stderr_file" ]]; then
+                RTC_COMMAND_SIGNAL_FD="$rtc_command_signal_fd" \
+                    python3 "$script_dir/run-bounded-command.py" "$timeout" "$@" \
+                    >"$output_file" 2>"$stderr_file" &
+            else
+                RTC_COMMAND_SIGNAL_FD="$rtc_command_signal_fd" \
+                    python3 "$script_dir/run-bounded-command.py" "$timeout" "$@" >"$output_file" &
+            fi
         else
-            python3 "$script_dir/run-bounded-command.py" "$timeout" "$@" >"$output_file" &
+            if [[ -n "$stderr_file" ]]; then
+                RTC_COMMAND_SIGNAL_FD="$rtc_command_signal_fd" \
+                    python3 "$script_dir/run-command-in-process-group.py" "$@" \
+                    >"$output_file" 2>"$stderr_file" &
+            else
+                RTC_COMMAND_SIGNAL_FD="$rtc_command_signal_fd" \
+                    python3 "$script_dir/run-command-in-process-group.py" "$@" >"$output_file" &
+            fi
         fi
-    else
-        if [[ -n "$stderr_file" ]]; then
-            python3 "$script_dir/run-command-in-process-group.py" "$@" \
-                >"$output_file" 2>"$stderr_file" &
-        else
-            python3 "$script_dir/run-command-in-process-group.py" "$@" >"$output_file" &
+        rtc_command_pid=$!
+        if [[ -n "$rtc_command_signal" ]]; then
+            rtc_forward_command_signal "$rtc_command_signal"
         fi
+        if wait "$rtc_command_pid"; then status=0; else status=$?; fi
     fi
-    rtc_command_pid=$!
-    if wait "$rtc_command_pid"; then status=0; else status=$?; fi
-    if [[ -n "$rtc_command_signal" ]]; then
-        wait "$rtc_command_pid" 2>/dev/null || true
-        signal="$rtc_command_signal"
-        if [[ "$signal" == INT ]]; then status=130; else status=143; fi
+    if [[ -n "$rtc_command_signal" && -n "$rtc_command_pid" ]]; then
+        while kill -0 "$rtc_command_pid" 2>/dev/null; do
+            wait "$rtc_command_pid" 2>/dev/null || true
+        done
     fi
     rtc_command_pid=""
     RTC_COMMAND_OUTPUT="$(<"$output_file")"
@@ -161,7 +180,11 @@ rtc_run_command() {
     [[ -n "$stdout_file" ]] || rm -f -- "$output_file"
     if [[ -n "$previous_int" ]]; then eval "$previous_int"; else trap - INT; fi
     if [[ -n "$previous_term" ]]; then eval "$previous_term"; else trap - TERM; fi
+    signal="$rtc_command_signal"
+    exec {rtc_command_signal_fd}<&-
+    rm -f -- "$rtc_command_signal_file"
     if [[ -n "$signal" ]]; then
+        if [[ "$signal" == INT ]]; then status=130; else status=143; fi
         kill -s "$signal" "$BASHPID" 2>/dev/null || true
     fi
     return "$status"
