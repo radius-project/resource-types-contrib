@@ -141,7 +141,7 @@ if [[ "$RESOURCE_TYPE" == "Radius.Data/postgreSqlDatabases" && "$PLATFORM" == az
     if [[ -n "${AZURE_RESOURCE_GROUP:-}" ]]; then
         export RTC_AZURE_LOCK_GUARD=1
     fi
-    RTC_TEST_PLATFORM="$PLATFORM" \
+    RTC_TEST_PLATFORM="$PLATFORM" RTC_POSTGRES_DIRECT_PROBE=1 \
         rtc_test_azure_postgresql_app "$TEST_FILE" "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE" || exit 1
 else
     RTC_TEST_PLATFORM="$PLATFORM" rtc_deploy_and_assert_test_app \

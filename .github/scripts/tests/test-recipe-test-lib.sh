@@ -164,6 +164,15 @@ echo "mock-generated-password"
 EOF
 chmod +x "$MOCK_BIN/openssl"
 
+cat >"$MOCK_BIN/docker" <<'EOF'
+#!/bin/bash
+echo "docker $*" >>"$CALL_LOG"
+[[ -n "${PGPASSWORD:-}" ]] || exit 3
+printf 'probe mode=%s sslmode=%s\n' "$POSTGRES_CREATE_EXTENSIONS" "$PGSSLMODE" >>"$CALL_LOG"
+exit "${DOCKER_EXIT_CODE:-0}"
+EOF
+chmod +x "$MOCK_BIN/docker"
+
 cat >"$MOCK_BIN/sleep" <<'EOF'
 #!/bin/bash
 echo "sleep $*" >>"$CALL_LOG"
@@ -753,6 +762,15 @@ grep -q 'postgresSize=M' "$CALL_LOG" || fail "per-recipe PostgreSQL capacity ret
 grep -qE '^rad deploy Data/postgreSqlDatabases/test/\.rtc-postgres-test-[^ ]+\.bicep ' "$CALL_LOG" ||
     fail "per-recipe PostgreSQL harness must stay beside the test app for Bicep extension discovery"
 grep -q '^az lock list ' "$CALL_LOG" || fail "per-recipe Azure PostgreSQL tests must enable the lock guard"
+grep -q -- '--parameters deployClients=false' "$CALL_LOG" ||
+    fail "per-recipe Azure tests must not deploy Kubernetes-only clients into the ACI pack"
+grep -q '^docker run --rm .*--env PGPASSWORD ' "$CALL_LOG" ||
+    fail "per-recipe Azure tests must verify SQL without a password on the command line"
+grep -q '^probe mode=true sslmode=require$' "$CALL_LOG" ||
+    fail "direct Azure verification must test the allow-list over TLS"
+if grep -q '^kubectl wait' "$CALL_LOG"; then
+    fail "direct Azure verification must not wait for Kubernetes clients"
+fi
 
 RADIUS_PROGRESS="Building Data/mongoDatabases/test/app.bicep...
 WARNING: Radius type compatibility is not verified.
@@ -1081,8 +1099,13 @@ if AZURE_RESOURCE_GROUP=rg DEPLOY_EXIT_CODE=1 DEPLOY_ERROR='InvalidTemplate: inv
 fi
 assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "per-recipe non-capacity attempt count"
 : >"$CALL_LOG"
+if AZURE_RESOURCE_GROUP=rg DOCKER_EXIT_CODE=1 run_postgres_recipe >/dev/null 2>&1; then
+    fail "direct Azure SQL verification failures must fail the Recipe test"
+fi
+assert_eq 1 "$(grep -c '^rad app delete ' "$CALL_LOG")" "direct SQL failure cleanup count"
+: >"$CALL_LOG"
 run_postgres_recipe kubernetes >/dev/null || fail "per-recipe Kubernetes PostgreSQL test must still pass"
-if grep -qE 'postgresSize=|createExtensions=true|^az ' "$CALL_LOG"; then
+if grep -qE 'postgresSize=|createExtensions=true|deployClients=false|^az |^docker ' "$CALL_LOG"; then
     fail "per-recipe Kubernetes PostgreSQL test must not use Azure capacity or creation overrides"
 fi
 : >"$CALL_LOG"

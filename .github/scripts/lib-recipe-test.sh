@@ -453,6 +453,26 @@ rtc_assert_postgresql_result() {
     fi
 
     echo "==> PostgreSQL result properties validated"
+    if [[ "${RTC_POSTGRES_DIRECT_PROBE:-0}" == 1 ]]; then
+        local probe
+        probe="$(dirname "${BASH_SOURCE[0]}")/../../Data/postgreSqlDatabases/test/verify-database.sh"
+        if [[ -z "${PGPASSWORD:-}" || ! -f "$probe" ]]; then
+            echo "Error: Direct PostgreSQL verification requires the test password and probe script." >&2
+            return 1
+        fi
+        probe="$(cd "$(dirname "$probe")" && pwd)/$(basename "$probe")" || return 1
+        if ! PGHOST="$(jq -er '.[0].properties.host' <<<"$resource_json")" \
+            PGPORT="$(jq -er '.[0].properties.port' <<<"$resource_json")" \
+            PGDATABASE=appdb PGUSER=radadmin PGSSLMODE=require PGCONNECT_TIMEOUT=5 \
+            POSTGRES_CREATE_EXTENSIONS=true \
+            timeout --kill-after=5s 120s docker run --rm --env PGHOST --env PGPORT --env PGDATABASE --env PGUSER \
+                --env PGPASSWORD --env PGSSLMODE --env PGCONNECT_TIMEOUT --env POSTGRES_CREATE_EXTENSIONS \
+                --mount "type=bind,source=$probe,target=/verify-database.sh,readonly" \
+                postgres:16-alpine sh /verify-database.sh; then
+            echo "Error: Direct Azure PostgreSQL prerequisite verification failed." >&2
+            return 1
+        fi
+    fi
 }
 
 # Resource-Type-specific post-deploy assertion dispatcher. A no-op (success)
@@ -486,6 +506,9 @@ rtc_assert_recipe_result() {
             if [[ ! -f "$test_file" ]]; then
                 echo "Error: PostgreSQL assertions require the deployed test template." >&2
                 return 1
+            fi
+            if [[ "${RTC_POSTGRES_DIRECT_PROBE:-0}" == 1 ]]; then
+                return 0
             fi
             grep -qE '^[[:space:]]*resource[[:space:]]+postgresclient[[:space:]]' "$test_file" || client_status=$?
             case "$client_status" in
@@ -769,6 +792,14 @@ rtc_deploy_and_assert_test_app() {
         echo "==> Detected 'password' parameter in test template, auto-generating value"
     fi
     params+=(--parameters "applicationName=$app_name")
+    if [[ "${RTC_POSTGRES_DIRECT_PROBE:-0}" == 1 ]]; then
+        if [[ "$resource_type" != Radius.Data/postgreSqlDatabases || "${RTC_TEST_PLATFORM:-}" != azure ]] ||
+            ! grep -qE '^[[:space:]]*param[[:space:]]+deployClients[[:space:]]+string([[:space:]]|$)' "$test_file"; then
+            echo "Error: Direct PostgreSQL verification requires the Azure test template's deployClients switch." >&2
+            return 1
+        fi
+        params+=(--parameters deployClients=false)
+    fi
     if [[ "$resource_type" == Radius.Data/postgreSqlDatabases && "${RTC_TEST_PLATFORM:-}" == azure ]] &&
         grep -qE '^[[:space:]]*param[[:space:]]+createExtensions[[:space:]]+string([[:space:]]|$)' "$test_file"; then
         params+=(--parameters createExtensions=true)
@@ -804,7 +835,8 @@ rtc_deploy_and_assert_test_app() {
     if "${deploy_command[@]}" "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
         echo "==> Test deployment successful"
 
-        if ! rtc_assert_recipe_result "$resource_type" "$app_name" "$workspace_name" "$kubernetes_namespace" "$test_file"; then
+        if ! PGPASSWORD="${generated_password:-}" \
+            rtc_assert_recipe_result "$resource_type" "$app_name" "$workspace_name" "$kubernetes_namespace" "$test_file"; then
             deploy_status=1
         fi
     else

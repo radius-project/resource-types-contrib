@@ -112,6 +112,11 @@ Azure test runners pass `createExtensions=true` so the client tests the server
 allow-list with `CREATE EXTENSION`. The test switch accepts the strings `true`
 and `false` because `rad deploy --parameters` passes string values.
 Older released test apps without the client keep their existing result checks.
+Per-Recipe Azure tests use the ACI pack, so they pass `deployClients=false`
+and run the same SQL probe from a temporary PostgreSQL client container on the
+CI runner. This check uses TLS and passes the password through the process
+environment, not the command line. Azure AKS pack-entry tests keep the
+Kubernetes client probe.
 
 ## Migrating Kubernetes consumers
 

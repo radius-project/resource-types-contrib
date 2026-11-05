@@ -15,6 +15,10 @@ param postgresSize string = 'S'
 @allowed(['true', 'false'])
 param createExtensions string = 'false'
 
+@description('Deploy Kubernetes clients. Per-Recipe Azure tests verify SQL directly from the CI runner.')
+@allowed(['true', 'false'])
+param deployClients string = 'true'
+
 @description('Database admin password. Set on the `password` property of the database (x-radius-sensitive, so Radius encrypts it at rest and injects it decrypted into the Recipe) and stored in a Radius.Security/secrets resource for the consuming container to bind by reference.')
 @secure()
 param password string
@@ -31,7 +35,7 @@ resource app 'Radius.Core/applications@2025-08-01-preview' = {
 // plain `env` value: `data.value` is x-radius-sensitive (encrypted at rest,
 // redacted on reads), whereas a container `env.value` is stored unencrypted on
 // the container resource and rendered literally into the Pod spec.
-resource dbCreds 'Radius.Security/secrets@2025-08-01-preview' = {
+resource dbCreds 'Radius.Security/secrets@2025-08-01-preview' = if (deployClients == 'true') {
   // Keep this distinct from the Recipe-owned `postgresql-credentials`
   // Kubernetes Secret that configures the PostgreSQL container.
   name: 'postgresql-client-credentials-${take(uniqueString(applicationName), 8)}'
@@ -70,7 +74,7 @@ INSERT INTO radius_test.seed VALUES (1, 'ready') ON CONFLICT (id) DO UPDATE SET 
   }
 }
 
-resource postgresclient 'Radius.Compute/containers@2025-08-01-preview' = {
+resource postgresclient 'Radius.Compute/containers@2025-08-01-preview' = if (deployClients == 'true') {
   name: 'postgresclient'
   properties: {
     environment: environment
@@ -110,7 +114,7 @@ resource postgresclient 'Radius.Compute/containers@2025-08-01-preview' = {
           PGPASSWORD: {
             valueFrom: {
               secretKeyRef: {
-                secretName: dbCreds.name
+                secretName: dbCreds!.name
                 key: 'password'
               }
             }
@@ -139,7 +143,7 @@ resource postgresclient 'Radius.Compute/containers@2025-08-01-preview' = {
   }
 }
 
-resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
+resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = if (deployClients == 'true') {
   name: 'democontainer'
   properties: {
     environment: environment
@@ -157,7 +161,7 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
           CONNECTION_POSTGRESQL_PASSWORD: {
             valueFrom: {
               secretKeyRef: {
-                secretName: dbCreds.name
+                secretName: dbCreds!.name
                 key: 'password'
               }
             }
