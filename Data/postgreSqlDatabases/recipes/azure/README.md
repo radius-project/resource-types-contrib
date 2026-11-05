@@ -16,6 +16,8 @@ when used, the initialization deployment-script ID for cleanup, plus `host`,
 Nonempty `initSql` runs through an Azure deployment script after the AVM
 deployment completes. The runner installs the PostgreSQL client in the Azure CLI
 2.77.0 Azure Linux image. Credentials and SQL use secure environment variables.
+Client installation uses only the official base package repository to reduce
+memory use in the runner. Package signature checks remain enabled.
 The checked-in `bicep/bicepconfig.json` enables ARM 2.0 symbolic references for
 this Recipe only. Keep it beside the Bicep source when building or publishing.
 This lets the runner read the AVM's actual hostname after the module completes,

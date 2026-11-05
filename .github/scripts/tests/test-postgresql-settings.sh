@@ -45,6 +45,33 @@ fi
 [[ "$output" == "Error: PostgreSQL initSql failed."* ]] || fail "SQL failure must have an explicit error"
 [[ "$output" != *"fixture SQL output"* ]] || fail "SQL errors must not leak"
 
+install_bin="$TEST_ROOT/install-bin"
+mkdir "$install_bin"
+ln -s "$(command -v cat)" "$install_bin/cat"
+export INSTALL_BIN="$install_bin" PSQL_STUB="$TEST_ROOT/psql" TDNF_CALL_LOG="$TEST_ROOT/tdnf-calls"
+cat >"$install_bin/tdnf" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >"$TDNF_CALL_LOG"
+if [ "${TDNF_EXIT_CODE:-0}" -ne 0 ]; then
+    exit "$TDNF_EXIT_CODE"
+fi
+/bin/cp "$PSQL_STUB" "$INSTALL_BIN/psql"
+EOF
+chmod +x "$install_bin/tdnf"
+if output="$(PATH="$install_bin" /bin/sh "$initialize" 2>&1)"; then
+    [[ -z "$output" ]] || fail "installation and SQL must not print results"
+else
+    fail "client installation must allow SQL initialization"
+fi
+[[ "$(cat "$TDNF_CALL_LOG")" == 'install -y --disablerepo=* --enablerepo=azurelinux-official-base postgresql' ]] ||
+    fail "client installation must load only the official base package index"
+rm "$install_bin/psql"
+if output="$(PATH="$install_bin" TDNF_EXIT_CODE=1 /bin/sh "$initialize" 2>&1)"; then
+    fail "client installation errors must fail initialization"
+fi
+[[ "$output" == "Error: Could not install the PostgreSQL client." ]] ||
+    fail "client installation errors must be explicit"
+
 : >"$PSQL_CALL_LOG"
 QUERY_RESULT=t sh "$probe" || fail "successful database checks must pass"
 if grep -q 'CREATE EXTENSION' "$PSQL_CALL_LOG"; then

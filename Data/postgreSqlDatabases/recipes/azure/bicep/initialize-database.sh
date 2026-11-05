@@ -11,7 +11,11 @@
 set -eu
 
 if ! command -v psql >/dev/null 2>&1; then
-    tdnf install -y postgresql >/dev/null
+    # Avoid loading unrelated package indexes in the memory-limited runner.
+    if ! tdnf install -y --disablerepo='*' --enablerepo=azurelinux-official-base postgresql >/dev/null; then
+        echo "Error: Could not install the PostgreSQL client." >&2
+        exit 1
+    fi
 fi
 
 # Do not print SQL results or errors: init scripts can contain credentials.
