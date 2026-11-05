@@ -179,6 +179,7 @@ bare_failure = re.compile(
 )
 harmless_progress = re.compile(
     r"\s*(?:Location:\s*[a-z][a-z0-9-]*|Status:\s*(?:Running|Accepted|Succeeded)"
+    r"|TraceId:\s*[0-9a-fA-F]{32}"
     r"|WARNING: Radius type compatibility is not verified\.)\s*"
 )
 line_start = 0

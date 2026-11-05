@@ -726,6 +726,7 @@ for pure_error in "$WRAPPED_TERRAFORM_ERROR" "$TERRAFORM_DOWNLOAD_ERROR" "$TRANS
         'Something: unrecognized diagnostic' \
         'Status: Failed' \
         'Status: Unknown' \
+        'TraceId: invalid diagnostic' \
         'WARNING: access denied' \
         'unknown failure during resource deployment'; do
         mixed_error="$pure_error"$'\n'"$diagnostic"
@@ -1001,6 +1002,38 @@ RTC_TEST_PLATFORM=kubernetes RTC_POSTGRES_TEST_SIZE=M run_postgres_entry >/dev/n
 if grep -q 'postgresSize=' "$CALL_LOG"; then fail "Kubernetes must not get an Azure size override"; fi
 if grep -q 'createExtensions=true' "$CALL_LOG"; then
     fail "Kubernetes runners must verify extension creation without creating it"
+fi
+
+run_postgres_recipe() {
+    (
+        cd "$REPO_ROOT"
+        # shellcheck disable=SC2031 # This fixture sets PATH in its own subshell.
+        PATH="$MOCK_BIN:$PATH" CALL_LOG="$CALL_LOG" \
+            bash .github/scripts/test-recipe.sh "Data/postgreSqlDatabases/recipes/${1:-azure}/bicep"
+    )
+}
+: >"$CALL_LOG"
+AZURE_RESOURCE_GROUP=rg DEPLOY_FAILURES=1 \
+    DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR"$'\nTraceId: 0123456789abcdef0123456789abcdef' \
+    run_postgres_recipe >/dev/null || fail "per-recipe Azure runner must recover from a capacity failure"
+assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "per-recipe capacity attempt count"
+assert_eq 2 "$(grep -c '^rad app delete ' "$CALL_LOG")" "per-recipe capacity cleanup count"
+for selected_size in S M; do
+    grep -q -- "--parameters postgresSize=$selected_size" "$CALL_LOG" ||
+        fail "per-recipe capacity recovery must try size $selected_size"
+done
+grep -q -- '--parameters createExtensions=true' "$CALL_LOG" ||
+    fail "per-recipe Azure runner must enable the allow-list test"
+: >"$CALL_LOG"
+if AZURE_RESOURCE_GROUP=rg DEPLOY_EXIT_CODE=1 DEPLOY_ERROR='InvalidTemplate: invalid input' \
+    run_postgres_recipe >/dev/null 2>&1; then
+    fail "per-recipe Azure runner must fail on non-capacity errors"
+fi
+assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "per-recipe non-capacity attempt count"
+: >"$CALL_LOG"
+run_postgres_recipe kubernetes >/dev/null || fail "per-recipe Kubernetes PostgreSQL test must still pass"
+if grep -qE 'postgresSize=|createExtensions=true|^az ' "$CALL_LOG"; then
+    fail "per-recipe Kubernetes PostgreSQL test must not use Azure capacity or creation overrides"
 fi
 : >"$CALL_LOG"
 if RTC_TEST_PLATFORM=kubernetes KUBECTL_EXIT_CODE=1 run_postgres_entry >/dev/null 2>&1; then

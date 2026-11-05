@@ -69,7 +69,7 @@ RESOURCE_NAME=$(basename "$RESOURCE_TYPE_PATH")
 RESOURCE_TYPE="Radius.$CATEGORY/$RESOURCE_NAME"
 
 # Derive platform from recipe path (first segment after recipes/)
-RECIPES_RELATIVE="${RECIPE_PATH#${RESOURCE_TYPE_PATH}/recipes/}"
+RECIPES_RELATIVE="${RECIPE_PATH#"${RESOURCE_TYPE_PATH}"/recipes/}"
 PLATFORM="${RECIPES_RELATIVE%%/*}"
 
 # Determine workspace and environment names based on platform (with overrides)
@@ -137,8 +137,12 @@ fi
 
 # Recipes come from the Recipe Pack bound to the Environment, so a failed test
 # has no per-type registration to undo.
-if ! RTC_TEST_PLATFORM="$PLATFORM" rtc_deploy_and_assert_test_app "$TEST_FILE" "$RESOURCE_TYPE" "testapp" "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE"; then
-    exit 1
+if [[ "$RESOURCE_TYPE" == "Radius.Data/postgreSqlDatabases" && "$PLATFORM" == azure ]]; then
+    RTC_TEST_PLATFORM="$PLATFORM" RTC_AZURE_LOCK_GUARD=1 \
+        rtc_test_azure_postgresql_app "$TEST_FILE" "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE" || exit 1
+else
+    RTC_TEST_PLATFORM="$PLATFORM" rtc_deploy_and_assert_test_app \
+        "$TEST_FILE" "$RESOURCE_TYPE" "testapp" "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE" || exit 1
 fi
 
 echo "==> Test completed successfully"

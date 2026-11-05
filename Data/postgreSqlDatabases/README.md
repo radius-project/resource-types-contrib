@@ -120,7 +120,7 @@ The Kubernetes Recipes no longer return the user-supplied `password` or derived 
 ## Test size and Azure capacity recovery
 
 The test app accepts `postgresSize` (`S`, `M`, or `L`) and defaults to `S`.
-Kubernetes tests keep that default. Azure pack-entry tests use only `S`
+Kubernetes tests keep that default. Azure Recipe and pack-entry tests use only `S`
 (`Standard_B1ms`, Burstable) and `M` (`Standard_D2ds_v5`, GeneralPurpose).
 `L` is not a recovery option because it maps to the same Azure SKU as `M`.
 The Resource Type schema and production pack defaults do not change.
@@ -153,6 +153,8 @@ the size to the test app. Each deployment has a 15-minute limit, reduced to
 the remaining time when `deadlineEpochSeconds` is present in the selection
 result. Direct runs can set `RTC_POSTGRES_TEST_DEADLINE_EPOCH` to the same
 absolute Unix deadline. Without a deadline, the entry has a 30-minute budget.
+Per-Recipe Azure tests use the same size selection, bounded retry, and cleanup
+checks.
 
 If a deployment reports a structured `SkuNotAvailable` or `ServerIsBusy`
 error for an Azure PostgreSQL server, the runner deletes the failed app and
