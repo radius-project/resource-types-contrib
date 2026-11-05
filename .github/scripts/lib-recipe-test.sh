@@ -638,31 +638,31 @@ rtc_deploy_with_retry() (
     done
 )
 
-rtc_collect_azure_test_diagnostics() {
+rtc_collect_test_diagnostics() {
     local resource_type="$1" app_name="$2" started="$3" directory status script_dir dependency
-    local diagnostics_root="${RTC_AZURE_DIAGNOSTICS_DIR:-}"
-    if [[ "${RTC_TEST_PLATFORM:-}" != azure || -z "$diagnostics_root" ]]; then
+    local diagnostics_root="${RTC_TEST_DIAGNOSTICS_DIR-${RTC_AZURE_DIAGNOSTICS_DIR:-}}"
+    if [[ -z "$diagnostics_root" ]]; then
         return 0
     fi
     if ! mkdir -p "$diagnostics_root" ||
        ! directory=$(mktemp -d "$diagnostics_root/failure-XXXXXXXX"); then
-        echo "Error: Could not create Azure diagnostic directory." >&2
+        echo "Error: Could not create failure diagnostic directory." >&2
         return 1
     fi
-    for dependency in node timeout az; do
+    for dependency in node timeout; do
         if ! command -v "$dependency" >/dev/null 2>&1; then
-            echo "Error: Azure diagnostics require $dependency." | tee "$directory/collector-status.txt" >&2
+            echo "Error: Failure diagnostics require $dependency." | tee "$directory/collector-status.txt" >&2
             return 1
         fi
     done
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    echo "==> Collecting Azure failure diagnostics before test app cleanup"
+    echo "==> Collecting failure diagnostics"
     if timeout --kill-after=5s 100s node "$script_dir/collect-azure-test-diagnostics.js" \
-        "$directory" "${AZURE_SUBSCRIPTION_ID:-}" "${AZURE_RESOURCE_GROUP:-}" "$app_name" "$started" "$resource_type"; then
-        echo "Azure diagnostic collection completed." >"$directory/collector-status.txt"
+        "$directory" "${AZURE_SUBSCRIPTION_ID:-}" "${AZURE_RESOURCE_GROUP:-}" "$app_name" "$started" "$resource_type" "${RTC_TEST_PLATFORM:-kubernetes}"; then
+        echo "Failure diagnostic collection completed." >"$directory/collector-status.txt"
     else
         status=$?
-        echo "Error: Azure diagnostics incomplete (collector exit $status); test failure and cleanup are unchanged." |
+        echo "Error: Failure diagnostics incomplete (collector exit $status); test failure and cleanup are unchanged." |
             tee "$directory/collector-status.txt" >&2
         return "$status"
     fi
@@ -686,6 +686,7 @@ rtc_deploy_and_assert_test_app() {
     local test_file="$1" resource_type="$2" app_name_prefix="$3" environment_path="$4" workspace_name="$5" kubernetes_namespace="$6"
     local app_name started locks_before="" inventory_locks="" deploy_status=0 azure_before="" azure_after=""
     local step_remaining="" step_deadline="${RTC_AZURE_TEST_STEP_DEADLINE_EPOCH:-}"
+    local diagnostics_collected=0
     local -a params=() deploy_timeout=() cleanup_timeout=()
     local -a deploy_command=(rtc_deploy_with_retry)
     shift 6
@@ -811,8 +812,9 @@ rtc_deploy_and_assert_test_app() {
               ( -n "${deploy_timeout[*]:-}" && "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" != 1 ) ]]; then
             cleanup_timeout=(timeout --kill-after=5s 3m)
         fi
-        rtc_collect_azure_test_diagnostics "$resource_type" "$app_name" "$started" ||
-            echo "Error: Azure diagnostic collection failed; continuing cleanup." >&2
+        rtc_collect_test_diagnostics "$resource_type" "$app_name" "$started" ||
+            echo "Error: Diagnostic collection failed; continuing cleanup." >&2
+        diagnostics_collected=1
     fi
 
     if [[ "${RTC_AZURE_LOCK_GUARD:-0}" == "1" ]]; then
@@ -823,6 +825,10 @@ rtc_deploy_and_assert_test_app() {
         fi
         if ! rtc_delete_owned_new_azure_management_locks "$locks_before" "$inventory_locks" "$app_name"; then
             echo "Error: Skipping Radius application deletion because Azure lock cleanup or Radius lock inventory validation failed." >&2
+            if [[ "$deploy_status" == 0 ]]; then
+                rtc_collect_test_diagnostics "$resource_type" "$app_name" "$started" ||
+                    echo "Error: Diagnostic collection failed after lock cleanup failure." >&2
+            fi
             rtc_cleanup_kubernetes_resources_bounded "$kubernetes_namespace" "$app_name"
             return 1
         fi
@@ -830,7 +836,14 @@ rtc_deploy_and_assert_test_app() {
 
     echo "==> Cleaning up test application"
     local cleanup_status=0
-    ${cleanup_timeout[@]+"${cleanup_timeout[@]}"} rad app delete "$app_name" --workspace "$workspace_name" --yes || cleanup_status=1
+    if ! ${cleanup_timeout[@]+"${cleanup_timeout[@]}"} rad app delete "$app_name" --workspace "$workspace_name" --yes; then
+        cleanup_status=1
+        if [[ "$deploy_status" == 0 ]]; then
+            rtc_collect_test_diagnostics "$resource_type" "$app_name" "$started" ||
+                echo "Error: Diagnostic collection failed after application cleanup failure." >&2
+            diagnostics_collected=1
+        fi
+    fi
     if [[ -n "$step_remaining" && "$deploy_status" -ne 0 ]]; then
         rtc_cleanup_kubernetes_resources_bounded "$kubernetes_namespace" "$app_name" || cleanup_status=1
     else
@@ -838,6 +851,10 @@ rtc_deploy_and_assert_test_app() {
     fi
     if [[ "$cleanup_status" -ne 0 ]]; then
         echo "Error: Test app cleanup failed." >&2
+        if [[ "$diagnostics_collected" == 0 ]]; then
+            rtc_collect_test_diagnostics "$resource_type" "$app_name" "$started" ||
+                echo "Error: Diagnostic collection failed after cleanup failure." >&2
+        fi
         return 1
     fi
     if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then

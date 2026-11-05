@@ -57,6 +57,7 @@ cat >"$TEST_ROOT/bin/node" <<'EOF'
 echo collector >>"$CALL_LOG"
 [[ "$1" == */collect-azure-test-diagnostics.js ]] || exit 99
 [[ "$3" == "${AZURE_SUBSCRIPTION_ID:-}" && "$4" == "$AZURE_RESOURCE_GROUP" && "$6" == *T*Z ]] || exit 98
+[[ "$8" == "${RTC_TEST_PLATFORM:-kubernetes}" ]] || exit 98
 echo '{"mock":"safe-evidence"}' >"$2/azure.json"
 exit "${COLLECTOR_STATUS:-0}"
 EOF
@@ -139,7 +140,7 @@ grep -q '^bounded 3m rad app$' "$CALL_LOG" || fail "assertion failure cleanup mu
 
 for platform in kubernetes aws ""; do
     GITHUB_ACTIONS=true RTC_TEST_PLATFORM="$platform" assert_failure_cleanup run_helper
-    if grep -q '^collector' "$CALL_LOG"; then fail "non-Azure tests must not collect"; fi
+    assert_before_cleanup
     if grep -q '^bounded' "$CALL_LOG"; then fail "non-Azure tests must not acquire new time limits"; fi
 done
 RESOURCE_TYPE=Radius.Data/widgets assert_failure_cleanup run_helper
@@ -179,16 +180,16 @@ grep -q '^bounded 15m bash -c$' "$CALL_LOG" || fail "CI deployment retries must 
 (
     # shellcheck disable=SC2329 # Called by the sourced helper.
     command() {
-        if [[ "$*" == "-v az" ]]; then return 1; fi
+        if [[ "$*" == "-v node" ]]; then return 1; fi
         builtin command "$@"
     }
     assert_failure_cleanup run_helper
-    grep -q 'Azure diagnostics require az' "$TEST_ROOT/output" || fail "missing tool must be explicit"
+    grep -q 'Failure diagnostics require node' "$TEST_ROOT/output" || fail "missing tool must be explicit"
 )
 # A bad output path must not prevent app cleanup.
 touch "$TEST_ROOT/not-a-directory"
 RTC_AZURE_DIAGNOSTICS_DIR="$TEST_ROOT/not-a-directory" assert_failure_cleanup run_helper
-grep -q 'Could not create Azure diagnostic directory' "$TEST_ROOT/output" || fail "output failure must be explicit"
+grep -q 'Could not create failure diagnostic directory' "$TEST_ROOT/output" || fail "output failure must be explicit"
 
 run_recipe() {
     (cd "$TEST_ROOT"; bash "$REPO_ROOT/.github/scripts/test-recipe.sh" Compute/containers/recipes/azure/bicep)
@@ -237,6 +238,14 @@ for github_actions in true false; do
     GITHUB_ACTIONS="$github_actions" RTC_AZURE_DIAGNOSTICS_DIR="" assert_failure_cleanup run_recipe
     if grep -q '^collector' "$CALL_LOG"; then fail "explicit empty directory must disable collection"; fi
 done
+DEPLOY_STATUS=0 CLEANUP_STATUS=8 assert_failure_cleanup run_helper
+[[ "$(grep -c '^collector$' "$CALL_LOG")" == 1 ]] || fail "cleanup-only failures must collect once"
+: >"$CALL_LOG"
+RTC_TEST_PLATFORM=kubernetes RTC_TEST_DIAGNOSTICS_DIR="$TEST_ROOT/workflow-diagnostics" \
+    rtc_collect_test_diagnostics workflow workflow-failure "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    >"$TEST_ROOT/output" 2>&1 || fail "workflow failures must collect without a test app"
+[[ "$(grep -c '^collector$' "$CALL_LOG")" == 1 ]] || fail "workflow fallback must collect"
+if grep -q '^rad ' "$CALL_LOG"; then fail "workflow fallback must not deploy or delete an app"; fi
 grep -Rq 'collector exit 124' "$RTC_AZURE_DIAGNOSTICS_DIR" || fail "timeout status must persist"
 grep -Rq 'safe-evidence' "$RTC_AZURE_DIAGNOSTICS_DIR" || fail "evidence must persist after cleanup"
 echo "Azure diagnostics integration tests passed"

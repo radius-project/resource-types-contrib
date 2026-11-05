@@ -73,7 +73,7 @@ function instanceView(value) {
 }
 
 function scopedId(value, scope) {
-  return typeof value === "string" &&
+  return typeof scope === "string" && typeof value === "string" &&
     value.toLowerCase().startsWith(`${scope.toLowerCase()}/providers/`) &&
     /^\/[a-z0-9_./()-]+$/i.test(value) && value.length <= 2048 &&
     !value.split("/").some((part) => part === "." || part === "..") ? value : null;
@@ -176,10 +176,12 @@ function logRecords(output, scope) {
       ["Received HTTP response headers ", "response-headers"],
       ["End processing HTTP request ", "logical-end"],
     ].find(([prefix]) => message.startsWith(prefix))?.[1] ?? null;
+    const resourceId = v.resourceId ?? v.ResourceId ?? v.resourceID;
     records.push({
       timestamp: text(v.timestamp, TIME), severity: text(v.severity),
       traceId: text(v.traceId, /^[a-f0-9]{32}$/i), spanId: text(v.spanId, /^[a-f0-9]{16}$/i),
-      resourceId: scopedId(v.resourceId ?? v.ResourceId, scope),
+      resourceId: scopedId(resourceId, scope) ?? text(resourceId,
+        /^\/planes\/(?:radius|kubernetes)\/local\/(?:resourcegroups|namespaces)\/[a-z0-9_./()-]+$/i),
       operationId: text(v.operationId, UUID),
       operationType: text(v.operationType, /^[a-z0-9_./|()-]{1,256}$/i),
       operationName: text(v.OperationName),
@@ -244,36 +246,41 @@ function runAz(args, timeoutMs, command = "az", prefix = [], parse = JSON.parse)
   });
 }
 
-async function collect({ subscription, group, app, started, resourceType = "Radius.Compute/containers",
+async function collect({ subscription, group, app, started, resourceType = "", platform = "azure",
   save, run = runAz, runKubernetes = (args, timeout, parse) => runAz(args, timeout, "kubectl", [], parse),
   now = Date.now }) {
   const deadline = now() + LIMITS.totalMs;
   let requests = 0;
-  if (!/^[a-z0-9_-]{1,90}$/i.test(group) ||
-      !/^[a-z0-9_-]{1,128}$/i.test(app) || !TIME.test(started)) {
+  if (!/^[a-z0-9_-]{1,128}$/i.test(app) || !TIME.test(started)) {
     throw new Error("invalid-diagnostic-context");
   }
-  // Older base workflows log in to Azure but do not export the subscription
-  // to the test step. Read only the selected account ID, never credentials.
-  if (subscription === "") {
-    requests++;
-    const result = await run(["account", "show", "--query", "id", "--only-show-errors", "--output", "json"],
-      LIMITS.requestMs);
-    if (result.error || typeof result.value !== "string" || !UUID.test(result.value)) {
-      throw new Error("azure-subscription-context-unavailable");
-    }
-    subscription = result.value;
-  }
-  if (!UUID.test(subscription)) throw new Error("invalid-diagnostic-context");
-  const scope = `/subscriptions/${subscription}/resourceGroups/${group}`;
   const report = {
-    schemaVersion: 1, app, resourceType, scope, deploymentStarted: started,
+    schemaVersion: 1, app, resourceType, platform, scope: null, deploymentStarted: started,
     collectedAt: new Date(now()).toISOString(), limits: LIMITS,
-    scopeNote: "Test resource group snapshot; resources are not attributed to an app.",
+    scopeNote: "Cluster log snapshot and optional Azure test resource group snapshot; records are not attributed to an app.",
     omitted: "Free-text messages, detailStatus, raw errors, headers, URL queries, tags, env, commands, credentials, deployment parameters and outputs.",
     providerLimitations: "The 2024-11-01-preview API has no NGroups child-list or NGroup instanceView. Resource-group containerGroups may not expose managed children. Activity Log records can be delayed; original PUT/poll headers and registry responses are not available through these reads.",
     resources: [], activity: [], radiusLogs: [], collections: [], errors: [], truncations: [],
   };
+  save(report);
+  // Older base workflows log in to Azure but do not export the subscription
+  // to the test step. Read only the selected account ID, never credentials.
+  if (platform === "azure" && subscription === "" && /^[a-z0-9_-]{1,90}$/i.test(group)) {
+    requests++;
+    const result = await run(["account", "show", "--query", "id", "--only-show-errors", "--output", "json"],
+      LIMITS.requestMs);
+    if (result.error || typeof result.value !== "string" || !UUID.test(result.value)) {
+      report.errors.push({ operation: "azure-context", reason: "azure-subscription-context-unavailable" });
+    } else {
+      subscription = result.value;
+    }
+  }
+  const scope = platform === "azure" && UUID.test(subscription) && /^[a-z0-9_-]{1,90}$/i.test(group)
+    ? `/subscriptions/${subscription}/resourceGroups/${group}` : null;
+  report.scope = scope;
+  if (platform === "azure" && !scope && report.errors.length === 0) {
+    report.errors.push({ operation: "azure-context", reason: "invalid-or-missing-azure-context" });
+  }
   save(report);
   async function kubernetes(label, args, parse = JSON.parse) {
     if (requests >= LIMITS.requests || now() >= deadline) {
@@ -296,11 +303,14 @@ async function collect({ subscription, group, app, started, resourceType = "Radi
     save(report);
   }
   const seen = new Set();
+  if (Array.isArray(object(pods).items) && pods.items.length > LIMITS.items) {
+    report.truncations.push("radius-pods");
+  }
   for (const pod of array(object(pods).items)) {
     const name = object(object(pod).metadata).name;
     const component = typeof name === "string" &&
       /^(deployment-engine|bicep-de|dynamic-rp|applications-rp|ucp)-[a-z0-9-]+$/.exec(name)?.[1];
-    if (!component || seen.has(component)) continue;
+    if (!component) continue;
     seen.add(component);
     const logs = await kubernetes(`radius-logs:${component}`, [
       "logs", name, "-n", "radius-system", "--all-containers=true",
@@ -311,13 +321,14 @@ async function collect({ subscription, group, app, started, resourceType = "Radi
       const id = object(container).imageID;
       return typeof id === "string" ? text(id.replace(/^(docker-pullable|containerd|docker):\/\//, ""), IMAGE) : null;
     });
-    report.radiusLogs.push({ component, images, imageIds, tailOnly: true, ...(logs ?? { records: [], omitted: 0 }) });
+    report.radiusLogs.push({ component, pod: name, images, imageIds, tailOnly: true, ...(logs ?? { records: [], omitted: 0 }) });
     save(report);
   }
   if (pods !== null && seen.size === 0) {
     report.errors.push({ operation: "radius-pods", reason: "no-radius-pods" });
     save(report);
   }
+  if (!scope) return report;
   async function get(label, url) {
     if (requests >= LIMITS.requests || now() >= deadline) {
       report.errors.push({ operation: label, reason: "collection-budget-exhausted" });
@@ -350,16 +361,15 @@ async function collect({ subscription, group, app, started, resourceType = "Radi
     return array(response.value);
   }
   const groups = [];
-  if (resourceType !== "Radius.Compute/containers") {
-    const inventory = await get("resource-inventory",
-      `https://management.azure.com${scope}/resources?api-version=2021-04-01`);
-    report.resources.push(...page("resource-inventory", inventory)
-      .filter((item) => scopedId(object(item).id, scope)).map((item) => resource(item, scope)));
-    save(report);
-  }
+  const inventory = await get("resource-inventory",
+    `https://management.azure.com${scope}/resources?api-version=2021-04-01`);
+  report.resources.push(...page("resource-inventory", inventory)
+    .filter((item) => scopedId(object(item).id, scope)).map((item) => resource(item, scope)));
+  save(report);
   const children = [];
-  const lists = resourceType === "Radius.Compute/containers" ? LISTS : SERVICE_LISTS;
-  for (const [type, version] of lists) {
+  // These API-specific reads enrich the general inventory; they do not select
+  // which applications or failures get logs.
+  for (const [type, version] of [...LISTS, ...SERVICE_LISTS]) {
     const label = `list:${type}`;
     const response = await get(label, `https://management.azure.com${scope}/providers/${type}?api-version=${version}`);
     for (const item of page(label, response)) {
@@ -417,17 +427,18 @@ async function collect({ subscription, group, app, started, resourceType = "Radi
 }
 
 if (require.main === module) {
-  const [directory, subscription, group, app, started, resourceType] = process.argv.slice(2);
+  const [directory, subscription, group, app, started, resourceType, platform = "azure"] = process.argv.slice(2);
+  const file = platform === "azure" ? "azure.json" : "radius.json";
   collect({
-    subscription, group, app, started, resourceType,
-    save: (report) => fs.writeFileSync(path.join(directory, "azure.json"), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 }),
+    subscription, group, app, started, resourceType, platform,
+    save: (report) => fs.writeFileSync(path.join(directory, file), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 }),
   }).then((report) => {
     if (report.errors.length || report.truncations.length) {
-      console.error("Azure diagnostics incomplete; see azure.json errors and truncations.");
+      console.error(`Failure diagnostics incomplete; see ${file} errors and truncations.`);
       process.exitCode = 1;
     }
   }).catch(() => {
-    console.error("Azure diagnostics failed: invalid context or collector/output error. Raw error withheld.");
+    console.error("Failure diagnostics failed: invalid context or collector/output error. Raw error withheld.");
     process.exitCode = 1;
   });
 }

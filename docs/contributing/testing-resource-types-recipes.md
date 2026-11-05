@@ -426,25 +426,40 @@ IDs returned by the Deployment Engine. These logs help identify conditional
 resources that the engine skipped but still returned as output resources.
 If no Deployment Engine pod is found, the file states that explicitly.
 
-## Azure test failure diagnostics
+## Test failure diagnostics
 
-Azure validation, nightly tests, and release candidate tests save diagnostics **before** they delete
-a failed Azure test app, including OpenAI and MongoDB. This applies to deployment and
-assertion failures, for both per-recipe tests and checked-in Recipe Pack tests.
+Validation, nightly tests, and release candidate tests save diagnostics **before** they delete
+a failed test app. Resource type and application name do not control whether logs
+are collected. This applies to Azure, Kubernetes, and other platforms, for both
+per-recipe tests and checked-in Recipe Pack tests. Deployment, assertion, and
+cleanup failures all trigger collection. Cleanup-only failures trigger collection
+after the failed cleanup attempt.
 The collector does not retry a deployment or turn a failed test into a pass.
-It does not run for successful tests or non-Azure tests. PostgreSQL capacity
-selection failures remain in `postgres-selection.json`; they occur before a test app deploys.
+It does not run for successful tests. The validation, nightly, and release candidate
+runtime jobs also collect a workflow-level snapshot after any failed step. This
+includes build, setup, pack deployment, and PostgreSQL preflight failures that occur
+before a test app deploys. Steps with `continue-on-error` are checked by their
+original outcome, so they cannot suppress collection. PostgreSQL selection details
+remain in `postgres-selection.json`.
 
 Download `azure-test-diagnostics-bicep` from Azure validation, or
 `azure-test-diagnostics-nightly-azure` from the nightly run. Each failure has a
 separate directory with `azure.json` and `collector-status.txt`. There is no
-artifact when no applicable test fails. A Terraform artifact uses the suffix
-`-terraform` if a future Azure container Terraform test fails.
+artifact when no applicable test fails. Azure Terraform validation uses
+`azure-test-diagnostics-terraform`.
 Release candidate tests use `azure-test-diagnostics-rc-azure`.
+Kubernetes validation uses `test-diagnostics-bicep` or `test-diagnostics-terraform`.
+The nightly and release candidate Kubernetes artifacts are
+`test-diagnostics-nightly-kubernetes` and `test-diagnostics-rc-kubernetes`.
+Non-Azure snapshots contain `radius.json` rather than `azure.json`.
 
-Azure validation and the nightly and release candidate Azure test steps set
-`RTC_AZURE_DIAGNOSTICS_DIR` to `azure-test-diagnostics`. An unset or empty value
-disables collection in both CI and local runs.
+Runtime jobs set `RTC_TEST_DIAGNOSTICS_DIR` to their artifact directory.
+`RTC_AZURE_DIAGNOSTICS_DIR` remains a fallback for older workflows and local
+commands. An explicit empty `RTC_TEST_DIAGNOSTICS_DIR` disables collection.
+If neither variable is set, local runs do not collect diagnostics.
+Azure context is optional for Radius logs: missing credentials, a missing resource
+group, or a failed Azure account lookup cannot prevent cluster log collection.
+Azure API reads run only with a valid Azure subscription and resource group.
 
 In GitHub Actions, the Azure container test limits `rad deploy` to 15 minutes
 and `rad app delete` to 3 minutes after a deployment or assertion failure,
@@ -473,21 +488,27 @@ group, not proof that every resource belongs to the failed app. It includes
 NGroups, container group profiles, standard container groups, VNets, NAT
 gateways, load balancers, and public IP resource states.
 
-For other resource types, the collector saves a resource-group inventory and
+For every Azure failure, the collector saves a resource-group inventory and
 OpenAI account, model deployment, Cosmos DB account, MongoDB database, and
 PostgreSQL server states. Activity Log records also include structured error
-codes, but not provider error messages.
+codes, but not provider error messages. These provider-specific reads add detail;
+they are not an application or resource-type filter.
 
 The `radiusLogs` field contains filtered records from the deployment engine,
-Dynamic RP, Applications RP, and UCP pods. The collector reads these first,
-before Azure calls and test cleanup. Records include timestamps, trace/span IDs,
+Dynamic RP, Applications RP, and UCP pods, including each discovered replica.
+The collector reads these before Azure resource API calls and failed-test cleanup.
+Records include timestamps, trace/span IDs,
 logger names, operation names, recipe references, terminal-state markers, HTTP phases and methods, request
 hosts/paths, response status codes, and elapsed times when the component emits
 them. Image references and image IDs identify the running component builds.
 Request queries, headers, bodies, and free-text log messages are not saved.
-Each component has at most 2,000 records and a 512 KiB log-read limit.
+Each pod log read has at most 2,000 records and a 512 KiB limit.
 `tailOnly` and `omitted` identify a bounded, filtered snapshot, not a complete log.
 Log rotation or a pod restart can remove earlier records before collection.
+Workflow snapshots use a six-hour lookback to include setup and preflight activity.
+Their collection limits remain the same as per-test snapshots. If setup failed
+before the cluster was ready, the report records the failed collection attempt
+instead of claiming that logs are complete.
 
 For an OpenAI provisioning conflict, compare account and model-deployment
 Activity Log timestamps and statuses, then use trace IDs and request paths to
@@ -526,13 +547,14 @@ invalid responses, and bounds. Missing permissions and unsupported APIs produce
 a failed-call entry with the CLI exit code. Raw provider errors are withheld
 to prevent secret exposure, so the artifact cannot distinguish those two causes.
 
-For local Azure tests, set `RTC_AZURE_DIAGNOSTICS_DIR` and `AZURE_RESOURCE_GROUP`
-to an output directory and the dedicated test resource group. Set
+For local tests, set `RTC_TEST_DIAGNOSTICS_DIR` to an output directory.
+For Azure provider data, also set `AZURE_RESOURCE_GROUP` to the dedicated test group. Set
 `AZURE_SUBSCRIPTION_ID` to use a subscription other than the selected account's.
 The per-recipe runner derives the platform from the recipe path. The pack test
 driver derives it from `PLATFORM_GROUP`; for a direct invocation of
 `test-recipe-pack-entry.sh`, also set `RTC_TEST_PLATFORM=azure`.
-Collection requires Node.js, Azure CLI with an existing login, and GNU `timeout`.
+Collection requires Node.js, kubectl, and GNU `timeout`. Azure provider data also
+requires Azure CLI with an existing login.
 It does not change permissions. In CI, its Azure CLI calls use the same login
 renewal wrapper as the tests. Missing tools are reported and cleanup still runs.
 

@@ -101,7 +101,7 @@ test("collects preview ACI, images, network state and operation IDs using scoped
     }
     return { value: { value: [] } };
   });
-  assert.equal(calls.length, 9);
+  assert.equal(calls.length, 13);
   for (const args of calls) {
     assert.deepEqual(args.slice(0, 3), ["rest", "--method", "get"]);
     const url = new URL(args[4]);
@@ -110,7 +110,7 @@ test("collects preview ACI, images, network state and operation IDs using scoped
       assert.equal(url.searchParams.get("$filter"), `eventTimestamp ge '${started}' and resourceGroupName eq '${group}'`);
       assert.equal(url.searchParams.get("$top"), "20");
     } else {
-      assert.ok(url.pathname.startsWith(`${scope}/providers/`));
+      assert.ok(url.pathname === `${scope}/resources` || url.pathname.startsWith(`${scope}/providers/`));
     }
   }
   assert.equal(report.resources.find((r) => r.id.endsWith("/ng")).provisioningState, "Failed");
@@ -155,7 +155,7 @@ test("non-container failures collect account, model, MongoDB and PostgreSQL stat
     }
     return { value: { value: [] } };
   }, { resourceType: "Radius.AI/models" });
-  assert.equal(calls.length, 7);
+  assert.equal(calls.length, 14);
   assert.equal(report.resourceType, "Radius.AI/models");
   assert.equal(report.resources.find((r) => r.id === account).provisioningState, "Creating");
   assert.equal(report.resources.find((r) => r.id.endsWith("/deployments/chat")).provisioningState, "Failed");
@@ -192,8 +192,8 @@ test("saves filtered Radius request records before Azure reads, without bodies o
       return { value: parse(`${raw}\n${secret}\n`) };
     },
   });
-  assert.deepEqual(order.slice(0, 3), ["get", "logs", "azure"]);
-  assert.equal(report.radiusLogs.length, 1);
+  assert.deepEqual(order.slice(0, 4), ["get", "logs", "logs", "azure"]);
+  assert.equal(report.radiusLogs.length, 2);
   const logs = report.radiusLogs[0];
   assert.equal(logs.omitted, 1);
   assert.deepEqual(logs.records[0].request, { host: "management.azure.com", path: request });
@@ -216,10 +216,12 @@ test("records HTTP phases and exact recipe references without free-text messages
     JSON.stringify({ message: `Sending HTTP request PUT https://example.invalid/?password=${secret}` }),
     JSON.stringify({ message: `Deploying recipe: "default", template: "${source}"` }),
     JSON.stringify({ message: "Succeeded" }),
+    JSON.stringify({ resourceID: "/planes/radius/local/resourcegroups/default/providers/Radius.Data/widgets/test" }),
   ].join("\n"), scope);
   assert.equal(records[0].httpEvent, "request-send");
   assert.equal(records[1].recipeSource, source);
   assert.equal(records[2].state, "Succeeded");
+  assert.equal(records[3].resourceId, "/planes/radius/local/resourcegroups/default/providers/Radius.Data/widgets/test");
   assert.ok(!JSON.stringify(records).includes(secret));
 });
 
@@ -227,7 +229,7 @@ test("pod log failures are explicit and cannot block Azure evidence", async () =
   const { report, calls } = await withMock(async () => ({ value: { value: [] } }), {
     runKubernetes: async () => ({ error: "cli-unavailable" }),
   });
-  assert.equal(calls.length, 8);
+  assert.equal(calls.length, 12);
   assert.deepEqual(report.errors[0], { operation: "radius-pods", reason: "cli-unavailable", exitCode: null });
 });
 
@@ -244,22 +246,22 @@ test("Activity Log saves structured error codes but discards provider messages",
 
 test("records denied/unsupported calls without copying CLI errors and continues", async () => {
   const { report, calls } = await withMock(async () => ({ error: "azure-cli-failed", exitCode: 3 }));
-  assert.equal(calls.length, 8);
-  assert.equal(report.errors.length, 8);
-  assert.deepEqual(report.errors[0], { operation: "list:Microsoft.ContainerInstance/ngroups", reason: "azure-cli-failed", exitCode: 3 });
+  assert.equal(calls.length, 12);
+  assert.equal(report.errors.length, 12);
+  assert.deepEqual(report.errors[0], { operation: "resource-inventory", reason: "azure-cli-failed", exitCode: 3 });
 });
 
 test("records missing data and invalid API shapes explicitly", async () => {
   const empty = await withMock(async () => ({ value: { value: [] } }));
-  assert.equal(empty.report.collections.length, 8);
+  assert.equal(empty.report.collections.length, 12);
   assert.ok(empty.report.collections.every((c) => c.returned === 0));
   assert.match(empty.report.providerLimitations, /no NGroups child-list/);
   const bad = await withMock(async () => ({ value: { value: { secret } } }));
-  assert.equal(bad.report.errors.length, 8);
+  assert.equal(bad.report.errors.length, 12);
   assert.ok(bad.report.errors.every((e) => e.reason === "invalid-list-shape"));
   for (const value of [null, false, [], secret]) {
     const malformed = await withMock(async () => ({ value }));
-    assert.equal(malformed.report.errors.length, 8);
+    assert.equal(malformed.report.errors.length, 12);
     assert.ok(malformed.report.errors.every((e) => e.reason === "invalid-response-shape"));
   }
 });
@@ -272,8 +274,8 @@ test("never follows nextLink or cross-group, wrong-type or traversal resource ID
       { id: "https://example.invalid/credentials" },
     ], nextLink: `https://example.invalid/${secret}` },
   }));
-  assert.equal(calls.length, 8);
-  assert.equal(report.truncations.length, 8);
+  assert.equal(calls.length, 12);
+  assert.equal(report.truncations.length, 12);
   assert.equal(report.resources.length, 0);
   assert.ok(!JSON.stringify(report).includes(secret));
 });
@@ -306,9 +308,38 @@ test("stops all new requests when the total time budget is spent", async () => {
   assert.equal(report.errors[1].reason, "collection-budget-exhausted");
 });
 
-test("rejects invalid context before calling Azure", async () => {
-  await assert.rejects(withMock(() => assert.fail("must not call"), { group: "group' or true" }));
-  await assert.rejects(withMock(() => assert.fail("must not call"), { subscription: "not-a-subscription" }));
+test("invalid Azure context cannot block Radius logs or cause an unscoped Azure read", async () => {
+  for (const context of [{ group: "group' or true" }, { subscription: "not-a-subscription" },
+    { group: "", subscription: "" }]) {
+    const { report, calls } = await withMock(() => assert.fail("must not call Azure"), context);
+    assert.equal(calls.length, 0);
+    assert.equal(report.radiusLogs.length, 1);
+    assert.equal(report.errors[0].reason, "invalid-or-missing-azure-context");
+  }
+});
+
+test("every resource type and non-Azure platform gets Radius logs without Azure credentials", async () => {
+  for (const platform of ["kubernetes", "aws", ""]) {
+    for (const resourceType of ["Radius.Data/widgets", "Radius.Security/secrets", "workflow"]) {
+      const { report, calls } = await withMock(() => assert.fail("must not call Azure"), {
+        subscription: "", group: "", platform, resourceType,
+      });
+      assert.equal(calls.length, 0);
+      assert.equal(report.radiusLogs.length, 1);
+      assert.equal(report.scope, null);
+      assert.equal(report.errors.length, 0);
+    }
+  }
+});
+
+test("Azure log and inventory collection has no resource-type allowlist", async () => {
+  for (const resourceType of ["Radius.Compute/containers", "Radius.Data/futureType", "workflow"]) {
+    const { report, calls } = await withMock(async () => ({ value: { value: [] } }), { resourceType });
+    assert.equal(report.radiusLogs.length, 1);
+    assert.equal(calls.length, 12);
+    assert.ok(report.collections.some((item) => item.operation === "resource-inventory"));
+    assert.equal(report.errors.length, 0);
+  }
 });
 
 test("older base workflows can use the selected Azure account without listing other subscriptions", async () => {
@@ -321,7 +352,7 @@ test("older base workflows can use the selected Azure account without listing ot
     assert.ok(args[4].includes(`/subscriptions/${subscription}/`));
     return { value: { value: [] } };
   }, { subscription: "" });
-  assert.equal(calls.length, 9);
+  assert.equal(calls.length, 13);
   assert.equal(report.scope, scope);
   assert.equal(report.errors.length, 0);
 });
@@ -330,8 +361,10 @@ test("account lookup failure cannot fall back to an unscoped resource request", 
   for (const response of [{ error: "request-timeout" }, { error: "azure-cli-failed", exitCode: 3 },
     { value: { id: subscription, credentials: secret } }, { value: secret }]) {
     let calls = 0;
-    await assert.rejects(withMock(async () => { calls++; return response; }, { subscription: "" }));
+    const { report } = await withMock(async () => { calls++; return response; }, { subscription: "" });
     assert.equal(calls, 1);
+    assert.equal(report.radiusLogs.length, 1);
+    assert.equal(report.errors[0].reason, "azure-subscription-context-unavailable");
   }
 });
 
