@@ -157,7 +157,7 @@ Per-Recipe Azure tests use the same size selection, bounded retry, and cleanup
 checks.
 The temporary test app stays beside its source so Bicep can use the same
 extension configuration. The runner removes this file when it exits.
-Database and credential resource names include the unique test application
+Database and credential resource names derive from the unique test application
 name so retries do not reuse names that Azure still reserves after deletion.
 
 If a deployment reports a structured `SkuNotAvailable` or `ServerIsBusy`

@@ -241,10 +241,8 @@ for invalid_list in '[]' '[{},{}]' '{}' 'not json'; do
         fail "PostgreSQL assertions must reject missing, ambiguous, or invalid resource lists"
     fi
 done
-grep -Fq "name: 'pg-\${applicationName}'" "$POSTGRES_TEST_APP_BICEP" ||
+grep -Fq "name: 'postgresql-\${take(uniqueString(applicationName), 8)}'" "$POSTGRES_TEST_APP_BICEP" ||
     fail "PostgreSQL server names must be distinct for each test application"
-grep -Fq "name: 'pg-creds-\${applicationName}'" "$POSTGRES_TEST_APP_BICEP" ||
-    fail "PostgreSQL credential names must not reuse soft-deleted Azure vault names"
 grep -q 'kubectl wait deployment -n test-ns -l radapp.io/application=testapp,radapp.io/resource=postgresclient' "$CALL_LOG" ||
     fail "PostgreSQL assertions must wait for the real prerequisite probe"
 if KUBECTL_EXIT_CODE=1 run_lib rtc_assert_recipe_result "Radius.Data/postgreSqlDatabases" testapp myws test-ns "$POSTGRES_TEST_APP_BICEP" >/dev/null 2>&1; then
@@ -673,6 +671,13 @@ secrets_resource_name="$(awk '
 ' "$REPO_ROOT/Security/secrets/test/app.bicep")"
 [[ "$secrets_resource_name" == "  name: 'dbsecret-\${take(uniqueString(applicationName), 8)}'" ]] ||
     fail "secrets test resource name must use an 8-character applicationName hash"
+
+postgresql_secret_name="$(awk '
+    /^resource dbCreds .*Radius.Security\/secrets@/ { in_secret = 1; next }
+    in_secret && /^  name:/ { print; exit }
+' "$REPO_ROOT/Data/postgreSqlDatabases/test/app.bicep")"
+[[ "$postgresql_secret_name" == "  name: 'postgresql-client-credentials-\${take(uniqueString(applicationName), 8)}'" ]] ||
+    fail "PostgreSQL test secret resource name must use an 8-character applicationName hash"
 
 echo 'param environment string' >"$TEST_ROOT/missing-application-name.bicep"
 : >"$CALL_LOG"

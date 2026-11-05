@@ -34,7 +34,7 @@ resource app 'Radius.Core/applications@2025-08-01-preview' = {
 resource dbCreds 'Radius.Security/secrets@2025-08-01-preview' = {
   // Keep this distinct from the Recipe-owned `postgresql-credentials`
   // Kubernetes Secret that configures the PostgreSQL container.
-  name: 'pg-creds-${applicationName}'
+  name: 'postgresql-client-credentials-${take(uniqueString(applicationName), 8)}'
   properties: {
     environment: environment
     application: app.id
@@ -47,7 +47,7 @@ resource dbCreds 'Radius.Security/secrets@2025-08-01-preview' = {
 }
 
 resource postgresql 'postgreSqlDatabases:Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
-  name: 'pg-${applicationName}'
+  name: 'postgresql-${take(uniqueString(applicationName), 8)}'
   properties: {
     environment: environment
     application: app.id
