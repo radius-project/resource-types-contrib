@@ -224,7 +224,7 @@ jobs:
       - name: Prepare parameterized PostgreSQL test harness
         run: |
           set -euo pipefail
-          harness="$RUNNER_TEMP/postgresql-test-app.bicep"
+          harness="$(mktemp Data/postgreSqlDatabases/test/.postgresql-test-XXXXXX.bicep)"
           bash .github/scripts/prepare-postgres-test-harness.sh \
             Data/postgreSqlDatabases/test/app.bicep "$harness"
           echo "RTC_POSTGRES_TEST_HARNESS=$harness" >> "$GITHUB_ENV"
@@ -412,6 +412,10 @@ jobs:
           RECIPE_PLATFORM_FILTER=azure make test \
             ENVIRONMENT="$AZURE_ENVIRONMENT_NAME" \
             RECIPE_TYPE=terraform
+
+      - name: Remove parameterized PostgreSQL test harness
+        if: always()
+        run: rm -f -- "${RTC_POSTGRES_TEST_HARNESS:?}"
 
       - name: Summarize PostgreSQL selection
         if: always()
