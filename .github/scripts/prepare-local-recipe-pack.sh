@@ -80,6 +80,7 @@ while IFS=$'\t' read -r resource_type source; do
         ghcr.io/radius-project/kube-recipes/*) platform=kubernetes ;;
         ghcr.io/radius-project/azure-recipes/*) platform=azure ;;
         ghcr.io/radius-project/azure-aci-recipes/*) platform=azure ;;
+        ghcr.io/radius-project/azure-aks-recipes/*) platform=azure ;;
         ghcr.io/radius-project/aws-eks-recipes/*) platform=aws ;;
         *)
             echo "Error: no local recipe mapping for '$source'." >&2
