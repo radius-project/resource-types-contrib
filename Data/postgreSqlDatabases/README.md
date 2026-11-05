@@ -160,6 +160,9 @@ result. Direct runs can set `RTC_POSTGRES_TEST_DEADLINE_EPOCH` to the same
 absolute Unix deadline. Without a deadline, the entry has a 30-minute budget.
 Per-Recipe Azure tests use the same size selection, bounded retry, and cleanup
 checks.
+The Azure Bicep validation job has a 45-minute limit to allow time for a capacity
+retry, SQL initialization, and server cleanup. Azure Terraform validation keeps
+its 30-minute limit.
 The temporary test app stays beside its source so Bicep can use the same
 extension configuration. The runner removes this file when it exits.
 Database and credential resource names derive from the unique test application
