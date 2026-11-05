@@ -94,10 +94,14 @@ resource subnetGroup 'AWS.RDS/DBSubnetGroup@default' = {
 // MySQL server
 //////////////////////////////////////////
 
+// AWS can't change a parameter group's family, so a group left by a failed
+// deploy would block every other version if the name didn't include it.
+var parameterGroupName = '${name}-${replace(version, '.', '')}'
+
 resource parameterGroup 'AWS.RDS/DBParameterGroup@default' = {
-  alias: name
+  alias: parameterGroupName
   properties: {
-    DBParameterGroupName: name
+    DBParameterGroupName: parameterGroupName
     Description: 'Radius MySQL ${context.resource.name}'
     Family: 'mysql${version}'
     // The AWS types model this free-form map as a closed object.

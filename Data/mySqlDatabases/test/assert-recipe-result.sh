@@ -55,6 +55,15 @@ jq -e '
 ' <<<"$AWS_TEMPLATE" >/dev/null ||
     { echo "AWS MySQL Recipe names must hash the cluster, namespace, and resource ID" >&2; exit 1; }
 
+# AWS can't change a parameter group's family, so its name must include the
+# version. Otherwise a group left by a failed deploy blocks other versions.
+jq -e '
+  (.variables.parameterGroupName | contains("variables('"'"'name'"'"')") and contains("variables('"'"'version'"'"')")) and
+  (.resources.parameterGroup.properties | .alias == "[variables('"'"'parameterGroupName'"'"')]" and
+    .properties.DBParameterGroupName == "[variables('"'"'parameterGroupName'"'"')]")
+' <<<"$AWS_TEMPLATE" >/dev/null ||
+    { echo "AWS MySQL Recipe parameter group name must include the version" >&2; exit 1; }
+
 # The aws-eks pack must pass every required Recipe parameter and nothing the
 # Recipe does not declare: a deployment rejects undeclared parameters.
 # shellcheck source=.github/scripts/lib-recipe-packs.sh
