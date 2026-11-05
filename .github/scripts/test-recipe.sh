@@ -137,8 +137,15 @@ fi
 
 # Recipes come from the Recipe Pack bound to the Environment, so a failed test
 # has no per-type registration to undo.
-if ! RTC_TEST_PLATFORM="$PLATFORM" rtc_deploy_and_assert_test_app "$TEST_FILE" "$RESOURCE_TYPE" "testapp" "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE"; then
-    exit 1
+if [[ "$RESOURCE_TYPE" == "Radius.Data/postgreSqlDatabases" && "$PLATFORM" == azure ]]; then
+    if [[ -n "${AZURE_RESOURCE_GROUP:-}" ]]; then
+        export RTC_AZURE_LOCK_GUARD=1
+    fi
+    rtc_test_azure_postgresql_app "$TEST_FILE" "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE" || exit 1
+else
+    if ! RTC_TEST_PLATFORM="$PLATFORM" rtc_deploy_and_assert_test_app "$TEST_FILE" "$RESOURCE_TYPE" "testapp" "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE"; then
+        exit 1
+    fi
 fi
 
 echo "==> Test completed successfully"
