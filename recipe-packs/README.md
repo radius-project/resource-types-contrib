@@ -116,53 +116,22 @@ a default branch. The nightly deployment checks the values used by each test
 app, not every possible property value. A type used by two packs is tested
 once per pack, with that pack active.
 
-Before nightly or release-candidate Azure tests create the main resource group,
-[`select-azure-test-location.sh`](../.github/scripts/select-azure-test-location.sh)
-checks candidate regions in order. Set the repository variable
-`RTC_AZURE_TEST_REGIONS` to override the list (up to four distinct Azure region
-names). Otherwise, the workflows keep `AZURE_LOCATION` and
-`AZURE_FALLBACK_LOCATION` first, when set, then fill remaining slots from the
-automatic candidates `westus3,centralus,northcentralus,southcentralus`. Their
-defaults are `westus3` and `centralus`, so the default list is
-`westus3,centralus,northcentralus,southcentralus`. Reported read-only catalog
-results from one subscription show PostgreSQL 16 and both approved sizes in all
-four. The Azure AKS pack's `gpt-5-mini` Global Standard deployment and Basic
-Azure AI Search service are listed as available there. `westus2` and `westus`
-are not automatic because an Azure AKS service is not listed in each region.
-Duplicates are removed without changing order, and automatic candidates fill
-the list to at most four regions. An explicit list with more than four distinct
-regions is invalid. For example, distinct legacy settings `eastus` and
-`northeurope` produce `eastus,northeurope,westus3,centralus`.
-`RTC_POSTGRES_TEST_SIZES` controls the candidate sizes (`S,M` by default, at
-most two distinct sizes).
+Azure has no API that reserves live regional capacity. The nightly and
+release-candidate workflows call the reusable
+[`azure-postgres-preflight.yaml`](../.github/workflows/azure-postgres-preflight.yaml)
+job before the main Azure test job. It tries the approved `S` and `M` tuples in
+the configured region order and reports a typed result. All probe servers are
+created in one disposable, owner-tagged resource group. The preflight deletes
+the group after selection, and the unconditional workflow cleanup job retries
+that deletion. Therefore, a timed-out Azure create can finish late only inside
+the owned probe group.
 
-For each tuple, the test first checks the read-only PostgreSQL catalog for
-version 16, the mapped SKU and tier, and 32-GiB storage. Verified unsupported
-tuples are reported separately and are not created. Catalog errors, malformed
-responses, and authorization or configuration failures stop selection. A
-catalog-level region or offer restriction is recorded without allocation, and
-selection continues with the next region. A supported tuple is probed by creating
-and deleting a flexible server in a temporary resource group with a random
-name and ownership tag. The selector checks the tag before deletion. Failed
-or uncertain cleanup stops further probes and reports the exact recovery
-target rather than deleting an unverified resource.
-
-Capacity errors such as `SkuNotAvailable` and `ServerIsBusy` move selection to
-the next configured tuple. The first tuple with capacity sets `AZURE_LOCATION`
-for the Azure tests. If no tuple works, the PostgreSQL entry fails; the first
-validated region remains only as the location for unrelated tests, which still
-run. The job reports the PostgreSQL failure instead of treating that region as
-a successful fallback. Selection and PostgreSQL deployment recovery share one
-60-minute deadline; cleanup has a separate reserve of up to 15 minutes. A
-deployment that loses capacity may retry one configured alternate size in the
-selected region after confirmed cleanup, within that same deadline.
-
-The probe uses `AZURE_SUBSCRIPTION_ID` when it is set, and the Azure CLI
-default subscription otherwise. More candidates can improve reliability but
-cannot guarantee Azure capacity. Verify every configured region for
-subscription access, quota, policy, PostgreSQL 16, and the other Azure AKS pack
-services. An explicit override may include `westus2` only if the required AI
-model deployment and other pack services are available there.
+Capacity, unsupported tuple, and catalog restriction results continue to the
+next candidate. Authentication, configuration, malformed catalog, timeout,
+and uncertain cleanup errors fail the preflight. If no candidate is selected
+safely, unrelated Azure tests continue and the PostgreSQL phase is reported as
+skipped and failed. A successful probe improves reliability but does not
+reserve capacity for the later deployment.
 
 MySQL pack entries that map `tls` to `require_secure_transport` run both
 `tls: required` and `tls: optional`. They pass `verifyTransport` through

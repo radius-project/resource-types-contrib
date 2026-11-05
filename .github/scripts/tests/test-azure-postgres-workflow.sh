@@ -17,15 +17,15 @@ temp="$(mktemp -d)"
 trap 'rm -rf -- "$temp"' EXIT
 fail() { echo "FAIL: $1" >&2; exit 1; }
 unset RTC_AZURE_TEST_REGIONS AZURE_LOCATION AZURE_FALLBACK_LOCATION
-[[ "$(bash "$script" regions)" == westus3,centralus,northcentralus,southcentralus ]] || fail defaults
+[[ "$(bash "$script" regions)" == westus3,eastus2,centralus ]] || fail defaults
 [[ "$(AZURE_LOCATION=eastus AZURE_FALLBACK_LOCATION=northeurope bash "$script" regions)" == \
-    eastus,northeurope,westus3,centralus ]] || fail "distinct legacy settings and automatic fill"
+    eastus,northeurope,centralus ]] || fail "legacy settings"
 [[ "$(AZURE_LOCATION=centralus AZURE_FALLBACK_LOCATION=centralus bash "$script" regions)" == \
-    centralus,westus3,northcentralus,southcentralus ]] || fail "stable deduplication and automatic fill"
+    centralus ]] || fail "stable deduplication"
 [[ "$(RTC_AZURE_TEST_REGIONS=westus2,westus2,eastus2 AZURE_LOCATION=bad bash "$script" regions)" == \
     westus2,eastus2 ]] || fail "override precedence"
-[[ "$(RTC_AZURE_TEST_REGIONS=westus3,centralus,northcentralus,southcentralus bash "$script" regions)" == \
-    westus3,centralus,northcentralus,southcentralus ]] || fail "four-region override"
+[[ "$(RTC_AZURE_TEST_REGIONS=westus3,eastus2,centralus,westus2 bash "$script" regions)" == \
+    westus3,eastus2,centralus,westus2 ]] || fail "four-region override"
 [[ "$(RTC_AZURE_TEST_REGIONS=centralus bash "$script" regions)" == centralus ]] || fail "single region"
 for list in '' Westus3 'eastus2,' 'eastus2,,centralus' 'a,b,c,d,e' $'eastus2\r' $'eastus2\nwestus2'; do
     if RTC_AZURE_TEST_REGIONS="$list" bash "$script" regions >/dev/null 2>&1; then fail "invalid list"; fi
@@ -33,110 +33,16 @@ done
 if RTC_AZURE_TEST_REGIONS="$(printf 'eastus2,%.0s' {1..32})eastus2" \
     bash "$script" regions >/dev/null 2>&1; then fail "raw list bound"; fi
 
-selector_scripts="$temp/selector-scripts"
-mkdir "$selector_scripts"
-cp "$script" "$selector_scripts/azure-postgres-workflow.sh"
-cp "$root/.github/scripts/lib-azure-postgres-test.sh" "$selector_scripts/"
-cp "$root/.github/scripts/run-command.py" "$selector_scripts/"
-export SIZE_LOG="$temp/selector-sizes"
-cat >"$selector_scripts/select-azure-test-location.sh" <<'EOF'
-#!/bin/bash
-printf '%s\n' "$RTC_POSTGRES_TEST_SIZES" >"$SIZE_LOG"
-printf '%s\n' "${RTC_AZURE_TEST_REGIONS%%,*}"
-jq -n --arg location "${RTC_AZURE_TEST_REGIONS%%,*}" --arg status "${FAKE_SELECTION_STATUS:-selected}" \
-    --arg cleanup "${FAKE_CLEANUP:-confirmed}" \
-    '{version:1,status:$status,location:$location,deadlineEpochSeconds:123456,
-      postgres:{size:"S",skuName:"Standard_B1ms",tier:"Burstable"},
-      attempts:[{region:$location,size:"S",skuName:"Standard_B1ms",tier:"Burstable",
-        outcome:(if $status == "deadline_exceeded" then "timeout" else "available" end),
-        errorCode:(if $status == "deadline_exceeded" then "CreateTimeout" else "" end),
-        durationSeconds:1,cleanup:$cleanup}]} |
-        if $status == "selected" then . else del(.postgres) end' >"$RTC_AZURE_SELECTION_FILE"
-exit "${FAKE_SELECTOR_STATUS:-23}"
-EOF
-chmod +x "$selector_scripts/select-azure-test-location.sh"
-failed_selection="$temp/failed-selection.json"
-failed_env="$temp/failed-selection.env"
-if output=$(RTC_AZURE_TEST_REGIONS=centralus,westus2 RTC_AZURE_SELECTION_FILE="$failed_selection" \
-    GITHUB_ENV="$failed_env" bash "$selector_scripts/azure-postgres-workflow.sh" \
-    select-context fixture-probe 2>&1); then
-    fail "a nonzero selector must remain a workflow failure"
-fi
-jq -e '.version == 1 and .status == "probe_error" and .location == "centralus" and
-    .deadlineEpochSeconds == 123456 and (has("postgres") | not) and
-    .attempts[0].region == "centralus"' "$failed_selection" >/dev/null ||
-    fail "nonzero selector must preserve diagnostics but fail closed"
-grep -Fxq 'AZURE_LOCATION=centralus' "$failed_env" ||
-    fail "nonzero selector must export its validated fallback region"
-grep -q 'continuing unrelated entries' <<<"$output" ||
-    fail "nonzero selector must report its safe continuation"
-grep -Fxq 'RTC_POSTGRES_TEST_SIZES=S,M' "$failed_env" ||
-    fail "validated default size list must persist to later workflow steps"
-
-for cleanup in confirmed failed; do
-    expected_status=deadline_exceeded
-    [[ "$cleanup" != failed ]] || expected_status=probe_error
-    if FAKE_SELECTION_STATUS=deadline_exceeded FAKE_CLEANUP="$cleanup" \
-        RTC_AZURE_TEST_REGIONS=centralus RTC_AZURE_SELECTION_FILE="$failed_selection" \
-        GITHUB_ENV="$failed_env" bash "$selector_scripts/azure-postgres-workflow.sh" \
-        select-context fixture-probe >/dev/null 2>&1; then
-        fail "nonzero deadline selector must fail its workflow step"
-    fi
-    jq -e --arg status "$expected_status" '.status == $status and (has("postgres") | not)' \
-        "$failed_selection" >/dev/null || fail "deadline and cleanup status must remain distinct"
-done
-
-cleanup_selection="$temp/cleanup-selection.json"
-jq -n '{version:1,status:"deadline_exceeded",location:"centralus",attempts:
-    (["confirmed","failed","not_required","uncertain"] | map({
-        region:"centralus",size:"S",skuName:"Standard_B1ms",tier:"Burstable",
-        outcome:"probe_error",errorCode:"Test",durationSeconds:0,cleanup:.
-    }))}' >"$cleanup_selection"
-cleanup_summary="$temp/cleanup-summary.md"
-RTC_AZURE_SELECTION_FILE="$cleanup_selection" GITHUB_STEP_SUMMARY="$cleanup_summary" \
-    bash "$script" summary failure success
-for cleanup in confirmed failed not_required uncertain; do
-    grep -Fq "| 0 | $cleanup |" "$cleanup_summary" || fail "summary must show each cleanup state"
-done
-jq -n '{version:1,status:"probe_error",location:"centralus",attempts:[{
-    region:"centralus",size:"S",skuName:"Standard_B1ms",tier:"Burstable",
-    outcome:"probe_error",errorCode:"CleanupUnconfirmed",durationSeconds:12,cleanup:"failed",
-    diagnostic:{stage:"delete",exitStatus:1,errorCode:"Conflict",
-      firstError:{stage:"create",exitStatus:1,errorCode:"SkuNotAvailable"},
-      outcomeBeforeCleanup:"capacity_exhausted",errorCodeBeforeCleanup:"SkuNotAvailable"},
-    untrusted:"DO_NOT_PRINT"}]}' >"$cleanup_selection"
-: >"$cleanup_summary"
-RTC_AZURE_SELECTION_FILE="$cleanup_selection" GITHUB_STEP_SUMMARY="$cleanup_summary" \
-    bash "$script" summary
-grep -Fq 'stage=delete,status=1,code=Conflict,first=create/1/SkuNotAvailable,before=capacity_exhausted/SkuNotAvailable' \
-    "$cleanup_summary" || { cat "$cleanup_summary" >&2; fail "summary must retain sanitized cleanup and first-error details"; }
-! grep -q DO_NOT_PRINT "$cleanup_summary" || fail "summary must not print untrusted fields"
-
-single_selection="$temp/single-size-selection.json"
-single_env="$temp/single-size.env"
-if RTC_AZURE_TEST_REGIONS=centralus RTC_POSTGRES_TEST_SIZES=S \
-    RTC_AZURE_SELECTION_FILE="$single_selection" GITHUB_ENV="$single_env" \
-    FAKE_SELECTOR_STATUS=0 bash "$selector_scripts/azure-postgres-workflow.sh" \
-    select-context fixture-probe >/dev/null 2>&1; then
-    :
-else
-    fail "single-size selection fixture should succeed"
-fi
-[[ "$(cat "$SIZE_LOG")" == S ]] || fail "selector must receive the single configured size"
-grep -Fxq 'RTC_POSTGRES_TEST_SIZES=S' "$single_env" ||
-    fail "validated single-size list must persist to the PostgreSQL deployment step"
-
 export RTC_AZURE_SELECTION_FILE="$temp/selection.json" GITHUB_STEP_SUMMARY="$temp/summary.md"
-for status in selected capacity_exhausted unsupported restricted catalog_unavailable probe_error deadline_exceeded; do
+for status in selected capacity_exhausted probe_error deadline_exceeded; do
     jq -n --arg status "$status" '{version:1,status:$status,deadlineEpochSeconds:123456,
         secret:"DO_NOT_PRINT",attempts:[{region:"centralus",size:"M",skuName:"Standard_D2ds_v5",
-        tier:"GeneralPurpose",outcome:"capacity_exhausted",errorCode:"SkuNotAvailable",
-        durationSeconds:12,cleanup:"confirmed"}]}' \
+        tier:"GeneralPurpose",outcome:"capacity_exhausted",errorCode:"SkuNotAvailable",durationSeconds:12}]}' \
         >"$RTC_AZURE_SELECTION_FILE"
     : >"$GITHUB_STEP_SUMMARY"
     bash "$script" summary
     grep -Fq "Final selection status: **$status**" "$GITHUB_STEP_SUMMARY" || fail "status summary"
-    grep -Fq '| centralus | M | Standard_D2ds_v5 | GeneralPurpose | capacity_exhausted | SkuNotAvailable | 12 | confirmed |' \
+    grep -Fq '| centralus | M | Standard_D2ds_v5 | GeneralPurpose | capacity_exhausted | SkuNotAvailable | 12 |' \
         "$GITHUB_STEP_SUMMARY" || fail "attempt table"
     ! grep -q DO_NOT_PRINT "$GITHUB_STEP_SUMMARY" || fail "unexpected fields leaked"
 done
@@ -151,9 +57,6 @@ cat >"$temp/bin/az" <<'EOF'
 #!/bin/bash
 set -euo pipefail
 echo "$*" >>"$CALL_LOG"
-if [[ "${SLOW_AZ_COMMAND:-}" == "$2" ]]; then
-    exec "$SLOW_AZ_HELPER"
-fi
 command="$2"
 group=""
 query=""
@@ -201,27 +104,6 @@ case "$command" in
                 rtcAzureTestGroupOwner=*) owner_tag=rtcAzureTestGroupOwner; owner_value="${tag#*=}" ;;
             esac
         done
-        if [[ -n "${ASSERT_CREATE_LOG:-}" && "$owner_tag" == rtcAzureTestGroupOwner ]] &&
-            ! grep -Fq "Creating main resource group '$group' with rtcAzureTestGroupOwner=$owner_value." \
-                "$ASSERT_CREATE_LOG"; then
-            exit 91
-        fi
-        case "${CREATE_FAILURE_MODE:-}" in
-            owned)
-                printf '%s|%s|%s\n' "$group" "$owner_tag" "$owner_value" >>"$GROUP_STATE"
-                exit 1
-                ;;
-            foreign)
-                printf '%s|rtcAzureTestGroupOwner|%s\n' "$group" "$FOREIGN_OWNER_TOKEN" >>"$GROUP_STATE"
-                exit 1
-                ;;
-            absent) exit 1 ;;
-            timeout) exit 124 ;;
-            late)
-                printf '%s|%s|%s\n' "$group" "$owner_tag" "$owner_value" >"$GROUP_STATE.pending"
-                exit 1
-                ;;
-        esac
         printf '%s|%s|%s\n' "$group" "$owner_tag" "$owner_value" >>"$GROUP_STATE"
         ;;
     *) exit 1 ;;
@@ -229,21 +111,6 @@ esac
 EOF
 chmod +x "$temp/bin/az"
 export PATH="$temp/bin:$PATH" GITHUB_RUN_ID=123 GITHUB_RUN_ATTEMPT=3 AZURE_SUBSCRIPTION_ID=test
-export SLOW_AZ_HELPER="$temp/slow-az.py" SLOW_AZ_PIDS="$temp/slow-az.pids"
-cat >"$SLOW_AZ_HELPER" <<'PY'
-#!/usr/bin/env python3
-import os
-import signal
-import time
-
-signal.signal(signal.SIGTERM, signal.SIG_IGN)
-child = os.fork()
-if child:
-    with open(os.environ["SLOW_AZ_PIDS"], "w", encoding="ascii") as output:
-        output.write(f"{os.getpid()}\n{child}\n")
-time.sleep(20)
-PY
-chmod +x "$SLOW_AZ_HELPER"
 token_a=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 token_b=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 for kind in nightly rc; do
@@ -376,14 +243,7 @@ done
 for kind in nightly rc; do
     : >"$GROUP_STATE"
     group="rrttest-$kind-123-3-$token_a"
-    create_log="$temp/create-$kind.log"
-    : >"$create_log"
-    # The mock checks the log line before allowing the create request to proceed.
-    # shellcheck disable=SC2094
-    ASSERT_CREATE_LOG="$create_log" bash "$script" create-main "$kind" "$group" westus3 "$token_a" \
-        >"$create_log" 2>&1
-    grep -Fq "Creating main resource group '$group' with rtcAzureTestGroupOwner=$token_a." "$create_log" ||
-        fail "main group recovery target must be logged before create"
+    bash "$script" create-main "$kind" "$group" westus3 "$token_a" >/dev/null
     grep -Fq "$group|rtcAzureTestGroupOwner|$token_a" "$GROUP_STATE" ||
         fail "main group ownership tag"
     : >"$CALL_LOG"
@@ -397,142 +257,5 @@ for kind in nightly rc; do
     fi
     ! grep -q '^group create' "$CALL_LOG" || fail "must not update existing main group"
     grep -Fq "$group||" "$GROUP_STATE" || fail "existing main group preserved"
-
-    for mode in owned foreign absent timeout; do
-        : >"$GROUP_STATE"
-        : >"$CALL_LOG"
-        if CREATE_FAILURE_MODE="$mode" FOREIGN_OWNER_TOKEN="$token_b" \
-            bash "$script" create-main "$kind" "$group" westus3 "$token_a" \
-            >/dev/null 2>&1; then
-            fail "$kind main-group $mode creation failure"
-        fi
-        ! grep -q 'group delete' "$CALL_LOG" || fail "$kind $mode failure must not delete an unconfirmed group"
-        case "$mode" in
-            owned)
-                grep -Fq "$group|rtcAzureTestGroupOwner|$token_a" "$GROUP_STATE" ||
-                    fail "$kind partial owned group must be left for the cleanup job"
-                ;;
-            foreign)
-                grep -Fq "$group|rtcAzureTestGroupOwner|$token_b" "$GROUP_STATE" ||
-                    fail "$kind foreign-tagged group must be preserved"
-                ;;
-            absent|timeout)
-                [[ ! -s "$GROUP_STATE" ]] || fail "$kind $mode failure must leave absent group state"
-                ;;
-        esac
-    done
-done
-
-: >"$GROUP_STATE"
-late_group="rrttest-nightly-123-3-$token_a"
-late_log="$temp/late-create.log"
-if output=$(CREATE_FAILURE_MODE=late \
-    bash "$script" create-main nightly "$late_group" westus3 "$token_a" 2>&1); then
-    fail "late main-group create must be reported as uncertain"
-fi
-printf '%s\n' "$output" >"$late_log"
-grep -Fq "Creating main resource group '$late_group' with rtcAzureTestGroupOwner=$token_a." <<<"$output" ||
-    fail "interrupted main-group create must log its exact recovery target before Azure work"
-grep -Fq "Inspect '$late_group' and its ownership tag" <<<"$output" ||
-    fail "uncertain main-group create must direct operators to the logged recovery target"
-[[ ! -s "$GROUP_STATE" ]] || fail "late-create fixture must initially remain absent"
-# Complete the remote operation after the client exits, without a client orphan.
-cat "$GROUP_STATE.pending" >>"$GROUP_STATE"
-grep -Fq "$late_group|rtcAzureTestGroupOwner|$token_a" "$GROUP_STATE" ||
-    fail "late Azure create must materialize the logged recovery target"
-
-assert_slow_processes_stopped() {
-    python3 - "$SLOW_AZ_PIDS" <<'PY' || fail "workflow watchdog left a process running"
-import pathlib
-import sys
-
-for pid in pathlib.Path(sys.argv[1]).read_text().splitlines():
-    try:
-        state = pathlib.Path(f"/proc/{pid}/stat").read_text().split(") ", 1)[1][0]
-    except FileNotFoundError:
-        continue
-    if state != "Z":
-        raise SystemExit(f"Process {pid} is still running ({state})")
-PY
-}
-for slow_command in exists show delete; do
-    : >"$CALL_LOG"
-    printf '%s|rtcAzureTestGroupOwner|%s\n' "$late_group" "$token_a" >"$GROUP_STATE"
-    rm -f -- "$SLOW_AZ_PIDS"
-    started_seconds=$SECONDS
-    if output=$({
-        export SLOW_AZ_COMMAND="$slow_command"
-        set -- regions
-        # shellcheck source=/dev/null
-        source "$script" >/dev/null
-        cleanup_deadline=$((SECONDS + 2))
-        delete_and_confirm_resource_group \
-            "$late_group" rtcAzureTestGroupOwner "$token_a" "$cleanup_deadline"
-    } 2>&1); then fail "$slow_command timeout must fail cleanup"; fi
-    ((SECONDS - started_seconds < 8)) || fail "workflow $slow_command exceeded its cleanup budget"
-    [[ -s "$SLOW_AZ_PIDS" ]] || fail "workflow $slow_command must exercise the watchdog"
-    assert_slow_processes_stopped
-    grep -Fq "$late_group|rtcAzureTestGroupOwner|$token_a" "$GROUP_STATE" ||
-        fail "uncertain workflow cleanup must preserve the resource group"
-    if [[ "$slow_command" != delete ]] && grep -q '^group delete ' "$CALL_LOG"; then
-        fail "uncertain existence or ownership must not authorize deletion"
-    fi
-done
-
-for interrupted_signal in TERM INT; do
-: >"$CALL_LOG"
-: >"$GROUP_STATE"
-rm -f -- "$SLOW_AZ_PIDS"
-PARENT_SIGNAL="SIG$interrupted_signal" python3 - "$script" "$late_group" "$token_a" \
-    "$temp/parent-only-signal-$interrupted_signal.log" <<'PY'
-import os
-import signal
-import subprocess
-import sys
-import time
-from pathlib import Path
-
-script, group, token, log_path = sys.argv[1:]
-environment = os.environ.copy()
-environment["SLOW_AZ_COMMAND"] = "create"
-parent_signal = getattr(signal, environment["PARENT_SIGNAL"])
-started = time.monotonic()
-process = subprocess.Popen(
-    ["bash", script, "create-main", "nightly", group, "westus3", token],
-    env=environment, start_new_session=True, stdout=subprocess.PIPE,
-    stderr=subprocess.STDOUT, text=True,
-)
-try:
-    deadline = started + 10
-    pid_file = Path(environment["SLOW_AZ_PIDS"])
-    while not pid_file.exists() or not pid_file.read_text().strip():
-        if process.poll() is not None or time.monotonic() >= deadline:
-            raise RuntimeError("workflow did not reach main-group creation")
-        time.sleep(0.01)
-    process.send_signal(parent_signal)
-    output, _ = process.communicate(timeout=8)
-    Path(log_path).write_text(output, encoding="utf-8")
-    if process.returncode == 0:
-        raise RuntimeError(f"parent-only {environment['PARENT_SIGNAL']} reported success")
-    if time.monotonic() - started >= 8:
-        raise RuntimeError("workflow cancellation exceeded the shutdown bound")
-except Exception:
-    pid_file = Path(environment["SLOW_AZ_PIDS"])
-    for pid in pid_file.read_text().splitlines() if pid_file.exists() else []:
-        try:
-            os.kill(int(pid), signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-    if process.poll() is None:
-        os.killpg(process.pid, signal.SIGKILL)
-        process.wait()
-    raise
-PY
-output="$(cat "$temp/parent-only-signal-$interrupted_signal.log")"
-assert_slow_processes_stopped
-grep -Fq "Creating main resource group '$late_group' with rtcAzureTestGroupOwner=$token_a." <<<"$output" ||
-    fail "cancelled creation must log the exact recovery target"
-! grep -q '^group delete ' "$CALL_LOG" ||
-    fail "cancelled main creation must leave ownership verification to the cleanup job"
 done
 echo "Azure PostgreSQL workflow tests passed"

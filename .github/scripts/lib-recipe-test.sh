@@ -37,8 +37,6 @@ if [[ -n "${RTC_LIB_RECIPE_TEST_SOURCED:-}" ]]; then
     return 0 2>/dev/null || exit 0
 fi
 RTC_LIB_RECIPE_TEST_SOURCED=1
-# shellcheck source=.github/scripts/lib-azure-postgres-test.sh
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-azure-postgres-test.sh"
 
 rtc_ensure_workspace_context() {
     local workspace_name="$1"
@@ -69,38 +67,20 @@ rtc_resolve_environment_path() {
     echo "$environment_path"$'\t'"$kubernetes_namespace"
 }
 
-# Unrelated tests keep their existing command behavior.
-rtc_run_postgresql_test_command() {
-    local limit="$1" deadline="$2" remaining
-    shift 2
-    if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" != 1 ]]; then
-        "$@"
-        return
-    fi
-    if [[ ! "$deadline" =~ ^[1-9][0-9]{0,10}$ ]]; then
-        echo "Error: Invalid PostgreSQL command deadline." >&2
-        return 1
-    fi
-    remaining=$((deadline - $(date +%s)))
-    if ((remaining <= 0)); then
-        echo "Error: PostgreSQL command deadline expired before $1." >&2
-        return 124
-    fi
-    if ((limit > remaining)); then limit="$remaining"; fi
-    rtc_run_command --timeout "$limit" "$@"
-}
-
 # Only delete leftovers labelled for this test app, not shared resources.
 rtc_cleanup_kubernetes_resources() {
-    local kubernetes_namespace="$1" app_name="$2" deadline="${3:-}" kind status=0
+    local kubernetes_namespace="$1" app_name="$2" kind status=0
+    local -a limit=()
+    if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
+        limit=(timeout --kill-after=5s 30s)
+    fi
     if [[ -z "$kubernetes_namespace" ]]; then
         return
     fi
 
     echo "==> Cleaning up leftover K8s resources for $app_name in $kubernetes_namespace"
     for kind in secrets deployments services; do
-        if ! rtc_run_postgresql_test_command 30 "$deadline" \
-            kubectl delete "$kind" -l "radapp.io/application=$app_name" -n "$kubernetes_namespace"; then
+        if ! "${limit[@]}" kubectl delete "$kind" -l "radapp.io/application=$app_name" -n "$kubernetes_namespace"; then
             echo "Error: Could not clean up $kind for '$app_name'." >&2
             status=1
         fi
@@ -226,15 +206,14 @@ PY
 # Compare group-wide IDs, not just Radius outputs: a failed recipe can allocate
 # a server before it records any output. Never delete an untracked resource here.
 rtc_snapshot_azure_resource_ids() {
-    local deadline="${1:-}" inventory
+    local inventory
     local -a subscription_args=()
     [[ -z "${AZURE_SUBSCRIPTION_ID:-}" ]] || subscription_args=(--subscription "$AZURE_SUBSCRIPTION_ID")
     [[ -n "${AZURE_RESOURCE_GROUP:-}" ]] || {
         echo "Error: PostgreSQL cleanup requires AZURE_RESOURCE_GROUP." >&2
         return 1
     }
-    inventory=$(rtc_run_postgresql_test_command 30 "$deadline" \
-        az resource list --resource-group "$AZURE_RESOURCE_GROUP" \
+    inventory=$(timeout --kill-after=5s 30s az resource list --resource-group "$AZURE_RESOURCE_GROUP" \
         "${subscription_args[@]}" --output json) || return 1
     jq -er '
         if type == "array" and all(.[]; .id | type == "string" and startswith("/subscriptions/"))
@@ -243,98 +222,25 @@ rtc_snapshot_azure_resource_ids() {
     ' <<<"$inventory"
 }
 
-rtc_postgresql_group_location() {
-    local deadline="$1" location
-    local -a subscription_args=()
-    [[ -z "${AZURE_SUBSCRIPTION_ID:-}" ]] || subscription_args=(--subscription "$AZURE_SUBSCRIPTION_ID")
-    if [[ -z "${AZURE_RESOURCE_GROUP:-}" ]] ||
-        ! location=$(RTC_POSTGRES_CAPACITY_RECOVERY=1 RTC_POSTGRES_TEST_DEADLINE_EPOCH="$deadline" \
-            rtc_run_postgresql_test_command 30 "$deadline" az group show \
-            --name "$AZURE_RESOURCE_GROUP" "${subscription_args[@]}" --query location --output tsv) ||
-        [[ ! "$location" =~ ^[a-z0-9]+$ ]]; then
-        echo "Error: Could not establish the fixed region for the PostgreSQL probe." >&2
-        return 1
-    fi
-    printf '%s\n' "$location"
-}
-
-# Probe a tuple in the existing group's region, never a caller's location hint.
-rtc_probe_azure_postgresql_size() {
-    local size="$1" deadline="$2" remaining location cleanup_reserve
-    local delete_timeout="${RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS-900}"
-    cleanup_reserve="$(rtc_postgres_cleanup_reserve_seconds)" || return 1
-    if ! rtc_postgres_positive_limit "$delete_timeout" 900; then
-        echo "Error: Invalid PostgreSQL probe cleanup reserve or delete timeout." >&2
-        return 1
-    fi
-    location="$(rtc_postgresql_group_location "$deadline")" || return 1
-    remaining=$((deadline - $(date +%s)))
-    if ((remaining <= 0)); then
-        echo "Error: PostgreSQL deadline has expired before the probe." >&2
-        return 1
-    fi
-    if ((remaining > 900)); then remaining=900; fi
-    AZURE_LOCATION="$location" RTC_POSTGRES_TEST_SIZE="$size" RTC_POSTGRES_PROBE_ATTEMPTS=1 \
-        RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS="$remaining" \
-        RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS="$delete_timeout" \
-        RTC_POSTGRES_PROBE_CLEANUP_DEADLINE_EPOCH="$((deadline + cleanup_reserve))" \
-        rtc_run_command --quiet "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/probe-azure-postgres-capacity.sh"
-}
-
 # Retry one untried size only when the shared helper confirms safe cleanup.
 rtc_test_azure_postgresql_app() (
     local test_file="$1" environment_path="$2" workspace_name="$3" kubernetes_namespace="$4"
     local size="${RTC_POSTGRES_TEST_SIZE:-S}" deadline="${RTC_POSTGRES_TEST_DEADLINE_EPOCH:-}"
-    local test_harness script_dir workspace_root invocation_id
-    local interrupted_status=0
+    local remaining status attempt test_harness script_dir
+    case "$size" in S|M) ;; *) echo "Error: PostgreSQL test size must be S or M." >&2; return 1 ;; esac
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
-    workspace_root="${GITHUB_WORKSPACE:-$(cd "$script_dir/../.." && pwd)}"
-    workspace_root="$(cd "$workspace_root" && pwd)" || return 1
-    test_harness=$(mktemp "$workspace_root/.rtc-postgres-test-XXXXXX.bicep") || return 1
+    test_harness=$(mktemp "${TMPDIR:-/tmp}/rtc-postgres-test-XXXXXX.bicep") || return 1
     trap 'rm -f -- "$test_harness"' EXIT
     if ! bash "$script_dir/prepare-postgres-test-harness.sh" "$test_file" "$test_harness"; then
         return 1
     fi
     test_file="$test_harness"
-    trap 'interrupted_status=130' INT
-    trap 'interrupted_status=143' TERM
-    ((interrupted_status == 0)) || return "$interrupted_status"
-    if ! invocation_id="$(python3 -c 'import secrets; print(secrets.token_hex(16))')"; then
-        echo "Error: Could not generate a unique PostgreSQL test application name." >&2
-        return 1
-    fi
-    local status attempt candidate alternate=""
-    local size_list
-    local -a allowed_sizes
-    case "$size" in S|M) ;; *) echo "Error: PostgreSQL test size must be S or M." >&2; return 1 ;; esac
-    size_list="$(rtc_postgres_normalize_test_sizes)" || return 1
-    IFS=',' read -r -a allowed_sizes <<<"$size_list"
-    if [[ ",$size_list," != *",$size,"* ]]; then
-        echo "Error: Selected PostgreSQL size $size is excluded by the configured size list." >&2
-        return 1
-    fi
     if [[ -z "$deadline" ]]; then deadline=$(( $(date +%s) + 1800 )); fi
     if [[ ! "$deadline" =~ ^[1-9][0-9]{0,10}$ ]]; then
         echo "Error: Invalid PostgreSQL test deadline." >&2
         return 1
     fi
-    if [[ "${RTC_POSTGRES_VERIFIED_SIZE:-}" != "$size" ||
-        ! "${RTC_POSTGRES_VERIFIED_LOCATION:-}" =~ ^[a-z0-9]+$ ]]; then
-        if ! rtc_probe_azure_postgresql_size "$size" "$deadline"; then
-            ((interrupted_status == 0)) || return "$interrupted_status"
-            echo "Error: Initial PostgreSQL probe failed; deployment is not allowed." >&2
-            return 1
-        fi
-    else
-        local location
-        location="$(rtc_postgresql_group_location "$deadline")" || return 1
-        if [[ "$location" != "$RTC_POSTGRES_VERIFIED_LOCATION" ]]; then
-            echo "Error: Verified PostgreSQL region differs from the existing resource group; deployment is blocked." >&2
-            return 1
-        fi
-    fi
     for attempt in 1 2; do
-        ((interrupted_status == 0)) || return "$interrupted_status"
         if ((deadline <= $(date +%s))); then
             echo "Error: PostgreSQL deployment deadline has expired." >&2
             return 1
@@ -342,41 +248,29 @@ rtc_test_azure_postgresql_app() (
         status=0
         RTC_POSTGRES_CAPACITY_RECOVERY=1 RTC_POSTGRES_TEST_DEADLINE_EPOCH="$deadline" \
             rtc_deploy_and_assert_test_app "$test_file" Radius.Data/postgreSqlDatabases \
-                "rtcpg-$invocation_id-$size-$attempt" "$environment_path" "$workspace_name" "$kubernetes_namespace" \
+                "recipepacktest-pg-$size-$attempt" "$environment_path" "$workspace_name" "$kubernetes_namespace" \
                 --parameters "postgresSize=$size" || status=$?
-        ((interrupted_status == 0)) || return "$interrupted_status"
         if ((status == 0)); then return 0; fi
         if ((status != 42 || attempt == 2)); then
             echo "Error: PostgreSQL deployment failed (size $size, attempt $attempt, status $status)." >&2
             return 1
         fi
-        for candidate in "${allowed_sizes[@]}"; do
-            if [[ "$candidate" != "$size" ]]; then alternate="$candidate"; break; fi
-        done
-        if [[ -z "$alternate" ]]; then
-            echo "Error: PostgreSQL capacity lost; no alternate size is allowed." >&2
-            return 1
-        fi
-        echo "==> PostgreSQL capacity lost; cleanup confirmed. Probing allowed size $alternate in the same region."
-        if ! rtc_probe_azure_postgresql_size "$alternate" "$deadline"; then
-            echo "Error: Alternate PostgreSQL probe failed; no deployment retry is allowed." >&2
-            return 1
-        fi
-        size="$alternate"
+        if [[ "$size" == S ]]; then size=M; else size=S; fi
+        echo "==> PostgreSQL capacity lost; cleanup confirmed. Retrying size $size in the same region."
     done
 )
 
 # Best-effort cleanup for fast-fail paths. The request timeout and non-blocking
 # delete keep cleanup bounded when the cluster or resource controllers are unhealthy.
 rtc_cleanup_kubernetes_resources_bounded() {
-    local kubernetes_namespace="$1" app_name="$2" deadline="${3:-}" kind
+    local kubernetes_namespace="$1" app_name="$2" kind
     if [[ -z "$kubernetes_namespace" ]]; then
         return
     fi
 
     echo "==> Cleaning up leftover K8s resources for $app_name in $kubernetes_namespace (bounded)"
     for kind in secrets deployments services; do
-        rtc_run_postgresql_test_command 30 "$deadline" kubectl delete "$kind" \
+        kubectl delete "$kind" \
             -l "radapp.io/application=$app_name" \
             -n "$kubernetes_namespace" \
             --request-timeout=10s \
@@ -386,7 +280,6 @@ rtc_cleanup_kubernetes_resources_bounded() {
 }
 
 rtc_snapshot_azure_management_locks() {
-    local deadline="${1:-}"
     local -a subscription_args=()
     if [[ -z "${AZURE_RESOURCE_GROUP:-}" ]]; then
         echo "Error: AZURE_RESOURCE_GROUP is required for the Azure management lock guard." >&2
@@ -396,7 +289,7 @@ rtc_snapshot_azure_management_locks() {
         subscription_args=(--subscription "$AZURE_SUBSCRIPTION_ID")
     fi
 
-    rtc_run_postgresql_test_command 30 "$deadline" az lock list \
+    az lock list \
         --resource-group "$AZURE_RESOURCE_GROUP" \
         "${subscription_args[@]}" \
         --query '[].id' \
@@ -404,8 +297,8 @@ rtc_snapshot_azure_management_locks() {
 }
 
 rtc_snapshot_application_azure_lock_inventory() {
-    local app_name="$1" workspace_name="$2" deadline="${3:-}" resources_json
-    if ! resources_json=$(rtc_run_postgresql_test_command 30 "$deadline" rad resource list \
+    local app_name="$1" workspace_name="$2" resources_json
+    if ! resources_json=$(rad resource list \
         --application "$app_name" \
         --workspace "$workspace_name" \
         --output json); then
@@ -459,13 +352,12 @@ rtc_save_azure_lock_diagnostics() {
 }
 
 rtc_delete_owned_new_azure_management_locks() {
-    local locks_before="$1" inventory_locks="$2" app_name="$3" deadline="${4:-}"
-    local locks_after lock_id delete_output status=0
+    local locks_before="$1" inventory_locks="$2" app_name="$3" locks_after lock_id delete_output status=0
     local -a subscription_args=()
     if [[ -n "${AZURE_SUBSCRIPTION_ID:-}" ]]; then
         subscription_args=(--subscription "$AZURE_SUBSCRIPTION_ID")
     fi
-    if ! locks_after=$(rtc_snapshot_azure_management_locks "$deadline"); then
+    if ! locks_after=$(rtc_snapshot_azure_management_locks); then
         echo "Error: Could not inspect Azure management locks after the Recipe Pack entry test." >&2
         return 1
     fi
@@ -476,8 +368,7 @@ rtc_delete_owned_new_azure_management_locks() {
             echo "==> Ignoring new Azure management lock outside the test application: $lock_id"
             continue
         fi
-        if delete_output=$(rtc_run_postgresql_test_command 30 "$deadline" \
-            az lock delete --ids "$lock_id" "${subscription_args[@]}" 2>&1); then
+        if delete_output=$(az lock delete --ids "$lock_id" "${subscription_args[@]}" 2>&1); then
             echo "==> Deleted Azure management lock created by the Recipe Pack entry: $lock_id"
             continue
         fi
@@ -538,9 +429,8 @@ rtc_assert_containers_result() {
 # Radius.Data/postgreSqlDatabases-specific assertion: the shared test app's
 # deployed resource must expose host/port/database and never leak secrets.
 rtc_assert_postgresql_result() {
-    local app_name="$1" workspace_name="$2" deadline="${3:-}" resource_json
-    if ! resource_json=$(rtc_run_postgresql_test_command 30 "$deadline" \
-        rad resource show "Radius.Data/postgreSqlDatabases" postgresql \
+    local app_name="$1" workspace_name="$2" resource_json
+    if ! resource_json=$(rad resource show "Radius.Data/postgreSqlDatabases" postgresql \
         --application "$app_name" \
         --workspace "$workspace_name" \
         --output json); then
@@ -566,7 +456,7 @@ rtc_assert_postgresql_result() {
 # `rad deploy` succeeding (the test app's own readiness probes/waits included)
 # is the test.
 rtc_assert_recipe_result() {
-    local resource_type="$1" app_name="$2" workspace_name="$3" deadline="${5:-}"
+    local resource_type="$1" app_name="$2" workspace_name="$3"
     case "$resource_type" in
         Radius.Data/mySqlDatabases)
             local kubernetes_namespace="${4:-}"
@@ -587,7 +477,7 @@ rtc_assert_recipe_result() {
             rtc_assert_containers_result "$app_name" "$workspace_name"
             ;;
         Radius.Data/postgreSqlDatabases)
-            rtc_assert_postgresql_result "$app_name" "$workspace_name" "$deadline"
+            rtc_assert_postgresql_result "$app_name" "$workspace_name"
             ;;
         *)
             return 0
@@ -796,7 +686,6 @@ rtc_collect_azure_test_diagnostics() {
 rtc_deploy_and_assert_test_app() {
     local test_file="$1" resource_type="$2" app_name_prefix="$3" environment_path="$4" workspace_name="$5" kubernetes_namespace="$6"
     local app_name started locks_before="" inventory_locks="" deploy_status=0 azure_before="" azure_after=""
-    local postgres_work_deadline="" postgres_cleanup_deadline="" postgres_cleanup_reserve
     local -a params=() deploy_timeout=() cleanup_timeout=()
     local -a deploy_command=(rtc_deploy_with_retry)
     shift 6
@@ -804,19 +693,12 @@ rtc_deploy_and_assert_test_app() {
     app_name="${app_name_prefix}-$(date +%s)"
 
     if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
-        postgres_cleanup_reserve="$(rtc_postgres_cleanup_reserve_seconds)" || return 1
-        postgres_work_deadline="${RTC_POSTGRES_TEST_DEADLINE_EPOCH:-}"
-        if [[ ! "$postgres_work_deadline" =~ ^[1-9][0-9]{0,10}$ ]]; then
-            echo "Error: Invalid PostgreSQL test deadline." >&2
-            return 1
-        fi
-        postgres_cleanup_deadline=$((postgres_work_deadline + postgres_cleanup_reserve))
         app_name+="-$RANDOM"
-        if ! azure_before=$(rtc_snapshot_azure_resource_ids "$postgres_work_deadline"); then
+        if ! azure_before=$(rtc_snapshot_azure_resource_ids); then
             echo "Error: Could not snapshot Azure resources before PostgreSQL deployment." >&2
             return 1
         fi
-        cleanup_timeout=(rtc_run_postgresql_test_command 720 "$postgres_cleanup_deadline")
+        cleanup_timeout=(timeout --kill-after=5s 12m)
     elif [[ "${GITHUB_ACTIONS:-}" == true && "${RTC_TEST_PLATFORM:-}" == azure &&
           "$resource_type" == Radius.Compute/containers ]]; then
         if ! command -v timeout >/dev/null 2>&1; then
@@ -849,7 +731,7 @@ rtc_deploy_and_assert_test_app() {
     params+=(--parameters "applicationName=$app_name")
 
     if [[ "${RTC_AZURE_LOCK_GUARD:-0}" == "1" ]]; then
-        if ! locks_before=$(rtc_snapshot_azure_management_locks "$postgres_work_deadline"); then
+        if ! locks_before=$(rtc_snapshot_azure_management_locks); then
             echo "Error: Could not inspect Azure management locks before the Recipe Pack entry test." >&2
             return 1
         fi
@@ -858,14 +740,18 @@ rtc_deploy_and_assert_test_app() {
     echo "==> Deploying test application from $test_file"
     started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
-        local remaining
-        remaining=$((postgres_work_deadline - $(date +%s)))
+        local deadline="${RTC_POSTGRES_TEST_DEADLINE_EPOCH:-}" remaining
+        if [[ ! "$deadline" =~ ^[1-9][0-9]{0,10}$ ]]; then
+            echo "Error: Invalid PostgreSQL test deadline." >&2
+            return 1
+        fi
+        remaining=$((deadline - $(date +%s)))
         if ((remaining <= 0)); then
             echo "Error: PostgreSQL deployment deadline expired before allocation." >&2
             return 1
         fi
         if ((remaining > 900)); then remaining=900; fi
-        deploy_timeout=(rtc_run_postgresql_test_command "$remaining" "$postgres_work_deadline")
+        deploy_timeout=(timeout --kill-after=5s "${remaining}s")
         # shellcheck disable=SC2016 # Expanded by the child shell.
         deploy_command=("${deploy_timeout[@]}" bash -c \
             'source "$1"; shift; rtc_deploy_with_retry "$@"' \
@@ -874,8 +760,7 @@ rtc_deploy_and_assert_test_app() {
     if "${deploy_command[@]}" "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
         echo "==> Test deployment successful"
 
-        if ! rtc_assert_recipe_result "$resource_type" "$app_name" "$workspace_name" \
-            "$kubernetes_namespace" "$postgres_work_deadline"; then
+        if ! rtc_assert_recipe_result "$resource_type" "$app_name" "$workspace_name" "$kubernetes_namespace"; then
             deploy_status=1
         fi
     else
@@ -888,9 +773,7 @@ rtc_deploy_and_assert_test_app() {
                 echo "Error: Azure container test deployment exceeded its 15-minute limit." >&2
             fi
         fi
-        if [[ "$deploy_status" != 42 && "$deploy_status" != 130 && "$deploy_status" != 143 ]]; then
-            deploy_status=1
-        fi
+        if [[ "$deploy_status" != 42 ]]; then deploy_status=1; fi
     fi
 
     if [[ "$deploy_status" -ne 0 ]]; then
@@ -902,17 +785,14 @@ rtc_deploy_and_assert_test_app() {
     fi
 
     if [[ "${RTC_AZURE_LOCK_GUARD:-0}" == "1" ]]; then
-        if ! inventory_locks=$(rtc_snapshot_application_azure_lock_inventory \
-            "$app_name" "$workspace_name" "$postgres_cleanup_deadline"); then
+        if ! inventory_locks=$(rtc_snapshot_application_azure_lock_inventory "$app_name" "$workspace_name"); then
             echo "Error: Continuing with bounded Radius application deletion without lock ownership data." >&2
             inventory_locks=""
             if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then deploy_status=1; fi
         fi
-        if ! rtc_delete_owned_new_azure_management_locks \
-            "$locks_before" "$inventory_locks" "$app_name" "$postgres_cleanup_deadline"; then
+        if ! rtc_delete_owned_new_azure_management_locks "$locks_before" "$inventory_locks" "$app_name"; then
             echo "Error: Skipping Radius application deletion because Azure lock cleanup or Radius lock inventory validation failed." >&2
-            rtc_cleanup_kubernetes_resources_bounded \
-                "$kubernetes_namespace" "$app_name" "$postgres_cleanup_deadline"
+            rtc_cleanup_kubernetes_resources_bounded "$kubernetes_namespace" "$app_name"
             return 1
         fi
     fi
@@ -920,14 +800,13 @@ rtc_deploy_and_assert_test_app() {
     echo "==> Cleaning up test application"
     local cleanup_status=0
     ${cleanup_timeout[@]+"${cleanup_timeout[@]}"} rad app delete "$app_name" --workspace "$workspace_name" --yes || cleanup_status=1
-    rtc_cleanup_kubernetes_resources \
-        "$kubernetes_namespace" "$app_name" "$postgres_cleanup_deadline" || cleanup_status=1
+    rtc_cleanup_kubernetes_resources "$kubernetes_namespace" "$app_name" || cleanup_status=1
     if [[ "$cleanup_status" -ne 0 ]]; then
         echo "Error: Test app cleanup failed." >&2
         return 1
     fi
     if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
-        if ! azure_after=$(rtc_snapshot_azure_resource_ids "$postgres_cleanup_deadline") ||
+        if ! azure_after=$(rtc_snapshot_azure_resource_ids) ||
             [[ -n "$(comm -13 <(printf '%s\n' "$azure_before" | sed '/^$/d') \
                 <(printf '%s\n' "$azure_after" | sed '/^$/d'))" ]]; then
             echo "Error: PostgreSQL Azure resource deletion was not confirmed; recovery is blocked." >&2

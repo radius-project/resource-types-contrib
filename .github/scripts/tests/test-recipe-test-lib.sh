@@ -38,10 +38,6 @@ CALL_LOG="$TEST_ROOT/calls.log"
 cat >"$MOCK_BIN/rad" <<'EOF'
 #!/bin/bash
 echo "rad $*" >>"$CALL_LOG"
-if [[ -n "${SLOW_COMMAND:-}" && "rad $*" == "$SLOW_COMMAND "* ]] &&
-    (( $(grep -c "^$SLOW_COMMAND " "$CALL_LOG") >= ${SLOW_AFTER:-1} )); then
-    exec "$SLOW_COMMAND_HELPER"
-fi
 case "$1 $2" in
     "workspace switch")
         exit "${WORKSPACE_EXIT_CODE:-0}"
@@ -57,20 +53,6 @@ case "$1 $2" in
         fi
         ;;
     "deploy "*)
-        if [[ -n "${ASSERT_BICEP_CONFIG_WORKSPACE:-}" ]]; then
-            deploy_file="$2"
-            [[ -f "$deploy_file" ]] || {
-                echo "Expected deployed Bicep file does not exist: $deploy_file" >&2
-                exit 97
-            }
-            deploy_directory="$(cd "$(dirname "$deploy_file")" && pwd)" || exit 98
-            config_directory="$(cd "$ASSERT_BICEP_CONFIG_WORKSPACE" && pwd)" || exit 98
-            if [[ "$deploy_directory" != "$config_directory" ||
-                ! -f "$deploy_directory/bicepconfig.json" ]]; then
-                echo "Deployed Bicep file cannot resolve the workspace config: $deploy_file" >&2
-                exit 99
-            fi
-        fi
         deploy_attempt=$(grep -c '^rad deploy ' "$CALL_LOG")
         deploy_exit_code="${DEPLOY_EXIT_CODE:-0}"
         if (( deploy_attempt <= ${DEPLOY_FAILURES:-0} )); then
@@ -125,9 +107,6 @@ chmod +x "$MOCK_BIN/rad"
 cat >"$MOCK_BIN/kubectl" <<'EOF'
 #!/bin/bash
 echo "kubectl $*" >>"$CALL_LOG"
-if [[ -n "${SLOW_COMMAND:-}" && "kubectl $*" == "$SLOW_COMMAND "* ]]; then
-    exec "$SLOW_COMMAND_HELPER"
-fi
 exit "${KUBECTL_EXIT_CODE:-0}"
 EOF
 chmod +x "$MOCK_BIN/kubectl"
@@ -135,54 +114,7 @@ chmod +x "$MOCK_BIN/kubectl"
 cat >"$MOCK_BIN/az" <<'EOF'
 #!/bin/bash
 echo "az $*" >>"$CALL_LOG"
-if [[ -n "${SLOW_COMMAND:-}" && "az $*" == "$SLOW_COMMAND "* ]] &&
-    (( $(grep -c "^$SLOW_COMMAND " "$CALL_LOG") >= ${SLOW_AFTER:-1} )); then
-    exec "$SLOW_COMMAND_HELPER"
-fi
 case "$1 $2" in
-    "group show")
-        printf '%s\n' "${AZ_GROUP_LOCATION:-westus3}"
-        exit "${AZ_GROUP_EXIT_CODE:-0}"
-        ;;
-    "postgres flexible-server")
-        case "$3" in
-            create)
-                if [[ "$4" == --help ]]; then
-                    echo '--zonal-resiliency --microsoft-entra-auth'
-                    exit 0
-                fi
-                if [[ "${PG_PROBE_EXIT_CODE:-0}" != 0 ]]; then
-                    echo '(SkuNotAvailable) capacity unavailable' >&2
-                    exit "$PG_PROBE_EXIT_CODE"
-                fi
-                ;;
-            list-skus)
-                if [[ "${PG_CATALOG_UNSUPPORTED:-0}" == 1 ]]; then
-                    echo '[{"supportedServerVersions":[{"name":"15"}],"supportedServerEditions":[]}]'
-                else
-                    jq -cn '{supportedServerVersions:[{name:"16",status:null}],supportedServerEditions:
-                        [{name:"Burstable",supportedServerSkus:[{name:"Standard_B1ms"}]},
-                         {name:"GeneralPurpose",supportedServerSkus:[{name:"Standard_D2ds_v5"}]}]
-                        | map(. + {supportedStorageEditions:[{name:"ManagedDisk",supportedStorageMb:[{storageSizeMb:32768}]}]})} | [.]'
-                fi
-                ;;
-            show)
-                creates=$(grep '^az postgres flexible-server create ' "$CALL_LOG" | grep -vc -- ' --help' || true)
-                deletes=$(grep -c '^az postgres flexible-server delete ' "$CALL_LOG" || true)
-                if ((creates > deletes)); then
-                    if [[ "${PG_PROBE_UNKNOWN_OWNER:-0}" == 1 ]]; then echo '{"tags":{}}'; exit 0; fi
-                    args=("$@")
-                    for ((i = 0; i < ${#args[@]}; i++)); do
-                        if [[ "${args[i]}" == --name ]]; then owner="${args[i+1]#pgprobe-}"; fi
-                    done
-                    printf '{"tags":{"rtc-probe-owner":"%s"}}\n' "$owner"
-                else
-                    echo '(ResourceNotFound) absent' >&2
-                    exit 1
-                fi
-                ;;
-        esac
-        ;;
     "resource list")
         if [[ "${AZ_RESOURCE_LIST_FAIL:-0}" == 1 ]]; then exit 1; fi
         if [[ -n "${AZ_RESOURCE_LIST_DELAY_SECONDS:-}" ]]; then sleep "$AZ_RESOURCE_LIST_DELAY_SECONDS"; fi
@@ -213,23 +145,6 @@ case "$1 $2" in
 esac
 EOF
 chmod +x "$MOCK_BIN/az"
-
-export SLOW_COMMAND_HELPER="$TEST_ROOT/slow-command.py"
-export SLOW_COMMAND_PIDS="$TEST_ROOT/slow-command.pids"
-cat >"$SLOW_COMMAND_HELPER" <<'PY'
-#!/usr/bin/env python3
-import os
-import signal
-import time
-
-signal.signal(signal.SIGTERM, signal.SIG_IGN)
-child = os.fork()
-if child:
-    with open(os.environ["SLOW_COMMAND_PIDS"], "w", encoding="ascii") as output:
-        output.write(f"{os.getpid()}\n{child}\n")
-time.sleep(20)
-PY
-chmod +x "$SLOW_COMMAND_HELPER"
 
 cat >"$MOCK_BIN/openssl" <<'EOF'
 #!/bin/bash
@@ -768,8 +683,7 @@ exec /usr/bin/timeout "$@"
 EOF
 chmod +x "$MOCK_BIN/timeout"
 run_postgres() {
-    RTC_POSTGRES_VERIFIED_SIZE="${RTC_POSTGRES_TEST_SIZE:-S}" RTC_POSTGRES_VERIFIED_LOCATION=westus3 \
-        AZURE_RESOURCE_GROUP=rg RTC_TEST_PLATFORM=azure run_lib rtc_test_azure_postgresql_app \
+    AZURE_RESOURCE_GROUP=rg RTC_TEST_PLATFORM=azure run_lib rtc_test_azure_postgresql_app \
         "$POSTGRES_TEST_APP_BICEP" /envs/myenv myws my-ns
 }
 
@@ -822,10 +736,7 @@ for pure_error in "$WRAPPED_TERRAFORM_ERROR" "$TERRAFORM_DOWNLOAD_ERROR" "$TRANS
         fail "$classifier must preserve Radius compatibility warnings and progress"
     : >"$CALL_LOG"
     DEPLOY_FAILURES=1 DEPLOY_ERROR="$RADIUS_PROGRESS"$'\n'"$pure_error" \
-        run_postgres >"$TEST_ROOT/progress-recovery.log" 2>&1 || {
-            cat "$TEST_ROOT/progress-recovery.log"
-            fail "pure errors with Radius progress must recover"
-        }
+        run_postgres >/dev/null 2>&1 || fail "pure errors with Radius progress must recover"
     assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "Radius progress recovery attempts"
 done
 
@@ -903,104 +814,11 @@ DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres >/dev/nul
 assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "PostgreSQL recovery attempts"
 grep -q -- '--parameters postgresSize=S' "$CALL_LOG" || fail "first deployment must use S"
 grep -q -- '--parameters postgresSize=M' "$CALL_LOG" || fail "recovery must use M"
-grep '^az postgres flexible-server create ' "$CALL_LOG" | grep -q -- '--sku-name Standard_D2ds_v5' ||
-    fail "M recovery must first probe the M tuple"
-awk '/^rad app delete / { cleaned = 1 }
-    /^az postgres flexible-server create / && !/--help/ { if (!cleaned) exit 1; probed = 1 }
-    /^az postgres flexible-server delete / { deleted = 1 }
-    /^rad deploy / { attempts++; if (attempts == 2 && (!probed || !deleted)) exit 1 }
-' "$CALL_LOG" || fail "alternate probe must follow app cleanup and finish before deployment"
-mapfile -t postgres_app_names < <(
-    sed -nE 's/^rad deploy .*--parameters applicationName=([^ ]+).*/\1/p' "$CALL_LOG"
-)
-[[ "${#postgres_app_names[@]}" -eq 2 ]] || fail "each PostgreSQL attempt must use an application name"
-for app_name in "${postgres_app_names[@]}"; do
-    [[ "${#app_name}" -le 63 &&
-        "$app_name" =~ ^rtcpg-[a-f0-9]{32}-[SM]-[12]-[0-9]{10}-[0-9]{1,5}$ ]] ||
-        fail "PostgreSQL application names must retain the 128-bit token and fit the 63-character limit"
-done
-
-for selected in S M; do
-    : >"$CALL_LOG"
-    if RTC_POSTGRES_TEST_SIZE="$selected" RTC_POSTGRES_TEST_SIZES="$selected" \
-        DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres >/dev/null 2>&1; then
-        fail "single-size policy must not recover with an excluded size"
-    fi
-    assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "single-size deployment attempts"
-    if grep -q '^az postgres flexible-server create ' "$CALL_LOG"; then
-        fail "single-size policy must not probe an excluded size"
-    fi
-done
-for sizes in S,M M,S; do
-    for selected in S M; do
-        : >"$CALL_LOG"
-        RTC_POSTGRES_TEST_SIZE="$selected" RTC_POSTGRES_TEST_SIZES="$sizes" \
-            DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres >/dev/null 2>&1 ||
-            fail "both-size policy must recover in either configured order"
-        assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "both-size recovery attempts"
-        expected_sku=Standard_D2ds_v5
-        [[ "$selected" != M ]] || expected_sku=Standard_B1ms
-        grep '^az postgres flexible-server create ' "$CALL_LOG" | grep -q -- "--sku-name $expected_sku" ||
-            fail "recovery probe must match the alternate deployed size"
-    done
-done
-for setting in PG_PROBE_EXIT_CODE=1 PG_PROBE_EXIT_CODE=124 PG_PROBE_UNKNOWN_OWNER=1 AZ_GROUP_EXIT_CODE=1 PG_CATALOG_UNSUPPORTED=1; do
-    : >"$CALL_LOG"
-    if (
-        export "${setting?}"
-        DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres >/dev/null 2>&1
-    ); then fail "failed or uncertain alternate probe must stop recovery"; fi
-    expected_deployments=1
-    [[ "$setting" != AZ_GROUP_EXIT_CODE=1 ]] || expected_deployments=0
-    assert_eq "$expected_deployments" "$(grep -c '^rad deploy ' "$CALL_LOG" || true)" \
-        "failed alternate probe deployment attempts"
-done
-for sizes in '' L S,L bad; do
-    : >"$CALL_LOG"
-    if RTC_POSTGRES_TEST_SIZES="$sizes" run_postgres >/dev/null 2>&1; then fail "invalid size list must fail"; fi
-    if grep -q '^rad deploy ' "$CALL_LOG"; then fail "invalid size policy must not allocate"; fi
-done
-
-: >"$CALL_LOG"
-DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres >/dev/null ||
-    fail "default recovery must remain available"
 assert_eq 2 "$(grep '^rad deploy ' "$CALL_LOG" | sed -E 's/.*applicationName=([^ ]+).*/\1/' | sort -u | wc -l | tr -d ' ')" \
     "recovery application names must be distinct"
-assert_eq 1 "$(grep '^rad deploy ' "$CALL_LOG" |
-    sed -nE 's/.*applicationName=rtcpg-([a-f0-9]{32})-[SM]-[12]-.*/\1/p' | sort -u | wc -l | tr -d ' ')" \
-    "recovery must retain its per-invocation identity"
 awk '/^rad app delete / { cleaned++ } /^az resource list / { snapshots++ }
     /^rad deploy / { attempts++; if (attempts == 2 && (cleaned != 1 || snapshots < 3)) exit 1 }' "$CALL_LOG" ||
     fail "recovery must follow Radius cleanup and Azure deletion verification"
-
-: >"$CALL_LOG"
-export REAL_DATE
-REAL_DATE="$(command -v date)"
-cat >"$MOCK_BIN/date" <<'EOF'
-#!/bin/bash
-if [[ "$*" == '+%s' ]]; then
-    echo 1700000000
-else
-    exec "$REAL_DATE" "$@"
-fi
-EOF
-chmod +x "$MOCK_BIN/date"
-run_postgres >"$TEST_ROOT/parallel-postgres-1.log" 2>&1 &
-first_postgres=$!
-run_postgres >"$TEST_ROOT/parallel-postgres-2.log" 2>&1 &
-second_postgres=$!
-wait "$first_postgres" || fail "first concurrent PostgreSQL test failed"
-wait "$second_postgres" || fail "second concurrent PostgreSQL test failed"
-rm -f -- "$MOCK_BIN/date"
-parallel_names="$(sed -nE 's/^rad deploy .*applicationName=([^ ]+).*/\1/p' "$CALL_LOG")"
-assert_eq 2 "$(sort -u <<<"$parallel_names" | wc -l | tr -d ' ')" \
-    "parallel PostgreSQL applications must have distinct names"
-while IFS= read -r name; do
-    [[ "$name" =~ ^rtcpg-[a-f0-9]{32}-S-1-1700000000-[0-9]+$ && ${#name} -le 63 ]] ||
-        fail "concurrent PostgreSQL name must include a unique invocation and remain within 63 characters"
-    grep -Fq "rad app delete $name --workspace " "$CALL_LOG" ||
-        fail "each concurrent test must delete its own application"
-done <<<"$parallel_names"
 
 RADIUS_POSTGRES_CAPACITY_ERROR='Error: {"code":"RecipeDeploymentFailed","message":"Recipe deployment failed","details":[{"code":"DeploymentFailed","details":[{"code":"ResourceDeploymentFailure","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg","message":"{\"code\":\"SkuNotAvailable\",\"message\":\"capacity unavailable\"}"}]}]}'
 : >"$CALL_LOG"
@@ -1045,9 +863,7 @@ grep '^rad deploy ' "$CALL_LOG" | tail -1 | grep -q 'postgresSize=S' ||
     fail "M recovery must use S, not L (the same SKU)"
 
 : >"$CALL_LOG"
-if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" \
-    run_postgres >"$TEST_ROOT/capacity-exhaustion.log" 2>&1; then
-    cat "$TEST_ROOT/capacity-exhaustion.log" "$CALL_LOG" >&2
+if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres >/dev/null 2>&1; then
     fail "capacity recovery exhaustion must fail"
 fi
 assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "capacity recovery is limited to two attempts"
@@ -1124,15 +940,15 @@ if RTC_POSTGRES_TEST_DEADLINE_EPOCH=1 run_postgres >/dev/null 2>&1; then fail "e
 [[ ! -s "$CALL_LOG" ]] || fail "deadline must stop allocation"
 
 : >"$CALL_LOG"
-if SLOW_COMMAND='rad deploy' RTC_POSTGRES_TEST_DEADLINE_EPOCH="$(( $(date +%s) + 2 ))" \
-    run_postgres >"$TEST_ROOT/deploy-timeout.log" 2>&1; then fail "deploy timeout must fail"; fi
-assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "timeout must not change size"
+if POSTGRES_DEPLOY_TIMEOUT=1 run_postgres >/dev/null 2>&1; then fail "deploy timeout must fail"; fi
+assert_eq 1 "$(grep -c '^timeout .* bash -c ' "$CALL_LOG")" "timeout must not change size"
 assert_eq 1 "$(grep -c '^rad app delete ' "$CALL_LOG")" "timeout must still clean up"
-grep -q 'deployment exceeded its time limit' "$TEST_ROOT/deploy-timeout.log" ||
-    fail "deployment watchdog timeout must be reported"
 : >"$CALL_LOG"
 RTC_POSTGRES_TEST_DEADLINE_EPOCH="$(( $(date +%s) + 45 ))" run_postgres >/dev/null ||
     fail "a remaining deadline must permit a bounded deployment"
+limit="$(sed -nE 's/^timeout --kill-after=5s ([0-9]+)s bash .*/\1/p' "$CALL_LOG")"
+[[ "$limit" =~ ^[0-9]+$ && "$limit" -gt 0 && "$limit" -le 45 ]] ||
+    fail "deployment must respect remaining selection time"
 
 : >"$CALL_LOG"
 if RTC_POSTGRES_TEST_DEADLINE_EPOCH="$(( $(date +%s) + 1 ))" AZ_RESOURCE_LIST_DELAY_SECONDS=2 \
@@ -1143,96 +959,7 @@ if grep -q '^rad deploy ' "$CALL_LOG"; then
     fail "deployment must not begin after snapshots consume the deadline"
 fi
 
-for slow_command in 'az resource list' 'az lock list' 'rad resource show' \
-    'rad resource list' 'az lock delete' 'rad app delete' 'kubectl delete' 'az resource list'; do
-    : >"$CALL_LOG"
-    rm -f -- "$SLOW_COMMAND_PIDS" "$AZ_LOCK_STATE_FILE"
-    slow_after=1
-    deploy_failures=1
-    [[ "$slow_command" != 'rad resource show' ]] || deploy_failures=0
-    [[ "$slow_command" != 'az resource list' || "${tested_resource_snapshot:-0}" == 0 ]] || slow_after=2
-    [[ "$slow_command" != 'az resource list' ]] || tested_resource_snapshot=1
-    started_seconds=$SECONDS
-    if SLOW_COMMAND="$slow_command" SLOW_AFTER="$slow_after" \
-        RTC_POSTGRES_TEST_DEADLINE_EPOCH="$(( $(date +%s) + 5 ))" \
-        RTC_POSTGRES_CLEANUP_RESERVE_SECONDS=2 RTC_AZURE_LOCK_GUARD=1 \
-        AZ_LOCKS_AFTER="$NEW_LOCK" RESOURCE_LIST_JSON="$LOCK_INVENTORY_JSON" \
-        DEPLOY_FAILURES="$deploy_failures" DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" \
-        run_postgres >"$TEST_ROOT/slow-command.log" 2>&1; then
-        fail "$slow_command timeout must fail"
-    fi
-    ((SECONDS - started_seconds < 10)) || fail "$slow_command exceeded the shared command budget"
-    [[ -s "$SLOW_COMMAND_PIDS" ]] || fail "$slow_command did not exercise the slow process"
-    python3 - "$SLOW_COMMAND_PIDS" <<'PY' || fail "watchdog left a process running"
-import pathlib
-import sys
-
-for pid in pathlib.Path(sys.argv[1]).read_text().splitlines():
-    try:
-        state = pathlib.Path(f"/proc/{pid}/stat").read_text().split(") ", 1)[1][0]
-    except FileNotFoundError:
-        continue
-    if state != "Z":
-        raise SystemExit(f"Process {pid} is still running ({state})")
-PY
-    [[ "$(grep -c '^rad deploy ' "$CALL_LOG" || true)" -le 1 ]] ||
-        fail "$slow_command uncertainty must block another deployment"
-    if grep -q '^az postgres flexible-server create ' "$CALL_LOG"; then
-        fail "$slow_command uncertainty must block another probe"
-    fi
-done
-
-# Initial and recovery probes share the absolute work deadline plus cleanup reserve.
-for initial in 0 1; do
-    : >"$CALL_LOG"
-    rm -f -- "$SLOW_COMMAND_PIDS"
-    started_seconds=$SECONDS
-    if (
-        export RTC_POSTGRES_TEST_DEADLINE_EPOCH="$(( $(date +%s) + 8 ))"
-        export RTC_POSTGRES_CLEANUP_RESERVE_SECONDS=2
-        export SLOW_COMMAND='az postgres flexible-server show' SLOW_AFTER=2
-        export DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR"
-        if [[ "$initial" == 1 ]]; then
-            AZURE_RESOURCE_GROUP=rg RTC_TEST_PLATFORM=azure run_lib rtc_test_azure_postgresql_app \
-                "$POSTGRES_TEST_APP_BICEP" /envs/myenv myws my-ns
-        else
-            run_postgres
-        fi
-    ) >"$TEST_ROOT/probe-cleanup-deadline.log" 2>&1; then
-        fail "uncertain probe cleanup must fail"
-    fi
-    ((SECONDS - started_seconds < 14)) || fail "probe cleanup exceeded the work deadline plus reserve"
-    if [[ ! -s "$SLOW_COMMAND_PIDS" ]]; then
-        cat "$CALL_LOG" >&2
-        fail "probe must exercise slow ownership confirmation (initial=$initial)"
-    fi
-    assert_eq "$((1 - initial))" "$(grep -c '^rad deploy ' "$CALL_LOG" || true)" \
-        "uncertain initial or recovery cleanup must block the next deployment"
-done
-: >"$CALL_LOG"
-started_seconds=$SECONDS
-if SLOW_COMMAND='az postgres flexible-server show' SLOW_AFTER=2 \
-    RTC_POSTGRES_CLEANUP_RESERVE_SECONDS=2 RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS=1 \
-    AZURE_RESOURCE_GROUP=rg run_lib rtc_probe_azure_postgresql_size S "$(( $(date +%s) + 30 ))" \
-    >"$TEST_ROOT/probe-short-delete.log" 2>&1; then
-    fail "short probe delete limit must fail on stalled ownership"
-fi
-((SECONDS - started_seconds < 5)) || fail "probe must honor a smaller configured delete timeout"
-for setting in RTC_POSTGRES_CLEANUP_RESERVE_SECONDS= RTC_POSTGRES_CLEANUP_RESERVE_SECONDS=0 \
-    RTC_POSTGRES_CLEANUP_RESERVE_SECONDS=901 RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS=0; do
-    : >"$CALL_LOG"
-    if (
-        export "${setting?}"
-        AZURE_RESOURCE_GROUP=rg run_lib rtc_probe_azure_postgresql_size S "$(( $(date +%s) + 30 ))"
-    ) >/dev/null 2>&1; then fail "invalid probe cleanup settings must fail"; fi
-    [[ ! -s "$CALL_LOG" ]] || fail "invalid cleanup settings must fail before Azure reads"
-done
-
 # Exercise the actual single-entry caller with the same mock cloud commands.
-POSTGRES_CONFIG_WORKSPACE="$TEST_ROOT/postgres-workspace"
-mkdir -p "$POSTGRES_CONFIG_WORKSPACE"
-printf '{"extensions":{"radius":"br:test/radius:latest"}}\n' \
-    >"$POSTGRES_CONFIG_WORKSPACE/bicepconfig.json"
 run_postgres_entry() {
     (
         cd "$REPO_ROOT"
@@ -1242,47 +969,9 @@ run_postgres_entry() {
     )
 }
 : >"$CALL_LOG"
-GITHUB_WORKSPACE="$POSTGRES_CONFIG_WORKSPACE" \
-    ASSERT_BICEP_CONFIG_WORKSPACE="$POSTGRES_CONFIG_WORKSPACE" \
-    RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg RTC_POSTGRES_TEST_SIZE=M \
+RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg RTC_POSTGRES_TEST_SIZE=M \
     run_postgres_entry >/dev/null || fail "single-entry Azure runner must pass selected M"
 grep -q -- '--parameters postgresSize=M' "$CALL_LOG" || fail "single-entry runner must pass M to Bicep"
-assert_eq 1 "$(grep '^az postgres flexible-server create ' "$CALL_LOG" | grep -vc -- ' --help')" \
-    "direct entry initial probe count"
-for location_hint in '' eastus; do
-    : >"$CALL_LOG"
-    RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg AZURE_LOCATION="$location_hint" \
-        DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres_entry >/dev/null 2>&1 ||
-        fail "direct entry must probe and recover in the group region"
-    assert_eq 2 "$(grep '^az postgres flexible-server create ' "$CALL_LOG" | grep -vc -- ' --help')" \
-        "direct initial and recovery probes"
-    if grep '^az postgres flexible-server create ' "$CALL_LOG" | grep -v -- ' --help' |
-        grep -qv -- '--location westus3'; then fail "probes must ignore caller location hints"; fi
-    grep '^az postgres flexible-server create ' "$CALL_LOG" | grep -q -- '--sku-name Standard_B1ms' ||
-        fail "direct S deployment must be probed as S"
-    grep '^az postgres flexible-server create ' "$CALL_LOG" | grep -q -- '--sku-name Standard_D2ds_v5' ||
-        fail "direct M recovery must be probed as M"
-done
-: >"$CALL_LOG"
-RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg RTC_POSTGRES_VERIFIED_SIZE=S \
-    RTC_POSTGRES_VERIFIED_LOCATION=westus3 run_postgres_entry >/dev/null ||
-    fail "verified orchestrator tuple must deploy without a duplicate initial probe"
-if grep -q '^az postgres flexible-server create ' "$CALL_LOG"; then fail "verified tuple must not be probed twice"; fi
-: >"$CALL_LOG"
-if RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg RTC_POSTGRES_VERIFIED_SIZE=S \
-    RTC_POSTGRES_VERIFIED_LOCATION=centralus run_postgres_entry >/dev/null 2>&1; then
-    fail "a verified marker for a different group region must fail"
-fi
-if grep -q '^rad deploy ' "$CALL_LOG"; then
-    fail "a mismatched verified region must not allocate"
-fi
-: >"$CALL_LOG"
-if RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg PG_CATALOG_UNSUPPORTED=1 \
-    run_postgres_entry >/dev/null 2>&1; then fail "unsupported initial tuple must fail"; fi
-if grep -q '^rad deploy ' "$CALL_LOG"; then fail "failed initial probe must prevent deployment"; fi
-if compgen -G "$POSTGRES_CONFIG_WORKSPACE/.rtc-postgres-test-*.bicep" >/dev/null; then
-    fail "current PostgreSQL harness must be removed from the workspace config directory"
-fi
 : >"$CALL_LOG"
 RTC_TEST_PLATFORM=kubernetes RTC_POSTGRES_TEST_SIZE=M run_postgres_entry >/dev/null ||
     fail "Kubernetes entry must retain the default template size"
@@ -1307,18 +996,13 @@ fi
 
 for selected_size in S M; do
     : >"$CALL_LOG"
-    GITHUB_WORKSPACE="$POSTGRES_CONFIG_WORKSPACE" \
-        ASSERT_BICEP_CONFIG_WORKSPACE="$POSTGRES_CONFIG_WORKSPACE" \
-        RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg RTC_POSTGRES_TEST_SIZE="$selected_size" \
+    RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg RTC_POSTGRES_TEST_SIZE="$selected_size" \
         RTC_POSTGRES_TEST_HARNESS="$POSTGRES_TEST_HARNESS" run_postgres_entry >/dev/null ||
         fail "pinned fixed-S harness must deploy selected size $selected_size"
     grep -q -- "--parameters postgresSize=$selected_size" "$CALL_LOG" ||
         fail "deployment must pass selected size $selected_size to Bicep"
     if grep '^rad deploy ' "$CALL_LOG" | grep -Fq "$FIXED_POSTGRES_TEST_APP"; then
         fail "deployment must use a temporary parameterized harness, not the pinned test app"
-    fi
-    if compgen -G "$POSTGRES_CONFIG_WORKSPACE/.rtc-postgres-test-*.bicep" >/dev/null; then
-        fail "fixed-S PostgreSQL harness must be removed from the workspace config directory"
     fi
 done
 

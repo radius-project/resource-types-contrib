@@ -43,11 +43,6 @@ case "${1:-} ${2:-}" in
 esac
 : "${AZURE_CLIENT_ID:?}" "${AZURE_TENANT_ID:?}" "${AZURE_SUBSCRIPTION_ID:?}"
 : "${ACTIONS_ID_TOKEN_REQUEST_URL:?}" "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:?}"
-login_log_fd="${RTC_AZURE_LOGIN_LOG_FD:-2}"
-if [[ ! "$login_log_fd" =~ ^[0-9]+$ ]]; then
-    echo "Error: Invalid Azure login log descriptor." >&2
-    exit 1
-fi
 
 # Renew on demand, not in a background process that can race with CLI reads.
 exec 9>"$RTC_AZURE_LOGIN_STAMP.lock"
@@ -67,7 +62,7 @@ fi
 # GitHub's assertion lasts five minutes. A fresh login also renews the Azure
 # access token, so the CLI never has to exchange the expired old assertion.
 if ((now - last >= 240 || now < last)); then
-    echo "==> Renewing Azure CLI login with a fresh GitHub OIDC assertion" >&"$login_log_fd"
+    echo "==> Renewing Azure CLI login with a fresh GitHub OIDC assertion" >&2
     separator='&'
     [[ "$ACTIONS_ID_TOKEN_REQUEST_URL" == *\?* ]] || separator='?'
     if ! response="$(curl --fail --silent --show-error --max-time 30 \
@@ -80,7 +75,7 @@ if ((now - last >= 240 || now < last)); then
         echo "Error: GitHub returned no OIDC assertion." >&2
         exit 1
     fi
-    echo "::add-mask::$token" >&"$login_log_fd"
+    echo "::add-mask::$token" >&2
     "$RTC_AZURE_CLI" login --service-principal \
         --username "$AZURE_CLIENT_ID" --tenant "$AZURE_TENANT_ID" \
         --federated-token "$token" --only-show-errors --output none

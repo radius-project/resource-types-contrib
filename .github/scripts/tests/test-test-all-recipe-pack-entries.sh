@@ -150,8 +150,6 @@ if [[ "$1" == Data/postgreSqlDatabases && "${RTC_TEST_PLATFORM:-}" == azure ]]; 
     [[ "${RTC_POSTGRES_TEST_SIZE:-}" == "${EXPECTED_POSTGRES_SIZE:-S}" ]] || exit 96
     [[ "${RTC_POSTGRES_TEST_DEADLINE_EPOCH:-}" =~ ^[0-9]+$ ]] || exit 95
     sleep "${POSTGRES_SLEEP:-0}"
-    [[ "${RTC_POSTGRES_VERIFIED_SIZE:-}" == "$RTC_POSTGRES_TEST_SIZE" &&
-        "${RTC_POSTGRES_VERIFIED_LOCATION:-}" == westus3 ]] || exit 93
 fi
 case "$2" in
     azure-ws) [[ "${RTC_TEST_PLATFORM:-}" == azure ]] || exit 97 ;;
@@ -183,7 +181,7 @@ cp "$TEST_ROOT/bin/test-recipe-pack-entry.sh" "$SCRIPTS_COPY/test-recipe-pack-en
 cat >"$SCRIPTS_COPY/probe-azure-postgres-capacity.sh" <<'EOF'
 #!/bin/bash
 echo "probe-azure-postgres-capacity.sh" >>"$CALL_LOG"
-[[ "${AZURE_LOCATION:-}" == westus3 && "${RTC_POSTGRES_TEST_SIZE:-}" == "${EXPECTED_POSTGRES_SIZE:-S}" &&
+[[ "${AZURE_LOCATION:-}" == westus3 && "${RTC_POSTGRES_TEST_SIZE:-}" == S &&
    "${RTC_POSTGRES_PROBE_ATTEMPTS:-}" == 1 && "${RTC_POSTGRES_PROBE_WAIT_SECONDS:-}" == 0 ]] || exit 94
 exit "${PROBE_EXIT_CODE:-0}"
 EOF
@@ -193,9 +191,6 @@ run_driver() {
     (
         export RTC_REPO_ROOT="$FIXTURE_ROOT"
         export PATH="$TEST_ROOT/bin:$PATH"
-        if [[ "${CLEAR_SELECTION:-0}" == 1 ]]; then
-            unset RTC_AZURE_SELECTION_FILE RTC_AZURE_PACK_ENTRY_PHASE
-        fi
         unset RTC_LIB_NAMESPACES_SOURCED RTC_LIB_RECIPE_PACKS_SOURCED
         cd "$FIXTURE_ROOT"
         "$SCRIPTS_COPY/test-all-recipe-pack-entries.sh" "$@"
@@ -328,19 +323,8 @@ fi
 bash "$REPO_ROOT/.github/scripts/report-azure-test-failures.sh" \
     "PostgreSQL entry:success" "Unrelated entries:success" >/dev/null ||
     fail "successful phases must pass the overall job"
-: >"$CALL_LOG"
-if RTC_AZURE_SELECTION_FILE="$selection" RTC_POSTGRES_TEST_SIZES=S \
-    run_driver azure azure-ws azure-env >/dev/null 2>&1; then fail "excluded selected M must fail"; fi
-if grep -q '^test-recipe-pack-entry.sh Data/postgreSqlDatabases' "$CALL_LOG"; then
-    fail "excluded selection must not deploy"
-fi
-: >"$CALL_LOG"
-RTC_POSTGRES_TEST_SIZES=M EXPECTED_POSTGRES_SIZE=M AZURE_LOCATION=eastus \
-    run_driver azure azure-ws azure-env >/dev/null || fail "single-M standalone policy must probe M in group region"
-assert_probe_count="$(grep -c '^probe-' "$CALL_LOG")"
-[[ "$assert_probe_count" == 1 ]] || fail "single-M initial probe must run once"
 
-for state in missing malformed capacity_exhausted unsupported restricted catalog_unavailable probe_error deadline_exceeded invalid_size invalid_tuple wrong_region expired invalid_deadline; do
+for state in missing malformed capacity_exhausted probe_error deadline_exceeded invalid_size invalid_tuple wrong_region expired invalid_deadline; do
     case "$state" in
         missing) rm -f "$selection" ;;
         malformed) echo '{' >"$selection" ;;
@@ -358,58 +342,11 @@ for state in missing malformed capacity_exhausted unsupported restricted catalog
         fail "$state selection must fail PostgreSQL"
     fi
     grep -qi 'PostgreSQL.*selection' <<<"$output" || fail "selection failure must be clear"
-    if [[ "$state" == unsupported ]]; then
-        grep -qi 'capacity selection failed: unsupported' <<<"$output" ||
-            fail "unsupported catalog result must be explicit"
-    fi
     if grep -q '^test-recipe-pack-entry.sh Data/postgreSqlDatabases' "$CALL_LOG"; then
         fail "$state selection must block PostgreSQL deployment"
     fi
     grep -q '^test-recipe-pack-entry.sh Compute/routes' "$CALL_LOG" || fail "later entries must still run"
 done
-
-selector_scripts="$TEST_ROOT/selector-scripts"
-mkdir "$selector_scripts"
-cp "$REPO_ROOT/.github/scripts/azure-postgres-workflow.sh" \
-    "$selector_scripts/azure-postgres-workflow.sh"
-cp "$REPO_ROOT/.github/scripts/lib-azure-postgres-test.sh" "$selector_scripts/"
-cp "$REPO_ROOT/.github/scripts/run-command.py" "$selector_scripts/"
-cat >"$selector_scripts/select-azure-test-location.sh" <<'EOF'
-#!/bin/bash
-printf '%s\n' "${RTC_AZURE_TEST_REGIONS%%,*}"
-jq -n --arg location "${RTC_AZURE_TEST_REGIONS%%,*}" \
-    '{version:1,status:"selected",location:$location,deadlineEpochSeconds:123456,
-      postgres:{size:"S",skuName:"Standard_B1ms",tier:"Burstable"},
-      attempts:[{region:$location,size:"S",skuName:"Standard_B1ms",tier:"Burstable",
-        outcome:"selected",errorCode:"",durationSeconds:1,cleanup:"confirmed"}]}' >"$RTC_AZURE_SELECTION_FILE"
-exit 23
-EOF
-chmod +x "$selector_scripts/select-azure-test-location.sh"
-failed_selection="$TEST_ROOT/workflow-failed-selection.json"
-failed_env="$TEST_ROOT/workflow-selection.env"
-if RTC_AZURE_TEST_REGIONS=westus3,eastus2 RTC_AZURE_SELECTION_FILE="$failed_selection" \
-    GITHUB_ENV="$failed_env" \
-    bash "$selector_scripts/azure-postgres-workflow.sh" select-context fixture-probe \
-    >"$TEST_ROOT/selection-output.log" 2>&1; then
-    fail "workflow must retain nonzero selector outcome"
-fi
-jq -e '.status == "probe_error" and .location == "westus3" and
-    (has("postgres") | not)' "$failed_selection" >/dev/null ||
-    fail "workflow fallback must not authorize PostgreSQL allocation"
-grep -Fxq 'AZURE_LOCATION=westus3' "$failed_env" ||
-    fail "workflow must export its validated fallback for main-group creation"
-grep -q 'continuing unrelated entries' "$TEST_ROOT/selection-output.log" ||
-    fail "workflow must explicitly report selector failure"
-: >"$CALL_LOG"
-if output=$(RTC_AZURE_SELECTION_FILE="$failed_selection" run_driver azure azure-ws azure-env 2>&1); then
-    fail "failed selector must still fail the Azure pack-entry phase"
-fi
-! grep -q '^test-recipe-pack-entry.sh Data/postgreSqlDatabases' "$CALL_LOG" ||
-    fail "failed selector must prevent PostgreSQL allocation"
-grep -q '^test-recipe-pack-entry.sh Compute/routes' "$CALL_LOG" ||
-    fail "unrelated entries must run after a nonzero selector"
-grep -q "Data/postgreSqlDatabases (from pack 'azure-aks'): preflight check failed" <<<"$output" ||
-    fail "failed selector must fail the PostgreSQL entry explicitly"
 
 : >"$CALL_LOG"
 RTC_AZURE_SELECTION_FILE="$selection" run_driver kubernetes kubernetes-ws kubernetes-env >/dev/null ||
