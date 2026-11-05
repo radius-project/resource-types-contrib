@@ -650,6 +650,13 @@ secrets_resource_name="$(awk '
 [[ "$secrets_resource_name" == "  name: 'dbsecret-\${take(uniqueString(applicationName), 8)}'" ]] ||
     fail "secrets test resource name must use an 8-character applicationName hash"
 
+postgresql_secret_name="$(awk '
+    /^resource dbCreds .*Radius.Security\/secrets@/ { in_secret = 1; next }
+    in_secret && /^  name:/ { print; exit }
+' "$REPO_ROOT/Data/postgreSqlDatabases/test/app.bicep")"
+[[ "$postgresql_secret_name" == "  name: 'postgresql-client-credentials-\${take(uniqueString(applicationName), 8)}'" ]] ||
+    fail "PostgreSQL test secret resource name must use an 8-character applicationName hash"
+
 echo 'param environment string' >"$TEST_ROOT/missing-application-name.bicep"
 : >"$CALL_LOG"
 if run_lib rtc_deploy_and_assert_test_app "$TEST_ROOT/missing-application-name.bicep" \
