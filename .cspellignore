@@ -15,6 +15,7 @@ pgvector
 rrttest
 SLSA
 tmpfs
+urandom
 vnet
 westus
 ededed
