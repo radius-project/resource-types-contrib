@@ -26,23 +26,25 @@ test('Azure PostgreSQL settings, precedence, and initialization', () => {
     fs.writeFileSync(path.join(dir, 'recipe.bicep'),
       fs.readFileSync(path.join(recipe, 'azure-postgresql.bicep'), 'utf8').replace(/^@secure\(\)\r?\n/m, ''));
     fs.copyFileSync(path.join(recipe, 'initialize-database.sh'), path.join(dir, 'initialize-database.sh'));
+    fs.copyFileSync(path.join(recipe, 'bicepconfig.json'), path.join(dir, 'bicepconfig.json'));
     const build = spawnSync(bicep, ['build', path.join(dir, 'recipe.bicep'), '--outfile', path.join(dir, 'recipe.json')],
       { encoding: 'utf8' });
     assert.equal(build.status, 0, `${build.error || ''}\n${build.stdout}\n${build.stderr}`);
     const template = JSON.parse(fs.readFileSync(path.join(dir, 'recipe.json'), 'utf8'));
-    const deployment = template.resources.find(r => r.type === 'Microsoft.Resources/deployments');
+    assert.equal(template.languageVersion, '2.0', 'Use symbolic references across Radius and Azure scopes');
+    const deployment = template.resources.server;
+    assert.equal(deployment.type, 'Microsoft.Resources/deployments');
     assert.equal(deployment.name, "[parameters('name')]", 'Nested deployments must use the unique server name');
-    const deploymentReference = "resourceId('Microsoft.Resources/deployments', parameters('name'))";
-    const serverReference = "resourceId('Microsoft.DBforPostgreSQL/flexibleServers', parameters('name'))";
-    const initialize = template.resources.find(r => r.type === 'Microsoft.Resources/deploymentScripts');
+    const deploymentReference = "reference('server')";
+    const initialize = template.resources.initialize;
     const host = initialize.properties.environmentVariables.find(v => v.name === 'PGHOST').value;
-    assert.ok(host.includes(serverReference), 'Initialization must read the deployed Azure server');
-    assert.ok(host.includes('.fullyQualifiedDomainName'), 'Do not hard-code the cloud-specific DNS suffix');
-    assert.deepEqual(initialize.dependsOn, [`[${deploymentReference}]`], 'Wait for all AVM configuration before SQL');
-    assert.ok(template.outputs.result.value.resources.includes(serverReference), 'Cleanup must use the Azure server ID');
-    assert.equal(template.outputs.result.value.values.host, host, 'Connections must use the same Azure server');
+    assert.equal(host, `[${deploymentReference}.outputs.fqdn.value]`, 'Use the actual AVM hostname');
+    assert.deepEqual(initialize.dependsOn, ['server'], 'Wait for all AVM configuration before SQL');
+    assert.ok(template.outputs.result.value.resources.includes(`${deploymentReference}.outputs.resourceId.value`),
+      'Cleanup must use the actual AVM resource ID');
+    assert.equal(template.outputs.result.value.values.host, host, 'Connections must use the same AVM hostname');
     assert.ok(!JSON.stringify({ initialize: initialize.properties, result: template.outputs.result })
-      .includes(deploymentReference), 'Do not read nested module outputs across Radius and Azure scopes');
+      .includes("resourceId('Microsoft.Resources/deployments'"), 'Do not resolve nested deployments in the Azure scope');
     const snapshot = (properties = '', configurations = '[]', serverName = 'pgsql-fixture') => {
       const params = path.join(dir, 'test.bicepparam');
       fs.writeFileSync(params, `using './recipe.bicep'

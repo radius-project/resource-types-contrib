@@ -78,11 +78,6 @@ module server 'br/public:avm/res/db-for-postgre-sql/flexible-server:0.15.2' = {
   }
 }
 
-// Read the Azure resource directly; nested deployment IDs use the Radius scope.
-resource deployedServer 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' existing = {
-  name: name
-}
-
 resource initialize 'Microsoft.Resources/deploymentScripts@2023-08-01' = if (hasInitSql) {
   name: '${name}-init'
   location: resourceGroup().location
@@ -96,7 +91,7 @@ resource initialize 'Microsoft.Resources/deploymentScripts@2023-08-01' = if (has
     environmentVariables: [
       {
         name: 'PGHOST'
-        value: deployedServer.properties.fullyQualifiedDomainName
+        value: server.outputs.fqdn
       }
       {
         name: 'PGPORT'
@@ -129,18 +124,15 @@ resource initialize 'Microsoft.Resources/deploymentScripts@2023-08-01' = if (has
     ]
     scriptContent: loadTextContent('initialize-database.sh')
   }
-  dependsOn: [
-    server
-  ]
 }
 
 output result object = {
   resources: concat(
-    [deployedServer.id],
+    [server.outputs.resourceId],
     hasInitSql ? [initialize!.id] : []
   )
   values: {
-    host: deployedServer.properties.fullyQualifiedDomainName
+    host: server.outputs.fqdn
     port: 5432
     database: database
   }

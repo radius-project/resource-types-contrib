@@ -16,9 +16,10 @@ when used, the initialization deployment-script ID for cleanup, plus `host`,
 Nonempty `initSql` runs through an Azure deployment script after the AVM
 deployment completes. The runner installs the PostgreSQL client in the Azure CLI
 2.77.0 Azure Linux image. Credentials and SQL use secure environment variables.
-The runner reads the server's actual Azure hostname after the AVM completes.
-It does not read the nested deployment's outputs across Radius and Azure scopes,
-which the current deployment engine cannot resolve.
+The checked-in `bicep/bicepconfig.json` enables ARM 2.0 symbolic references for
+this Recipe only. Keep it beside the Bicep source when building or publishing.
+This lets the runner read the AVM's actual hostname after the module completes,
+without looking for the Radius nested deployment in the Azure scope.
 The runner uses TLS, fails on SQL errors, and does not print SQL output.
 The script has a 15-minute timeout. Azure cleans up its temporary container and
 storage account on success or failure.
