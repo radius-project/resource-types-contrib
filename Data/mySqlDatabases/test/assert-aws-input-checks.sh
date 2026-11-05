@@ -16,7 +16,7 @@ CHECK_FAILED="Invalid Radius.Data/mySqlDatabases properties for Amazon RDS for M
 
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/${NAME}-XXXXXX")"
 cleanup() {
-    rad app delete "$NAME" --environment "$NAME" --yes >/dev/null 2>&1 || true
+    rad app delete "$NAME" --yes >/dev/null 2>&1 || true
     rad env delete "$NAME" --yes >/dev/null 2>&1 || true
     rad resource delete Radius.Core/recipePacks "$NAME" --yes >/dev/null 2>&1 || true
     kubectl delete namespace "$NAME" --ignore-not-found --wait=false >/dev/null 2>&1 || true
