@@ -20,7 +20,9 @@ resource app 'Radius.Core/applications@2025-08-01-preview' = {
 }
 
 resource mysql 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
-  name: 'mysql'
+  // Radius resource IDs don't include the application, so use a name that
+  // test/app.bicep doesn't.
+  name: applicationName
   properties: {
     environment: environment
     application: app.id
