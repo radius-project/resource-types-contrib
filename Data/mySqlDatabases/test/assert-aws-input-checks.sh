@@ -119,11 +119,13 @@ expect_rejected "$output" "$password" \
 
 # The longest values RDS accepts, and every password symbol it allows. These
 # pass the checks and fail later because the Environment has no AWS account.
+# Radius v0.62.0 reports the AWS resource types; later versions report the
+# AWS extension scope.
 database="a$(printf 'b%.0s' {1..61})_9"
 username="U$(printf 'x%.0s' {1..30})_"
 password="P'ss~!#\$%^&*()_+-={}[]|\\:;<>,.?\`abcdefghi"
 output="$(deploy "$database" "$username" "$password")"
-if grep -qF -- "$CHECK_FAILED" <<<"$output" || ! grep -qE 'AWS\.(EKS|RDS)/' <<<"$output"; then
+if grep -qF -- "$CHECK_FAILED" <<<"$output" || ! grep -qE 'AWS\.(EKS|RDS)/|/extensions/aws/' <<<"$output"; then
     echo "Valid values didn't reach the AWS resources:" >&2
     echo "$output" >&2
     exit 1
