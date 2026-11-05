@@ -18,7 +18,7 @@ limitations under the License.
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { collect, runAz, resource, activity, LIMITS } = require("../collect-azure-test-diagnostics.js");
+const { collect, runAz, resource, activity, logRecords, LIMITS } = require("../collect-azure-test-diagnostics.js");
 
 const subscription = "11111111-1111-1111-1111-111111111111";
 const group = "rrttest-123-1-bicep";
@@ -60,6 +60,9 @@ async function withMock(run, extra = {}) {
     subscription, group, app: "testapp-123", started,
     save: (value) => snapshots.push(JSON.stringify(value)),
     run: async (args, timeout) => { calls.push(args); return run(args, timeout); },
+    runKubernetes: async (args) => ({ value: args[0] === "get"
+      ? { items: [{ metadata: { name: "deployment-engine-test" } }] }
+      : { records: [], omitted: 0 } }),
     ...extra,
   });
   return { report, calls, snapshots };
@@ -135,6 +138,110 @@ test("allowlists typed leaves; never copies nested objects, free text or credent
   assert.equal(resource(null, scope).instanceView.available, false);
 });
 
+test("non-container failures collect account, model, MongoDB and PostgreSQL state", async () => {
+  const account = id("Microsoft.CognitiveServices/accounts", "openai");
+  const mongo = id("Microsoft.DocumentDB/databaseAccounts", "mongo");
+  const { report, calls } = await withMock(async (args) => {
+    const url = new URL(args[4]);
+    if (url.pathname.endsWith("/accounts")) {
+      return { value: { value: [{ id: account, properties: { provisioningState: "Creating", secret } }] } };
+    }
+    if (url.pathname.endsWith("/databaseAccounts")) return { value: { value: [{ id: mongo }] } };
+    if (url.pathname.endsWith("/accounts/openai/deployments")) {
+      return { value: { value: [{ id: `${account}/deployments/chat`, properties: { provisioningState: "Failed" } }] } };
+    }
+    if (url.pathname.endsWith("/mongodbDatabases")) {
+      return { value: { value: [{ id: `${mongo}/mongodbDatabases/test`, properties: { provisioningState: "Creating" } }] } };
+    }
+    return { value: { value: [] } };
+  }, { resourceType: "Radius.AI/models" });
+  assert.equal(calls.length, 7);
+  assert.equal(report.resourceType, "Radius.AI/models");
+  assert.equal(report.resources.find((r) => r.id === account).provisioningState, "Creating");
+  assert.equal(report.resources.find((r) => r.id.endsWith("/deployments/chat")).provisioningState, "Failed");
+  assert.ok(calls.some((args) => args[4].includes("/flexibleServers?")));
+  assert.ok(!JSON.stringify(report).includes(secret));
+});
+
+test("saves filtered Radius request records before Azure reads, without bodies or URL queries", async () => {
+  const order = [];
+  const request = `${scope}/providers/Microsoft.CognitiveServices/accounts/openai/deployments/chat`;
+  const raw = JSON.stringify({
+    timestamp: started, severity: "info", scope: "System.Net.Http.HttpClient",
+    traceId: "a".repeat(32), spanId: "b".repeat(16),
+    Uri: `https://management.azure.com${request}?api-version=2025-06-01&token=${secret}`,
+    HttpMethod: "PUT", StatusCode: 409, message: secret, body: { secret }, headers: { secret },
+    error: { code: "RequestConflict", message: secret },
+  });
+  const { report } = await withMock(async () => {
+    order.push("azure");
+    return { value: { value: [] } };
+  }, {
+    runKubernetes: async (args, timeout, parse) => {
+      order.push(args[0]);
+      assert.ok(timeout <= LIMITS.requestMs);
+      if (args[0] === "get") return { value: { items: [
+        { metadata: { name: "deployment-engine-abc" },
+          spec: { containers: [{ image: "ghcr.io/azure-octo/deployment-engine:edge" }, { image: `https://user:${secret}@host` }] },
+          status: { containerStatuses: [{ imageID: `docker-pullable://ghcr.io/azure-octo/deployment-engine@sha256:${"a".repeat(64)}` }] } },
+        { metadata: { name: "unrelated-pod" } },
+        { metadata: { name: "deployment-engine-def" } },
+      ] } };
+      assert.ok(args.includes(`--since-time=${started}`));
+      assert.ok(args.includes("--limit-bytes=524288"));
+      return { value: parse(`${raw}\n${secret}\n`) };
+    },
+  });
+  assert.deepEqual(order.slice(0, 3), ["get", "logs", "azure"]);
+  assert.equal(report.radiusLogs.length, 1);
+  const logs = report.radiusLogs[0];
+  assert.equal(logs.omitted, 1);
+  assert.deepEqual(logs.records[0].request, { host: "management.azure.com", path: request });
+  assert.equal(logs.records[0].method, "PUT");
+  assert.equal(logs.records[0].statusCode, 409);
+  assert.deepEqual(logs.records[0].errorCodes, ["RequestConflict"]);
+  assert.equal(logs.images[1], null);
+  assert.equal(logs.imageIds[0], `ghcr.io/azure-octo/deployment-engine@sha256:${"a".repeat(64)}`);
+  assert.equal(logs.tailOnly, true);
+  assert.ok(!JSON.stringify(report).includes(secret));
+  for (const uri of [`https://evil.invalid${request}`, `https://management.azure.com${request.replace(group, "other")}`,
+    `https://user:password@management.azure.com${request}`]) {
+    assert.equal(logRecords(JSON.stringify({ Uri: uri }), scope).records[0].request, null);
+  }
+});
+
+test("records HTTP phases and exact recipe references without free-text messages", () => {
+  const source = "mcr.microsoft.com/bicep/avm/res/cognitive-services/account:0.15.0";
+  const { records } = logRecords([
+    JSON.stringify({ message: `Sending HTTP request PUT https://example.invalid/?password=${secret}` }),
+    JSON.stringify({ message: `Deploying recipe: "default", template: "${source}"` }),
+    JSON.stringify({ message: "Succeeded" }),
+  ].join("\n"), scope);
+  assert.equal(records[0].httpEvent, "request-send");
+  assert.equal(records[1].recipeSource, source);
+  assert.equal(records[2].state, "Succeeded");
+  assert.ok(!JSON.stringify(records).includes(secret));
+});
+
+test("pod log failures are explicit and cannot block Azure evidence", async () => {
+  const { report, calls } = await withMock(async () => ({ value: { value: [] } }), {
+    runKubernetes: async () => ({ error: "cli-unavailable" }),
+  });
+  assert.equal(calls.length, 8);
+  assert.deepEqual(report.errors[0], { operation: "radius-pods", reason: "cli-unavailable", exitCode: null });
+});
+
+test("Activity Log saves structured error codes but discards provider messages", () => {
+  const safe = activity({
+    resourceId: containerId,
+    properties: { statusMessage: JSON.stringify({ error: {
+      code: "DeploymentFailed", message: secret, details: [{ code: "RequestConflict", message: secret }],
+    } }) },
+  }, scope);
+  assert.deepEqual(safe.errorCodes, ["DeploymentFailed", "RequestConflict"]);
+  assert.ok(!JSON.stringify(safe).includes(secret));
+});
+
 test("records denied/unsupported calls without copying CLI errors and continues", async () => {
   const { report, calls } = await withMock(async () => ({ error: "azure-cli-failed", exitCode: 3 }));
   assert.equal(calls.length, 8);
@@ -179,7 +286,7 @@ test("caps request count, pages and nested items", async () => {
     if (args[4].includes("/containerGroups/")) return { value: fixture(args[4].split("?")[0].replace("https://management.azure.com", "")) };
     return { value: { value: [] } };
   });
-  assert.equal(calls.length, LIMITS.requests);
+  assert.equal(calls.length, LIMITS.requests - 2);
   assert.ok(report.errors.some((e) => e.reason === "collection-budget-exhausted"));
   assert.ok(report.truncations.includes("list:Microsoft.ContainerInstance/containerGroups"));
   const input = fixture();

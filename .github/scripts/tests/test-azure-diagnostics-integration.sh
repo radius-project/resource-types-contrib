@@ -65,7 +65,7 @@ cat >"$TEST_ROOT/bin/timeout" <<'EOF'
 [[ "$1" == --kill-after=5s ]] || exit 97
 case "$2 $3 $4" in
     "100s node "*) ;;
-    "15m bash -c"|"3m rad app")
+    "15m bash -c"|"3m rad app"|[0-9]*"s bash -c")
         echo "bounded $2 $3 $4" >>"$CALL_LOG"
         if [[ "${DEPLOY_HANG:-0}" == 1 || "${CLEANUP_HANG:-0}" == 1 ]]; then
             shift 2
@@ -143,7 +143,27 @@ for platform in kubernetes aws ""; do
     if grep -q '^bounded' "$CALL_LOG"; then fail "non-Azure tests must not acquire new time limits"; fi
 done
 RESOURCE_TYPE=Radius.Data/widgets assert_failure_cleanup run_helper
-if grep -q '^collector' "$CALL_LOG"; then fail "unrelated tests must not collect"; fi
+assert_before_cleanup
+for resource_type in Radius.AI/models Radius.Data/mongoDatabases; do
+    RESOURCE_TYPE="$resource_type" assert_failure_cleanup run_helper
+    assert_before_cleanup
+    GITHUB_ACTIONS=true RESOURCE_TYPE="$resource_type" DEPLOY_HANG=1 \
+        RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$(( $(date +%s) + 600 ))" assert_failure_cleanup run_helper
+    assert_before_cleanup
+    grep -q 'collecting diagnostics before the step deadline' "$TEST_ROOT/output" ||
+        fail "non-container stalls must reach diagnostics before workflow timeout"
+    grep -q '^bounded 3m rad app$' "$CALL_LOG" || fail "failure cleanup must be bounded"
+done
+(
+    : >"$CALL_LOG"
+    status=0
+    GITHUB_ACTIONS=true RESOURCE_TYPE=Radius.AI/models \
+        RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$(( $(date +%s) + 300 ))" \
+        run_helper >"$TEST_ROOT/output" 2>&1 || status=$?
+    [[ "$status" == 1 ]] || fail "exhausted step budget must fail"
+    if grep -q '^rad deploy ' "$CALL_LOG"; then fail "must not allocate after the step budget expires"; fi
+    grep -q 'step budget exhausted' "$TEST_ROOT/output" || fail "budget failure must be explicit"
+)
 : >"$CALL_LOG"
 DEPLOY_STATUS=0 run_helper >"$TEST_ROOT/output" 2>&1 || fail "successful test must remain successful"
 if grep -q '^collector' "$CALL_LOG"; then fail "success must not collect"; fi

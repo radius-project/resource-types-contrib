@@ -426,13 +426,14 @@ IDs returned by the Deployment Engine. These logs help identify conditional
 resources that the engine skipped but still returned as output resources.
 If no Deployment Engine pod is found, the file states that explicitly.
 
-## Azure container failure diagnostics
+## Azure test failure diagnostics
 
 Azure validation, nightly tests, and release candidate tests save diagnostics **before** they delete
-a failed `Radius.Compute/containers` test app. This applies to deployment and
+a failed Azure test app, including OpenAI and MongoDB. This applies to deployment and
 assertion failures, for both per-recipe tests and checked-in Recipe Pack tests.
 The collector does not retry a deployment or turn a failed test into a pass.
-It does not run for successful tests, other resource types, or non-Azure tests.
+It does not run for successful tests or non-Azure tests. PostgreSQL capacity
+selection failures remain in `postgres-selection.json`; they occur before a test app deploys.
 
 Download `azure-test-diagnostics-bicep` from Azure validation, or
 `azure-test-diagnostics-nightly-azure` from the nightly run. Each failure has a
@@ -441,7 +442,7 @@ artifact when no applicable test fails. A Terraform artifact uses the suffix
 `-terraform` if a future Azure container Terraform test fails.
 Release candidate tests use `azure-test-diagnostics-rc-azure`.
 
-Azure validation and all three nightly Azure test steps set
+Azure validation and the nightly and release candidate Azure test steps set
 `RTC_AZURE_DIAGNOSTICS_DIR` to `azure-test-diagnostics`. An unset or empty value
 disables collection in both CI and local runs.
 
@@ -452,8 +453,16 @@ test has no timeout.
 This leaves time to collect evidence when provisioning stalls, instead of
 waiting for the 30-minute job limit. A timeout remains a test failure.
 Collection runs before app cleanup, and Kubernetes cleanup is still attempted.
-These limits do not apply to local runs, other resource types, or non-Azure
-tests. They do not cancel an Azure operation or fix the cause of a provider
+The nightly and release candidate test steps also pass their absolute deadline
+as `RTC_AZURE_TEST_STEP_DEADLINE_EPOCH`. Each Azure deployment must stop at least
+six minutes before that deadline. Container tests retain their shorter
+15-minute limit. PostgreSQL tests retain their shorter recovery deadline.
+Failure cleanup uses a three-minute application deletion limit and bounded
+Kubernetes deletion requests. A test cannot start a deployment after the
+reserved part of the step budget begins. This lets a stalled MongoDB deployment
+reach the collector instead of waiting for the workflow to terminate the step.
+These limits do not apply to local runs or non-Azure tests.
+They do not cancel an Azure operation or fix the cause of a provider
 stall; the workflow still performs its final resource-group cleanup.
 
 The JSON file contains an allowlist of resource IDs, provisioning states,
@@ -463,6 +472,29 @@ when Azure returns them. This is a snapshot of the test's dedicated resource
 group, not proof that every resource belongs to the failed app. It includes
 NGroups, container group profiles, standard container groups, VNets, NAT
 gateways, load balancers, and public IP resource states.
+
+For other resource types, the collector saves a resource-group inventory and
+OpenAI account, model deployment, Cosmos DB account, MongoDB database, and
+PostgreSQL server states. Activity Log records also include structured error
+codes, but not provider error messages.
+
+The `radiusLogs` field contains filtered records from the deployment engine,
+Dynamic RP, Applications RP, and UCP pods. The collector reads these first,
+before Azure calls and test cleanup. Records include timestamps, trace/span IDs,
+logger names, operation names, recipe references, terminal-state markers, HTTP phases and methods, request
+hosts/paths, response status codes, and elapsed times when the component emits
+them. Image references and image IDs identify the running component builds.
+Request queries, headers, bodies, and free-text log messages are not saved.
+Each component has at most 2,000 records and a 512 KiB log-read limit.
+`tailOnly` and `omitted` identify a bounded, filtered snapshot, not a complete log.
+Log rotation or a pod restart can remove earlier records before collection.
+
+For an OpenAI provisioning conflict, compare account and model-deployment
+Activity Log timestamps and statuses, then use trace IDs and request paths to
+find the matching engine and Radius records. A successful account operation
+followed by a rejected child operation differs from a child request sent while
+account creation is still running. These records help locate the fault; they
+do not assume that Bicep, the engine, Radius, or Azure is responsible.
 
 The `2024-11-01-preview` API has no NGroups child-list endpoint or NGroup
 instance view. Standard container-group reads can return instance-view events,
@@ -479,13 +511,13 @@ and free-text image-pull detail remain unavailable. Use the saved resource IDs,
 timestamps, and correlation IDs for a provider investigation. These diagnostics
 do not establish or fix the cause of a registry failure.
 
-Resource collection uses only GET requests, scoped to the configured
+Azure resource collection uses only GET requests, scoped to the configured
 subscription and test resource group. For local runs without
 `AZURE_SUBSCRIPTION_ID`, the collector first reads the selected account ID with
 `az account show --query id`. It does not list accounts or read credentials.
 That lookup uses the same time and request budget.
 Each request has a 10-second limit and a 2 MiB response
-limit. Each collection has a 90-second request budget and at most 24 requests.
+limit. Each collection has a shared 90-second budget and at most 24 Azure and Kubernetes requests.
 The shell stops the collector after 100 seconds, with a further 5-second kill
 limit. Only the first page and at most 20 items per list are kept; pagination
 URLs are never followed. Partial results are saved after each request.

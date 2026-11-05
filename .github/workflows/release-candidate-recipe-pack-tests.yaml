@@ -351,7 +351,9 @@ jobs:
           RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RTC_AZURE_PACK_ENTRY_PHASE: postgres
-        run: make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+        run: |
+          export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 45 * 60 ))
+          make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
 
       - name: Test unrelated released Recipe Pack entries
         id: azure_pack_entries
@@ -361,7 +363,9 @@ jobs:
           RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RTC_AZURE_PACK_ENTRY_PHASE: unrelated
-        run: make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+        run: |
+          export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 60 * 60 ))
+          make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
 
       - name: Test released Azure Bicep recipes
         id: azure_bicep
@@ -372,6 +376,7 @@ jobs:
         run: |
           set -euo pipefail
           pack_name="candidateazurebiceprecipepack"
+          export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 55 * 60 ))
           pack_file="recipe-pack-rc-azure-bicep.bicep"
           RECIPE_PLATFORM_FILTER=azure make generate-recipe-pack \
             PACK_NAME="$pack_name" \
@@ -397,6 +402,7 @@ jobs:
         run: |
           set -euo pipefail
           pack_name="candidateazureterraformrecipepack"
+          export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 55 * 60 ))
           pack_file="recipe-pack-rc-azure-terraform.bicep"
           RECIPE_PLATFORM_FILTER=azure make generate-recipe-pack \
             PACK_NAME="$pack_name" \
