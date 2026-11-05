@@ -36,7 +36,12 @@ The AWS region and account come from the Environment's AWS provider, not from th
 
 The `Radius.Data/mySqlDatabases` Recipe creates a DB subnet group from `subnetIds`, a DB parameter group, and a single-AZ, encrypted, non-public `db.t3.micro` RDS for MySQL instance with 20 GiB of `gp3` storage. It returns `host`, `port` (`3306`), and `database`, the same values as the Kubernetes Recipe, so one application definition works on every platform.
 
-Resource names are `mysql-<hash>`, where the hash covers the EKS cluster name, the Environment's Kubernetes namespace, and the Radius resource ID. Radius resource IDs repeat across installations, so the namespace keeps apps in different namespaces on the same cluster apart. Names stay the same across redeploys, including from a new Radius installation that targets the same namespace. Two Environments that share a cluster, a namespace, and resource IDs share one database, the same way their Kubernetes resources would collide. The parameter group name also ends with the version without the dot, for example `mysql-<hash>-84`, because AWS can't change a parameter group's family. A group left behind by a failed deploy doesn't block a deploy of another version.
+Resource names are `mysql-<hash>`, where the hash covers the EKS cluster name, the Environment's Kubernetes namespace, and the Radius resource ID. Radius resource IDs repeat across installations, so the namespace keeps apps in different namespaces on the same cluster apart. Names stay the same across redeploys, including from a new Radius installation that targets the same namespace. Two Environments that share a cluster, a namespace, and resource IDs share one database, the same way their Kubernetes resources would collide. The parameter group name also ends with the version without the dot, for example `mysql-<hash>-84`, because AWS can't change a parameter group's family. A group left behind by a failed deploy doesn't block a deploy of another version, but Radius doesn't track it ([radius-project/radius#13065](https://github.com/radius-project/radius/issues/13065)), so delete it yourself. To list a resource's parameter groups, run the command below. Any group that the DB instance doesn't use is left over.
+
+```bash
+aws resourcegroupstaggingapi get-resources --resource-type-filters rds:pg \
+  --tag-filters Key=radapp.io/resource,Values=<Radius resource ID>
+```
 
 ### Network access
 

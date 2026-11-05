@@ -57,12 +57,14 @@ jq -e '
 
 # AWS can't change a parameter group's family, so its name must include the
 # version. Otherwise a group left by a failed deploy blocks other versions.
-jq -e '
-  (.variables.parameterGroupName | contains("variables('"'"'name'"'"')") and contains("variables('"'"'version'"'"')")) and
-  (.resources.parameterGroup.properties | .alias == "[variables('"'"'parameterGroupName'"'"')]" and
-    .properties.DBParameterGroupName == "[variables('"'"'parameterGroupName'"'"')]")
+# RDS allows only letters, digits, and hyphens, so drop the dot.
+jq -e \
+  --arg pg "[format('{0}-{1}', variables('name'), replace(variables('version'), '.', ''))]" \
+  --arg ref "[variables('parameterGroupName')]" '
+  .variables.parameterGroupName == $pg and
+  (.resources.parameterGroup.properties | .alias == $ref and .properties.DBParameterGroupName == $ref)
 ' <<<"$AWS_TEMPLATE" >/dev/null ||
-    { echo "AWS MySQL Recipe parameter group name must include the version" >&2; exit 1; }
+    { echo "AWS MySQL Recipe parameter group name must end with the version without the dot" >&2; exit 1; }
 
 # The aws-eks pack must pass every required Recipe parameter and nothing the
 # Recipe does not declare: a deployment rejects undeclared parameters.
