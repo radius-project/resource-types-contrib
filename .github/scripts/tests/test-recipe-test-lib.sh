@@ -720,6 +720,8 @@ rm -f "$AZ_LOCK_STATE_FILE"
 DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_azure_postgres_recipe >/dev/null ||
     fail "per-recipe Azure PostgreSQL capacity failure must retry with the alternate size"
 assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "per-recipe PostgreSQL capacity retry count"
+grep -Fq "rad deploy Data/postgreSqlDatabases/test/rtc-postgres-test-" "$CALL_LOG" ||
+    fail "the runtime harness must retain its source directory's Bicep configuration"
 grep -q 'postgresSize=M' "$CALL_LOG" || fail "per-recipe PostgreSQL capacity retry must select size M"
 grep -q '^az lock list ' "$CALL_LOG" || fail "per-recipe Azure PostgreSQL tests must enable the lock guard"
 
