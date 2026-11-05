@@ -90,7 +90,9 @@ run "protected_settings_and_null_extensions" {
             Ssl_Cert_File    = "/bypass.crt"
             SSL_KEY_FILE     = "/bypass.key"
             Hba_File         = "/bypass.conf"
-            application_name = "literal $value; `not a command`"
+            application_name = "literal $(POSTGRES_DB) $$ $$(POSTGRES_DB) $value; `not a command`"
+            log_line_prefix  = "$$"
+            search_path      = "$(POSTGRES_DB)"
           }
         }
       }
@@ -101,8 +103,22 @@ run "protected_settings_and_null_extensions" {
     error_message = "Null extensions must not create an init ConfigMap."
   }
   assert {
-    condition     = kubernetes_deployment.postgresql.spec[0].template[0].spec[0].container[0].args == tolist(["postgres", "-c", "application_name=literal $value; `not a command`"])
-    error_message = "Protected settings must be filtered without regard to case; other values must stay literal."
+    condition = kubernetes_deployment.postgresql.spec[0].template[0].spec[0].container[0].args == tolist([
+      "postgres", "-c", "application_name=literal $$(POSTGRES_DB) $$$$ $$$$(POSTGRES_DB) $$value; `not a command`",
+      "-c", "log_line_prefix=$$$$", "-c", "search_path=$$(POSTGRES_DB)"
+    ])
+    error_message = "Protected settings must be filtered without regard to case; Pod arguments must escape dollars for kubelet."
+  }
+  assert {
+    # Protect escaped dollars before expanding this fixture's known environment reference.
+    condition = tolist([
+      for arg in kubernetes_deployment.postgresql.spec[0].template[0].spec[0].container[0].args :
+      replace(replace(replace(arg, "$$", "__ESCAPED_DOLLAR__"), "$(POSTGRES_DB)", "postgres_db"), "__ESCAPED_DOLLAR__", "$")
+      ]) == tolist([
+      "postgres", "-c", "application_name=literal $(POSTGRES_DB) $$ $$(POSTGRES_DB) $value; `not a command`",
+      "-c", "log_line_prefix=$$", "-c", "search_path=$(POSTGRES_DB)"
+    ])
+    error_message = "After Kubernetes expansion, process arguments must contain the original setting values."
   }
   assert {
     condition     = kubernetes_deployment.postgresql.spec[0].template[0].spec[0].container[0].port[0].container_port == 5432 && kubernetes_service.postgres.spec[0].port[0].port == 5432 && output.result.values.port == 5432

@@ -47,8 +47,9 @@ locals {
   extensions         = coalesce(try(var.context.resource.properties.extensions, null), [])
   server_settings    = coalesce(try(var.context.resource.properties.serverSettings, null), {})
   protected_settings = ["port", "ssl", "ssl_cert_file", "ssl_key_file", "hba_file"]
-  server_args        = flatten([for name, value in local.server_settings : ["-c", "${name}=${value}"] if !contains(local.protected_settings, lower(name))])
-  extension_sql      = join("\n", [for name in local.extensions : "CREATE EXTENSION IF NOT EXISTS \"${replace(name, "\"", "\"\"")}\";"])
+  # Escape dollars before kubelet expands Pod arguments; the shell receives the original text.
+  server_args   = flatten([for name, value in local.server_settings : ["-c", replace("${name}=${value}", "$", "$$")] if !contains(local.protected_settings, lower(name))])
+  extension_sql = join("\n", [for name in local.extensions : "CREATE EXTENSION IF NOT EXISTS \"${replace(name, "\"", "\"\"")}\";"])
 
   labels = {
     "radapp.io/resource"       = local.resource_name

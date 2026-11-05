@@ -223,12 +223,35 @@ test('Kubernetes settings preserve TLS, fixed ports, and first-initialization ex
     assert.ok(container.command[2].includes('required) plaintext_auth=reject'));
     assert.ok(container.command[2].includes('optional) plaintext_auth=scram-sha-256'));
     fs.writeFileSync(path.join(dir, 'docker-entrypoint.sh'), '#!/bin/sh\nprintf "%s\\n" "$@"\n', { mode: 0o755 });
-    const value = 'application_name=literal $value; `not a command`';
-    const forwarded = run('sh', ['-ec', exec, 'postgres', '-c', value],
-      { env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH}` } }).trim().split('\n');
-    assert.deepEqual(forwarded, ['postgres', '-c', value, '-c', 'port=5432', '-c', 'ssl=on',
-      '-c', 'ssl_cert_file=/tls-runtime/server.crt', '-c', 'ssl_key_file=/tls-runtime/server.key',
-      '-c', 'hba_file=/tls-runtime/pg_hba.conf']);
+    // Model kubelet's single-pass expansion before the shell receives its argv.
+    // See kubernetes/third_party/forked/golang/expansion/expand.go.
+    const expandKubernetesArgument = argument => argument.replace(/\$\$|\$\(([^)]*)\)/g,
+      (reference, name) => reference === '$$' ? '$' : name === 'POSTGRES_DB' ? 'fixture-db' : reference);
+    assert.equal(expandKubernetesArgument('$(POSTGRES_DB)'), 'fixture-db');
+    assert.equal(expandKubernetesArgument('$$'), '$');
+    assert.equal(expandKubernetesArgument('$$(POSTGRES_DB)'), '$(POSTGRES_DB)');
+    for (const { value, podValue } of [
+      { value: '$(POSTGRES_DB)', podValue: '$$(POSTGRES_DB)' },
+      { value: '$$', podValue: '$$$$' },
+      {
+        value: 'literal $(POSTGRES_DB) $$ $$(POSTGRES_DB) $value; `not a command`',
+        podValue: 'literal $$(POSTGRES_DB) $$$$ $$$$(POSTGRES_DB) $$value; `not a command`',
+      },
+    ]) {
+      const literalResources = snapshot(`serverSettings: { application_name: '${value}' }`);
+      const pod = literalResources.find(resource => resource.type === 'apps/Deployment@v1')
+        .properties.spec.template.spec.containers[0];
+      assert.deepEqual(pod.args, ['postgres', '-c', `application_name=${podValue}`],
+        'Pod arguments must escape dollars before Kubernetes expansion');
+      const processArgs = pod.args.map(expandKubernetesArgument);
+      assert.deepEqual(processArgs, ['postgres', '-c', `application_name=${value}`]);
+      const forwarded = run('sh', ['-ec', exec, ...processArgs], {
+        env: { ...process.env, POSTGRES_DB: 'fixture-db', PATH: `${dir}${path.delimiter}${process.env.PATH}` },
+      }).trim().split('\n');
+      assert.deepEqual(forwarded, ['postgres', '-c', `application_name=${value}`, '-c', 'port=5432', '-c', 'ssl=on',
+        '-c', 'ssl_cert_file=/tls-runtime/server.crt', '-c', 'ssl_key_file=/tls-runtime/server.key',
+        '-c', 'hba_file=/tls-runtime/pg_hba.conf']);
+    }
     const resources = snapshot(`extensions: ['pg_trgm']
 serverSettings: {
   port: '6000'
