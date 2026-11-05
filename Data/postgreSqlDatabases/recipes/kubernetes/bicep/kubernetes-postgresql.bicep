@@ -32,7 +32,8 @@ var hasInitScripts = hasInitSql || !empty(extensions)
 var extensionSql = join(map(extensions, name => 'CREATE EXTENSION IF NOT EXISTS "${replace(name, '"', '""')}";'), '\n')
 var serverSettings = context.resource.properties.?serverSettings ?? {}
 var protectedSettings = ['port', 'ssl', 'ssl_cert_file', 'ssl_key_file', 'hba_file']
-var serverArgs = flatten(map(filter(items(serverSettings), setting => !contains(protectedSettings, toLower(setting.key))), setting => ['-c', '${setting.key}=${setting.value}']))
+// Escape dollars before kubelet expands Pod arguments; the shell receives the original text.
+var serverArgs = flatten(map(filter(items(serverSettings), setting => !contains(protectedSettings, toLower(setting.key))), setting => ['-c', replace('${setting.key}=${setting.value}', '$', '$$')]))
 var tag string = '16-alpine'
 var port = 5432
 var memory ={

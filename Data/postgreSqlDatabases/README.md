@@ -76,7 +76,9 @@ runs these only when its data directory is empty. The Bicep Recipe keeps
 the existing `01-init.sql` file after the extension file. Updating the list
 does not create or remove extensions in an existing database. Both Recipes
 pass server settings as separate `postgres -c name=value` arguments, not
-shell commands. Invalid or unavailable settings fail startup. Setting
+shell commands. They escape dollar signs in Pod arguments so Kubernetes
+preserves literal values such as `$(POSTGRES_DB)` and `$$` before the shell
+forwards them to PostgreSQL. Invalid or unavailable settings fail startup. Setting
 changes cause a Pod rollout; read the [data protection warning](#updates-and-data-protection)
 before making changes.
 
