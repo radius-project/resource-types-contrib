@@ -28,13 +28,30 @@ rtc_postgres_test_tuple() {
 
 # Fail closed when a release overlay changes the tuple or required features.
 rtc_validate_postgres_test_pack() {
-    local pack="$1" entry small_sku small_tier setting
+    local pack="$1" entry small_sku small_tier setting wrapper sku_expression tier_expression
     entry="$(sed -n "/'Radius.Data\/postgreSqlDatabases': {/,/'Radius.Data\/sqlServerDatabases': {/p" "$pack")" || return 1
     rtc_postgres_test_tuple S
     small_sku="$postgres_sku"; small_tier="$postgres_tier"
     rtc_postgres_test_tuple M
-    if ! grep -Fq "skuName: '{{context.resource.properties.size == \"S\" ? \"$small_sku\" : \"$postgres_sku\"}}'" <<<"$entry" ||
-        ! grep -Fq "tier: '{{context.resource.properties.size == \"S\" ? \"$small_tier\" : \"$postgres_tier\"}}'" <<<"$entry"; then
+    sku_expression="skuName: '{{context.resource.properties.size == \"S\" ? \"$small_sku\" : \"$postgres_sku\"}}'"
+    tier_expression="tier: '{{context.resource.properties.size == \"S\" ? \"$small_tier\" : \"$postgres_tier\"}}'"
+    # Keep direct-module checks for historical packs; current settings live in the wrapper.
+    if grep -Fq "source: 'ghcr.io/radius-project/azure-aks-recipes/postgresqldatabases:" <<<"$entry"; then
+        wrapper="${2:-$(dirname "$pack")/../../Data/postgreSqlDatabases/recipes/azure/bicep/azure-postgresql.bicep}"
+        if [[ ! -f "$wrapper" ]] || ! grep -Fq "name: 'pgsql-{{context.azure.resourceNameHash}}'" <<<"$entry"; then
+            echo "Error: PostgreSQL wrapper or stable server name is missing: $pack" >&2
+            return 1
+        fi
+        entry="$(cat "$wrapper")" || return 1
+        if ! grep -Fq "module server 'br/public:avm/res/db-for-postgre-sql/flexible-server:0.15.2'" <<<"$entry"; then
+            echo "Error: PostgreSQL wrapper must retain the approved AVM version: $wrapper" >&2
+            return 1
+        fi
+        sku_expression="skuName: (properties.?size ?? 'S') == 'S' ? '$small_sku' : '$postgres_sku'"
+        tier_expression="tier: (properties.?size ?? 'S') == 'S' ? '$small_tier' : '$postgres_tier'"
+    fi
+    if ! grep -Fq "$sku_expression" <<<"$entry" ||
+        ! grep -Fq "$tier_expression" <<<"$entry"; then
         echo "Error: PostgreSQL selection policy differs from the pack SKU or tier mapping: $pack" >&2
         return 1
     fi
