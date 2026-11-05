@@ -18,7 +18,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `size` | string (`S`, `M`, `L`) | Optional | The size of the PostgreSQL database. Defaults to `S`. The Recipe maps the size onto a concrete cloud SKU/tier. |
 | `extensions` | array of strings | Optional | Extension names. Azure allow-lists them; the application must create each extension in its database. Kubernetes creates them when the database is first initialized. Defaults to `[]`. |
 | `serverSettings` | object of strings | Optional | PostgreSQL server parameter names and values. Azure operator settings take precedence. Reserved TLS and port settings cannot be changed through this object. Defaults to `{}`. |
-| `initSql` | string | Optional | Optional SQL script executed on first initialization to create tables, indexes, and seed data. |
+| `initSql` | string (`x-radius-sensitive`) | Optional | SQL for users, schemas, and seed data. Azure runs it after provisioning; it must be safe to repeat. Kubernetes Bicep runs it when the data directory is empty. See [database initialization](#database-initialization). |
 | `tls` | string (`required`, `optional`) | Optional | The requested transport policy for connections to the database server. Defaults to `required`. Use `optional`, which permits non-TLS connections, only when the server is not publicly reachable. See below for platform behavior and operator overrides. |
 | `host` | string | Read only | The host name used to connect to the database. Set from the Recipe module's output. |
 | `port` | integer | Optional | The TCP port used to connect to the database. Defaults to `5432`, the standard port every Recipe in this repository provisions. A Recipe that provisions the database on a different port overwrites this value from its own output. Setting it in an application definition changes only the value reported to connected containers, never the port the server listens on. |
@@ -86,7 +86,39 @@ the existing TLS policy and certificate handling. Both platforms keep
 the server on port 5432. Other setting names and values are passed
 unchanged. Do not place credentials in `serverSettings`.
 
-### Local settings checks
+## Database initialization
+
+Use `initSql` to create the users, schemas, and seed data the application
+needs. For example:
+
+```bicep
+initSql: '''
+  CREATE SCHEMA IF NOT EXISTS app;
+  CREATE TABLE IF NOT EXISTS app.products (id integer PRIMARY KEY, name text NOT NULL);
+  INSERT INTO app.products (id, name) VALUES (1, 'sample') ON CONFLICT (id) DO NOTHING;
+'''
+```
+
+On Azure, the Recipe runs nonempty SQL after the server, database, and
+server settings are ready. Empty or whitespace-only SQL creates no runner.
+SQL changes can run the script again. A later deployment can also run it
+again after the deployment-script retention period expires. Use SQL that
+is safe to repeat; execution is not guaranteed to occur only once.
+
+A SQL error fails the Recipe. The runner does not wrap the whole script in
+a transaction or undo completed statements. It does not print SQL results
+or database errors, which can contain credentials. See the
+[Azure Recipe](recipes/azure/README.md#sql-initialization) for time limits,
+permissions, network requirements, and cleanup behavior.
+
+Radius encrypts `initSql` at rest and redacts it on reads. Use a secure
+Bicep parameter if the script contains credentials. This does not change
+the existing Kubernetes Bicep ConfigMap storage: that Recipe mounts the
+script under `/docker-entrypoint-initdb.d/` and runs it when the data
+directory is empty. It does not run changed SQL against an existing volume.
+The Kubernetes Terraform Recipe does not implement `initSql`.
+
+### Local settings and initialization checks
 
 Use Node.js, the Radius-bundled Bicep CLI (`~/.rad/bin/bicep`, or set
 `BICEP_CLI`), and Terraform 1.7 or later. The first run needs access to the
@@ -98,9 +130,9 @@ make test-postgresql-inputs
 bash .github/scripts/tests/test-postgresql-transport.sh
 ```
 
-These commands check compiled output, Azure snapshots, Terraform plans
-with a mock Kubernetes provider, and existing transport regressions. They
-do not deploy to Azure or Kubernetes. Deployment-specific checks remain
+These commands check compiled output, Azure snapshots, SQL-runner shell
+fixtures, Terraform plans with a mock Kubernetes provider, and existing
+transport regressions. They do not deploy to Azure or Kubernetes. Deployment-specific checks remain
 in [#472](https://github.com/radius-project/resource-types-contrib/issues/472).
 
 ## Kubernetes TLS

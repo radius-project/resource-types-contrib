@@ -89,7 +89,8 @@ types:
               description: "(Optional) The name of the database. Defaults to `postgres_db` if not provided."
             initSql:
               type: string
-              description: "(Optional) SQL script mounted into the PostgreSQL container's `/docker-entrypoint-initdb.d/` directory and executed whenever PGDATA is empty. With the default ephemeral storage this runs on every pod restart. If a PersistentVolumeClaim is used, the script runs only on the very first startup and subsequent changes to initSql are ignored on existing volumes. Limited to ~1 MiB. Useful for creating tables, indexes, and inserting seed data."
+              x-radius-sensitive: true
+              description: "(Optional) SQL script for users, schemas, and seed data. Radius encrypts it at rest and redacts it on reads. Azure runs it after provisioning with a deployment script; it can run again after SQL changes or deployment-script retention expires. Use SQL that is safe to repeat. Kubernetes Bicep mounts it into /docker-entrypoint-initdb.d/ and runs it when PGDATA is empty; changes do not run against existing volumes. Platform script and environment-variable size limits apply. See the Azure Recipe documentation for execution limits."
             tls:
               type: string
               enum: ['required', 'optional']
