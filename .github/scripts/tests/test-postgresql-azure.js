@@ -68,9 +68,16 @@ param configurations = ${configurations}
       assert.equal(matches.length, 1, `Expected one ${name} configuration`);
       return matches[0].properties.value;
     };
+    const hasSetting = (resources, name) => resources.some(r =>
+      r.type === 'Microsoft.DBforPostgreSQL/flexibleServers/configurations' && r.name.endsWith(`/${name}`));
     let resources = snapshot();
     assert.equal(setting(resources, 'require_secure_transport'), 'ON');
-    assert.equal(setting(resources, 'azure.extensions'), '');
+    assert.equal(hasSetting(resources, 'azure.extensions'), false, 'Omitted extensions must preserve an existing allow-list');
+    resources = snapshot("extensions: []\ninitSql: '  \\n\\t '");
+    assert.equal(hasSetting(resources, 'azure.extensions'), false, 'An empty list must not clear an existing allow-list');
+    assert.equal(resources.some(r => r.type === 'Microsoft.Resources/deploymentScripts'), false, 'Whitespace-only SQL must not create a runner');
+    resources = snapshot('', "[{ name: 'azure.extensions', source: 'user-override', value: '' }]");
+    assert.equal(setting(resources, 'azure.extensions'), '', 'Operators can explicitly clear the allow-list');
     for (const serverName of ['pgsql-first', 'pgsql-second']) {
       const serverResources = snapshot("initSql: 'SELECT 1;'", '[]', serverName);
       assert.equal(serverResources.find(r => r.type === 'Microsoft.DBforPostgreSQL/flexibleServers').name, serverName);
@@ -110,9 +117,37 @@ serverSettings: {
     resources = snapshot(`serverSettings: {
   'azure.extensions': 'unsafe-bypass'
   require_secure_transport: 'OFF'
+  port: 'not-a-number'
 }`);
     assert.equal(setting(resources, 'require_secure_transport'), 'ON');
-    assert.equal(setting(resources, 'azure.extensions'), '');
+    assert.equal(hasSetting(resources, 'azure.extensions'), false);
+    assert.equal(hasSetting(resources, 'port'), false, 'Application settings must not change the fixed server port');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('Kubernetes PostgreSQL keeps a fixed port and skips whitespace-only SQL', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rtc-postgresql-kubernetes-'));
+  try {
+    fs.copyFileSync(path.join(root, 'Data/postgreSqlDatabases/recipes/kubernetes/bicep/kubernetes-postgresql.bicep'),
+      path.join(dir, 'recipe.bicep'));
+    const build = spawnSync(bicep, ['build', path.join(dir, 'recipe.bicep'), '--outfile', path.join(dir, 'recipe.json')],
+      { encoding: 'utf8' });
+    assert.equal(build.status, 0, `${build.error || ''}\n${build.stdout}\n${build.stderr}`);
+    const template = JSON.parse(fs.readFileSync(path.join(dir, 'recipe.json'), 'utf8'));
+    assert.equal(template.variables.port, 5432);
+    assert.equal(template.variables.hasInitSql, "[not(empty(trim(variables('initSql'))))]");
+    assert.ok(template.variables.serverArgs.includes("lambdaVariables('setting').key, 'port'"),
+      'Do not forward serverSettings.port to PostgreSQL');
+    const deployment = template.resources.postgresql;
+    assert.equal(deployment.type, 'apps/Deployment@v1');
+    assert.equal(deployment.properties.spec.template.spec.containers[0].ports[0].containerPort, "[variables('port')]");
+    assert.equal(template.resources.svc.properties.spec.ports[0].port, "[variables('port')]");
+    assert.equal(template.resources.initSqlSecret.properties.metadata.name, "[format('{0}-init-sql', variables('resourceName'))]");
+    assert.ok(deployment.properties.spec.template.spec.volumes.includes("'name', 'init-sql'"));
+    assert.ok(deployment.properties.spec.template.spec.containers[0].volumeMounts.includes("'name', 'init-sql'"));
+    assert.equal(template.outputs.result.value.values.port, "[variables('port')]");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

@@ -453,25 +453,32 @@ rtc_assert_postgresql_result() {
     fi
 
     echo "==> PostgreSQL result properties validated"
-    if [[ "${RTC_POSTGRES_DIRECT_PROBE:-0}" == 1 ]]; then
-        local probe
-        probe="$(dirname "${BASH_SOURCE[0]}")/../../Data/postgreSqlDatabases/test/verify-database.sh"
-        if [[ -z "${PGPASSWORD:-}" || ! -f "$probe" ]]; then
-            echo "Error: Direct PostgreSQL verification requires the test password and probe script." >&2
-            return 1
-        fi
-        probe="$(cd "$(dirname "$probe")" && pwd)/$(basename "$probe")" || return 1
-        if ! PGHOST="$(jq -er '.[0].properties.host' <<<"$resource_json")" \
-            PGPORT="$(jq -er '.[0].properties.port' <<<"$resource_json")" \
-            PGDATABASE=appdb PGUSER=radadmin PGSSLMODE=require PGCONNECT_TIMEOUT=5 \
-            POSTGRES_CREATE_EXTENSIONS=true \
-            timeout --kill-after=5s 120s docker run --rm --env PGHOST --env PGPORT --env PGDATABASE --env PGUSER \
-                --env PGPASSWORD --env PGSSLMODE --env PGCONNECT_TIMEOUT --env POSTGRES_CREATE_EXTENSIONS \
-                --mount "type=bind,source=$probe,target=/verify-database.sh,readonly" \
-                postgres:16-alpine sh /verify-database.sh; then
-            echo "Error: Direct Azure PostgreSQL prerequisite verification failed." >&2
-            return 1
-        fi
+}
+
+rtc_probe_postgresql_database() {
+    local app_name="$1" workspace_name="$2" resource_json host port probe
+    probe="$(dirname "${BASH_SOURCE[0]}")/../../Data/postgreSqlDatabases/test/verify-database.sh"
+    if [[ -z "${PGPASSWORD:-}" || ! -f "$probe" ]]; then
+        echo "Error: Direct PostgreSQL verification requires the test password and probe script." >&2
+        return 1
+    fi
+    if ! resource_json=$(rad resource list "Radius.Data/postgreSqlDatabases" \
+        --application "$app_name" --workspace "$workspace_name" --output json) ||
+        ! host=$(jq -er 'select(type == "array" and length == 1) | .[0].properties.host | select(type == "string" and length > 0)' <<<"$resource_json") ||
+        ! port=$(jq -er '.[0].properties.port | select(type == "number")' <<<"$resource_json"); then
+        echo "Error: Could not read the PostgreSQL connection for direct verification." >&2
+        return 1
+    fi
+    probe="$(cd "$(dirname "$probe")" && pwd)/$(basename "$probe")" || return 1
+    if ! PGHOST="$host" PGPORT="$port" \
+        PGDATABASE=appdb PGUSER=radadmin PGSSLMODE=require PGCONNECT_TIMEOUT=5 \
+        POSTGRES_CREATE_EXTENSIONS=true \
+        timeout --kill-after=5s 120s docker run --rm --env PGHOST --env PGPORT --env PGDATABASE --env PGUSER \
+            --env PGPASSWORD --env PGSSLMODE --env PGCONNECT_TIMEOUT --env POSTGRES_CREATE_EXTENSIONS \
+            --mount "type=bind,source=$probe,target=/verify-database.sh,readonly" \
+            postgres:16-alpine sh /verify-database.sh; then
+        echo "Error: Direct Azure PostgreSQL prerequisite verification failed." >&2
+        return 1
     fi
 }
 
@@ -508,7 +515,8 @@ rtc_assert_recipe_result() {
                 return 1
             fi
             if [[ "${RTC_POSTGRES_DIRECT_PROBE:-0}" == 1 ]]; then
-                return 0
+                PGPASSWORD="${6:-}" rtc_probe_postgresql_database "$app_name" "$workspace_name"
+                return $?
             fi
             grep -qE '^[[:space:]]*resource[[:space:]]+postgresclient[[:space:]]' "$test_file" || client_status=$?
             case "$client_status" in
@@ -835,8 +843,7 @@ rtc_deploy_and_assert_test_app() {
     if "${deploy_command[@]}" "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
         echo "==> Test deployment successful"
 
-        if ! PGPASSWORD="${generated_password:-}" \
-            rtc_assert_recipe_result "$resource_type" "$app_name" "$workspace_name" "$kubernetes_namespace" "$test_file"; then
+        if ! rtc_assert_recipe_result "$resource_type" "$app_name" "$workspace_name" "$kubernetes_namespace" "$test_file" "${generated_password:-}"; then
             deploy_status=1
         fi
     else

@@ -37,7 +37,7 @@ locals {
   environment_name = var.context.environment != null ? var.context.environment.name : ""
   resource_group   = element(split("/", var.context.resource.id), 5)
   namespace        = var.context.runtime.kubernetes.namespace
-  port             = tonumber(try(var.context.resource.properties.serverSettings.port, "5432"))
+  port             = 5432
   tag              = "16-alpine"
   username         = var.context.resource.properties.username
   password         = var.context.resource.properties.password
@@ -45,7 +45,7 @@ locals {
   size_value       = try(var.context.resource.properties.size, "S")
   extensions       = coalesce(try(var.context.resource.properties.extensions, null), [])
   server_settings  = coalesce(try(var.context.resource.properties.serverSettings, null), {})
-  server_args      = flatten([for name, value in local.server_settings : ["-c", "${name}=${value}"]])
+  server_args      = flatten([for name, value in local.server_settings : ["-c", "${name}=${value}"] if name != "port"])
   extension_sql    = join("\n", [for name in local.extensions : "CREATE EXTENSION IF NOT EXISTS \"${replace(name, "\"", "\"\"")}\";"])
   init_sql         = try(var.context.resource.properties.initSql, null) == null ? "" : var.context.resource.properties.initSql
   has_init_sql     = trimspace(local.init_sql) != ""
@@ -64,7 +64,7 @@ resource "kubernetes_secret" "init_scripts" {
   count = local.has_init_scripts ? 1 : 0
 
   metadata {
-    name      = "${local.resource_name}-extensions"
+    name      = "${local.resource_name}-init-sql"
     namespace = local.namespace
     labels    = local.labels
   }
@@ -116,7 +116,7 @@ resource "kubernetes_deployment" "postgresql" {
           dynamic "volume_mount" {
             for_each = kubernetes_secret.init_scripts
             content {
-              name       = "extensions"
+              name       = "init-sql"
               mount_path = "/docker-entrypoint-initdb.d"
               read_only  = true
             }
@@ -160,7 +160,7 @@ resource "kubernetes_deployment" "postgresql" {
         dynamic "volume" {
           for_each = kubernetes_secret.init_scripts
           content {
-            name = "extensions"
+            name = "init-sql"
             secret {
               secret_name = volume.value.metadata[0].name
             }

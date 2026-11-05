@@ -57,7 +57,10 @@ serverSettings: {
 Use lowercase extension names from the target platform's supported list.
 Azure maps `extensions` to `azure.extensions`. This permits extension creation;
 it does not run `CREATE EXTENSION` in each database. Your migrations or `initSql`
-must do that. Kubernetes runs quoted `CREATE EXTENSION IF NOT EXISTS` statements
+must do that. An omitted or empty list does not write `azure.extensions`, so it
+does not clear an existing allow-list. To clear that list, an operator must set
+`azure.extensions` to an empty string in `postgreSqlServerConfigurations`.
+Kubernetes runs quoted `CREATE EXTENSION IF NOT EXISTS` statements
 before `initSql`, when the data directory is empty. The default `postgres:16-alpine`
 image includes `pg_trgm`, but not `vector`. A missing extension fails startup;
 use an operator-supplied Recipe with an image that includes it. The Recipe does
@@ -68,9 +71,10 @@ settings. An operator `azure.extensions` entry replaces the app's extension
 allow-list, so it must include every extension the app needs. The `tls` and
 `extensions` properties take precedence over `serverSettings.require_secure_transport`
 and `serverSettings['azure.extensions']`; use the dedicated properties instead.
-Other settings pass to Azure unchanged. On Kubernetes, settings become separate
-`postgres -c name=value` arguments, without a shell. A Kubernetes `port` setting
-also changes the Service port and reported connection port.
+Both platforms ignore application `serverSettings.port` and keep the server,
+Service, and reported connection port at 5432. Other settings pass to Azure
+unchanged. On Kubernetes, settings become separate `postgres -c name=value`
+arguments, without a shell.
 Azure settings that require a server restart still need an operator-managed
 restart; this Recipe does not grant itself permission to restart the server.
 
@@ -78,7 +82,7 @@ restart; this Recipe does not grant itself permission to restart the server.
 
 `initSql` can create schemas, users, and seed rows. Radius encrypts this property
 and redacts it on reads. Pass scripts that contain credentials through a secure
-Bicep parameter, not a checked-in string.
+Bicep parameter, not a checked-in string. All three Recipes ignore whitespace-only SQL.
 
 Azure runs the script against the requested database after the server, settings,
 and database are ready. The step uses `psql` with TLS and stops at the first SQL

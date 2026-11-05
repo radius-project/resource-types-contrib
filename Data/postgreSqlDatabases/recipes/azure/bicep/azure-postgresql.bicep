@@ -11,11 +11,11 @@ param configurations array = []
 var properties = context.resource.properties
 var database = properties.?database ?? 'postgres_db'
 var initSql = properties.?initSql ?? ''
-var hasInitSql = !empty(initSql)
+var hasInitSql = !empty(trim(initSql))
 var extensions = properties.?extensions ?? []
 var serverSettings = properties.?serverSettings ?? {}
 var operatorNames = map(configurations, config => config.name)
-var applicationSettings = filter(items(serverSettings), setting => !contains(operatorNames, setting.key) && setting.key != 'azure.extensions' && setting.key != 'require_secure_transport')
+var applicationSettings = filter(items(serverSettings), setting => !contains(operatorNames, setting.key) && !contains(['azure.extensions', 'require_secure_transport', 'port'], setting.key))
 var applicationConfigurations = [
   for setting in applicationSettings: {
     name: setting.key
@@ -31,7 +31,7 @@ var transportConfiguration = contains(operatorNames, 'require_secure_transport')
     value: (properties.?tls ?? 'required') == 'optional' ? 'OFF' : 'ON'
   }
 ]
-var extensionConfiguration = contains(operatorNames, 'azure.extensions') ? [] : [
+var extensionConfiguration = contains(operatorNames, 'azure.extensions') || empty(extensions) ? [] : [
   {
     name: 'azure.extensions'
     source: 'user-override'
@@ -107,11 +107,11 @@ resource initialize 'Microsoft.Resources/deploymentScripts@2023-08-01' = if (has
       }
       {
         name: 'PGPASSWORD'
-        secureValue: context.resource.properties.password
+        secureValue: properties.password
       }
       {
         name: 'INIT_SQL'
-        secureValue: context.resource.properties.?initSql ?? ''
+        secureValue: initSql
       }
       {
         name: 'PGSSLMODE'

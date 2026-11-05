@@ -9,6 +9,9 @@ operator `configurations` array in AVM `{ name, source, value }` form.
 It maps application `extensions`, `serverSettings`, and `tls` to server
 configuration. Operator entries take precedence. The pack supplies the existing
 server name; standalone Recipes derive one from the Radius resource ID.
+An omitted or empty `extensions` list leaves the existing allow-list unchanged.
+An operator can clear it with an explicit empty `azure.extensions` value.
+Application `serverSettings.port` is ignored; the server stays on port 5432.
 It returns the server ID and,
 when used, the initialization deployment-script ID for cleanup, plus `host`,
 `port`, and `database` connection values.

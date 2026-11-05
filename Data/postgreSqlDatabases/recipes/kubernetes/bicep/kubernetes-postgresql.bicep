@@ -25,14 +25,14 @@ var password = context.resource.properties.password
 var database = context.resource.properties.?database ?? 'postgres_db'
 var sizeValue = context.resource.properties.?size ?? 'S'
 var initSql = context.resource.properties.?initSql ?? ''
-var hasInitSql = initSql != ''
+var hasInitSql = !empty(trim(initSql))
 var extensions = context.resource.properties.?extensions ?? []
 var hasInitScripts = hasInitSql || !empty(extensions)
 var extensionSql = join(map(extensions, name => 'CREATE EXTENSION IF NOT EXISTS "${replace(name, '"', '""')}";'), '\n')
 var serverSettings = context.resource.properties.?serverSettings ?? {}
-var serverArgs = flatten(map(items(serverSettings), setting => ['-c', '${setting.key}=${setting.value}']))
+var serverArgs = flatten(map(filter(items(serverSettings), setting => setting.key != 'port'), setting => ['-c', '${setting.key}=${setting.value}']))
 var tag string = '16-alpine'
-var port = int(serverSettings.?port ?? '5432')
+var port = 5432
 var memory ={
   S: {
     memoryRequest: '512Mi'

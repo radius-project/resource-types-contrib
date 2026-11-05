@@ -12,7 +12,7 @@ param containerImagesRegistry string
 @description('Name of the Kubernetes Secret holding registry credentials for Radius.Compute/containerImages. Leave empty for an unauthenticated registry.')
 param containerImagesRegistrySecretName string = ''
 
-@description('Server parameters forwarded to the AVM PostgreSQL flexible server configurations array for Radius.Data/postgreSqlDatabases, using the AVM item shape with name, source, and value fields. Commonly used to allow-list extensions via the azure.extensions parameter (for example to enable pgvector). Setting require_secure_transport here overrides the transport policy the resource requests through its tls property. See recipe-packs/azure-aks/README.md for an example and a link to the supported extensions. Defaults to an empty array (no extra server configuration).')
+@description('Operator PostgreSQL settings merged by the authored Recipe with application serverSettings, extensions, and tls, using AVM items with name, source, and value fields. Operator entries override matching application settings. An azure.extensions entry replaces the entire application allow-list; apps should normally request extensions through their extensions property. A require_secure_transport entry overrides the requested tls policy. Defaults to no operator overrides. See recipe-packs/azure-aks/README.md for examples and supported extensions.')
 param postgreSqlServerConfigurations array = []
 
 resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {

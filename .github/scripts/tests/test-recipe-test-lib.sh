@@ -71,6 +71,10 @@ case "$1 $2" in
         # Used by the containers/postgresql assertion helpers.
         case "$3" in
             "Radius.Compute/containers")
+                if [[ "${CHECK_ASSERTION_PASSWORD:-0}" == 1 && -n "${PGPASSWORD:-}" ]]; then
+                    echo "Error: PostgreSQL password reached a containers assertion." >&2
+                    exit 1
+                fi
                 if [[ -n "${CONTAINERS_JSON:-}" ]]; then
                     echo "$CONTAINERS_JSON"
                     exit 0
@@ -267,6 +271,21 @@ if grep -q '^kubectl wait' "$CALL_LOG"; then
 fi
 if run_lib rtc_assert_recipe_result "Radius.Data/postgreSqlDatabases" testapp myws test-ns "$TEST_ROOT/missing.bicep" >/dev/null 2>&1; then
     fail "missing PostgreSQL test templates must not bypass readiness checks"
+fi
+
+: >"$CALL_LOG"
+RTC_POSTGRES_DIRECT_PROBE=1 run_lib rtc_assert_postgresql_result testapp myws >/dev/null ||
+    fail "result-shape checks must not require a database password"
+if grep -q '^docker ' "$CALL_LOG"; then
+    fail "result-shape checks must not run a SQL probe"
+fi
+RTC_POSTGRES_DIRECT_PROBE=1 run_lib rtc_assert_recipe_result \
+    "Radius.Data/postgreSqlDatabases" testapp myws test-ns "$POSTGRES_TEST_APP_BICEP" fixture-only >/dev/null ||
+    fail "the PostgreSQL dispatcher must run the direct SQL probe with its scoped password"
+grep -q '^docker run ' "$CALL_LOG" || fail "the dispatcher must call the direct SQL probe"
+if RTC_POSTGRES_DIRECT_PROBE=1 run_lib rtc_assert_recipe_result \
+    "Radius.Data/postgreSqlDatabases" testapp myws test-ns "$POSTGRES_TEST_APP_BICEP" >/dev/null 2>&1; then
+    fail "direct SQL probes must reject a missing password"
 fi
 
 if PEER_HOST=host-a run_lib rtc_assert_recipe_result "Radius.Compute/containers" testapp myws >/dev/null; then
@@ -485,6 +504,10 @@ DEPLOY_EXIT_CODE=0 run_lib rtc_deploy_and_assert_test_app \
     || fail "rtc_deploy_and_assert_test_app should succeed with an auto-generated password"
 grep -Fq -- '--parameters password=Aa1!mock-generated-password' "$CALL_LOG" \
     || fail "rtc_deploy_and_assert_test_app should pass a generated password value to rad deploy"
+
+CHECK_ASSERTION_PASSWORD=1 run_lib rtc_deploy_and_assert_test_app \
+    "$TEST_APP_WITH_PASSWORD" "Radius.Compute/containers" "rtc-test" "/envs/myenv" "myws" "my-ns" >/dev/null ||
+    fail "generated PostgreSQL passwords must not reach another resource type's assertions"
 
 # Retry only the Azure transport and Terraform provider download failures.
 TRANSIENT_DEPLOY_ERROR='Error: {"code":"ResourceDeploymentFailure","message":"System.IO.IOException: Connection reset by peer","target":"/subscriptions/test/resourceGroups/test/providers/Microsoft.KeyVault/vaults/test"}'

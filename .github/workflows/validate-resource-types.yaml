@@ -117,7 +117,7 @@ jobs:
         if: matrix.recipe == 'bicep'
         run: Data/mySqlDatabases/test/assert-recipe-result.sh
 
-      - name: Test Azure PostgreSQL recipe settings
+      - name: Test PostgreSQL recipe settings
         if: matrix.recipe == 'bicep'
         run: node --test .github/scripts/tests/test-postgresql-azure.js
 
