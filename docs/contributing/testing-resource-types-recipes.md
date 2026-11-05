@@ -470,7 +470,8 @@ waiting for the 30-minute job limit. A timeout remains a test failure.
 Collection runs before app cleanup, and Kubernetes cleanup is still attempted.
 The nightly and release candidate test steps also pass their absolute deadline
 as `RTC_AZURE_TEST_STEP_DEADLINE_EPOCH`. Each Azure deployment must stop at least
-six minutes before that deadline. Container tests retain their shorter
+six minutes before that deadline. Assertions use the time left before the same
+cutoff; they cannot use the diagnostics and cleanup reserve. Container tests retain their shorter
 15-minute limit. PostgreSQL tests retain their shorter recovery deadline.
 Failure cleanup uses a three-minute application deletion limit and bounded
 Kubernetes deletion requests. A test cannot start a deployment after the

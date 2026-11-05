@@ -789,8 +789,28 @@ rtc_deploy_and_assert_test_app() {
     if "${deploy_command[@]}" "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
         echo "==> Test deployment successful"
 
-        if ! rtc_assert_recipe_result "$resource_type" "$app_name" "$workspace_name" "$kubernetes_namespace"; then
-            deploy_status=1
+        local assertion_remaining="" assertion_status=0
+        local -a assertion_command=(rtc_assert_recipe_result)
+        if [[ -n "$step_remaining" ]]; then
+            assertion_remaining=$((step_deadline - $(date +%s) - 360))
+            if ((assertion_remaining <= 0)); then
+                echo "Error: Azure test step budget exhausted before assertions; collecting diagnostics." >&2
+                deploy_status=1
+            else
+                # shellcheck disable=SC2016 # Expanded by the child shell.
+                assertion_command=(timeout --kill-after=5s "${assertion_remaining}s" bash -c \
+                    'source "$1"; shift; rtc_assert_recipe_result "$@"' \
+                    bash "${BASH_SOURCE[0]}")
+            fi
+        fi
+        if [[ "$deploy_status" == 0 ]]; then
+            "${assertion_command[@]}" "$resource_type" "$app_name" "$workspace_name" "$kubernetes_namespace" || assertion_status=$?
+            if [[ "$assertion_status" -ne 0 ]]; then
+                deploy_status=1
+                if [[ -n "$assertion_remaining" && ( "$assertion_status" == 124 || "$assertion_status" == 137 ) ]]; then
+                    echo "Error: Azure test assertions exceeded the step budget; collecting diagnostics." >&2
+                fi
+            fi
         fi
     else
         deploy_status=$?

@@ -127,11 +127,13 @@ test("allowlists typed leaves; never copies nested objects, free text or credent
   const input = fixture();
   input.name = { secret };
   input.properties.provisioningState = { secret };
+  input.properties.state = { secret };
   input.properties.containers[0].properties.image = `https://user:${secret}@host/image?token=${secret}`;
   input.properties.instanceView.events[0].name = { secret };
   const safe = resource(input, scope);
   assert.equal(safe.name, null);
   assert.equal(safe.provisioningState, null);
+  assert.equal(safe.state, null);
   assert.equal(safe.containers[0].image, null);
   assert.ok(!JSON.stringify(safe).includes(secret));
   assert.ok(!JSON.stringify(activity({ properties: { serviceRequestId: secret }, status: { value: { secret } } }, scope)).includes(secret));
@@ -141,6 +143,7 @@ test("allowlists typed leaves; never copies nested objects, free text or credent
 test("non-container failures collect account, model, MongoDB and PostgreSQL state", async () => {
   const account = id("Microsoft.CognitiveServices/accounts", "openai");
   const mongo = id("Microsoft.DocumentDB/databaseAccounts", "mongo");
+  const postgres = id("Microsoft.DBforPostgreSQL/flexibleServers", "postgres");
   const { report, calls } = await withMock(async (args) => {
     const url = new URL(args[4]);
     if (url.pathname.endsWith("/accounts")) {
@@ -153,12 +156,17 @@ test("non-container failures collect account, model, MongoDB and PostgreSQL stat
     if (url.pathname.endsWith("/mongodbDatabases")) {
       return { value: { value: [{ id: `${mongo}/mongodbDatabases/test`, properties: { provisioningState: "Creating" } }] } };
     }
+    if (url.pathname.endsWith("/flexibleServers")) {
+      return { value: { value: [{ id: postgres, properties: { state: "Ready", secret } }] } };
+    }
     return { value: { value: [] } };
   }, { resourceType: "Radius.AI/models" });
   assert.equal(calls.length, 14);
   assert.equal(report.resourceType, "Radius.AI/models");
   assert.equal(report.resources.find((r) => r.id === account).provisioningState, "Creating");
   assert.equal(report.resources.find((r) => r.id.endsWith("/deployments/chat")).provisioningState, "Failed");
+  assert.equal(report.resources.find((r) => r.id === postgres).state, "Ready");
+  assert.equal(report.resources.find((r) => r.id === postgres).provisioningState, null);
   assert.ok(calls.some((args) => args[4].includes("/flexibleServers?")));
   assert.ok(!JSON.stringify(report).includes(secret));
 });
@@ -223,6 +231,64 @@ test("records HTTP phases and exact recipe references without free-text messages
   assert.equal(records[2].state, "Succeeded");
   assert.equal(records[3].resourceId, "/planes/radius/local/resourcegroups/default/providers/Radius.Data/widgets/test");
   assert.ok(!JSON.stringify(records).includes(secret));
+});
+
+test("preserves native Radius IDs without Azure context and rejects unsafe paths", () => {
+  for (const resourceId of [
+    "/planes/radius/local/resourceGroups/default/providers/Radius.AI/models/testmodel",
+    "/planes/kubernetes/local/namespaces/default/providers/core/Secret/test",
+  ]) {
+    for (const key of ["resourceId", "ResourceId", "resourceID"]) {
+      assert.equal(logRecords(JSON.stringify({ [key]: resourceId }), null).records[0].resourceId, resourceId);
+    }
+  }
+  for (const resourceId of [
+    "/planes/radius/local/resourceGroups/default/providers/Radius.AI/models/../test",
+    "/planes/radius/local/resourceGroups/default/providers/Radius.AI/models/test?token=hidden",
+    "/planes/radius/local/resourceGroups/default/providers/Radius.AI/models/test#hidden",
+    "/planes/radius/local/resourceGroups/default/unrelated/path",
+    "/planes/other/local/resourceGroups/default/providers/Radius.AI/models/test",
+    { secret },
+    "x".repeat(2049),
+  ]) {
+    assert.equal(logRecords(JSON.stringify({ resourceId }), null).records[0].resourceId, null);
+  }
+});
+
+test("preserves HTTP Terraform recipe sources without credentials, queries or fragments", () => {
+  const source = (value) => logRecords(JSON.stringify({
+    message: `Deploying recipe: "default", template: "${value}"`,
+  }), scope).records[0].recipeSource;
+  for (const value of [
+    "http://tf-module-server.radius-test-tf-module-server.svc.cluster.local/secrets-azure.zip",
+    "https://modules.example.invalid:8443/recipes/secrets-azure.zip",
+  ]) {
+    assert.equal(source(value), value);
+  }
+  for (const value of [
+    `https://user:${secret}@modules.example.invalid/recipe.zip`,
+    `https://modules.example.invalid/recipe.zip?token=${secret}`,
+    `https://modules.example.invalid/recipe.zip#${secret}`,
+    "https://modules.example.invalid/recipe.zip?",
+    "https://modules.example.invalid/recipe.zip#",
+    "https://modules.example.invalid/recipe with spaces.zip",
+    "file:///recipe.zip",
+    "ftp://modules.example.invalid/recipe.zip",
+    "https://modules.example.invalid/" + "a".repeat(2048),
+  ]) {
+    assert.equal(source(value), null);
+  }
+});
+
+test("preserves bounded logger names with spaces without accepting free text", () => {
+  for (const key of ["scope", "name"]) {
+    for (const value of ["applications.core.Applications.Core async worker", "ucp async worker"]) {
+      assert.equal(logRecords(JSON.stringify({ [key]: value }), scope).records[0].logger, value);
+    }
+    for (const value of [{ secret }, "a".repeat(257), "worker\nhidden", "worker?token=hidden"]) {
+      assert.equal(logRecords(JSON.stringify({ [key]: value }), scope).records[0].logger, null);
+    }
+  }
 });
 
 test("pod log failures are explicit and cannot block Azure evidence", async () => {

@@ -79,6 +79,12 @@ function scopedId(value, scope) {
     !value.split("/").some((part) => part === "." || part === "..") ? value : null;
 }
 
+function radiusId(value) {
+  const id = text(value,
+    /^\/planes\/(?:radius|kubernetes)\/local\/(?:resourcegroups|namespaces)\/[a-z0-9_()-]+\/providers\/[a-z0-9_.-]+(?:\/[a-z0-9_().-]+){2,}$/i);
+  return id && !id.split("/").some((part) => part === "." || part === "..") ? id : null;
+}
+
 function resource(value, scope) {
   const v = object(value);
   const p = object(v.properties);
@@ -89,7 +95,7 @@ function resource(value, scope) {
   });
   return {
     id: scopedId(v.id, scope), type: text(v.type), name: text(v.name), location: text(v.location),
-    provisioningState: text(p.provisioningState),
+    provisioningState: text(p.provisioningState), state: text(p.state),
     instanceView: instanceView(p.instanceView),
     containers: containers(p.containers), initContainers: containers(p.initContainers),
     containersTruncated: [p.containers, p.initContainers].some((v) => Array.isArray(v) && v.length > LIMITS.items),
@@ -160,6 +166,18 @@ function requestTarget(value, scope) {
   return azure || radius ? { host: url.hostname, path: url.pathname } : null;
 }
 
+function recipeSource(value) {
+  const image = text(value, IMAGE);
+  if (image) return image;
+  if (typeof value !== "string" || value.length > 2048 || /[?#]/.test(value)) return null;
+  let url;
+  try { url = new URL(value); } catch { return null; }
+  return (url.protocol === "https:" || url.protocol === "http:") &&
+    !url.username && !url.password &&
+    text(url.hostname, /^[a-z0-9.-]+$/i) &&
+    text(url.pathname, /^\/[a-z0-9_./()-]+$/i) ? value : null;
+}
+
 function logRecords(output, scope) {
   const records = [];
   let omitted = 0;
@@ -180,16 +198,15 @@ function logRecords(output, scope) {
     records.push({
       timestamp: text(v.timestamp, TIME), severity: text(v.severity),
       traceId: text(v.traceId, /^[a-f0-9]{32}$/i), spanId: text(v.spanId, /^[a-f0-9]{16}$/i),
-      resourceId: scopedId(resourceId, scope) ?? text(resourceId,
-        /^\/planes\/(?:radius|kubernetes)\/local\/(?:resourcegroups|namespaces)\/[a-z0-9_./()-]+$/i),
+      resourceId: scopedId(resourceId, scope) ?? radiusId(resourceId),
       operationId: text(v.operationId, UUID),
       operationType: text(v.operationType, /^[a-z0-9_./|()-]{1,256}$/i),
       operationName: text(v.OperationName),
       state: text(v.message, /^(Accepted|Running|Succeeded|Failed|Canceled|Creating|Updating|Deleting)$/),
       version: text(v.version),
-      recipeSource: text(recipe?.[1], IMAGE),
+      recipeSource: recipeSource(recipe?.[1]),
       httpEvent,
-      logger: text(v.scope ?? v.name),
+      logger: text(v.scope ?? v.name, /^[a-z0-9_.:/ -]{1,256}$/i),
       request: requestTarget(v.Uri, scope),
       method: text(v.HttpMethod), statusCode: integer(v.StatusCode),
       elapsedMilliseconds: integer(v.ElapsedMilliseconds),

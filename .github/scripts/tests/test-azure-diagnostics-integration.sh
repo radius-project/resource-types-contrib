@@ -50,6 +50,7 @@ EOF
 cat >"$TEST_ROOT/bin/kubectl" <<'EOF'
 #!/bin/bash
 echo "kubectl $*" >>"$CALL_LOG"
+if [[ "$1" == wait && "${ASSERT_HANG:-0}" == 1 ]]; then exec sleep 30; fi
 exit "${CLEANUP_STATUS:-0}"
 EOF
 cat >"$TEST_ROOT/bin/node" <<'EOF'
@@ -68,7 +69,8 @@ case "$2 $3 $4" in
     "100s node "*) ;;
     "15m bash -c"|"3m rad app"|[0-9]*"s bash -c")
         echo "bounded $2 $3 $4" >>"$CALL_LOG"
-        if [[ "${DEPLOY_HANG:-0}" == 1 || "${CLEANUP_HANG:-0}" == 1 ]]; then
+        if [[ "${DEPLOY_HANG:-0}" == 1 || "${CLEANUP_HANG:-0}" == 1 ||
+              ( "${ASSERT_HANG:-0}" == 1 && "$5" == *rtc_assert_recipe_result* ) ]]; then
             shift 2
             exec "$REAL_TIMEOUT" --kill-after=1s 1s "$@"
         fi ;;
@@ -164,6 +166,37 @@ done
     [[ "$status" == 1 ]] || fail "exhausted step budget must fail"
     if grep -q '^rad deploy ' "$CALL_LOG"; then fail "must not allocate after the step budget expires"; fi
     grep -q 'step budget exhausted' "$TEST_ROOT/output" || fail "budget failure must be explicit"
+)
+(
+    deadline=$(( $(date +%s) + 600 ))
+    # shellcheck disable=SC2329 # Called by the sourced helper.
+    date() {
+        if [[ "$*" == +%s ]] && grep -q '^rad deploy ' "$CALL_LOG"; then
+            printf '%s\n' "$clock_after_deploy"
+        else
+            command date "$@"
+        fi
+    }
+    for remaining in 0 1 60; do
+        clock_after_deploy=$((deadline - 360 - remaining))
+        GITHUB_ACTIONS=true RESOURCE_TYPE=Radius.Data/mySqlDatabases DEPLOY_STATUS=0 ASSERT_HANG=1 \
+            RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$deadline" assert_failure_cleanup run_helper
+        assert_before_cleanup
+        grep -q '^bounded 3m rad app$' "$CALL_LOG" || fail "assertion timeout must retain bounded cleanup"
+        if ((remaining == 0)); then
+            if grep -q '^kubectl wait ' "$CALL_LOG"; then fail "expired assertion budget must not start assertions"; fi
+            grep -q 'budget exhausted before assertions' "$TEST_ROOT/output" || fail "expired assertion budget must be explicit"
+        else
+            grep -q "^bounded ${remaining}s bash -c$" "$CALL_LOG" || fail "assertions must use the recalculated budget"
+            grep -q 'assertions exceeded the step budget' "$TEST_ROOT/output" || fail "stalled assertions must reach diagnostics"
+        fi
+    done
+    : >"$CALL_LOG"
+    GITHUB_ACTIONS=true RESOURCE_TYPE=Radius.Data/mySqlDatabases DEPLOY_STATUS=0 \
+        RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$deadline" run_helper >"$TEST_ROOT/output" 2>&1 ||
+        fail "bounded successful assertions must remain successful"
+    grep -q '^kubectl wait ' "$CALL_LOG" || fail "bounded assertions must run"
+    if grep -q '^collector' "$CALL_LOG"; then fail "successful assertions must not collect"; fi
 )
 : >"$CALL_LOG"
 DEPLOY_STATUS=0 run_helper >"$TEST_ROOT/output" 2>&1 || fail "successful test must remain successful"
