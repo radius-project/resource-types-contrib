@@ -96,7 +96,7 @@ elif [[ "$RESOURCE_TYPE" == "Radius.Data/mySqlDatabases" && "$MYSQL_TEST_MODE" !
     echo "Error: unsupported MySQL test mode '$MYSQL_TEST_MODE'. Use connection-only or verify-transport." >&2
     exit 1
 elif [[ "$RESOURCE_TYPE" == "Radius.Data/postgreSqlDatabases" && "${RTC_TEST_PLATFORM:-}" == azure ]]; then
-    rtc_test_azure_postgresql_app "$TEST_FILE" "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE" || exit 1
+    rtc_test_azure_postgresql_app "$TEST_FILE" "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE" || exit $?
 else
     rtc_deploy_and_assert_test_app "$TEST_FILE" "$RESOURCE_TYPE" "recipepacktest" \
         "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE" || exit 1

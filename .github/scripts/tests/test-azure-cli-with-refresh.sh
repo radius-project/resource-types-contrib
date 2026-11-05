@@ -116,6 +116,16 @@ wait "$second" || fail "second parallel command failed"
 [[ "$(grep -c '^login ' "$CALL_LOG")" == 1 ]] || fail "parallel callers must share one renewal"
 [[ "$(grep -c '^lock ' "$CALL_LOG")" == 2 ]] || fail "both commands must execute"
 
+echo 1 >"$RTC_AZURE_LOGIN_STAMP"
+RTC_AZURE_LOGIN_LOG_FD=3 python3 "$REPO_ROOT/.github/scripts/run-command.py" --timeout 10 -- \
+    bash -c 'exec bash "$@"' bash "$wrapper" lock list \
+    3>"$TEST_ROOT/masks" >"$TEST_ROOT/out" 2>"$TEST_ROOT/err" ||
+    fail "bounded nested Bash calls must retain the login log descriptor"
+grep -Fxq '::add-mask::test-assertion' "$TEST_ROOT/masks" || fail "nested command must deliver its token mask"
+[[ ! -s "$TEST_ROOT/err" ]] || fail "renewal must not enter provider diagnostics"
+[[ "$(cat "$TEST_ROOT/out")" == '{"value":"command-result"}' ]] ||
+    fail "nested renewal must preserve provider stdout"
+
 status=0
 COMMAND_STATUS=7 run_cli || status=$?
 [[ "$status" == 7 ]] || fail "must preserve requested command's exit code"

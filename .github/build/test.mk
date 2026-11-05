@@ -107,6 +107,9 @@ test-recipe-pack-entries-unit: ## Run fixture-based unit tests for all Recipe Pa
 	@./.github/scripts/tests/test-test-all-direct-module-recipes.sh
 	@./.github/scripts/tests/test-test-all-recipe-pack-entries.sh
 	@./.github/scripts/tests/test-probe-azure-postgres-capacity.sh
+	@bash ./.github/scripts/tests/test-select-azure-postgres-integration.sh
+	@python3 ./.github/scripts/tests/test-command-launch.py
+	@bash ./.github/scripts/tests/test-run-command-signals.sh
 	@./.github/scripts/tests/test-select-azure-test-location.sh
 	@bash ./.github/scripts/tests/test-azure-postgres-test-policy.sh
 	@bash ./.github/scripts/tests/test-azure-postgres-workflow.sh

@@ -237,31 +237,38 @@ deployment rather than silently testing the wrong size.
 
 Set repository variable `RTC_AZURE_TEST_REGIONS` to a comma-separated list of
 approved regions. It overrides all other region settings. If it is not set,
-the workflows use `AZURE_LOCATION` (default `westus3`), then
-`AZURE_FALLBACK_LOCATION` (default `eastus2`), then `centralus`. The automatic
-default list is `westus3,eastus2,centralus`; it avoids `westus2` because the
-unrelated `azure-aks` AI models test requires an OpenAI model deployment that is
-not listed for that region in Microsoft's
-[Global Standard Americas availability table](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure-region-availability).
-These two legacy settings are also repository variables. Scripts accept the same
-names as environment variables. The selector's `RTC_AZURE_TEST_REGIONS` takes
-precedence over positional regions.
+the workflows keep `AZURE_LOCATION` and `AZURE_FALLBACK_LOCATION` first, when
+set, then fill remaining slots from the automatic list
+`westus3,centralus,northcentralus,southcentralus`. Defaults for the legacy
+settings are `westus3` and `centralus`, so the default list is
+`westus3,centralus,northcentralus,southcentralus`. For example, distinct legacy
+settings `eastus` and `northeurope` produce
+`eastus,northeurope,westus3,centralus`. Reported read-only catalog
+results from one subscription show PostgreSQL 16 and both approved sizes in all
+four, and the Azure AKS pack's `gpt-5-mini` Global Standard deployment and Basic
+Azure AI Search service are listed as available there. `westus2` and `westus`
+are not automatic candidates because one or more Azure AKS services are not
+listed there. The legacy settings are also repository variables;
+scripts accept the same names as environment variables. The selector's
+`RTC_AZURE_TEST_REGIONS` takes precedence over positional regions.
 
 Duplicates are removed without changing order. At most four distinct regions
-are allowed. An explicit one-region list prevents selection in another region.
-The default produces three regions x two sizes, or six candidate tuples. Before
-use, verify **all candidates**, including automatic defaults, for subscription
-access, quota, policy, PostgreSQL 16, and the other `azure-aks` pack services.
-Check the exact OpenAI model and version, especially if explicitly adding
-`westus2`. The defaults are candidates, not a claim that every subscription can
-use them.
+are used. An explicit list with more than four distinct regions is invalid; an
+explicit one-region list prevents selection in another region.
+Before use, verify **all candidates**, including automatic defaults, for
+subscription access, quota, policy, PostgreSQL 16, and the other `azure-aks`
+pack services. Check OpenAI model and version availability where those tests
+run. The defaults are candidates, not a claim that every subscription can use
+them.
 
 Repository variable `RTC_POSTGRES_TEST_SIZES` defaults to `S,M`. Only `S` and
 `M` are allowed; duplicates are removed. `S` maps to `Standard_B1ms`/`Burstable`;
 `M` maps to `Standard_D2ds_v5`/`GeneralPurpose`. Try the first size in every
-region before trying the next size. Thus the default order is all three `S`
-candidates, then all three `M` candidates. Empty or malformed script settings,
-unsafe region values, and excessive lists fail before Azure calls.
+region before trying the next size. Thus the default order is `S` in
+`westus3`, `centralus`, `northcentralus`, and `southcentralus`, then `M` in
+those regions. Empty or
+malformed script settings, unsafe region values, and excessive lists fail
+before Azure calls.
 
 Probes use PostgreSQL 16, 32 GiB storage, no HA, no geo-redundant backup,
 automatic zone placement, password and Entra authentication, and public
@@ -275,7 +282,8 @@ The selector writes version 1 JSON to `RTC_AZURE_SELECTION_FILE`. It includes
 The default and maximum work budget is **60 minutes**, shared by selection,
 setup between steps, the actual PostgreSQL deployment, and recovery. Scripts
 can reduce it with `RTC_POSTGRES_SELECTION_DEADLINE_SECONDS` (1..3600).
-Nested attempts do not reset it. Cleanup can use up to 15 additional minutes.
+Nested attempts do not reset it. Cleanup can use up to 15 additional minutes;
+`RTC_POSTGRES_CLEANUP_RESERVE_SECONDS` can shorten that reserve (1..900).
 If selection or setup uses the work budget, PostgreSQL fails; a successful probe
 does not grant a new deployment budget.
 
@@ -293,24 +301,35 @@ after confirmed cleanup. It does not move the shared resource group.
 Standalone entry tests without a selection file have a separate 30-minute
 entry budget in the group's existing region.
 
-Both Azure jobs retain the 330-minute limit. Node, ORAS, Radius CLI, and local
+Both Azure jobs have a 330-minute limit. Node, ORAS, Radius CLI, and local
 cluster setup run before the selector starts its absolute deadline. Main-group
-creation and Azure provider configuration remain after selection. The selector
-step has a 76-minute limit (60-minute work budget, cleanup, and termination
-margin); main-group creation has five minutes. Checked-in pack deployment has
-15 minutes. Pack entries run in two steps: PostgreSQL first, with 45 minutes
-for deployment recovery and cleanup,
-then unrelated entries with a protected 60-minute window. A PostgreSQL failure
-does not skip the unrelated step; the final report still fails the job.
-Bicep and Terraform recipe suites have 55 minutes each. When a selection file
-is present, the entry driver tests PostgreSQL before unrelated entries within
-each pack. The workflows run the PostgreSQL-only phase before the unrelated
-phase, so `azure-aci` cannot use the PostgreSQL deadline first. Other entries
-keep their relative order. Standalone and Kubernetes runs keep their existing
-order. These limits total 311 minutes, leaving 19 minutes for setup and
-diagnostics within the job limit. The job limit remains the final bound. The separate
-30-minute cleanup job reserves ten minutes for main-group cleanup and 16 for
-probe cleanup, leaving four minutes for checkout and login.
+creation and Azure provider configuration run after selection. The selector
+keeps its 76-minute limit for the 60-minute work budget, cleanup reserve, and
+termination margin. Main-group creation has five minutes; checked-in pack
+deployment has 15 minutes. The PostgreSQL step increases from 45 to 76 minutes
+because it can use the remaining shared work deadline and cleanup reserve.
+Selection and deployment share one absolute deadline, so those two step limits
+are not additive.
+Pack entries run in two steps: PostgreSQL
+first, then unrelated entries with a protected 68-minute window. The unrelated
+window provides ten minutes beyond the roughly 58 minutes measured in a recent
+run, but does not guarantee completion. The existing pack and entry order does
+not change. A PostgreSQL failure does not skip the unrelated step; the final
+report still fails the job.
+Bicep and Terraform recipe suites remain at their 55-minute limits from `main`.
+When a selection file is present, the entry driver tests PostgreSQL before
+unrelated entries within each pack. The workflows run the PostgreSQL-only phase
+before the unrelated phase, so `azure-aci` cannot use the PostgreSQL deadline
+first. The explicit
+phase and reporting limits total 275 minutes, counting the shared PostgreSQL
+selection/deployment allowance once. This leaves 55 minutes for tool, cluster,
+provider, and workflow overhead within the unchanged job limit. If setup and
+overhead exceed that reserve, GitHub's job timeout can still stop later work.
+The separate 30-minute cleanup job gives `cleanup-run-groups` one
+shared 25-minute budget to
+discover and delete all owned groups. Its step has a 26-minute limit, leaving
+one minute for command shutdown; the job reserves four minutes for checkout and
+login.
 
 These are cost-exposure limits, not a guaranteed currency limit. Review current
 regional prices and set subscription budget alerts. **More candidates improve
@@ -320,21 +339,42 @@ reserve capacity for deployment.
 ### Failures, diagnostics, and cleanup
 
 Only JSON status `selected` is a valid PostgreSQL selection. `capacity_exhausted`
-means approved candidates returned capacity errors such as `SkuNotAvailable`
-or `ServerIsBusy`. `deadline_exceeded` means the shared work time expired.
-`probe_error` covers other errors, including authorization, policy, quota,
-invalid configuration, CLI errors, create timeout, and unconfirmed deletion.
-The attempt's outcome and error code distinguish these cases. Unknown or mixed
-errors stop selection; they do not trigger another allocation.
+means supported candidates returned capacity errors such as `SkuNotAvailable`
+or `ServerIsBusy`. `unsupported` means every tested tuple was verified absent
+from the region's PostgreSQL 16, SKU, tier, or 32-GiB storage catalog; those
+tuples are reported separately and are not created. `restricted` means every
+tested region had a catalog-level region or offer restriction before allocation.
+The selector continues after each restricted candidate. `deadline_exceeded`
+means the shared work time expired. `probe_error` covers catalog-provider
+failures, malformed data, authorization, policy, quota, invalid configuration,
+CLI errors, create timeout, and unconfirmed deletion. The attempt's outcome and
+error code distinguish these cases. Unknown or mixed errors stop selection;
+they do not trigger another allocation.
 
 The legacy selector still prints a region on failure. That region is for
 unrelated entries only; it is not evidence of PostgreSQL capacity.
 PostgreSQL remains a failed check, unrelated entries can continue, and the job
-reports failure. Cleanup failure stops further PostgreSQL allocations; failure
-to request probe-group deletion also stops setup.
+reports failure. If the selector exits nonzero, the workflow keeps a valid
+`deadline_exceeded`, `unsupported`, or `restricted` result. Inconsistent
+selected results and cleanup failures become `probe_error`. It uses the first validated candidate as
+the main group's fallback location. PostgreSQL deployment remains blocked, unrelated
+entries continue, and the final report includes the selector failure. Cleanup
+failure stops further PostgreSQL allocations.
+Probe logs report the stage, exit status, and sanitized parsed error code for
+pre-create reads, creates, and cleanup operations. A cleanup diagnostic also
+retains the first probe error and the outcome before cleanup; raw Azure error
+text is not logged. The selection JSON and job summary retain these sanitized
+diagnostic fields when a probe fails.
 
 The job summary has a credential-free attempt table with region, size, SKU,
-tier, outcome, error code, and duration, plus final selection status.
+tier, outcome, error code, duration, and cleanup, plus final selection status.
+Cleanup is `confirmed`, `failed`, `not_required`, or `uncertain`. A timed-out or
+interrupted create stays uncertain even if its server is immediately absent.
+After a shared deadline, the table and JSON list remaining configured tuples as
+`not_attempted`, with zero duration and no allocation.
+The JSON `settings` field records the common version, storage, HA, backup,
+automatic zone, authentication, and network settings checked against the pack.
+These settings do not vary by candidate.
 `azure-test-diagnostics/postgres-selection.json` is included in the existing
 Azure diagnostics artifact. Deployment recovery uses the entry runner's
 separate safe failure records. Passwords, tokens, connection strings, and raw
@@ -388,6 +428,9 @@ Offline fixtures need Bash, Node.js, `jq`, and GNU `timeout`:
 ```bash
 make test-recipe-pack-entries-unit
 ```
+
+The target runs the offline fixture suites serially with temporary files and
+mock commands. All suites must pass.
 
 ## Azure CLI login renewal in CI
 

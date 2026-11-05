@@ -4,5 +4,6 @@
 # Local release bundle output (see .github/build/release.mk)
 /dist/
 /radius-pod-logs/
+/.rtc-postgres-test-*.bicep
 
 .DS_Store

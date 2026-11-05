@@ -93,16 +93,23 @@ skip_reason() {
 preflight() {
     postgres_test_size=S
     postgres_deadline=""
+    postgres_verified_size=""
+    postgres_verified_location=""
     case "$platform_group:$1" in
         azure:Data/postgreSqlDatabases)
             rtc_validate_postgres_test_pack "$template" || return 1
-            local location selection_status
+            local location selection_status size_list
+            size_list="$(rtc_postgres_normalize_test_sizes)" || return 1
             local -a subscription_args=()
             [[ -z "${AZURE_SUBSCRIPTION_ID:-}" ]] || subscription_args=(--subscription "$AZURE_SUBSCRIPTION_ID")
             if [[ -z "${AZURE_RESOURCE_GROUP:-}" ]] ||
-                ! location=$(timeout --kill-after=5s 30s az group show --name "$AZURE_RESOURCE_GROUP" \
-                    "${subscription_args[@]}" --query location --output tsv) ||
-                [[ ! "$location" =~ ^[a-z0-9]+$ ]]; then
+                ! rtc_run_command --timeout 30 --quiet az group show --name "$AZURE_RESOURCE_GROUP" \
+                    "${subscription_args[@]}" --query location --output tsv; then
+                echo "Error: PostgreSQL selection requires the existing resource group's region." >&2
+                return 1
+            fi
+            location="$RTC_COMMAND_OUTPUT"
+            if [[ ! "$location" =~ ^[a-z0-9]+$ ]]; then
                 echo "Error: PostgreSQL selection requires the existing resource group's region." >&2
                 return 1
             fi
@@ -111,6 +118,7 @@ preflight() {
                 if [[ ! -f "$RTC_AZURE_SELECTION_FILE" ]] || ! jq -e '
                     type == "object" and .version == 1 and
                     (.status == "selected" or .status == "capacity_exhausted" or
+                     .status == "unsupported" or .status == "restricted" or
                      .status == "probe_error" or .status == "deadline_exceeded") and
                     (if has("deadlineEpochSeconds") then
                         (.deadlineEpochSeconds | type == "number" and floor == . and . > 0 and . < 100000000000)
@@ -133,6 +141,10 @@ preflight() {
                     return 1
                 fi
                 postgres_test_size=$(jq -r '.postgres.size' "$RTC_AZURE_SELECTION_FILE")
+                if [[ ",$size_list," != *",$postgres_test_size,"* ]]; then
+                    echo "Error: Selected PostgreSQL size is excluded by the configured size list." >&2
+                    return 1
+                fi
                 rtc_postgres_test_tuple "$postgres_test_size" || return 1
                 if ! jq -e --arg sku "$postgres_sku" --arg tier "$postgres_tier" \
                     '.postgres.skuName == $sku and .postgres.tier == $tier' "$RTC_AZURE_SELECTION_FILE" >/dev/null; then
@@ -147,11 +159,14 @@ preflight() {
                 fi
             else
                 # Never relocate an existing group or repeat the full region search.
-                AZURE_LOCATION="$location" RTC_POSTGRES_TEST_SIZE=S \
+                postgres_test_size="${size_list%%,*}"
+                AZURE_LOCATION="$location" RTC_POSTGRES_TEST_SIZE="$postgres_test_size" \
                     RTC_POSTGRES_PROBE_ATTEMPTS=1 RTC_POSTGRES_PROBE_WAIT_SECONDS=0 \
                     RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS=900 \
                     "$SCRIPT_DIR/probe-azure-postgres-capacity.sh" || return 1
             fi
+            postgres_verified_size="$postgres_test_size"
+            postgres_verified_location="$location"
             ;;
     esac
 }
@@ -217,9 +232,15 @@ for pack_id in "${packs[@]}"; do
             failures=$((failures + 1))
             continue
         fi
-        if ! RTC_TEST_PLATFORM="$platform_group" RTC_POSTGRES_TEST_SIZE="$postgres_test_size" \
+        entry_status=0
+        RTC_TEST_PLATFORM="$platform_group" RTC_POSTGRES_TEST_SIZE="$postgres_test_size" \
             RTC_POSTGRES_TEST_DEADLINE_EPOCH="$postgres_deadline" \
-            "$SCRIPT_DIR/test-recipe-pack-entry.sh" "${test_args[@]}"; then
+            RTC_POSTGRES_VERIFIED_SIZE="$postgres_verified_size" \
+            RTC_POSTGRES_VERIFIED_LOCATION="$postgres_verified_location" \
+            "$SCRIPT_DIR/test-recipe-pack-entry.sh" "${test_args[@]}" || entry_status=$?
+        if ((entry_status == 130 || entry_status == 143)); then
+            exit "$entry_status"
+        elif ((entry_status != 0)); then
             echo "==> FAILED: $resource_type_dir (from pack '$pack_id')" >&2
             failures=$((failures + 1))
         fi
