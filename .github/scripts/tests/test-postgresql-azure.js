@@ -33,10 +33,16 @@ test('Azure PostgreSQL settings, precedence, and initialization', () => {
     const deployment = template.resources.find(r => r.type === 'Microsoft.Resources/deployments');
     assert.equal(deployment.name, "[parameters('name')]", 'Nested deployments must use the unique server name');
     const deploymentReference = "resourceId('Microsoft.Resources/deployments', parameters('name'))";
+    const serverReference = "resourceId('Microsoft.DBforPostgreSQL/flexibleServers', parameters('name'))";
     const initialize = template.resources.find(r => r.type === 'Microsoft.Resources/deploymentScripts');
-    assert.ok(initialize.properties.environmentVariables.find(v => v.name === 'PGHOST').value.includes(deploymentReference));
-    assert.ok(template.outputs.result.value.resources.includes(deploymentReference), 'Cleanup must use this server deployment');
-    assert.ok(template.outputs.result.value.values.host.includes(deploymentReference), 'Connections must use this server deployment');
+    const host = initialize.properties.environmentVariables.find(v => v.name === 'PGHOST').value;
+    assert.ok(host.includes(serverReference), 'Initialization must read the deployed Azure server');
+    assert.ok(host.includes('.fullyQualifiedDomainName'), 'Do not hard-code the cloud-specific DNS suffix');
+    assert.deepEqual(initialize.dependsOn, [`[${deploymentReference}]`], 'Wait for all AVM configuration before SQL');
+    assert.ok(template.outputs.result.value.resources.includes(serverReference), 'Cleanup must use the Azure server ID');
+    assert.equal(template.outputs.result.value.values.host, host, 'Connections must use the same Azure server');
+    assert.ok(!JSON.stringify({ initialize: initialize.properties, result: template.outputs.result })
+      .includes(deploymentReference), 'Do not read nested module outputs across Radius and Azure scopes');
     const snapshot = (properties = '', configurations = '[]', serverName = 'pgsql-fixture') => {
       const params = path.join(dir, 'test.bicepparam');
       fs.writeFileSync(params, `using './recipe.bicep'
