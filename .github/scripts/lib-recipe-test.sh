@@ -230,7 +230,7 @@ rtc_test_azure_postgresql_app() (
     local remaining status attempt test_harness script_dir
     case "$size" in S|M) ;; *) echo "Error: PostgreSQL test size must be S or M." >&2; return 1 ;; esac
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
-    test_harness=$(mktemp "${TMPDIR:-/tmp}/rtc-postgres-test-XXXXXX.bicep") || return 1
+    test_harness=$(mktemp "$(dirname "$test_file")/.rtc-postgres-test-XXXXXX.bicep") || return 1
     trap 'rm -f -- "$test_harness"' EXIT
     if ! bash "$script_dir/prepare-postgres-test-harness.sh" "$test_file" "$test_harness"; then
         return 1
