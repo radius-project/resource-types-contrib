@@ -144,6 +144,26 @@ make test RECIPE_TYPE=terraform ENVIRONMENT=my-terraform-env
 
 ## Build All Resources
 
+### PostgreSQL Kubernetes transport tests
+
+After publishing the updated Recipe and attaching its Recipe Pack, run:
+
+```bash
+.github/scripts/test-recipe.sh Data/postgreSqlDatabases/recipes/kubernetes/bicep
+# Switch to the generated Terraform Recipe Pack before running:
+.github/scripts/test-recipe.sh Data/postgreSqlDatabases/recipes/kubernetes/terraform
+```
+
+Use an isolated Environment/resource group/namespace without an existing `postgresql` Deployment or `postgresql-tls` Secret. Pass the Environment name as the second argument if it is not `default`. The runner tests omitted policy, unchanged redeployment, optional, and explicit required with generated certificates, then repeats with an operator certificate. It checks empty-Secret fallback, encrypted TCP without trust enrollment, explicit public-certificate enrollment for verified identity, operator precedence, connection properties, container restart, and manual rotation. Cleanup deletes test-owned certificates, but application deletion must leave the operator Secret intact. Bicep tests also assert `initSql` execution.
+
+The ordinary Azure test path does not create Kubernetes database certificates. For manual database deployments outside this test runner, follow [PostgreSQL Kubernetes TLS](../../Data/postgreSqlDatabases/README.md#kubernetes-tls).
+
+Partial and malformed operator material must produce a failed/restarting certificate init container, a certificate-specific diagnostic, and no ready replicas in a fresh deployment. Tests verify the current Deployment generation and ReplicaSet/Pod ownership; a Pending Pod, image-pull error, or timeout is not certificate-failure evidence. Production retains the normal rollout/provider deadlines. The runner observes failures while deployment is in flight, repairs the test Secret, replaces only the failed Pod to reset backoff, and waits for the original operation to settle before cleanup or any recovery redeploy. It does not require `ProgressDeadlineExceeded` or a prompt Terraform CLI failure. Bicep reports resource submission rather than workload readiness, so its CLI success is never the readiness assertion.
+
+The fixture target also requires Python 3 and OpenSSL. It executes the certificate-preparation scripts extracted from both Recipes and checks their parity, generated certificates, RSA/EC operator keys, malformed inputs, and private-key permissions. Release-candidate runs with pinned sources that predate the lifecycle script retain the legacy application test and explicitly report that transport coverage is unavailable.
+
+Both drivers also test a failed update from a healthy `optional` database to requested `required` policy after corrupting the same operator Secret in place. The new Pod must fail certificate initialization while the original ready Pod remains the only ready Service endpoint. Service-addressed plaintext and verified-TLS SQL queries check both `pg_stat_ssl` and `inet_server_addr()` to attribute traffic to that old Pod, with UID, restart-count, readiness, and EndpointSlice checks around each query. The test reselects a ready client and copies its public CA before each probe because Bicep can replace the client during the failed update. It repairs the Secret, settles the original apply before any explicit `required` recovery deployment, and requires a healthy required-policy rollout with the old Pod removed. This bounded observation does not prove indefinite availability or live IPv6 connectivity.
+
 Build all resource types and recipes at once:
 
 ```bash

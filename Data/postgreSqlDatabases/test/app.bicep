@@ -6,6 +6,20 @@ param environment string
 @description('Application name. CI supplies a unique name for deployment and cleanup.')
 param applicationName string = 'postgresql-test'
 
+@description('Leave empty to exercise the schema default.')
+@allowed([
+  ''
+  'required'
+  'optional'
+])
+param tls string = ''
+
+@description('Use a psql client for the Kubernetes transport tests instead of the demo application.')
+param verifyTransport bool = false
+
+@description('Optional initialization SQL for the Bicep recipe regression test.')
+param initSql string = ''
+
 @description('Portable PostgreSQL size. Azure capacity tests can select an approved alternative.')
 @allowed(['S', 'M', 'L'])
 param postgresSize string = 'S'
@@ -50,7 +64,8 @@ resource postgresql 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
     database: 'appdb'
     username: 'radadmin'
     password: password
-    // `tls` is omitted so this test exercises the schema default (`required`).
+    ...(empty(tls) ? {} : { tls: tls == 'optional' ? 'optional' : 'required' })
+    ...(empty(initSql) ? {} : { initSql: initSql })
   }
 }
 
@@ -61,7 +76,16 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
     application: app.id
     containers: {
       demo: {
-        image: 'ghcr.io/radius-project/samples/demo:latest'
+        image: verifyTransport ? 'postgres:16-alpine' : 'ghcr.io/radius-project/samples/demo:latest'
+        ...(verifyTransport ? {
+          command: ['/bin/sh', '-c', 'exec sleep infinity']
+        } : {
+          ports: {
+            web: {
+              containerPort: 3000
+            }
+          }
+        })
         // Host, port, username, and database arrive automatically as
         // CONNECTION_POSTGRESQL_* env vars from the connection below. The
         // connection cannot carry the password (x-radius-sensitive properties
@@ -76,11 +100,6 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
                 key: 'password'
               }
             }
-          }
-        }
-        ports: {
-          web: {
-            containerPort: 3000
           }
         }
       }
