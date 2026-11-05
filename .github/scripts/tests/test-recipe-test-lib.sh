@@ -704,6 +704,25 @@ run_postgres() {
         "$POSTGRES_TEST_APP_BICEP" /envs/myenv myws my-ns
 }
 
+mkdir -p "$TEST_ROOT/Data/postgreSqlDatabases/recipes/azure/bicep"
+touch "$TEST_ROOT/Data/postgreSqlDatabases/recipes/azure/bicep/azure-postgresql.bicep"
+cp -R "$REPO_ROOT/Data/postgreSqlDatabases/test/." "$TEST_ROOT/Data/postgreSqlDatabases/test/"
+run_azure_postgres_recipe() {
+    (
+        cd "$TEST_ROOT"
+        # shellcheck disable=SC2031 # This fixture creates a new subshell with the mock PATH.
+        PATH="$MOCK_BIN:$PATH" CALL_LOG="$CALL_LOG" AZURE_RESOURCE_GROUP=rg \
+            bash "$REPO_ROOT/.github/scripts/test-recipe.sh" Data/postgreSqlDatabases/recipes/azure/bicep
+    )
+}
+: >"$CALL_LOG"
+rm -f "$AZ_LOCK_STATE_FILE"
+DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_azure_postgres_recipe >/dev/null ||
+    fail "per-recipe Azure PostgreSQL capacity failure must retry with the alternate size"
+assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "per-recipe PostgreSQL capacity retry count"
+grep -q 'postgresSize=M' "$CALL_LOG" || fail "per-recipe PostgreSQL capacity retry must select size M"
+grep -q '^az lock list ' "$CALL_LOG" || fail "per-recipe Azure PostgreSQL tests must enable the lock guard"
+
 RADIUS_PROGRESS="Building Data/mongoDatabases/test/app.bicep...
 WARNING: Radius type compatibility is not verified.
     Configured Radius extension tag(s): latest
