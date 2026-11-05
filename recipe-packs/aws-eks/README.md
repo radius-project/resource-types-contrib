@@ -63,7 +63,9 @@ The Recipe maps the resource's `tls` property to the parameter group's `require_
 
 ### Requirements and limitations
 
-- The `password` must meet the RDS rules: 8 to 41 printable ASCII characters, without `/`, `"`, `@`, or spaces.
+- `database`, `username`, and `password` must meet the RDS for MySQL rules. The Recipe checks them before it creates any AWS resource, and a failed check lists every invalid value:
+  - `database`: 1 to 64 characters, and `username`: 1 to 32 characters. Both start with a letter, contain only letters, digits, and underscores, and can't be a word RDS reserves, in any case. RDS reserves most MySQL reserved words, such as `select` and `table`, and `innodb`, `mysql`, `rdsadmin`, and `rdsrepladmin`. The Kubernetes Recipe accepts some values that RDS rejects, such as `app-db`.
+  - `password`: 8 to 41 printable ASCII characters, without `/`, `"`, `@`, or spaces.
 - `version` maps to the RDS engine version and the `mysql<version>` parameter group family. Use `8.4`, the default. `5.7` and `8.0` run on [RDS Extended Support](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/extended-support.html), which AWS bills separately.
 - Changing `version` after the database exists is not supported. The deploy fails with `createOnlyProperties [/properties/Family] cannot be updated`, and nothing changes in AWS. Change `version` back and deploy again before you delete the app, as described for failed redeploys below. To use another version, create a new `mySqlDatabases` resource and move the data to it.
 - The credentials Radius uses for AWS need permission to manage RDS instances, subnet groups, and parameter groups, and to describe the EKS cluster. Delete also needs `rds:CreateDBSnapshot`, because the AWS Cloud Control API takes a final snapshot before it deletes the instance ([radius-project/radius#13565](https://github.com/radius-project/radius/issues/13565)). Without that permission, `rad app delete` retries for about 41 minutes and then fails, and the instance keeps running.
@@ -114,6 +116,6 @@ rad env update default \
 
 ## Testing
 
-Every pull request deploys and activates this pack on a local cluster, and checks that the pack passes exactly the parameters the MySQL Recipe declares. CI has no AWS account, so the nightly tests don't deploy the AWS Recipes.
+Every pull request deploys and activates this pack on a local cluster, and checks that the pack passes exactly the parameters the MySQL Recipe declares. It also deploys the MySQL Recipe from the pull request with invalid values and checks that they fail before any AWS call. CI has no AWS account, so the nightly tests don't deploy the AWS Recipes.
 
 The MySQL Recipe was tested by hand against an EKS cluster's subnets and security group: create, unchanged redeploy, and delete through Radius. Delete removes the instance, subnet group, parameter group, and automated backups. It keeps the final snapshot described in [Requirements and limitations](#requirements-and-limitations).
