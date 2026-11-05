@@ -85,7 +85,7 @@ deploy() {
 expect_rejected() {
     local output="$1" password="$2" message
     shift 2
-    for message in "$CHECK_FAILED" "No AWS resources were created" "$@"; do
+    for message in "$CHECK_FAILED" "This deploy didn't create or change any AWS resources" "$@"; do
         grep -qF -- "$message" <<<"$output" ||
             { echo "Expected '$message' in:" >&2; echo "$output" >&2; exit 1; }
     done
@@ -113,9 +113,17 @@ expect_rejected "$output" "$password" \
 password='Passw0rd 123'
 output="$(deploy '1db' 'MySQL' "$password")"
 expect_rejected "$output" "$password" \
-    "database '1db' must be 1 to 64 characters" \
+    "database '1db' must be 1 to 64 characters, start with an ASCII letter, and contain only ASCII letters" \
     "username 'MySQL' is a reserved word" \
     "password must be 8 to 41 printable ASCII characters"
+
+# RDS accepts non-ASCII letters in the database name, but the Recipe allows
+# only ASCII letters.
+password='Passw0rd123'
+output="$(deploy 'appdé' 'accessible' "$password")"
+expect_rejected "$output" "$password" \
+    "database 'appdé' must be 1 to 64 characters, start with an ASCII letter, and contain only ASCII letters" \
+    "username 'accessible' is a reserved word"
 
 # The longest values RDS accepts, and every password symbol it allows. These
 # pass the checks and fail later because the Environment has no AWS account.

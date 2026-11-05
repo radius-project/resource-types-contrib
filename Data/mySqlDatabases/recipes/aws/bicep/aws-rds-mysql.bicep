@@ -58,15 +58,15 @@ var identifierCharacters = '${letters}0123456789_'
 var passwordCharacters = '!#$%&\'()*+,-.0123456789:;<=>?${letters}[\\]^_`{|}~'
 
 var rdsReservedWords = filter(split(replace(replace('''
-  add all alter analyze and as asc asensitive before between bigint binary blob both by call
-  cascade case change char character check collate column condition constraint continue convert
-  create cross current_date current_time current_timestamp current_user cursor database databases
-  day_hour day_microsecond day_minute day_second dec decimal declare default delayed delete desc
-  describe deterministic distinct distinctrow div double drop dual each else elseif enclosed
-  escaped exists exit explain false fetch float float4 float8 for force foreign from fulltext
-  grant group having high_priority hour_microsecond hour_minute hour_second if ignore in index
-  infile inner innodb inout insensitive insert int int1 int2 int3 int4 int8 integer interval into
-  is iterate join key keys kill leading leave left like limit linear lines load localtime
+  accessible add all alter analyze and as asc asensitive before between bigint binary blob both by
+  call cascade case change char character check collate column condition constraint continue
+  convert create cross current_date current_time current_timestamp current_user cursor database
+  databases day_hour day_microsecond day_minute day_second dec decimal declare default delayed
+  delete desc describe deterministic distinct distinctrow div double drop dual each else elseif
+  enclosed escaped exists exit explain false fetch float float4 float8 for force foreign from
+  fulltext grant group having high_priority hour_microsecond hour_minute hour_second if ignore in
+  index infile inner innodb inout insensitive insert int int1 int2 int3 int4 int8 integer interval
+  into is iterate join key keys kill leading leave left like limit linear lines load localtime
   localtimestamp lock long longblob longtext loop low_priority master_ssl_verify_server_cert match
   mediumblob mediumint mediumtext middleint minute_microsecond minute_second mod modifies mysql
   natural no_write_to_binlog not null numeric on optimize option optionally or order out outer
@@ -84,9 +84,9 @@ var usernameValid = length(username) >= 1 && length(username) <= 32 && contains(
 var passwordValid = length(password) >= 8 && length(password) <= 41 && empty(filter(range(0, length(password)), i => !contains(passwordCharacters, substring(password, i, 1))))
 
 var inputErrors = filter([
-  databaseValid ? '' : 'database \'${database}\' must be 1 to 64 characters, start with a letter, and contain only letters, digits, and underscores.'
+  databaseValid ? '' : 'database \'${database}\' must be 1 to 64 characters, start with an ASCII letter, and contain only ASCII letters, digits, and underscores.'
   databaseValid && contains(rdsReservedWords, toLower(database)) ? 'database \'${database}\' is a reserved word in RDS for MySQL.' : ''
-  usernameValid ? '' : 'username \'${username}\' must be 1 to 32 characters, start with a letter, and contain only letters, digits, and underscores.'
+  usernameValid ? '' : 'username \'${username}\' must be 1 to 32 characters, start with an ASCII letter, and contain only ASCII letters, digits, and underscores.'
   usernameValid && contains(rdsReservedWords, toLower(username)) ? 'username \'${username}\' is a reserved word in RDS for MySQL.' : ''
   // Never include the password value.
   passwordValid ? '' : 'password must be 8 to 41 printable ASCII characters, without /, @, ", or spaces.'
@@ -102,7 +102,7 @@ var inputErrors = filter([
 var namespace = context.runtime.?kubernetes.?namespace ?? ''
 var name = empty(inputErrors)
   ? 'mysql-${uniqueString('${eksClusterName}/${namespace}', context.resource.id)}'
-  : fail('Invalid Radius.Data/mySqlDatabases properties for Amazon RDS for MySQL: ${join(inputErrors, ' ')} No AWS resources were created. Fix the values and deploy again')
+  : fail('Invalid Radius.Data/mySqlDatabases properties for Amazon RDS for MySQL: ${join(inputErrors, ' ')} This deploy didn\'t create or change any AWS resources. Fix the values and deploy again')
 
 var tags = [
   {
