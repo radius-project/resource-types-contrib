@@ -91,7 +91,19 @@ case "$1 $2" in
         esac
         ;;
     "resource list")
-        printf '%s\n' "${RESOURCE_LIST_JSON:-[]}"
+        if [[ "$3" == "Radius.Data/postgreSqlDatabases" ]]; then
+            if [[ -n "${POSTGRES_LIST_JSON:-}" ]]; then
+                printf '%s\n' "$POSTGRES_LIST_JSON"
+            else
+                postgres_result="${POSTGRES_JSON:-}"
+                if [[ -z "$postgres_result" ]]; then
+                    postgres_result='{"properties":{"host":"pg-host","port":5432,"database":"appdb"}}'
+                fi
+                printf '[%s]\n' "$postgres_result"
+            fi
+        else
+            printf '%s\n' "${RESOURCE_LIST_JSON:-[]}"
+        fi
         ;;
     "app delete")
         if [[ -n "${APP_DELETE_DELAY_SECONDS:-}" ]]; then
@@ -221,6 +233,18 @@ POSTGRES_TEST_APP_BICEP="$REPO_ROOT/Data/postgreSqlDatabases/test/app.bicep"
 FIXED_POSTGRES_TEST_APP="$REPO_ROOT/.github/scripts/tests/fixtures/postgresql-test-app-fixed-s.bicep"
 run_lib rtc_assert_recipe_result "Radius.Data/postgreSqlDatabases" testapp myws test-ns "$POSTGRES_TEST_APP_BICEP" >/dev/null \
     || fail "rtc_assert_recipe_result should pass for a valid postgresql result"
+grep -q 'rad resource list Radius.Data/postgreSqlDatabases --application testapp --workspace myws' "$CALL_LOG" ||
+    fail "PostgreSQL assertions must find the resource within its unique test application"
+for invalid_list in '[]' '[{},{}]' '{}' 'not json'; do
+    if POSTGRES_LIST_JSON="$invalid_list" run_lib rtc_assert_recipe_result \
+        "Radius.Data/postgreSqlDatabases" testapp myws test-ns "$POSTGRES_TEST_APP_BICEP" >/dev/null 2>&1; then
+        fail "PostgreSQL assertions must reject missing, ambiguous, or invalid resource lists"
+    fi
+done
+grep -Fq "name: 'pg-\${applicationName}'" "$POSTGRES_TEST_APP_BICEP" ||
+    fail "PostgreSQL server names must be distinct for each test application"
+grep -Fq "name: 'pg-creds-\${applicationName}'" "$POSTGRES_TEST_APP_BICEP" ||
+    fail "PostgreSQL credential names must not reuse soft-deleted Azure vault names"
 grep -q 'kubectl wait deployment -n test-ns -l radapp.io/application=testapp,radapp.io/resource=postgresclient' "$CALL_LOG" ||
     fail "PostgreSQL assertions must wait for the real prerequisite probe"
 if KUBECTL_EXIT_CODE=1 run_lib rtc_assert_recipe_result "Radius.Data/postgreSqlDatabases" testapp myws test-ns "$POSTGRES_TEST_APP_BICEP" >/dev/null 2>&1; then

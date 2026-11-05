@@ -431,7 +431,7 @@ rtc_assert_containers_result() {
 # deployed resource must expose host/port/database and never leak secrets.
 rtc_assert_postgresql_result() {
     local app_name="$1" workspace_name="$2" resource_json
-    if ! resource_json=$(rad resource show "Radius.Data/postgreSqlDatabases" postgresql \
+    if ! resource_json=$(rad resource list "Radius.Data/postgreSqlDatabases" \
         --application "$app_name" \
         --workspace "$workspace_name" \
         --output json); then
@@ -440,12 +440,15 @@ rtc_assert_postgresql_result() {
     fi
 
     if ! jq -e '
-        (.properties.host | type == "string" and length > 0) and
-        (.properties.port | type == "number") and
-        (.properties.database == "appdb") and
-        (.properties | has("secrets") | not)
+        if type == "array" and length == 1 then
+            .[0] |
+            (.properties.host | type == "string" and length > 0) and
+            (.properties.port | type == "number") and
+            (.properties.database == "appdb") and
+            (.properties | has("secrets") | not)
+        else false end
     ' <<<"$resource_json" >/dev/null; then
-        echo "Error: PostgreSQL result must expose host, port, and database without secrets."
+        echo "Error: Expected one PostgreSQL result with host, port, and database without secrets."
         return 1
     fi
 
