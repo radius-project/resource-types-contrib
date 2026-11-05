@@ -344,7 +344,9 @@ or `ServerIsBusy`. `unsupported` means every tested tuple was verified absent
 from the region's PostgreSQL 16, SKU, tier, or 32-GiB storage catalog; those
 tuples are reported separately and are not created. `restricted` means every
 tested region had a catalog-level region or offer restriction before allocation.
-The selector continues after each restricted candidate. `deadline_exceeded`
+The selector continues after each restricted candidate. `catalog_unavailable`
+means the tested candidates contained a mixture of unsupported tuples and
+catalog-level restrictions, with no capacity allocation attempt. `deadline_exceeded`
 means the shared work time expired. `probe_error` covers catalog-provider
 failures, malformed data, authorization, policy, quota, invalid configuration,
 CLI errors, create timeout, and unconfirmed deletion. The attempt's outcome and

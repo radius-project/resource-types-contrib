@@ -85,8 +85,7 @@ rtc_postgres_cleanup_reserve_seconds() {
 rtc_forward_command_signal() {
     local signal="$1"
     rtc_command_signal="$signal"
-    printf '%s\n' "$signal" >"$rtc_command_signal_file"
-    if [[ -n "${rtc_command_pid:-}" ]]; then
+    if [[ "${rtc_command_ready:-false}" == true && -n "${rtc_command_pid:-}" ]]; then
         kill -s "$signal" "$rtc_command_pid" 2>/dev/null || true
     fi
 }
@@ -126,18 +125,24 @@ rtc_run_command() {
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
     previous_int="$(trap -p INT)"
     previous_term="$(trap -p TERM)"
-    local rtc_command_pid="" rtc_command_signal="" rtc_command_signal_file rtc_command_signal_fd
+    local rtc_command_pid="" rtc_command_signal="" rtc_command_signal_dir rtc_command_signal_file
+    local rtc_command_signal_fd rtc_command_ready=false rtc_command_ready_file ready_value=""
+    local rtc_command_ready_attempt
     if [[ -n "$stdout_file" ]]; then
         output_file="$stdout_file"
     else
         output_file="$(mktemp "${TMPDIR:-/tmp}/rtc-command-XXXXXX")" || return 1
     fi
-    rtc_command_signal_file="$(mktemp "${TMPDIR:-/tmp}/rtc-command-signal-XXXXXX")" || {
+    rtc_command_signal_dir="$(mktemp -d "${TMPDIR:-/tmp}/rtc-command-signal-XXXXXX")" || {
         [[ -n "$stdout_file" ]] || rm -f -- "$output_file"
         return 1
     }
-    if ! exec {rtc_command_signal_fd}<"$rtc_command_signal_file"; then
-        rm -f -- "$rtc_command_signal_file"
+    rtc_command_signal_file="$rtc_command_signal_dir/control"
+    rtc_command_ready_file="$rtc_command_signal_dir/ready"
+    : >"$rtc_command_ready_file"
+    if ! mkfifo "$rtc_command_signal_file" ||
+        ! exec {rtc_command_signal_fd}<>"$rtc_command_signal_file"; then
+        rm -rf -- "$rtc_command_signal_dir"
         [[ -n "$stdout_file" ]] || rm -f -- "$output_file"
         return 1
     fi
@@ -150,14 +155,29 @@ rtc_run_command() {
         else
             exec {rtc_command_stderr_fd}>&2
         fi
-        RTC_COMMAND_SIGNAL_FD="$rtc_command_signal_fd" \
+        RTC_COMMAND_SIGNAL_FD="$rtc_command_signal_fd" RTC_COMMAND_READY_FILE="$rtc_command_ready_file" \
             python3 "$script_dir/run-command.py" "${supervisor_args[@]}" -- "$@" \
             >"$output_file" 2>&"$rtc_command_stderr_fd" &
         rtc_command_pid=$!
-        if [[ -n "$rtc_command_signal" ]]; then
-            rtc_forward_command_signal "$rtc_command_signal"
+        for ((rtc_command_ready_attempt = 0; rtc_command_ready_attempt < 500;
+            rtc_command_ready_attempt++)); do
+            ready_value="$(<"$rtc_command_ready_file")"
+            [[ "$ready_value" == READY ]] && break
+            kill -0 "$rtc_command_pid" 2>/dev/null || break
+            sleep 0.01
+        done
+        if [[ "$ready_value" == READY ]]; then
+            rtc_command_ready=true
+            if [[ -n "$rtc_command_signal" ]]; then
+                printf '%s\n' "$rtc_command_signal" >&"$rtc_command_signal_fd"
+            else
+                printf 'READY\n' >&"$rtc_command_signal_fd"
+            fi
+            if wait "$rtc_command_pid"; then status=0; else status=$?; fi
+        else
+            if wait "$rtc_command_pid"; then status=1; else status=$?; fi
+            echo "Error: command supervisor did not acknowledge launch." >&2
         fi
-        if wait "$rtc_command_pid"; then status=0; else status=$?; fi
     fi
     if [[ -n "$rtc_command_signal" && -n "$rtc_command_pid" ]]; then
         while kill -0 "$rtc_command_pid" 2>/dev/null; do
@@ -173,7 +193,7 @@ rtc_run_command() {
     signal="$rtc_command_signal"
     if [[ -n "${rtc_command_stderr_fd:-}" ]]; then exec {rtc_command_stderr_fd}>&-; fi
     exec {rtc_command_signal_fd}<&-
-    rm -f -- "$rtc_command_signal_file"
+    rm -rf -- "$rtc_command_signal_dir"
     if [[ -n "$signal" ]]; then
         if [[ "$signal" == INT ]]; then status=130; else status=143; fi
         kill -s "$signal" "$BASHPID" 2>/dev/null || true
@@ -186,12 +206,29 @@ rtc_postgres_catalog_result() {
 import json
 import sys
 
-def available(item):
+AVAILABLE_STATUSES = {"available", "enabled", "supported"}
+RESTRICTED_STATUSES = {"disabled", "restricted", "unavailable"}
+
+def restricted(item):
     status = item.get("status")
+    reason = item.get("reason")
+    restricted_value = item.get("restricted")
+    if status is not None and not isinstance(status, str):
+        raise ValueError("status")
+    if reason is not None and not isinstance(reason, str):
+        raise ValueError("reason")
+    if restricted_value is not None and type(restricted_value) is not bool:
+        raise ValueError("restricted")
+    normalized = status.lower() if status is not None else None
+    if normalized is not None and normalized not in AVAILABLE_STATUSES | RESTRICTED_STATUSES:
+        raise ValueError("status")
     return (
-        not item.get("reason") and item.get("restricted") in (None, False)
-        and (status is None or isinstance(status, str) and status.lower() in {"available", "enabled", "supported"})
+        restricted_value is True or bool(reason)
+        or normalized in RESTRICTED_STATUSES
     )
+
+def available(item):
+    return not restricted(item)
 
 def objects(parent, key):
     items = parent[key]
@@ -209,26 +246,34 @@ def classify(catalog, tier, sku):
         return "InvalidCatalog"
     if not catalog:
         return "RegionRestricted"
-    if any(not available(item) for item in catalog):
-        return "RegionRestricted"
+    region_restricted = False
     for root in catalog:
+        region_restricted = restricted(root) or region_restricted
         if "supportedFeatures" in root:
             for feature in named(objects(root, "supportedFeatures")):
                 if feature["name"] == "OfferRestricted":
                     if feature.get("status") == "Enabled":
-                        return "RegionRestricted"
-                    if feature.get("status") != "Disabled":
+                        region_restricted = True
+                    elif feature.get("status") != "Disabled":
                         return "InvalidCatalog"
         versions = named(objects(root, "supportedServerVersions"))
         editions = named(objects(root, "supportedServerEditions"))
         if not versions and not editions:
-            return "RegionRestricted"
+            region_restricted = True
+        for version in versions:
+            available(version)
         for edition in editions:
-            named(objects(edition, "supportedServerSkus"))
+            available(edition)
+            for server_sku in named(objects(edition, "supportedServerSkus")):
+                available(server_sku)
             for storage in named(objects(edition, "supportedStorageEditions")):
+                available(storage)
                 for size in objects(storage, "supportedStorageMb"):
                     if type(size.get("storageSizeMb")) is not int:
                         raise ValueError("storageSizeMb")
+                    available(size)
+    if region_restricted:
+        return "RegionRestricted"
     roots = [root for root in catalog if any(
         item["name"] == "16" and available(item) for item in root["supportedServerVersions"]
     )]

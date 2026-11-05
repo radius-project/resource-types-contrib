@@ -1045,7 +1045,9 @@ grep '^rad deploy ' "$CALL_LOG" | tail -1 | grep -q 'postgresSize=S' ||
     fail "M recovery must use S, not L (the same SKU)"
 
 : >"$CALL_LOG"
-if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres >/dev/null 2>&1; then
+if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" \
+    run_postgres >"$TEST_ROOT/capacity-exhaustion.log" 2>&1; then
+    cat "$TEST_ROOT/capacity-exhaustion.log" "$CALL_LOG" >&2
     fail "capacity recovery exhaustion must fail"
 fi
 assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "capacity recovery is limited to two attempts"
@@ -1186,7 +1188,7 @@ for initial in 0 1; do
     rm -f -- "$SLOW_COMMAND_PIDS"
     started_seconds=$SECONDS
     if (
-        export RTC_POSTGRES_TEST_DEADLINE_EPOCH="$(( $(date +%s) + 4 ))"
+        export RTC_POSTGRES_TEST_DEADLINE_EPOCH="$(( $(date +%s) + 8 ))"
         export RTC_POSTGRES_CLEANUP_RESERVE_SECONDS=2
         export SLOW_COMMAND='az postgres flexible-server show' SLOW_AFTER=2
         export DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR"
@@ -1199,7 +1201,7 @@ for initial in 0 1; do
     ) >"$TEST_ROOT/probe-cleanup-deadline.log" 2>&1; then
         fail "uncertain probe cleanup must fail"
     fi
-    ((SECONDS - started_seconds < 10)) || fail "probe cleanup exceeded the work deadline plus reserve"
+    ((SECONDS - started_seconds < 14)) || fail "probe cleanup exceeded the work deadline plus reserve"
     if [[ ! -s "$SLOW_COMMAND_PIDS" ]]; then
         cat "$CALL_LOG" >&2
         fail "probe must exercise slow ownership confirmation (initial=$initial)"

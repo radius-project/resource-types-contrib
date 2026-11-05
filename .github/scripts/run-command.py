@@ -19,6 +19,7 @@
 
 import ctypes
 import os
+import select
 import signal
 import subprocess
 import sys
@@ -49,6 +50,9 @@ class LaunchGate:
             os.close(descriptor)
 
     def start(self, command, pass_fds=()):
+        environment = os.environ.copy()
+        environment.pop("RTC_COMMAND_SIGNAL_FD", None)
+        environment.pop("RTC_COMMAND_READY_FILE", None)
         return subprocess.Popen(
             [
                 sys.executable,
@@ -61,6 +65,7 @@ class LaunchGate:
             stdin=subprocess.DEVNULL,
             pass_fds=(*pass_fds, self.read_fd),
             preexec_fn=_set_parent_death_signal if sys.platform == "linux" else None,
+            env=environment,
         )
 
     def release(self):
@@ -115,18 +120,36 @@ def _parse_arguments(arguments):
     return timeout, arguments
 
 
-def _pending_signal():
+def _pending_signal(interrupted):
     descriptor = os.environ.pop("RTC_COMMAND_SIGNAL_FD", None)
     if descriptor is None:
         return 0
     if not descriptor.isdigit():
         raise ValueError("invalid pending-signal descriptor")
     try:
-        with os.fdopen(int(descriptor), encoding="ascii") as pending:
-            value = pending.read().strip()
+        descriptor = int(descriptor)
+        data = b""
+        while not interrupted():
+            readable, _, _ = select.select([descriptor], [], [], 0.1)
+            if not readable:
+                continue
+            chunk = os.read(descriptor, 32)
+            if not chunk:
+                raise ValueError("could not read pending-signal data")
+            data += chunk
+            if len(data) > 16:
+                raise ValueError("invalid pending-signal data")
+            if b"\n" in data:
+                break
+        if interrupted():
+            return interrupted()
+        value = data.decode("ascii").strip()
     except (OSError, UnicodeError) as error:
         raise ValueError("could not read pending-signal data") from error
-    if not value:
+    finally:
+        if isinstance(descriptor, int):
+            os.close(descriptor)
+    if value == "READY":
         return 0
     if value not in _SIGNALS:
         raise ValueError("invalid pending-signal data")
@@ -140,6 +163,14 @@ def _pass_fds():
     if not descriptor.isdigit():
         raise ValueError("invalid Azure login log descriptor")
     return (int(descriptor),)
+
+
+def _notify_ready():
+    path = os.environ.pop("RTC_COMMAND_READY_FILE", None)
+    if path is None:
+        return
+    with open(path, "w", encoding="ascii") as ready:
+        ready.write("READY\n")
 
 
 def _kill_group(process, signum):
@@ -166,13 +197,12 @@ def supervise(timeout, command):
     signal.signal(signal.SIGINT, forward_signal)
     signal.signal(signal.SIGTERM, forward_signal)
     try:
-        pending = _pending_signal()
-        if pending:
-            return 128 + pending
         pass_fds = _pass_fds()
         process = gate.start(command, pass_fds=pass_fds)
-        if interrupted:
-            forward_signal(interrupted, None)
+        _notify_ready()
+        pending = _pending_signal(lambda: interrupted)
+        if pending:
+            return 128 + pending
         gate.release()
         timeout_deadline = time.monotonic() + timeout if timeout is not None else None
         interrupt_deadline = time.monotonic() + 2 if interrupted else None

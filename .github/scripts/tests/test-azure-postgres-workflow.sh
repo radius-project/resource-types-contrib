@@ -127,7 +127,7 @@ grep -Fxq 'RTC_POSTGRES_TEST_SIZES=S' "$single_env" ||
     fail "validated single-size list must persist to the PostgreSQL deployment step"
 
 export RTC_AZURE_SELECTION_FILE="$temp/selection.json" GITHUB_STEP_SUMMARY="$temp/summary.md"
-for status in selected capacity_exhausted unsupported restricted probe_error deadline_exceeded; do
+for status in selected capacity_exhausted unsupported restricted catalog_unavailable probe_error deadline_exceeded; do
     jq -n --arg status "$status" '{version:1,status:$status,deadlineEpochSeconds:123456,
         secret:"DO_NOT_PRINT",attempts:[{region:"centralus",size:"M",skuName:"Standard_D2ds_v5",
         tier:"GeneralPurpose",outcome:"capacity_exhausted",errorCode:"SkuNotAvailable",

@@ -340,7 +340,7 @@ RTC_POSTGRES_TEST_SIZES=M EXPECTED_POSTGRES_SIZE=M AZURE_LOCATION=eastus \
 assert_probe_count="$(grep -c '^probe-' "$CALL_LOG")"
 [[ "$assert_probe_count" == 1 ]] || fail "single-M initial probe must run once"
 
-for state in missing malformed capacity_exhausted unsupported restricted probe_error deadline_exceeded invalid_size invalid_tuple wrong_region expired invalid_deadline; do
+for state in missing malformed capacity_exhausted unsupported restricted catalog_unavailable probe_error deadline_exceeded invalid_size invalid_tuple wrong_region expired invalid_deadline; do
     case "$state" in
         missing) rm -f "$selection" ;;
         malformed) echo '{' >"$selection" ;;

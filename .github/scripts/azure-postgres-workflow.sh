@@ -172,7 +172,8 @@ write_failed_selection() {
     if [[ -f "$RTC_AZURE_SELECTION_FILE" ]] && jq -e '
         type == "object" and .version == 1 and
         (.status == "selected" or .status == "capacity_exhausted" or
-         .status == "unsupported" or .status == "restricted" or .status == "probe_error" or
+         .status == "unsupported" or .status == "restricted" or
+         .status == "catalog_unavailable" or .status == "probe_error" or
          .status == "deadline_exceeded") and
         (.location | type == "string") and (.attempts | type == "array") and
         (.attempts | all(.[]; (.region | type == "string") and (.size | type == "string") and
@@ -186,6 +187,7 @@ write_failed_selection() {
             --argjson settings "$(rtc_postgres_test_settings)" '
             .status = (if any(.attempts[]; .cleanup == "failed") then "probe_error"
                 elif .status == "unsupported" or .status == "restricted" or
+                    .status == "catalog_unavailable" or
                     .status == "deadline_exceeded" then .status
                 else "probe_error" end) |
             .location = $location |
@@ -251,7 +253,8 @@ select_context() {
         [[ -f "$RTC_AZURE_SELECTION_FILE" ]] && jq -e '
             type == "object" and .version == 1 and
             (.status == "selected" or .status == "capacity_exhausted" or
-             .status == "unsupported" or .status == "restricted" or .status == "probe_error" or
+             .status == "unsupported" or .status == "restricted" or
+             .status == "catalog_unavailable" or .status == "probe_error" or
              .status == "deadline_exceeded") and
             (.location | type == "string") and (.attempts | type == "array")
         ' "$RTC_AZURE_SELECTION_FILE" >/dev/null 2>&1; then
@@ -312,7 +315,8 @@ case "${1:-}" in
         jq -er '
             if .version != 1 or (.attempts | type) != "array" or
                 (.status != "selected" and .status != "capacity_exhausted" and
-                 .status != "unsupported" and .status != "restricted" and .status != "probe_error" and
+                 .status != "unsupported" and .status != "restricted" and
+                 .status != "catalog_unavailable" and .status != "probe_error" and
                  .status != "deadline_exceeded") then
                 error("invalid selection record")
             else . end |

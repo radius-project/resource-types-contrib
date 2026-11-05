@@ -34,8 +34,13 @@ set -euo pipefail
 
 service="${1:-}"
 command="${2:-}"
-subcommand="${3:-}"
-shift 3 || true
+subcommand=""
+if [[ "$service" == group ]]; then
+    shift 2 || true
+else
+    subcommand="${3:-}"
+    shift 3 || true
+fi
 if [[ "$service:$command:$subcommand" == postgres:flexible-server:create && "${1:-}" == --help ]]; then
     printf 'PostgreSQL create --zonal-resiliency --microsoft-entra-auth --password-auth\n'
     exit 0
@@ -217,6 +222,14 @@ grep -Eq '^server create pgprobe-[a-f0-9]{32} region=westus3 sku=Standard_D2ds_v
     echo "The owned temporary resource group must be created and deleted exactly once." >&2
     exit 1
 }
+created_group="$(awk '/^group create / { print $3; exit }' "$CALL_LOG")"
+if [[ ! "$created_group" =~ ^rtc-integration-probe-[a-f0-9]{32}$ ]] ||
+    ! grep -Eq "^group create $created_group location=westus3 owner=[a-f0-9]{32}$" "$CALL_LOG" ||
+    ! grep -Fxq "group delete $created_group" "$CALL_LOG"; then
+    cat "$CALL_LOG" >&2
+    echo "The integration mock must preserve the selector resource-group name." >&2
+    exit 1
+fi
 [[ ! -s "$GROUP_STATE" && ! -s "$SERVER_STATE" ]] || {
     cat "$GROUP_STATE" "$SERVER_STATE" >&2
     echo "Azure resource state remains after selector cleanup." >&2

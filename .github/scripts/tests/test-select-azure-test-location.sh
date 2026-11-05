@@ -259,6 +259,11 @@ select_location westus3 >/dev/null
 [[ "$(probe_count)" == 2 ]] || fail "all unsupported tuples must be checked"
 assert_json '.status == "unsupported" and (has("postgres") | not) and
     all(.attempts[]; .outcome == "unsupported")'
+reset 5 4
+select_location westus3 >/dev/null
+[[ "$(probe_count)" == 2 ]] || fail "mixed catalog-only outcomes must check all tuples"
+assert_json '.status == "catalog_unavailable" and (has("postgres") | not) and
+    [.attempts[].outcome] == ["restricted","unsupported"]'
 reset 5 0
 select_location westus3 eastus2 >/dev/null
 [[ "$(probe_count)" == 2 ]] || fail "region restriction must continue to the next region"

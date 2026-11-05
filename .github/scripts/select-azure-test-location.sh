@@ -377,11 +377,15 @@ for size in "${test_sizes[@]}"; do
     done
 done
 if [[ "$selection_status" == "capacity_exhausted" ]] &&
-    jq -e 'length > 0 and all(.[]; .outcome == "unsupported")' <<<"$attempt_records" >/dev/null; then
-    selection_status="unsupported"
-elif [[ "$selection_status" == "capacity_exhausted" ]] &&
-    jq -e 'length > 0 and all(.[]; .outcome == "restricted")' <<<"$attempt_records" >/dev/null; then
-    selection_status="restricted"
+    ! jq -e 'any(.[]; .outcome == "capacity_exhausted")' <<<"$attempt_records" >/dev/null; then
+    if jq -e 'length > 0 and all(.[]; .outcome == "unsupported")' <<<"$attempt_records" >/dev/null; then
+        selection_status="unsupported"
+    elif jq -e 'length > 0 and all(.[]; .outcome == "restricted")' <<<"$attempt_records" >/dev/null; then
+        selection_status="restricted"
+    elif jq -e 'length > 0 and all(.[]; .outcome == "unsupported" or .outcome == "restricted")' \
+        <<<"$attempt_records" >/dev/null; then
+        selection_status="catalog_unavailable"
+    fi
 fi
 if [[ "$selection_status" != "selected" ]]; then
     echo "::error::PostgreSQL selection: $selection_status. No PostgreSQL tuple was selected; $selected_location is for unrelated tests only." >&2

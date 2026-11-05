@@ -619,7 +619,9 @@ for field in Version Tier Sku Storage; do
         '.outcome == "unsupported" and .errorCode == $code and .cleanup == "not_required"' \
         "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "unsupported $field result"
 done
-for catalog in 'not json' '[{}]'; do
+for catalog in 'not json' '[{}]' \
+    '[{"status":123,"supportedServerVersions":[],"supportedServerEditions":[]}]' \
+    '[{"status":"Unknown","supportedServerVersions":[],"supportedServerEditions":[]}]'; do
     reset ok
     expect_status 1 env CATALOG_JSON="$catalog" AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \
         PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
