@@ -275,6 +275,9 @@ rtc_recipe_pack_param_value() {
         subnetIds)
             echo "subnet-0123456789abcdef0,subnet-0fedcba9876543210"
             ;;
+        appPermissionsBoundaryArn)
+            echo "arn:aws:iam::123456789012:policy/radius/apps/validation/radius-app-boundary-validation"
+            ;;
         *)
             echo "Error: no CI test value for required recipe pack parameter '$1'. Add one to rtc_recipe_pack_param_value() in lib-recipe-packs.sh." >&2
             return 1
@@ -309,6 +312,48 @@ rtc_recipe_pack_entry_body() {
             print line
         }
     ' "$bicep_file" 2>/dev/null
+}
+
+# Print the names of the parameters that one Resource Type entry in a pack
+# passes to its Recipe, one per line, sorted. Keys of nested objects are not
+# parameter names, so only the first level of `parameters` counts.
+rtc_recipe_pack_entry_param_names() {
+    local bicep_file="$1" resource_type="$2"
+    rtc_recipe_pack_entry_body "$bicep_file" "$resource_type" |
+        awk '
+            { sub(/\r$/, "") }
+            !inside && /^[[:space:]]*parameters:[[:space:]]*\{[[:space:]]*$/ { inside = 1; depth = 1; next }
+            inside {
+                line = $0
+                if (depth == 1 && match(line, /^[[:space:]]*[A-Za-z0-9_]+:/)) {
+                    key = substr(line, RSTART, RLENGTH - 1)
+                    gsub(/[[:space:]]/, "", key)
+                    print key
+                }
+                depth += gsub(/\{/, "{", line) - gsub(/\}/, "}", line)
+                if (depth <= 0) inside = 0
+            }
+        ' | LC_ALL=C sort
+}
+
+# Check that a pack entry passes every required parameter of its Recipe and
+# nothing the Recipe doesn't declare, because a deployment rejects undeclared
+# parameters. template_json is the Recipe compiled with `bicep build`.
+rtc_check_recipe_pack_params() {
+    local bicep_file="$1" resource_type="$2" template_json="$3" passed declared required
+    if [[ -z "$(rtc_recipe_pack_entry_body "$bicep_file" "$resource_type")" ]]; then
+        echo "Error: $bicep_file has no entry for $resource_type." >&2
+        return 1
+    fi
+    passed="$(rtc_recipe_pack_entry_param_names "$bicep_file" "$resource_type" | jq -Rsc 'split("\n") | map(select(length > 0))')"
+    declared="$(jq -c '.parameters | del(.context) | keys' <<<"$template_json")"
+    required="$(jq -c '.parameters | del(.context) | with_entries(select(.value | has("defaultValue") | not)) | keys' <<<"$template_json")"
+    jq -en --argjson passed "$passed" --argjson declared "$declared" --argjson required "$required" '
+        ($required - $passed) == [] and ($passed - $declared) == []
+    ' >/dev/null || {
+        echo "Error: $resource_type in $bicep_file passes $passed. Its Recipe requires $required and declares $declared." >&2
+        return 1
+    }
 }
 
 # True when a pack's MySQL entry maps the Radius tls property to the server's
