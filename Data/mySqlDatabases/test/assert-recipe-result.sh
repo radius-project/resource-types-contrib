@@ -55,6 +55,17 @@ jq -e '
 ' <<<"$AWS_TEMPLATE" >/dev/null ||
     { echo "AWS MySQL Recipe names must hash the cluster, namespace, and resource ID" >&2; exit 1; }
 
+# AWS can't change a parameter group's family, so its name must include the
+# version. Otherwise a group left by a failed deploy blocks other versions.
+# RDS allows only letters, digits, and hyphens, so drop the dot.
+jq -e \
+  --arg pg "[format('{0}-{1}', variables('name'), replace(variables('version'), '.', ''))]" \
+  --arg ref "[variables('parameterGroupName')]" '
+  .variables.parameterGroupName == $pg and
+  (.resources.parameterGroup.properties | .alias == $ref and .properties.DBParameterGroupName == $ref)
+' <<<"$AWS_TEMPLATE" >/dev/null ||
+    { echo "AWS MySQL Recipe parameter group name must end with the version without the dot" >&2; exit 1; }
+
 # The aws-eks pack must pass every required Recipe parameter and nothing the
 # Recipe does not declare: a deployment rejects undeclared parameters.
 # shellcheck source=.github/scripts/lib-recipe-packs.sh

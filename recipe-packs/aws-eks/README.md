@@ -36,7 +36,12 @@ The AWS region and account come from the Environment's AWS provider, not from th
 
 The `Radius.Data/mySqlDatabases` Recipe creates a DB subnet group from `subnetIds`, a DB parameter group, and a single-AZ, encrypted, non-public `db.t3.micro` RDS for MySQL instance with 20 GiB of `gp3` storage. It returns `host`, `port` (`3306`), and `database`, the same values as the Kubernetes Recipe, so one application definition works on every platform.
 
-Resource names are `mysql-<hash>`, where the hash covers the EKS cluster name, the Environment's Kubernetes namespace, and the Radius resource ID. Radius resource IDs repeat across installations, so the namespace keeps apps in different namespaces on the same cluster apart. Names stay the same across redeploys, including from a new Radius installation that targets the same namespace. Two Environments that share a cluster, a namespace, and resource IDs share one database, the same way their Kubernetes resources would collide.
+Resource names are `mysql-<hash>`, where the hash covers the EKS cluster name, the Environment's Kubernetes namespace, and the Radius resource ID. Radius resource IDs repeat across installations, so the namespace keeps apps in different namespaces on the same cluster apart. Names stay the same across redeploys, including from a new Radius installation that targets the same namespace. Two Environments that share a cluster, a namespace, and resource IDs share one database, the same way their Kubernetes resources would collide. The parameter group name also ends with the version without the dot, for example `mysql-<hash>-84`, because AWS can't change a parameter group's family. A group left behind by a failed deploy doesn't block a deploy of another version, but Radius doesn't track it ([radius-project/radius#13065](https://github.com/radius-project/radius/issues/13065)), so delete it yourself. To list a resource's parameter groups, run the command below. Any group that the DB instance doesn't use is left over.
+
+```bash
+aws resourcegroupstaggingapi get-resources --resource-type-filters rds:pg \
+  --tag-filters Key=radapp.io/resource,Values=<Radius resource ID>
+```
 
 ### Network access
 
@@ -63,9 +68,11 @@ The Recipe maps the resource's `tls` property to the parameter group's `require_
 
 ### Requirements and limitations
 
-- The `password` must meet the RDS rules: 8 to 41 printable ASCII characters, without `/`, `"`, `@`, or spaces.
+- `database`, `username`, and `password` must meet the RDS for MySQL rules. The Recipe checks them before it creates any AWS resource, and a failed check lists every invalid value:
+  - `database`: 1 to 64 characters, and `username`: 1 to 32 characters. Both start with an ASCII letter, contain only ASCII letters, digits, and underscores, and can't be a word RDS reserves, in any case. RDS accepts other letters in a database name, but the Recipe rejects them. RDS reserves most MySQL reserved words, such as `select` and `table`, and `innodb`, `mysql`, `rdsadmin`, and `rdsrepladmin`. The Kubernetes Recipe accepts some values that the AWS Recipe rejects, such as `app-db`.
+  - `password`: 8 to 41 printable ASCII characters, without `/`, `"`, `@`, or spaces.
 - `version` maps to the RDS engine version and the `mysql<version>` parameter group family. Use `8.4`, the default. `5.7` and `8.0` run on [RDS Extended Support](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/extended-support.html), which AWS bills separately.
-- Changing `version` after the database exists is not supported. The deploy fails with `createOnlyProperties [/properties/Family] cannot be updated`, and nothing changes in AWS. Change `version` back and deploy again before you delete the app, as described for failed redeploys below. To use another version, create a new `mySqlDatabases` resource and move the data to it.
+- Changing `version` after the database exists is not supported. The deploy fails when RDS updates the DB instance, with `The AllowMajorVersionUpgrade flag must be present when upgrading to a new major version` for a later version, or `Cannot upgrade mysql from <current> to <requested>` for an earlier one. The DB instance doesn't change, but the Recipe has already created a parameter group for the requested version, and it stays in AWS. Change `version` back and deploy again before you delete the app, as described for failed redeploys below, then delete that parameter group yourself. It has the `radapp.io/resource` tag with the Radius resource ID. To use another version, create a new `mySqlDatabases` resource and move the data to it.
 - The credentials Radius uses for AWS need permission to manage RDS instances, subnet groups, and parameter groups, and to describe the EKS cluster. Delete also needs `rds:CreateDBSnapshot`, because the AWS Cloud Control API takes a final snapshot before it deletes the instance ([radius-project/radius#13565](https://github.com/radius-project/radius/issues/13565)). Without that permission, `rad app delete` retries for about 41 minutes and then fails, and the instance keeps running.
 - Delete keeps that final snapshot, named `rds-snapshot-<random>`, and AWS bills its storage until you delete it. The snapshot has the instance's `radapp.io/*` tags. To find it, run `aws rds describe-db-snapshots --db-instance-identifier mysql-<hash> --snapshot-type manual`.
 - Redeploying an unchanged app sends updates to AWS. In a live test, they applied the same values and nothing else changed:
@@ -114,6 +121,6 @@ rad env update default \
 
 ## Testing
 
-Every pull request deploys and activates this pack on a local cluster, and checks that the pack passes exactly the parameters the MySQL Recipe declares. CI has no AWS account, so the nightly tests don't deploy the AWS Recipes.
+Every pull request deploys and activates this pack on a local cluster, and checks that the pack passes exactly the parameters the MySQL Recipe declares. It also deploys the MySQL Recipe from the pull request with invalid values and checks that they fail before any AWS call. CI has no AWS account, so the nightly tests don't deploy the AWS Recipes.
 
 The MySQL Recipe was tested by hand against an EKS cluster's subnets and security group: create, unchanged redeploy, and delete through Radius. Delete removes the instance, subnet group, parameter group, and automated backups. It keeps the final snapshot described in [Requirements and limitations](#requirements-and-limitations).
