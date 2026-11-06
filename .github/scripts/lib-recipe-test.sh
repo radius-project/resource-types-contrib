@@ -543,22 +543,39 @@ def is_provider_reset(message):
         and all(provider_reset.fullmatch(item) for item in diagnostics[1:])
     )
 
-def visit(value, failure_context=False):
+def visit(value, failure_context=False, resource_target=""):
     global invalid
     if isinstance(value, list):
         for item in value:
-            visit(item, failure_context)
+            visit(item, failure_context, resource_target)
     elif isinstance(value, dict):
         before = len(reasons)
         code = value.get("code")
         message = value.get("message")
         target = value.get("target")
+        if isinstance(target, str) and target.startswith("/"):
+            resource_target = target
         status = value.get("status", "")
         is_failure = failure_context or (
             isinstance(status, str) and status.lower() in {"failed", "failure", "error"}
         )
         if code:
-            if code not in wrappers:
+            if code == "AzureContainerInstance/ContainerGroupTransitioning":
+                if (
+                    re.fullmatch(
+                        r"/subscriptions/[^/]+/resourceGroups/[^/]+/providers/"
+                        r"Microsoft\.ContainerInstance/ngroups/[^/]+",
+                        resource_target,
+                        re.I,
+                    )
+                    and isinstance(message, str)
+                    and '"ErrorCode": "AzureContainerInstance/ContainerGroupTransitioning"' in message
+                    and "still transitioning, please retry later." in message
+                ):
+                    reasons.append("Azure Container Instance group is still transitioning")
+                else:
+                    invalid = True
+            elif code not in wrappers:
                 invalid = True
             elif code == "RecipeDeploymentFailed" and isinstance(message, str) and is_provider_reset(message):
                 reasons.append("Terraform provider download connection reset")
@@ -569,16 +586,32 @@ def visit(value, failure_context=False):
                 and re.match(r'/subscriptions/[^"]*/providers/Microsoft\.', target)
             ):
                 reasons.append("Azure deployment connection reset")
+        elif (
+            value.get("ErrorCode") == "AzureContainerInstance/ContainerGroupTransitioning"
+            and re.fullmatch(
+                r"/subscriptions/[^/]+/resourceGroups/[^/]+/providers/"
+                r"Microsoft\.ContainerInstance/ngroups/[^/]+",
+                resource_target,
+                re.I,
+            )
+            and isinstance(value.get("SampleErrorMessage"), str)
+            and "still transitioning, please retry later." in value["SampleErrorMessage"]
+        ):
+            reasons.append("Azure Container Instance group is still transitioning")
         elif is_failure or (
             "message" in value and status not in {"Succeeded", "Running", "Accepted"}
         ):
             invalid = True
         for key, item in value.items():
             if isinstance(item, (dict, list)):
-                visit(item, is_failure or (code in wrappers and key in {"details", "error"}))
+                visit(
+                    item,
+                    is_failure or (code in wrappers and key in {"details", "error"}),
+                    resource_target,
+                )
         if isinstance(message, str):
             for item, _, _ in objects(message):
-                visit(item, True)
+                visit(item, True, resource_target)
         if code in wrappers and len(reasons) == before:
             invalid = True
     elif failure_context:
