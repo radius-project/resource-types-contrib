@@ -197,6 +197,8 @@ jobs:
           # AWS recipes wired by the aws-eks recipe pack.
           - name: Publish aws-eks mysqldatabases
             run: REGISTRY=ghcr.io/radius-project/aws-eks-recipes ./.github/scripts/publish-bicep-recipe.sh mysqldatabases Data/mySqlDatabases/recipes/aws/bicep/aws-rds-mysql.bicep
+          - name: Publish aws-eks containers
+            run: REGISTRY=ghcr.io/radius-project/aws-eks-recipes ./.github/scripts/publish-bicep-recipe.sh containers Compute/containers/recipes/aws/bicep/aws-eks-containers.bicep
 
       - name: Record published digests
         id: subjects
