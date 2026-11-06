@@ -458,18 +458,20 @@ rtc_assert_postgresql_result() {
 rtc_assert_recipe_result() {
     local resource_type="$1" app_name="$2" workspace_name="$3"
     case "$resource_type" in
-        Radius.Data/mySqlDatabases)
+        Radius.Data/mySqlDatabases|Radius.Data/redisCaches)
             local kubernetes_namespace="${4:-}"
+            local client_resource=mysqlclient
+            [[ "$resource_type" != Radius.Data/redisCaches ]] || client_resource=democontainer
             if [[ -z "$kubernetes_namespace" ]]; then
-                echo "Error: MySQL readiness assertion requires the environment Kubernetes namespace." >&2
+                echo "Error: $resource_type readiness assertion requires the environment Kubernetes namespace." >&2
                 return 1
             fi
-            # The direct-module client probe checks the actual server setting.
+            # Wait for the client probe, not just a successful resource deployment.
             if ! kubectl wait deployment \
                 -n "$kubernetes_namespace" \
-                -l "radapp.io/application=$app_name,radapp.io/resource=mysqlclient" \
+                -l "radapp.io/application=$app_name,radapp.io/resource=$client_resource" \
                 --for=condition=Available --timeout=180s; then
-                echo "Error: MySQL client readiness assertion failed." >&2
+                echo "Error: $resource_type client readiness assertion failed." >&2
                 return 1
             fi
             ;;

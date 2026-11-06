@@ -104,6 +104,10 @@ elif [[ "$RESOURCE_TYPE" == "Radius.Data/mySqlDatabases" && "$TEST_MODE" != "con
     exit 1
 elif [[ "$RESOURCE_TYPE" == "Radius.Data/postgreSqlDatabases" && "${RTC_TEST_PLATFORM:-}" == azure ]]; then
     rtc_test_azure_postgresql_app "$TEST_FILE" "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE" || exit 1
+elif [[ "$RESOURCE_TYPE" == "Radius.Data/redisCaches" && "${RTC_TEST_PLATFORM:-}" == azure ]]; then
+    rtc_deploy_and_assert_test_app "$TEST_FILE" "$RESOURCE_TYPE" "recipepacktest" \
+        "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE" \
+        --parameters cachePlatform=azure || exit 1
 else
     rtc_deploy_and_assert_test_app "$TEST_FILE" "$RESOURCE_TYPE" "recipepacktest" \
         "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE" || exit 1

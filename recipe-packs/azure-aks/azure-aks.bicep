@@ -36,6 +36,7 @@ resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
           database: {
             name: 'default'
             accessKeysAuthentication: 'Enabled'
+            clientProtocol: 'Encrypted'
           }
           publicNetworkAccess: 'Enabled'
           enableTelemetry: false
@@ -49,6 +50,7 @@ resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
           secrets: {
             accessKey: 'primaryAccessKey'
             url: 'primaryConnectionString'
+            connectionString: 'primaryStackExchangeRedisConnectionString'
           }
         }
       }

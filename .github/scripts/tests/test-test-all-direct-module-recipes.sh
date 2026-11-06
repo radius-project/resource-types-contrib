@@ -97,7 +97,7 @@ export FAIL_TYPE=""
 # non-zero for the Resource Type directory named in $FAIL_TYPE.
 cat >"$TEST_ROOT/bin/test-direct-module-recipe.sh" <<'EOF'
 #!/bin/bash
-echo "test-direct-module-recipe.sh $*" >>"$CALL_LOG"
+echo "test-direct-module-recipe.sh $* platform=${RTC_TEST_PLATFORM:-unset}" >>"$CALL_LOG"
 [[ "$1" == "$FAIL_TYPE" ]] && exit 1
 exit 0
 EOF
@@ -134,13 +134,13 @@ fail() {
 
 # --- each pack is activated before its own tests --------------------------
 : >"$CALL_LOG"
-FAIL_TYPE="" run_driver azure azure-ws azure-env ||
+RTC_TEST_PLATFORM=kubernetes FAIL_TYPE="" run_driver azure azure-ws azure-env ||
     fail "expected all-pass run to exit 0"
 expected="rad env update azure-env --workspace azure-ws --recipe-packs azure-aci
-test-direct-module-recipe.sh Data/redisCaches azure-ws azure-env
+test-direct-module-recipe.sh Data/redisCaches azure-ws azure-env platform=azure
 rad env update azure-env --workspace azure-ws --recipe-packs azure-aks
-test-direct-module-recipe.sh Data/redisCaches azure-ws azure-env
-test-direct-module-recipe.sh Data/mySqlDatabases azure-ws azure-env verify-transport"
+test-direct-module-recipe.sh Data/redisCaches azure-ws azure-env platform=azure
+test-direct-module-recipe.sh Data/mySqlDatabases azure-ws azure-env verify-transport platform=azure"
 diff -u <(echo "$expected") "$CALL_LOG" || fail "each pack must be active for all its tests"
 grep -q "test-direct-module-recipe.sh Data/mySqlDatabases azure-ws azure-env verify-transport" "$CALL_LOG" ||
     fail "expected the active MySQL mapping to select transport verification"
