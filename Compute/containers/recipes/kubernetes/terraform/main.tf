@@ -42,8 +42,9 @@ locals {
   # Connection definitions - original connection config (has source, disableDefaultEnvVars)
   connection_definitions = try(var.context.resource.properties.connections, {})
 
-  # Properties to exclude from connection environment variables
-  excluded_properties = ["recipe", "secrets", "status", "provisioningState"]
+  # Properties to exclude from connection environment variables. awsIamPolicy is
+  # read by the aws-eks Recipe for the pod's IAM role.
+  excluded_properties = ["recipe", "secrets", "status", "provisioningState", "awsIamPolicy"]
   top_level_excluded_properties = [
     "recipe",
     "secrets",

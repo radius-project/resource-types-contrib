@@ -18,6 +18,13 @@ param containerImagesRegistry string
 @description('Name of the Kubernetes Secret holding registry credentials for Radius.Compute/containerImages. Leave empty for an unauthenticated registry.')
 param containerImagesRegistrySecretName string = ''
 
+@description('IAM path for the roles that Radius.Compute/containers creates for EKS Pod Identity, for example /radius/apps/my-env/. Empty uses /.')
+param appRolePath string = ''
+
+@description('ARN of the IAM permissions boundary for the roles that Radius.Compute/containers creates. See recipe-packs/aws-eks/README.md.')
+@minLength(1)
+param appPermissionsBoundaryArn string
+
 resource awsEksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
   name: 'aws-eks'
   properties: {
@@ -32,7 +39,12 @@ resource awsEksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
       }
       'Radius.Compute/containers': {
         kind: 'bicep'
-        source: 'ghcr.io/radius-project/kube-recipes/containers:latest'
+        source: 'ghcr.io/radius-project/aws-eks-recipes/containers:latest'
+        parameters: {
+          eksClusterName: eksClusterName
+          appRolePath: appRolePath
+          appPermissionsBoundaryArn: appPermissionsBoundaryArn
+        }
       }
       'Radius.Compute/persistentVolumes': {
         kind: 'bicep'
