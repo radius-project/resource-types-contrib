@@ -135,6 +135,11 @@ jobs:
         if: matrix.recipe == 'bicep'
         run: .github/scripts/deploy-all-checked-in-recipe-packs.sh aws "$RAD_ENVIRONMENT_NAME"
 
+      # Also needs no AWS account: the checks fail before any AWS call.
+      - name: Validate AWS MySQL Recipe input checks
+        if: matrix.recipe == 'bicep'
+        run: Data/mySqlDatabases/test/assert-aws-input-checks.sh
+
       # Generates the bicep definition for recipe pack in recipe-pack-{bicep|terraform}.bicep
       - name: Generate Recipe Pack
         run: RECIPE_PLATFORM_FILTER=kubernetes make generate-recipe-pack PACK_NAME=${{ matrix.recipe }}recipepack OUTPUT_FILE=recipe-pack-${{ matrix.recipe }}.bicep

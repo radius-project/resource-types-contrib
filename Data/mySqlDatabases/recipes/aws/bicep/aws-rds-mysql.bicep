@@ -26,6 +26,9 @@ param allocatedStorage int = 20
 
 var properties = context.resource.properties
 var database = properties.?database ?? 'mysql_db'
+var username = properties.username
+// password is x-radius-sensitive: Radius decrypts it only for the Recipe.
+var password = properties.password
 var version = properties.?version ?? '8.4'
 var requireTls = (properties.?tls ?? 'required') == 'required'
 var port = 3306
@@ -36,6 +39,59 @@ var subnetIdList = filter(
   id => !empty(id)
 )
 
+//////////////////////////////////////////
+// Input checks
+//
+// RDS checks the database name and credentials only when it creates the DB
+// instance, after the subnet group and parameter group exist. Radius records no
+// output resources for a failed first deploy, so `rad app delete` would leave
+// both groups. Check the RDS rules here, before any AWS resource, and report
+// every problem at once. Every AWS resource name depends on `name` below, which
+// fails when a check fails. The rules and reserved words were measured against
+// RDS for MySQL 5.7, 8.0, and 8.4: RDS rejects the same words for the database
+// name and the username, in any case, for every version.
+//////////////////////////////////////////
+
+var letters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+var identifierCharacters = '${letters}0123456789_'
+// Printable ASCII except `/`, `@`, `"`, and space.
+var passwordCharacters = '!#$%&\'()*+,-.0123456789:;<=>?${letters}[\\]^_`{|}~'
+
+var rdsReservedWords = filter(split(replace(replace('''
+  accessible add all alter analyze and as asc asensitive before between bigint binary blob both by
+  call cascade case change char character check collate column condition constraint continue
+  convert create cross current_date current_time current_timestamp current_user cursor database
+  databases day_hour day_microsecond day_minute day_second dec decimal declare default delayed
+  delete desc describe deterministic distinct distinctrow div double drop dual each else elseif
+  enclosed escaped exists exit explain false fetch float float4 float8 for force foreign from
+  fulltext grant group having high_priority hour_microsecond hour_minute hour_second if ignore in
+  index infile inner innodb inout insensitive insert int int1 int2 int3 int4 int8 integer interval
+  into is iterate join key keys kill leading leave left like limit linear lines load localtime
+  localtimestamp lock long longblob longtext loop low_priority master_ssl_verify_server_cert match
+  mediumblob mediumint mediumtext middleint minute_microsecond minute_second mod modifies mysql
+  natural no_write_to_binlog not null numeric on optimize option optionally or order out outer
+  outfile precision primary procedure purge range rdsadmin rdsrepladmin read read_write reads real
+  references regexp release rename repeat replace require restrict return revoke right rlike
+  schema schemas second_microsecond select sensitive separator set show smallint spatial specific
+  sql sql_big_result sql_calc_found_rows sql_small_result sqlexception sqlstate sqlwarning ssl
+  starting straight_join table terminated then tinyblob tinyint tinytext to trailing trigger true
+  undo union unique unlock unsigned update usage use using utc_date utc_time utc_timestamp values
+  varbinary varchar varcharacter varying when where while with write xor year_month zerofill
+''', '\r', ''), '\n', ' '), ' '), word => !empty(word))
+
+var databaseValid = length(database) >= 1 && length(database) <= 64 && contains(letters, substring(database, 0, min(length(database), 1))) && empty(filter(range(0, length(database)), i => !contains(identifierCharacters, substring(database, i, 1))))
+var usernameValid = length(username) >= 1 && length(username) <= 32 && contains(letters, substring(username, 0, min(length(username), 1))) && empty(filter(range(0, length(username)), i => !contains(identifierCharacters, substring(username, i, 1))))
+var passwordValid = length(password) >= 8 && length(password) <= 41 && empty(filter(range(0, length(password)), i => !contains(passwordCharacters, substring(password, i, 1))))
+
+var inputErrors = filter([
+  databaseValid ? '' : 'database \'${database}\' must be 1 to 64 characters, start with an ASCII letter, and contain only ASCII letters, digits, and underscores.'
+  databaseValid && contains(rdsReservedWords, toLower(database)) ? 'database \'${database}\' is a reserved word in RDS for MySQL.' : ''
+  usernameValid ? '' : 'username \'${username}\' must be 1 to 32 characters, start with an ASCII letter, and contain only ASCII letters, digits, and underscores.'
+  usernameValid && contains(rdsReservedWords, toLower(username)) ? 'username \'${username}\' is a reserved word in RDS for MySQL.' : ''
+  // Never include the password value.
+  passwordValid ? '' : 'password must be 8 to 41 printable ASCII characters, without /, @, ", or spaces.'
+], message => !empty(message))
+
 // RDS names are unique per account and region, but Radius resource IDs are
 // not: every installation uses the `local` plane, and a control plane can be
 // recreated for each deploy. The hash adds the cluster and the Environment's
@@ -44,7 +100,9 @@ var subnetIdList = filter(
 // uniqueString joins its arguments with `-`, which cluster names and namespaces
 // can contain, so join those two with `/`, which neither allows.
 var namespace = context.runtime.?kubernetes.?namespace ?? ''
-var name = 'mysql-${uniqueString('${eksClusterName}/${namespace}', context.resource.id)}'
+var name = empty(inputErrors)
+  ? 'mysql-${uniqueString('${eksClusterName}/${namespace}', context.resource.id)}'
+  : fail('Invalid Radius.Data/mySqlDatabases properties for Amazon RDS for MySQL: ${join(inputErrors, ' ')} This deploy didn\'t create or change any AWS resources. Fix the values and deploy again')
 
 var tags = [
   {
@@ -94,10 +152,14 @@ resource subnetGroup 'AWS.RDS/DBSubnetGroup@default' = {
 // MySQL server
 //////////////////////////////////////////
 
+// AWS can't change a parameter group's family, so a group left by a failed
+// deploy would block every other version if the name didn't include it.
+var parameterGroupName = '${name}-${replace(version, '.', '')}'
+
 resource parameterGroup 'AWS.RDS/DBParameterGroup@default' = {
-  alias: name
+  alias: parameterGroupName
   properties: {
-    DBParameterGroupName: name
+    DBParameterGroupName: parameterGroupName
     Description: 'Radius MySQL ${context.resource.name}'
     Family: 'mysql${version}'
     // The AWS types model this free-form map as a closed object.
@@ -119,9 +181,8 @@ resource instance 'AWS.RDS/DBInstance@default' = {
     StorageType: 'gp3'
     StorageEncrypted: true
     DBName: database
-    // password is x-radius-sensitive: Radius decrypts it only for the Recipe.
-    MasterUsername: properties.username
-    MasterUserPassword: properties.password
+    MasterUsername: username
+    MasterUserPassword: password
     Port: string(port)
     DBSubnetGroupName: subnetGroup.properties.DBSubnetGroupName
     DBParameterGroupName: parameterGroup.properties.DBParameterGroupName
