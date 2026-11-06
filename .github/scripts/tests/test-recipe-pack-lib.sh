@@ -161,6 +161,42 @@ assert_eq "$expected" "$actual" "CRLF recipe pack entries"
 actual="$(run_in_fixture rtc_recipe_pack_name "$crlf_template")"
 assert_eq "azure-aks" "$actual" "CRLF recipe pack name"
 
+# rtc_recipe_pack_entry_param_names lists only first-level parameter keys, so
+# "source" inside the nested object is not a parameter.
+aks_pack="$FIXTURE_ROOT/recipe-packs/azure-aks/azure-aks.bicep"
+actual="$(run_in_fixture rtc_recipe_pack_entry_param_names "$aks_pack" "Radius.Data/gadgets" | tr '\n' ',')"
+assert_eq "nested," "$actual" "parameter names for gadgets"
+actual="$(run_in_fixture rtc_recipe_pack_entry_param_names "$crlf_template" "Radius.Data/gadgets" | tr '\n' ',')"
+assert_eq "nested," "$actual" "CRLF parameter names for gadgets"
+actual="$(run_in_fixture rtc_recipe_pack_entry_param_names "$aks_pack" "Radius.Data/widgets")"
+assert_eq "" "$actual" "parameter names for an entry without parameters"
+
+# rtc_check_recipe_pack_params passes when the entry passes every required
+# parameter and only declared ones. Optional parameters may be omitted.
+template='{"parameters":{"context":{"type":"object"},"nested":{"type":"object"},"tier":{"type":"string","defaultValue":"basic"}}}'
+run_in_fixture rtc_check_recipe_pack_params "$aks_pack" "Radius.Data/gadgets" "$template" ||
+    fail "rtc_check_recipe_pack_params should accept a pack that passes the required parameters"
+
+template='{"parameters":{"context":{"type":"object"},"nested":{"type":"object"},"region":{"type":"string"}}}'
+if output="$(run_in_fixture rtc_check_recipe_pack_params "$aks_pack" "Radius.Data/gadgets" "$template" 2>&1)"; then
+    fail "rtc_check_recipe_pack_params should reject a missing required parameter"
+fi
+[[ "$output" == *'requires ["nested","region"]'* ]] ||
+    fail "the missing-parameter error should list the required parameters: $output"
+
+template='{"parameters":{"context":{"type":"object"}}}'
+if output="$(run_in_fixture rtc_check_recipe_pack_params "$aks_pack" "Radius.Data/gadgets" "$template" 2>&1)"; then
+    fail "rtc_check_recipe_pack_params should reject an undeclared parameter"
+fi
+[[ "$output" == *'passes ["nested"]'* ]] ||
+    fail "the undeclared-parameter error should list the passed parameters: $output"
+
+if output="$(run_in_fixture rtc_check_recipe_pack_params "$aks_pack" "Radius.Data/missing" "$template" 2>&1)"; then
+    fail "rtc_check_recipe_pack_params should reject a pack without the entry"
+fi
+[[ "$output" == *"has no entry for Radius.Data/missing"* ]] ||
+    fail "the missing-entry error should name the Resource Type: $output"
+
 # rtc_list_direct_module_types: kubernetes pack has zero gaps (its only entry
 # is repo-owned); azure-aks pack flags only Data/gadgets (Data/widgets is
 # repo-owned, Data/untested has no test app to deploy).

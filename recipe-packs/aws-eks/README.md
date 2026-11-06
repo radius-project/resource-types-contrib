@@ -11,13 +11,13 @@ This folder contains the **AWS EKS Recipe Pack**, a collection of Recipes that p
 | Resource Type | Kind | Source |
 | --- | --- | --- |
 | `Radius.Data/mySqlDatabases` | Bicep | `ghcr.io/radius-project/aws-eks-recipes/mysqldatabases` (Amazon RDS for MySQL) |
-| `Radius.Compute/containers` | Bicep | `ghcr.io/radius-project/kube-recipes/containers` |
+| `Radius.Compute/containers` | Bicep | `ghcr.io/radius-project/aws-eks-recipes/containers` (Kubernetes Deployment with an EKS Pod Identity role) |
 | `Radius.Compute/persistentVolumes` | Bicep | `ghcr.io/radius-project/kube-recipes/persistentvolumes` |
 | `Radius.Security/secrets` | Bicep | `ghcr.io/radius-project/kube-recipes/secrets` |
 | `Radius.Compute/routes` | Bicep | `ghcr.io/radius-project/kube-recipes/routes` |
 | `Radius.Compute/containerImages` | Bicep | `ghcr.io/radius-project/kube-recipes/containerimages` |
 
-The AWS Recipe source is [`Data/mySqlDatabases/recipes/aws/bicep/aws-rds-mysql.bicep`](../../Data/mySqlDatabases/recipes/aws/bicep/aws-rds-mysql.bicep). More AWS-backed Resource Types will be added to this pack.
+The AWS Recipe sources are [`Data/mySqlDatabases/recipes/aws/bicep/aws-rds-mysql.bicep`](../../Data/mySqlDatabases/recipes/aws/bicep/aws-rds-mysql.bicep) and [`Compute/containers/recipes/aws/bicep/aws-eks-containers.bicep`](../../Compute/containers/recipes/aws/bicep/aws-eks-containers.bicep). More AWS-backed Resource Types will be added to this pack.
 
 ## Parameters
 
@@ -29,6 +29,7 @@ The AWS Recipe source is [`Data/mySqlDatabases/recipes/aws/bicep/aws-rds-mysql.b
 | `routesGatewayNamespace` | Namespace of the Gateway resource for `Radius.Compute/routes`. Defaults to `default`. |
 | `containerImagesRegistry` | Registry path (e.g. `ghcr.io/my-org`) that `Radius.Compute/containerImages` pushes built images to. |
 | `containerImagesRegistrySecretName` | Name of the Kubernetes Secret holding registry credentials for `Radius.Compute/containerImages`. Optional; leave empty for an unauthenticated registry. |
+| `appPermissionsBoundaryArn` | ARN of the IAM managed policy that is the permissions boundary of the roles that `Radius.Compute/containers` creates. The roles go under the policy's IAM path. See [AWS credentials for containers](#aws-credentials-for-containers). |
 
 The AWS region and account come from the Environment's AWS provider, not from the pack.
 
@@ -86,6 +87,31 @@ The Recipe maps the resource's `tls` property to the parameter group's `require_
 - After a failed redeploy, Radius loses track of the AWS resources ([radius-project/radius#13065](https://github.com/radius-project/radius/issues/13065)). If you delete the app before a successful deploy, `rad app delete` succeeds but leaves the DB instance, the subnet group, and the parameter group. Deploy the app successfully before you delete it.
 - Radius v0.62.0 and earlier copy the `password` into the AWS deployment responses they return, which appear in deployment operation results ([radius-project/radius#13457](https://github.com/radius-project/radius/issues/13457)). The Recipe can't avoid this: RDS needs the password, and the Recipe can only send it through that API.
 
+## AWS credentials for containers
+
+The `Radius.Compute/containers` Recipe deploys the same Kubernetes resources as the Kubernetes Recipe. It also gives each containers resource its own AWS identity through [EKS Pod Identity](https://docs.aws.amazon.com/eks/latest/userguide/pod-identities.html):
+
+1. An IAM role named `radius-app-<name>-<hash>`, with the permissions boundary, under the boundary's IAM path. For example, the boundary `arn:aws:iam::123456789012:policy/radius/apps/my-env/my-env-boundary` puts the roles under `/radius/apps/my-env/`. The hash covers that path, the region, the EKS cluster, the Environment's Kubernetes namespace, and the Radius resource ID, because IAM role names are unique per account and Radius resource IDs repeat across installations. Its trust policy allows only the Pod Identity service, for this cluster, namespace, and service account.
+2. A Pod Identity association between the role and a service account named `radius-app-<name>`.
+3. The service account, and the Deployment running as it. The Deployment waits for the association, because a pod started before it gets no credentials.
+
+EKS gives the pods short-lived credentials for the role. No access keys are stored. An [AWS SDK version that supports EKS Pod Identity](https://docs.aws.amazon.com/eks/latest/userguide/pod-id-minimum-sdk.html) finds them through its default credential chain, before the node's instance role. An older SDK may not use Pod Identity. Depending on the SDK, it may fail to find credentials, or use the node's instance role if the pod can reach the instance metadata service (IMDS).
+
+The role's permissions come from connections. An AWS Resource Type whose resources apps reach with IAM credentials declares a read-only `awsIamPolicy` string property. Its value is a JSON IAM policy document with a `Statement` array, scoped to the resource its Recipe created. The containers Recipe parses that string, so an object value fails the deploy. It copies the statements of every connected resource into one inline policy named `connections`, and doesn't turn `awsIamPolicy` into an environment variable. See [Contributing Resource Types and Recipes](../../docs/contributing/contributing-resource-types-recipes.md#aws-iam-permissions-for-connected-containers). A role without such connections gets a policy that denies everything. Removing a connection removes its statements on the next deploy, and running pods see policy changes within seconds.
+
+The boundary caps what any statement can grant. Create it before you deploy the pack. Because the roles share the boundary's path, the credentials Radius uses can be limited to roles under that path that have a boundary from the same path. Radius Canvas creates the boundary and that limit during environment setup. The pack requires the boundary. For containers that need no AWS credentials, use the Kubernetes Recipe.
+
+### Container requirements and limitations
+
+- The cluster needs the [EKS Pod Identity Agent](https://docs.aws.amazon.com/eks/latest/userguide/pod-id-agent-setup.html) add-on, which EKS Auto Mode includes. Without it, the deploy succeeds and pods get no credentials. Pod Identity works only for Linux pods on EC2 nodes. Pods on Fargate or Windows nodes get no credentials.
+- The credentials Radius uses for AWS need to create, read, update, tag, and delete roles under the boundary's path with the boundary attached, pass them to `pods.eks.amazonaws.com`, and manage Pod Identity associations. AWS Cloud Control also reads each role by name without its path, so they need `iam:GetRole` on `role/radius-app-*` too.
+- AWS can't move a role to another path. If you point the pack at a boundary under another path, the next deploy creates a new role for each containers resource and moves its association to it. Radius doesn't delete the old roles ([radius-project/radius#13065](https://github.com/radius-project/radius/issues/13065)). Without an association, no pod can assume them, but they keep their permissions until you delete them. To list them, run `aws iam list-roles --path-prefix <old path>`. Changing the boundary's name or content under the same path keeps the roles.
+- Each containers resource uses one role and one association, even without AWS connections. That keeps the set of resources the Recipe creates the same across deploys. Radius doesn't delete resources that a Recipe stops creating, so a role created only for AWS connections would be left behind, with its permissions, when the last connection is removed. Default quotas allow 1,000 roles per account and 5,000 associations per cluster.
+- Pod Identity doesn't isolate pods from the node's instance role. Unless the nodes restrict IMDS, a pod can still get the node role's credentials, and [AWS says](https://docs.aws.amazon.com/eks/latest/userguide/pod-identities.html) it may reach the credentials of other pods' roles on the same node. Pods with `hostNetwork: true` always reach IMDS. To keep pods to their own role, require IMDSv2 with a hop limit of 1 on the nodes and don't run app pods on the host network.
+- The policy statements of one containers resource are limited to 10,000 characters of compact JSON. The deploy fails above that.
+- A deploy fails before the Recipe creates or changes any resource when `appPermissionsBoundaryArn` isn't the ARN of an IAM policy, including when it is empty. The Recipe can't skip the identity, because Radius doesn't delete resources that a Recipe stops creating, so a skipped role would keep its permissions.
+- Radius v0.62.0 and earlier fail when they redeploy a Pod Identity association.
+
 ## Deploying
 
 Create and configure the Environment first. `rad env create` needs the Kubernetes namespace to exist:
@@ -109,7 +135,8 @@ rad deploy recipe-packs/aws-eks/aws-eks.bicep \
   --parameters eksClusterName=<cluster-name> \
   --parameters subnetIds=<subnet-id>,<subnet-id> \
   --parameters routesGatewayName=<gateway-name> \
-  --parameters containerImagesRegistry=<registry-path>
+  --parameters containerImagesRegistry=<registry-path> \
+  --parameters appPermissionsBoundaryArn=<boundary-arn>
 ```
 
 Finally, associate the pack with the Environment:
@@ -122,5 +149,11 @@ rad env update default \
 ## Testing
 
 Every pull request deploys and activates this pack on a local cluster, and checks that the pack passes exactly the parameters the MySQL Recipe declares. It also deploys the MySQL Recipe from the pull request with invalid values and checks that they fail before any AWS call. CI has no AWS account, so the nightly tests don't deploy the AWS Recipes.
+
+For the containers Recipe, CI compiles it and checks that the pack passes exactly the parameters it declares. It also checks that the role takes the boundary and its path, and that the trust policy, the association, and the pods use the same service account.
+
+The IAM limits that Radius Canvas sets up for these roles were tested by hand through AWS Cloud Control, as a deploy role with those limits. Creating, updating, and deleting a role with the boundary under its path, and creating and deleting a Pod Identity association for it, succeeded. These were refused: creating a role without the boundary, with another boundary, or under another path; removing or replacing the boundary; and changing or deleting the boundary policy.
+
+This version of the Recipe hasn't been deployed through Radius, so pod credentials and the failure for an invalid `appPermissionsBoundaryArn` are untested. An earlier prototype was tested by hand on an EKS cluster through a Radius edge build: create, policy changes reaching a running pod, and delete.
 
 The MySQL Recipe was tested by hand against an EKS cluster's subnets and security group: create, unchanged redeploy, and delete through Radius. Delete removes the instance, subnet group, parameter group, and automated backups. It keeps the final snapshot described in [Requirements and limitations](#requirements-and-limitations).

@@ -139,6 +139,10 @@ jobs:
         if: matrix.recipe == 'bicep'
         run: node --test .github/scripts/tests/test-openai-dependencies.js
 
+      - name: Validate AWS containers Recipe contract
+        if: matrix.recipe == 'bicep'
+        run: Compute/containers/test/assert-aws-recipe.sh
+
       - name: Validate containerImages local context resolver
         if: matrix.recipe == 'terraform'
         run: Compute/containerImages/test/resolve-local-context-test.sh
