@@ -51,22 +51,28 @@ if [[ "$*" == "postgres flexible-server list-skus "* ]]; then
             cat <<'JSON'
 [{
   "name": "default",
-  "supportedServerVersions": [{"name": "16"}],
+  "status": "Default",
+  "restricted": "Disabled",
+  "supportedServerVersions": [{"name": "16", "status": "Visible"}],
   "supportedServerEditions": [
     {
       "name": "Burstable",
-      "supportedServerSkus": [{"name": "Standard_B1ms"}],
+      "status": "Available",
+      "supportedServerSkus": [{"name": "Standard_B1ms", "status": "Visible"}],
       "supportedStorageEditions": [{
         "name": "Premium_LRS",
-        "supportedStorageMb": [{"storageSizeMb": 32768}]
+        "status": "Default",
+        "supportedStorageMb": [{"storageSizeMb": 32768, "status": "Available"}]
       }]
     },
     {
       "name": "GeneralPurpose",
-      "supportedServerSkus": [{"name": "Standard_D2ds_v5"}],
+      "status": "Default",
+      "supportedServerSkus": [{"name": "Standard_D2ds_v5", "status": "Visible"}],
       "supportedStorageEditions": [{
         "name": "Premium_LRS",
-        "supportedStorageMb": [{"storageSizeMb": 32768}]
+        "status": "Available",
+        "supportedStorageMb": [{"storageSizeMb": 32768, "status": "Default"}]
       }]
     }
   ]
@@ -74,6 +80,10 @@ if [[ "$*" == "postgres flexible-server list-skus "* ]]; then
 JSON
             ;;
         restricted) printf '%s\n' '[]' ;;
+        location-restricted)
+            printf '%s\n' \
+                '[{"name":"default","status":"Visible","restricted":"Enabled","supportedServerVersions":[],"supportedServerEditions":[]}]'
+            ;;
         offer-restricted)
             cat <<'JSON'
 [{
@@ -93,6 +103,14 @@ JSON
 JSON
             ;;
         malformed) printf '%s\n' '[{"supportedServerVersions":"16"}]' ;;
+        malformed-restricted)
+            printf '%s\n' \
+                '[{"name":"default","restricted":true,"supportedServerVersions":[],"supportedServerEditions":[]}]'
+            ;;
+        malformed-status)
+            printf '%s\n' \
+                '[{"name":"default","status":"Unknown","supportedServerVersions":[],"supportedServerEditions":[]}]'
+            ;;
         error) echo '(AuthorizationFailed) denied' >&2; exit 1 ;;
     esac
     exit 0
@@ -240,6 +258,12 @@ expect_status 5 env CATALOG_MODE=restricted RTC_POSTGRES_PROBE_GROUP_LIFECYCLE=t
 jq -e '.outcome == "restricted" and .errorCode == "RegionRestricted"' \
     "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "restricted result"
 reset ok
+expect_status 5 env CATALOG_MODE=location-restricted RTC_POSTGRES_PROBE_GROUP_LIFECYCLE=true \
+    RTC_POSTGRES_PROBE_ATTEMPTS=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \
+    PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+jq -e '.outcome == "restricted" and .errorCode == "RegionRestricted"' \
+    "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "location restriction result"
+reset ok
 expect_status 5 env CATALOG_MODE=offer-restricted RTC_POSTGRES_PROBE_GROUP_LIFECYCLE=true \
     RTC_POSTGRES_PROBE_ATTEMPTS=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \
     PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
@@ -252,7 +276,7 @@ expect_status 4 env CATALOG_MODE=unsupported RTC_POSTGRES_PROBE_GROUP_LIFECYCLE=
 [[ "$(count create)" == 0 ]] || fail "unsupported catalog must not create"
 jq -e '.outcome == "unsupported" and .errorCode == "UnsupportedVersion"' \
     "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "unsupported result"
-for mode in malformed error; do
+for mode in malformed malformed-restricted malformed-status error; do
     reset ok
     expect_status 1 env CATALOG_MODE="$mode" RTC_POSTGRES_PROBE_GROUP_LIFECYCLE=true \
         RTC_POSTGRES_PROBE_ATTEMPTS=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \

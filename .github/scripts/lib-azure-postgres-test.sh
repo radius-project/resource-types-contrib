@@ -58,7 +58,7 @@ rtc_postgres_catalog_result() {
 import json
 import sys
 
-AVAILABLE_STATUSES = {"available", "enabled", "supported"}
+AVAILABLE_STATUSES = {"available", "default", "enabled", "supported", "visible"}
 RESTRICTED_STATUSES = {"disabled", "restricted", "unavailable"}
 
 
@@ -70,12 +70,22 @@ def is_restricted(item):
         raise ValueError("status")
     if reason is not None and not isinstance(reason, str):
         raise ValueError("reason")
-    if restricted is not None and type(restricted) is not bool:
-        raise ValueError("restricted")
+    if restricted is not None:
+        if not isinstance(restricted, str):
+            raise ValueError("restricted")
+        normalized_restriction = restricted.lower()
+        if normalized_restriction not in {"enabled", "disabled"}:
+            raise ValueError("restricted")
+    else:
+        normalized_restriction = None
     normalized = status.lower() if status is not None else None
     if normalized is not None and normalized not in AVAILABLE_STATUSES | RESTRICTED_STATUSES:
         raise ValueError("status")
-    return restricted is True or bool(reason) or normalized in RESTRICTED_STATUSES
+    return (
+        normalized_restriction == "enabled"
+        or bool(reason)
+        or normalized in RESTRICTED_STATUSES
+    )
 
 
 def objects(parent, key):
