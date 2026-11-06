@@ -263,20 +263,23 @@ rtc_test_azure_postgresql_app() (
 # Best-effort cleanup for fast-fail paths. The request timeout and non-blocking
 # delete keep cleanup bounded when the cluster or resource controllers are unhealthy.
 rtc_cleanup_kubernetes_resources_bounded() {
-    local kubernetes_namespace="$1" app_name="$2" kind
+    local kubernetes_namespace="$1" app_name="$2" kind status=0
     if [[ -z "$kubernetes_namespace" ]]; then
         return
     fi
 
     echo "==> Cleaning up leftover K8s resources for $app_name in $kubernetes_namespace (bounded)"
     for kind in secrets deployments services; do
-        kubectl delete "$kind" \
+        if ! kubectl delete "$kind" \
             -l "radapp.io/application=$app_name" \
             -n "$kubernetes_namespace" \
             --request-timeout=10s \
-            --wait=false ||
+            --wait=false; then
             echo "Error: Could not clean up $kind for '$app_name'." >&2
+            status=1
+        fi
     done
+    return "$status"
 }
 
 rtc_snapshot_azure_management_locks() {
@@ -685,17 +688,40 @@ rtc_collect_test_diagnostics() {
 rtc_deploy_and_assert_test_app() {
     local test_file="$1" resource_type="$2" app_name_prefix="$3" environment_path="$4" workspace_name="$5" kubernetes_namespace="$6"
     local app_name started locks_before="" inventory_locks="" deploy_status=0 azure_before="" azure_after=""
-    local step_remaining="" step_deadline="${RTC_AZURE_TEST_STEP_DEADLINE_EPOCH:-}"
+    local step_remaining="" step_deadline="${RTC_AZURE_TEST_STEP_DEADLINE_EPOCH:-}" step_reserve=360
     local diagnostics_collected=0
     local -a params=() deploy_timeout=() cleanup_timeout=()
     local -a deploy_command=(rtc_deploy_with_retry)
     shift 6
 
     app_name="${app_name_prefix}-$(date +%s)"
+    started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
+        # Preserve the twelve-minute deletion budget plus diagnostics and verification.
+        step_reserve=1080
+    fi
+
+    if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ||
+          ( "${GITHUB_ACTIONS:-}" == true && "${RTC_TEST_PLATFORM:-}" == azure &&
+            ( -n "$step_deadline" || "$resource_type" == Radius.Compute/containers ) ) ]]; then
+        if ! command -v timeout >/dev/null 2>&1; then
+            echo "Error: Azure test deadlines require GNU timeout." >&2
+            rtc_collect_test_diagnostics "$resource_type" "$app_name" "$started" ||
+                echo "Error: Diagnostic collection failed before deployment." >&2
+            return 1
+        fi
+    fi
 
     if [[ "${GITHUB_ACTIONS:-}" == true && "${RTC_TEST_PLATFORM:-}" == azure && -n "$step_deadline" ]]; then
         if [[ ! "$step_deadline" =~ ^[1-9][0-9]{0,10}$ ]]; then
             echo "Error: Invalid Azure test step deadline." >&2
+            return 1
+        fi
+        step_remaining=$((step_deadline - $(date +%s) - step_reserve))
+        if ((step_remaining <= 0)); then
+            echo "Error: Azure test step budget exhausted before deployment; collecting diagnostics." >&2
+            rtc_collect_test_diagnostics "$resource_type" "$app_name" "$started" ||
+                echo "Error: Diagnostic collection failed before deployment." >&2
             return 1
         fi
     fi
@@ -709,10 +735,6 @@ rtc_deploy_and_assert_test_app() {
         cleanup_timeout=(timeout --kill-after=5s 12m)
     elif [[ "${GITHUB_ACTIONS:-}" == true && "${RTC_TEST_PLATFORM:-}" == azure &&
           "$resource_type" == Radius.Compute/containers ]]; then
-        if ! command -v timeout >/dev/null 2>&1; then
-            echo "Error: Azure container CI tests require GNU timeout." >&2
-            return 1
-        fi
         deploy_timeout=(timeout --kill-after=5s 15m)
         # shellcheck disable=SC2016 # Expanded by the child shell.
         deploy_command=("${deploy_timeout[@]}" bash -c \
@@ -746,12 +768,12 @@ rtc_deploy_and_assert_test_app() {
     fi
 
     echo "==> Deploying test application from $test_file"
-    started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     if [[ "${GITHUB_ACTIONS:-}" == true && "${RTC_TEST_PLATFORM:-}" == azure && -n "$step_deadline" ]]; then
-        # Reserve six minutes for diagnostics and bounded failure cleanup.
-        step_remaining=$((step_deadline - $(date +%s) - 360))
+        step_remaining=$((step_deadline - $(date +%s) - step_reserve))
         if ((step_remaining <= 0)); then
-            echo "Error: Azure test step budget exhausted before deployment; reserving time for diagnostics." >&2
+            echo "Error: Azure test step budget exhausted before deployment; collecting diagnostics." >&2
+            rtc_collect_test_diagnostics "$resource_type" "$app_name" "$started" ||
+                echo "Error: Diagnostic collection failed before deployment." >&2
             return 1
         fi
     fi
@@ -792,7 +814,7 @@ rtc_deploy_and_assert_test_app() {
         local assertion_remaining="" assertion_status=0
         local -a assertion_command=(rtc_assert_recipe_result)
         if [[ -n "$step_remaining" ]]; then
-            assertion_remaining=$((step_deadline - $(date +%s) - 360))
+            assertion_remaining=$((step_deadline - $(date +%s) - step_reserve))
             if ((assertion_remaining <= 0)); then
                 echo "Error: Azure test step budget exhausted before assertions; collecting diagnostics." >&2
                 deploy_status=1
@@ -828,8 +850,8 @@ rtc_deploy_and_assert_test_app() {
     fi
 
     if [[ "$deploy_status" -ne 0 ]]; then
-        if [[ -n "$step_remaining" ||
-              ( -n "${deploy_timeout[*]:-}" && "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" != 1 ) ]]; then
+        if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" != 1 &&
+              ( -n "$step_remaining" || -n "${deploy_timeout[*]:-}" ) ]]; then
             cleanup_timeout=(timeout --kill-after=5s 3m)
         fi
         rtc_collect_test_diagnostics "$resource_type" "$app_name" "$started" ||
@@ -864,7 +886,7 @@ rtc_deploy_and_assert_test_app() {
             diagnostics_collected=1
         fi
     fi
-    if [[ -n "$step_remaining" && "$deploy_status" -ne 0 ]]; then
+    if [[ -n "$step_remaining" && "$deploy_status" -ne 0 && "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" != 1 ]]; then
         rtc_cleanup_kubernetes_resources_bounded "$kubernetes_namespace" "$app_name" || cleanup_status=1
     else
         rtc_cleanup_kubernetes_resources "$kubernetes_namespace" "$app_name" || cleanup_status=1

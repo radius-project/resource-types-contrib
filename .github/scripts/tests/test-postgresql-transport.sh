@@ -287,6 +287,56 @@ done
 rm "$tmp/bin/kubectl"
 echo "PostgreSQL certificate failure observation and deployment settlement tests passed."
 
+sed -n '/^cleanup()/,/^}/p' "$root/Data/postgreSqlDatabases/test/test-kubernetes.sh" >"$tmp/cleanup-function"
+# shellcheck source=/dev/null
+source "$tmp/cleanup-function"
+# shellcheck disable=SC2329 # Stubs are called by the extracted cleanup trap.
+for outcome in test-failure app-cleanup kubernetes-cleanup unsettled success; do
+    export CLEANUP_CALLS="$tmp/cleanup-calls"
+    : >"$CLEANUP_CALLS"
+    status=0
+    (
+        export app_name=fixture workspace=fixture namespace=isolated started=2026-11-06T00:00:00Z
+        export app_deleted=false deployment_pending=false
+        [[ "$outcome" != unsettled ]] || deployment_pending=true
+        rtc_collect_test_diagnostics() { echo collector >>"$CLEANUP_CALLS"; return 1; }
+        settle_deployment() { return 1; }
+        rad() { echo app-delete >>"$CLEANUP_CALLS"; [[ "$outcome" != app-cleanup ]]; }
+        rtc_cleanup_kubernetes_resources() {
+            echo namespace-delete >>"$CLEANUP_CALLS"
+            [[ "$outcome" != kubernetes-cleanup ]]
+        }
+        kubectl() { echo extra-delete >>"$CLEANUP_CALLS"; }
+        rm() { echo temporary-cleanup >>"$CLEANUP_CALLS"; }
+        trap cleanup EXIT
+        if [[ "$outcome" == test-failure ]]; then exit 7; fi
+        exit 0
+    ) >"$tmp/cleanup-output" 2>&1 || status=$?
+    if [[ "$outcome" == success ]]; then
+        [[ "$status" == 0 ]] || { cat "$tmp/cleanup-output" >&2; exit 1; }
+        if grep -q '^collector$' "$CLEANUP_CALLS"; then
+            echo "Error: Successful PostgreSQL cleanup must not collect diagnostics." >&2
+            exit 1
+        fi
+    else
+        expected=1
+        [[ "$outcome" != test-failure ]] || expected=7
+        [[ "$status" == "$expected" && "$(grep -c '^collector$' "$CLEANUP_CALLS")" == 1 ]] || {
+            echo "Error: PostgreSQL $outcome must retain failure and collect once." >&2
+            exit 1
+        }
+        if [[ "$outcome" == test-failure && "$(head -n1 "$CLEANUP_CALLS")" != collector ]]; then
+            echo "Error: PostgreSQL diagnostics must precede failed-test cleanup." >&2
+            exit 1
+        fi
+        if [[ "$outcome" == unsettled && "$(wc -l <"$CLEANUP_CALLS")" != 1 ]]; then
+            echo "Error: Unsettled deployment must retain resources after collection." >&2
+            exit 1
+        fi
+    fi
+done
+echo "PostgreSQL lifecycle failure diagnostics tests passed."
+
 fixture="$tmp/repo"
 mkdir -p "$fixture/.github/scripts" "$fixture/Data/postgreSqlDatabases/"{test,recipes/kubernetes/{bicep,terraform}}
 cp "$root/.github/scripts/"{test-recipe.sh,test-recipe-pack-entry.sh,lib-recipe-test.sh} "$fixture/.github/scripts/"

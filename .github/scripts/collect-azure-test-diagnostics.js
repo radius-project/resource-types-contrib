@@ -95,7 +95,7 @@ function resource(value, scope) {
   });
   return {
     id: scopedId(v.id, scope), type: text(v.type), name: text(v.name), location: text(v.location),
-    provisioningState: text(p.provisioningState), state: text(p.state),
+    provisioningState: text(p.provisioningState) ?? text(v.provisioningState), state: text(p.state),
     instanceView: instanceView(p.instanceView),
     containers: containers(p.containers), initContainers: containers(p.initContainers),
     containersTruncated: [p.containers, p.initContainers].some((v) => Array.isArray(v) && v.length > LIMITS.items),
@@ -377,11 +377,21 @@ async function collect({ subscription, group, app, started, resourceType = "", p
     report.collections.push({ operation: label, returned: response.value.length, kept: Math.min(response.value.length, LIMITS.items) });
     return array(response.value);
   }
+  function recordResource(value) {
+    const next = resource(value, scope);
+    const previous = report.resources.find((item) => item.id.toLowerCase() === next.id.toLowerCase());
+    if (previous) {
+      Object.assign(previous, Object.fromEntries(Object.entries(next).filter(([, value]) => value !== null)));
+    } else {
+      report.resources.push(next);
+    }
+  }
   const groups = [];
   const inventory = await get("resource-inventory",
-    `https://management.azure.com${scope}/resources?api-version=2021-04-01`);
-  report.resources.push(...page("resource-inventory", inventory)
-    .filter((item) => scopedId(object(item).id, scope)).map((item) => resource(item, scope)));
+    `https://management.azure.com${scope}/resources?api-version=2021-04-01&$expand=provisioningState`);
+  for (const item of page("resource-inventory", inventory)) {
+    if (scopedId(object(item).id, scope)) recordResource(item);
+  }
   save(report);
   const children = [];
   // These API-specific reads enrich the general inventory; they do not select
@@ -398,7 +408,7 @@ async function collect({ subscription, group, app, started, resourceType = "", p
         report.errors.push({ operation: label, reason: "invalid-resource-id" });
         continue;
       }
-      report.resources.push(resource(item, scope));
+      recordResource(item);
       if (type === "Microsoft.ContainerInstance/containerGroups") groups.push(id);
       if (type === "Microsoft.CognitiveServices/accounts") {
         children.push([`${id}/deployments`, version]);
@@ -419,7 +429,7 @@ async function collect({ subscription, group, app, started, resourceType = "", p
         report.errors.push({ operation: label, reason: "invalid-resource-id" });
         continue;
       }
-      report.resources.push(resource(item, scope));
+      recordResource(item);
     }
     save(report);
   }
@@ -433,7 +443,7 @@ async function collect({ subscription, group, app, started, resourceType = "", p
     const detail = await get("container-group-instance-view", `https://management.azure.com${id}?api-version=2024-11-01-preview`);
     if (detail) {
       if (scopedId(detail.id, scope)?.toLowerCase() === id.toLowerCase()) {
-        report.resources.push(resource(detail, scope));
+        recordResource(detail);
       } else {
         report.errors.push({ operation: "container-group-instance-view", reason: "invalid-resource-id" });
       }

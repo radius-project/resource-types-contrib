@@ -81,6 +81,7 @@ exec "$@"
 EOF
 cat >"$TEST_ROOT/bin/az" <<'EOF'
 #!/bin/bash
+echo "az $1 $2" >>"$CALL_LOG"
 if [[ "$1 $2" == "lock list" ]]; then exit 0; fi
 echo "Unexpected Azure CLI call outside collector" >&2
 exit 99
@@ -161,11 +162,39 @@ done
     : >"$CALL_LOG"
     status=0
     GITHUB_ACTIONS=true RESOURCE_TYPE=Radius.AI/models \
+        RTC_AZURE_LOCK_GUARD=1 \
         RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$(( $(date +%s) + 300 ))" \
         run_helper >"$TEST_ROOT/output" 2>&1 || status=$?
     [[ "$status" == 1 ]] || fail "exhausted step budget must fail"
     if grep -q '^rad deploy ' "$CALL_LOG"; then fail "must not allocate after the step budget expires"; fi
     grep -q 'step budget exhausted' "$TEST_ROOT/output" || fail "budget failure must be explicit"
+    [[ "$(grep -c '^collector$' "$CALL_LOG")" == 1 ]] || fail "exhausted budget must collect immediately"
+    if grep -q '^az ' "$CALL_LOG"; then fail "exhausted budget must precede lock snapshots"; fi
+)
+(
+    : >"$CALL_LOG"
+    status=0
+    GITHUB_ACTIONS=true RESOURCE_TYPE=Radius.Data/postgreSqlDatabases RTC_POSTGRES_CAPACITY_RECOVERY=1 \
+        RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$(( $(date +%s) + 900 ))" \
+        run_helper >"$TEST_ROOT/output" 2>&1 || status=$?
+    [[ "$status" == 1 ]] || fail "exhausted PostgreSQL cleanup reserve must fail"
+    [[ "$(grep -c '^collector$' "$CALL_LOG")" == 1 ]] || fail "PostgreSQL budget failure must collect"
+    if grep -qE '^(rad|az) ' "$CALL_LOG"; then fail "PostgreSQL budget must precede snapshots and allocation"; fi
+)
+(
+    # shellcheck disable=SC2329 # Called by the sourced helper.
+    command() {
+        if [[ "$*" == "-v timeout" ]]; then return 1; fi
+        builtin command "$@"
+    }
+    : >"$CALL_LOG"
+    status=0
+    GITHUB_ACTIONS=true RESOURCE_TYPE=Radius.AI/models \
+        RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$(( $(date +%s) + 600 ))" \
+        run_helper >"$TEST_ROOT/output" 2>&1 || status=$?
+    [[ "$status" == 1 ]] || fail "non-container deadlines must require GNU timeout"
+    grep -q 'Azure test deadlines require GNU timeout' "$TEST_ROOT/output" || fail "missing timeout must be explicit"
+    if grep -q '^rad ' "$CALL_LOG"; then fail "missing timeout must prevent allocation"; fi
 )
 (
     deadline=$(( $(date +%s) + 600 ))

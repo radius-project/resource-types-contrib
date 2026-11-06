@@ -381,6 +381,13 @@ if grep -q '^rad app delete' "$CALL_LOG"; then
 fi
 
 # Healthy Azure cleanup is not subject to a short harness timeout.
+(
+    : >"$CALL_LOG"
+    if KUBECTL_EXIT_CODE=1 run_lib rtc_cleanup_kubernetes_resources_bounded my-ns testapp >/dev/null 2>&1; then
+        fail "bounded Kubernetes cleanup failures must return failure"
+    fi
+    assert_eq 3 "$(grep -c '^kubectl delete ' "$CALL_LOG")" "bounded cleanup must attempt every kind"
+)
 : >"$CALL_LOG"
 rm -f "$AZ_LOCK_STATE_FILE"
 started_at="$(date +%s)"
@@ -819,6 +826,27 @@ assert_eq 2 "$(grep '^rad deploy ' "$CALL_LOG" | sed -E 's/.*applicationName=([^
 awk '/^rad app delete / { cleaned++ } /^az resource list / { snapshots++ }
     /^rad deploy / { attempts++; if (attempts == 2 && (cleaned != 1 || snapshots < 3)) exit 1 }' "$CALL_LOG" ||
     fail "recovery must follow Radius cleanup and Azure deletion verification"
+
+(
+    export GITHUB_ACTIONS=true RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$(( $(date +%s) + 2700 ))"
+    export RTC_TEST_DIAGNOSTICS_DIR="$TEST_ROOT/capacity-diagnostics"
+    : >"$CALL_LOG"
+    DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres >/dev/null 2>&1 ||
+        fail "CI capacity recovery with a step deadline must succeed"
+    assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "CI recovery attempts"
+    assert_eq 2 "$(grep -c '^timeout --kill-after=5s 12m rad app delete ' "$CALL_LOG")" "CI recovery must preserve twelve-minute cleanup"
+    if grep -q -- '--wait=false' "$CALL_LOG"; then fail "CI recovery must wait for Kubernetes cleanup"; fi
+    [[ -n "$(find "$RTC_TEST_DIAGNOSTICS_DIR" -name azure.json -print -quit)" ]] ||
+        fail "failed capacity attempt must retain diagnostics after recovery"
+    for failure in APP_DELETE_EXIT_CODE KUBECTL_EXIT_CODE AZ_RESOURCE_LIST_FAIL; do
+        : >"$CALL_LOG"
+        if (
+            export "$failure=1"
+            DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres
+        ) >/dev/null 2>&1; then fail "CI $failure must block recovery"; fi
+        [[ "$(grep -c '^rad deploy ' "$CALL_LOG")" -le 1 ]] || fail "CI cleanup uncertainty must block recovery"
+    done
+)
 
 RADIUS_POSTGRES_CAPACITY_ERROR='Error: {"code":"RecipeDeploymentFailed","message":"Recipe deployment failed","details":[{"code":"DeploymentFailed","details":[{"code":"ResourceDeploymentFailure","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg","message":"{\"code\":\"SkuNotAvailable\",\"message\":\"capacity unavailable\"}"}]}]}'
 : >"$CALL_LOG"

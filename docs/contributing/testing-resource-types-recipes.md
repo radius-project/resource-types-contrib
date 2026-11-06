@@ -455,7 +455,8 @@ per-recipe tests and checked-in Recipe Pack tests. Deployment, assertion, and
 cleanup failures all trigger collection. Cleanup-only failures trigger collection
 after the failed cleanup attempt.
 The collector does not retry a deployment or turn a failed test into a pass.
-It does not run for successful tests. The validation, nightly, and release candidate
+Successful attempts do not trigger collection. Failed attempts keep their logs
+even if a later PostgreSQL capacity-recovery attempt succeeds. The validation, nightly, and release candidate
 runtime jobs also collect a workflow-level snapshot after any failed step. This
 includes build, setup, pack deployment, and PostgreSQL preflight failures that occur
 before a test app deploys. Steps with `continue-on-error` are checked by their
@@ -465,7 +466,7 @@ remain in `postgres-selection.json`.
 Download `azure-test-diagnostics-bicep` from Azure validation, or
 `azure-test-diagnostics-nightly-azure` from the nightly run. Each failure has a
 separate directory with `azure.json` and `collector-status.txt`. There is no
-artifact when no applicable test fails. Azure Terraform validation uses
+artifact when no test attempt or workflow stage fails. Azure Terraform validation uses
 `azure-test-diagnostics-terraform`.
 Release candidate tests use `azure-test-diagnostics-rc-azure`.
 Kubernetes validation uses `test-diagnostics-bicep` or `test-diagnostics-terraform`.
@@ -490,11 +491,14 @@ waiting for the 30-minute job limit. A timeout remains a test failure.
 Collection runs before app cleanup, and Kubernetes cleanup is still attempted.
 The nightly and release candidate test steps also pass their absolute deadline
 as `RTC_AZURE_TEST_STEP_DEADLINE_EPOCH`. Each Azure deployment must stop at least
-six minutes before that deadline. Assertions use the time left before the same
+six minutes before that deadline, or eighteen minutes for PostgreSQL capacity recovery
+to preserve its twelve-minute application deletion budget and cleanup verification.
+Assertions use the time left before the same
 cutoff; they cannot use the diagnostics and cleanup reserve. Container tests retain their shorter
 15-minute limit. PostgreSQL tests retain their shorter recovery deadline.
-Failure cleanup uses a three-minute application deletion limit and bounded
-Kubernetes deletion requests. A test cannot start a deployment after the
+Other failure cleanup uses a three-minute application deletion limit and bounded
+Kubernetes deletion requests. PostgreSQL recovery waits for Kubernetes cleanup
+and blocks recovery if deletion fails. A test cannot start a deployment after the
 reserved part of the step budget begins. This lets a stalled MongoDB deployment
 reach the collector instead of waiting for the workflow to terminate the step.
 These limits do not apply to local runs or non-Azure tests.

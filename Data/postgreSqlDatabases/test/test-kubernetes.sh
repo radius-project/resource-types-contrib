@@ -47,14 +47,24 @@ for resource in 'Radius.Data/postgreSqlDatabases postgresql' \
 done
 
 app_name="postgresql-transport-$(date +%s)-$$"
+started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 app_deleted=false
 tmp="$(mktemp -d)"
 chmod 0700 "$tmp"
 cleanup() {
-    local status=$?
+    local status=$? diagnostics_collected=false
     trap - EXIT
+    if [[ "$status" -ne 0 ]]; then
+        rtc_collect_test_diagnostics Radius.Data/postgreSqlDatabases "$app_name" "$started" ||
+            echo "Error: PostgreSQL diagnostic collection failed; continuing cleanup." >&2
+        diagnostics_collected=true
+    fi
     if [[ "$deployment_pending" == true ]]; then
         if ! settle_deployment; then
+            if [[ "$diagnostics_collected" == false ]]; then
+                rtc_collect_test_diagnostics Radius.Data/postgreSqlDatabases "$app_name" "$started" ||
+                    echo "Error: PostgreSQL diagnostic collection failed after unsettled deployment." >&2
+            fi
             echo "Error: Deployment has not been confirmed terminal; preserving $tmp and test resources for recovery." >&2
             exit 1
         fi
@@ -62,9 +72,18 @@ cleanup() {
     if [[ "$app_deleted" == false ]]; then
         rad app delete "$app_name" --workspace "$workspace" --yes || status=1
     fi
+    if [[ "$status" -ne 0 && "$diagnostics_collected" == false ]]; then
+        rtc_collect_test_diagnostics Radius.Data/postgreSqlDatabases "$app_name" "$started" ||
+            echo "Error: PostgreSQL diagnostic collection failed after application cleanup failure." >&2
+        diagnostics_collected=true
+    fi
     rtc_cleanup_kubernetes_resources "$namespace" "$app_name" || status=1
     kubectl delete configmap -n "$namespace" -l "radapp.io/application=$app_name" || status=1
     kubectl delete secret -n "$namespace" -l "rtc-postgresql-test=$app_name" || status=1
+    if [[ "$status" -ne 0 && "$diagnostics_collected" == false ]]; then
+        rtc_collect_test_diagnostics Radius.Data/postgreSqlDatabases "$app_name" "$started" ||
+            echo "Error: PostgreSQL diagnostic collection failed after Kubernetes cleanup failure." >&2
+    fi
     rm -rf "$tmp"
     exit "$status"
 }

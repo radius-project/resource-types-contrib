@@ -115,8 +115,8 @@ test("collects preview ACI, images, network state and operation IDs using scoped
   }
   assert.equal(report.resources.find((r) => r.id.endsWith("/ng")).provisioningState, "Failed");
   assert.equal(report.resources.find((r) => r.id.endsWith("/vnet")).subnets[0].provisioningState, "Succeeded");
-  assert.equal(report.resources.at(-1).containers[0].image, image);
-  assert.equal(report.resources.at(-1).containers[0].instanceView.events[0].count, 2);
+  assert.equal(report.resources.find((r) => r.id === containerId).containers[0].image, image);
+  assert.equal(report.resources.find((r) => r.id === containerId).containers[0].instanceView.events[0].count, 2);
   assert.equal(report.activity[0].serviceRequestId, subscription);
   assert.equal(report.errors.length, 0);
   assert.ok(snapshots.length > calls.length, "partial evidence must be saved before later calls");
@@ -138,6 +138,48 @@ test("allowlists typed leaves; never copies nested objects, free text or credent
   assert.ok(!JSON.stringify(safe).includes(secret));
   assert.ok(!JSON.stringify(activity({ properties: { serviceRequestId: secret }, status: { value: { secret } } }, scope)).includes(secret));
   assert.equal(resource(null, scope).instanceView.available, false);
+});
+
+test("expands inventory state and merges provider details by resource ID", async () => {
+  const other = id("Microsoft.Storage/storageAccounts", "storage");
+  const { report } = await withMock(async (args) => {
+    const url = new URL(args[4]);
+    if (url.pathname.endsWith("/resources")) {
+      assert.equal(url.searchParams.get("$expand"), "provisioningState");
+      return { value: { value: [
+        { id: containerId, name: "child", type: "Microsoft.ContainerInstance/containerGroups", provisioningState: "Creating" },
+        { id: other, provisioningState: "Succeeded" },
+      ] } };
+    }
+    if (url.pathname.endsWith("/containerGroups")) {
+      return { value: { value: [{ id: containerId.toUpperCase(), properties: { provisioningState: "Succeeded" } }] } };
+    }
+    if (url.pathname.toLowerCase().endsWith("/containergroups/child")) return { value: fixture() };
+    return { value: { value: [] } };
+  });
+  assert.equal(report.resources.length, 2);
+  const container = report.resources.find((r) => r.id.toLowerCase() === containerId.toLowerCase());
+  assert.equal(container.name, "child");
+  assert.equal(container.provisioningState, "Failed");
+  assert.equal(container.containers[0].image, image);
+  assert.equal(report.resources.find((r) => r.id === other).provisioningState, "Succeeded");
+  assert.equal(resource({ provisioningState: { secret } }, scope).provisioningState, null);
+});
+
+test("caps discovered pod replicas and reports truncation", async () => {
+  const podCalls = [];
+  const { report } = await withMock(() => assert.fail("must not call Azure"), {
+    platform: "kubernetes",
+    runKubernetes: async (args) => {
+      podCalls.push(args);
+      return { value: args[0] === "get"
+        ? { items: Array.from({ length: LIMITS.items + 5 }, (_, i) => ({ metadata: { name: `dynamic-rp-${i}` } })) }
+        : { records: [], omitted: 0 } };
+    },
+  });
+  assert.equal(report.radiusLogs.length, LIMITS.items);
+  assert.equal(podCalls.filter((args) => args[0] === "logs").length, LIMITS.items);
+  assert.ok(report.truncations.includes("radius-pods"));
 });
 
 test("non-container failures collect account, model, MongoDB and PostgreSQL state", async () => {
