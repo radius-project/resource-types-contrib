@@ -16,6 +16,8 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `password` | string (`x-radius-sensitive`) | Required | The administrator password. Encrypted at rest, redacted on reads, and injected decrypted into the Recipe as `{{context.resource.properties.password}}`. |
 | `database` | string | Optional | The name of the database. Defaults to `postgres_db`. |
 | `size` | string (`S`, `M`, `L`) | Optional | The size of the PostgreSQL database. Defaults to `S`. The Recipe maps the size onto a concrete cloud SKU/tier. |
+| `extensions` | array of strings | Optional | Extension names. Azure allow-lists them; the application must create each extension in its database. Kubernetes creates them when the database is first initialized. Defaults to `[]`. |
+| `serverSettings` | object of strings | Optional | PostgreSQL server parameter names and values. Reserved TLS and port settings cannot be changed through this object. Defaults to `{}`. See [Azure configuration rules](recipes/azure/README.md#settings-and-operator-overrides). |
 | `initSql` | string | Optional | Optional SQL script executed on first initialization to create tables, indexes, and seed data. |
 | `tls` | string (`required`, `optional`) | Optional | The requested transport policy for connections to the database server. Defaults to `required`. Use `optional`, which permits non-TLS connections, only when the server is not publicly reachable. See below for platform behavior and operator overrides. |
 | `host` | string | Read only | The host name used to connect to the database. Set from the Recipe module's output. |
@@ -27,16 +29,76 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 | Platform | Recipe Pack | Recipe source |
 | --- | --- | --- |
-| Azure | [`recipe-packs/azure-aks/azure-aks.bicep`](../../recipe-packs/azure-aks/azure-aks.bicep) | Direct module — Azure Verified Module `avm/res/db-for-postgre-sql/flexible-server` |
+| Azure | [`recipe-packs/azure-aks/azure-aks.bicep`](../../recipe-packs/azure-aks/azure-aks.bicep) | [Authored Recipe](recipes/azure/README.md) using Azure Verified Module `avm/res/db-for-postgre-sql/flexible-server:0.15.2` |
 | Kubernetes | [`recipe-packs/kubernetes/default.bicep`](../../recipe-packs/kubernetes/default.bicep) | `ghcr.io/radius-project/kube-recipes/postgresqldatabases` |
 
 ## Using the resource type
 
 Add a `postgreSqlDatabases` resource to your application and connect a container to it. Radius injects the database's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_POSTGRESQL_HOST`, `CONNECTION_POSTGRESQL_PORT`, `CONNECTION_POSTGRESQL_DATABASE`, and `CONNECTION_POSTGRESQL_TLS`). See [`test/app.bicep`](test/app.bicep) for a complete example.
 
-Because `tls` defaults to `required`, configure your PostgreSQL client for TLS and trust the server's certificate authority (CA). Both Kubernetes Recipes enable TLS for every policy and reject plaintext TCP connections when `tls` is omitted or `required`. With `optional`, both TLS and password-authenticated plaintext connections work. A platform engineer can still pin the Azure server's transport policy to `ON` or `OFF`; the connection variable reports the application's request. See [PostgreSQL transport policy](../../recipe-packs/azure-aks/README.md#postgresql-transport-policy) for Azure precedence and public-network restrictions.
+Because `tls` defaults to `required`, configure your PostgreSQL client for TLS and trust the server's certificate authority (CA). Both Kubernetes Recipes enable TLS for every policy and reject plaintext TCP connections when `tls` is omitted or `required`. With `optional`, both TLS and password-authenticated plaintext connections work. See the [Azure configuration rules](recipes/azure/README.md#settings-and-operator-overrides) for operator overrides and effective transport policy.
 
 Use `optional` only when the server is not publicly reachable. Non-TLS connections can expose administrator credentials and query traffic in transit. Private reachability does not encrypt traffic, so TLS remains preferred; keep it required with the Azure pack as written.
+
+## Extensions and server settings
+
+Declare the settings that the application needs:
+
+```bicep
+extensions: [
+  'pg_trgm'
+  'btree_gin'
+]
+serverSettings: {
+  log_min_duration_statement: '1000'
+}
+```
+
+Use extension names supported by the target server. The default
+`postgres:16-alpine` image includes `pg_trgm` and `btree_gin`, but not every
+extension. For example, `vector` needs an image that includes pgvector.
+These Recipes do not install extension packages.
+
+On Azure, `extensions` requests a server allow-list; the application must
+create each extension in its database. The [Azure configuration rules](recipes/azure/README.md#settings-and-operator-overrides)
+define list merging, explicit clearing, operator overrides, and protected
+settings. The same document explains the AVM conversion and the publication
+prerequisite for the new Recipe image.
+
+On Kubernetes, both Recipes generate `CREATE EXTENSION IF NOT EXISTS`
+statements in `/docker-entrypoint-initdb.d/00-extensions.sql`. PostgreSQL
+runs these only when its data directory is empty. The Bicep Recipe keeps
+the existing `01-init.sql` file after the extension file. Updating the list
+does not create or remove extensions in an existing database. Both Recipes
+pass server settings as separate `postgres -c name=value` arguments, not
+shell commands. They escape dollar signs in Pod arguments so Kubernetes
+preserves literal values such as `$(POSTGRES_DB)` and `$$` before the shell
+forwards them to PostgreSQL. Invalid or unavailable settings fail startup. Setting
+changes cause a Pod rollout; read the [data protection warning](#updates-and-data-protection)
+before making changes.
+
+The Kubernetes Recipes reserve `port`, `ssl`, `ssl_cert_file`,
+`ssl_key_file`, and `hba_file`, without regard to case. This preserves
+the existing TLS policy and certificate handling. Both platforms keep
+the server on port 5432. Other setting names and values are passed
+unchanged. Do not place credentials in `serverSettings`.
+
+### Local settings checks
+
+Use Node.js, the Radius-bundled Bicep CLI (`~/.rad/bin/bicep`, or set
+`BICEP_CLI`), and Terraform 1.7 or later. The first run needs access to the
+public AVM and Terraform provider registries.
+
+```bash
+make test-postgresql-settings
+make test-postgresql-inputs
+bash .github/scripts/tests/test-postgresql-transport.sh
+```
+
+These commands check compiled output, Azure snapshots, Terraform plans
+with a mock Kubernetes provider, and existing transport regressions. They
+do not deploy to Azure or Kubernetes. Deployment-specific checks remain
+in [#472](https://github.com/radius-project/resource-types-contrib/issues/472).
 
 ## Kubernetes TLS
 

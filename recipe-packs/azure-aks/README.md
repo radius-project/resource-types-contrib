@@ -16,7 +16,7 @@ This Recipe Pack requires a Radius runtime that supports the `context.azure.reso
 
 ## Database ports
 
-The AVM modules for MySQL flexible server, PostgreSQL flexible server, and Azure SQL Database expose `fqdn` / `fullyQualifiedDomainName` but no port output, so this pack maps only `host` for `Radius.Data/mySqlDatabases`, `Radius.Data/postgreSqlDatabases`, and `Radius.Data/sqlServerDatabases`.
+The direct AVM modules for MySQL flexible server and Azure SQL Database expose `fqdn` / `fullyQualifiedDomainName` but no port output, so this pack maps only `host` for `Radius.Data/mySqlDatabases` and `Radius.Data/sqlServerDatabases`. The authored PostgreSQL Recipe returns `host`, `port: 5432`, and `database` through its `result`.
 
 A Recipe Pack `outputs` entry maps a resource property to the **name of a module output**; it cannot supply a literal, and naming an output the module does not declare fails validation before the deployment is submitted. Because each of these Azure managed services is fixed to its engine's standard port, each Resource Type declares `port` as an optional property whose schema default is that port (`3306`, `5432`, `1433`). Radius materializes the default when the application definition leaves the property unset, so `CONNECTION_<NAME>_PORT` is populated on Azure without a mapping here. Please do not "fix" the missing mapping by adding a `port` entry to these recipes.
 
@@ -33,7 +33,7 @@ Defaults are applied when a resource is written, not when a Resource Type is reg
 | Resource Type | Kind | Source |
 | --- | --- | --- |
 | `Radius.Data/sqlServerDatabases` | Bicep | Azure Verified Module — `mcr.microsoft.com/bicep/avm/res/sql/server:0.21.4` |
-| `Radius.Data/postgreSqlDatabases` | Bicep | Azure Verified Module — `avm/res/db-for-postgre-sql/flexible-server` |
+| `Radius.Data/postgreSqlDatabases` | Bicep | `ghcr.io/radius-project/azure-aks-recipes/postgresqldatabases:latest`, using AVM `avm/res/db-for-postgre-sql/flexible-server:0.15.2` |
 | `Radius.AI/search` | Bicep | Azure Verified Module — `avm/res/search/search-service` |
 | `Radius.AI/models` | Bicep | Azure Verified Module — `avm/res/cognitive-services/account` |
 | `Radius.Messaging/rabbitMQ` | Bicep | `ghcr.io/radius-project/kube-recipes/rabbitmq` |
@@ -62,17 +62,33 @@ This Recipe therefore requires a registered `Radius.Data` namespace whose `mySql
 
 ### PostgreSQL transport policy
 
-Unless the platform engineer pins the server parameter as described below, the `Radius.Data/postgreSqlDatabases` Recipe maps the resource's `tls` property onto the flexible server's `require_secure_transport` parameter, so the server rejects connections that do not use TLS unless the application sets `tls: 'optional'`. This relies on the Radius runtime materializing schema defaults into the resource's properties, so applications that omit `tls` still resolve to `required`.
+The `Radius.Data/postgreSqlDatabases` Recipe uses the resource's `tls` property and operator configuration to set the server transport policy. See the [Azure configuration rules](../../Data/postgreSqlDatabases/recipes/azure/README.md#settings-and-operator-overrides) for the mapping and operator precedence.
 
 **Keep TLS required with this pack as written.** It enables public network access and includes an allow-all firewall rule, with no parameter to make the server private. Allowing non-TLS connections can expose administrator credentials and query traffic in transit. Use `optional` only with a Recipe or customized pack that makes the server not publicly reachable. Private reachability does not encrypt traffic, so TLS remains preferred. `optional` allows plaintext when honored by the Recipe; it does not disable TLS support or change network access.
 
-The derived entry is appended to the `postgreSqlServerConfigurations` array rather than replacing it, so operator-supplied parameters such as `azure.extensions` are preserved. **The platform engineer wins:** if `postgreSqlServerConfigurations` already contains a `require_secure_transport` entry, the Recipe forwards that value and does not derive one from `tls`. Setting it there pins the server's transport policy environment-wide, and an application's `tls` property cannot override it. Leave it unset to let each application request its own policy.
-
-An operator-pinned `ON` requires TLS even when the application requests `optional`. An operator-pinned `OFF` allows non-TLS connections even when the application requests `required`, and carries the same public-network risk described above; TLS connections remain possible. The resource's `tls` property and `CONNECTION_POSTGRESQL_TLS` still report the application's requested policy, not the effective server setting. The PostgreSQL operator-configuration array does not apply to the MySQL Recipe.
-
-Supply configuration objects with `name`, `source`, and `value` fields, using canonical lowercase Azure parameter names. Override detection compares names exactly: `Require_Secure_Transport` is not recognized, so the derived entry is still added. The filter's safe navigation is not input validation; malformed entries are forwarded and can fail during downstream AVM configuration deployment.
+The PostgreSQL operator-configuration array does not apply to the MySQL Recipe.
 
 This Recipe therefore requires a registered `Radius.Data` namespace whose `postgreSqlDatabases` definition includes the `tls` property. The property was added without changing the `2025-08-01-preview` API version, so an older definition cannot be detected by version negotiation. Register a `Radius.Data` namespace release that contains the property before deploying this pack.
+
+### PostgreSQL application settings
+
+Applications can now request `extensions` and `serverSettings` on
+`Radius.Data/postgreSqlDatabases`. The authored Recipe converts the
+application map and list to AVM configuration items. It still uses the
+same pinned `flexible-server:0.15.2` AVM and retains the existing server
+name and provisioning defaults; it does not replace AVM provisioning.
+
+See the [Azure configuration rules](../../Data/postgreSqlDatabases/recipes/azure/README.md#settings-and-operator-overrides)
+for extension list merging, explicit clearing, operator precedence, and
+protected settings.
+
+**Release prerequisite:** Public availability of the new
+`ghcr.io/radius-project/azure-aks-recipes/postgresqldatabases:latest`
+image is not verified. Publish it through the normal release process and
+verify anonymous pull access before releasing or deploying this pack.
+The publishing workflow adds the Recipe, but a main-branch `edge` push
+does not establish the `latest` alias. No stable alias or package access
+change is part of this change. See the [Recipe documentation](../../Data/postgreSqlDatabases/recipes/azure/README.md).
 
 ## Parameters
 
@@ -84,7 +100,7 @@ The Azure pack accepts only parameters consumed by its Recipes. Azure and Kubern
 | `routesGatewayNamespace` | Namespace of the Gateway resource for `Radius.Compute/routes`. Defaults to `default`. |
 | `containerImagesRegistry` | Registry path (e.g. `ghcr.io/my-org`) that `Radius.Compute/containerImages` pushes built images to. |
 | `containerImagesRegistrySecretName` | Name of the Kubernetes Secret holding registry credentials for `Radius.Compute/containerImages`. Optional; leave empty for an unauthenticated registry. |
-| `postgreSqlServerConfigurations` | Server parameters forwarded to the AVM PostgreSQL flexible server `configurations` array for `Radius.Data/postgreSqlDatabases`, using the AVM item shape `{ name, source, value }`. Most commonly used to allow-list extensions via `azure.extensions` — for example `[{ name: 'azure.extensions', source: 'user-override', value: 'vector' }]` to enable pgvector. See [Extensions and modules by name in Azure Database for PostgreSQL flexible server](https://learn.microsoft.com/en-us/azure/postgresql/extensions/concepts-extensions-versions) for the supported extension names. A `require_secure_transport` entry pins the transport policy for every database in the Environment and overrides the resource's `tls` property, as described in [PostgreSQL transport policy](#postgresql-transport-policy). Optional; defaults to an empty array (no extra server configuration). |
+| `postgreSqlServerConfigurations` | Operator settings in AVM `{ name, source, value }` form. Defaults to `[]`. See the [Azure configuration rules](../../Data/postgreSqlDatabases/recipes/azure/README.md#settings-and-operator-overrides). |
 
 ## Deploying
 
