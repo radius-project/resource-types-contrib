@@ -223,6 +223,7 @@ chmod 0600 /tls-runtime/server.key
 exec docker-entrypoint.sh postgres "$@" -c port=5432 -c ssl=on -c ssl_cert_file=/tls-runtime/server.crt -c ssl_key_file=/tls-runtime/server.key -c hba_file=/tls-runtime/pg_hba.conf
 '''
             ]
+            // The first argument is the sh -ec $0 placeholder; "$@" contains only setting arguments.
             args: concat(['postgres'], serverArgs)
             readinessProbe: {
               exec: {
