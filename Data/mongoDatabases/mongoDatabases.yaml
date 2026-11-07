@@ -6,7 +6,8 @@ types:
       database. To deploy a Mongo database, add a mongoDatabases resource to the
       application definition Bicep file. The Azure recipe uses Cosmos DB for
       MongoDB and exposes its endpoint and connection string as resource
-      properties.
+      properties. The Kubernetes recipe runs a single MongoDB server with
+      authentication enabled in the Environment's namespace.
       ```bicep
       resource database 'Radius.Data/mongoDatabases@2025-08-01-preview' = {
         name: 'mongo'
@@ -76,7 +77,7 @@ types:
               description: "(Optional) The Mongo database name. Defaults to `mongo_db` if not provided."
             endpoint:
               type: string
-              description: The endpoint used to connect to the database. Mapped from the recipe module's output.
+              description: (Read Only) The endpoint used to connect to the database. Mapped from the recipe module's output. For the Kubernetes recipe this is the MongoDB Service DNS name followed by port `27017`.
               readOnly: true
             secrets:
               type: object
@@ -94,5 +95,5 @@ types:
                 connectionString:
                   type: string
                   readOnly: true
-                  description: The connection string used to connect to the database. Mapped from the recipe module's output; delivered via the managed secret.
+                  description: (Read Only) The connection string used to connect to the database. Mapped from the recipe module's output. The Kubernetes recipe returns a MongoDB URI with the generated administrator credentials and `authSource=admin`. Delivered via the managed secret.
           required: [environment]

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The **Radius.Data/mongoDatabases** resource type represents a Mongo-compatible database. It allows developers to create and easily connect to a Mongo database as part of their Radius applications. The Azure Recipe Pack provisions Cosmos DB for MongoDB using the Azure Verified Module and exposes its endpoint and connection string as read-only resource properties.
+The **Radius.Data/mongoDatabases** resource type represents a Mongo-compatible database. It allows developers to create and easily connect to a Mongo database as part of their Radius applications. The Azure Recipe Pack provisions Cosmos DB for MongoDB using the Azure Verified Module and exposes its endpoint and connection string as read-only resource properties. The Kubernetes Recipe Pack runs a single MongoDB server in the Environment's namespace instead.
 
 Developer documentation is embedded in the resource type definition YAML file and is accessible via the `rad resource-type show Radius.Data/mongoDatabases` command.
 
@@ -23,6 +23,23 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 | Platform | Recipe Pack | Recipe source |
 | --- | --- | --- |
 | Azure | [`recipe-packs/azure-aks/azure-aks.bicep`](../../recipe-packs/azure-aks/azure-aks.bicep) | Direct module — Azure Verified Module `avm/res/document-db/database-account` |
+| Kubernetes | [`recipe-packs/kubernetes/default.bicep`](../../recipe-packs/kubernetes/default.bicep) | In-cluster MongoDB `Deployment` + `Service` [`recipes/kubernetes`](recipes/kubernetes) |
+
+### Kubernetes Recipe
+
+The Kubernetes Recipe ([`recipes/kubernetes/bicep/kubernetes-mongodb.bicep`](recipes/kubernetes/bicep/kubernetes-mongodb.bicep)) runs a single MongoDB server from the official `mongo` image in the Environment's namespace, with authentication enabled. It is meant for development and testing:
+
+- The server is MongoDB 7.0. MongoDB 8.0 and later refuse to start on Linux kernel 6.19 and newer ([SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912)). 7.0 does not have that restriction.
+- Clients connect on port `27017`. There is no TLS.
+- The Recipe generates a password for an administrator named `admin` and keeps both in a Kubernetes `Secret`. The image creates the administrator in the `admin` database when the server first starts. A new password is generated on each deployment and the server restarts with it, like the generated password of the RabbitMQ Recipe. A container that reads the connection string from the managed secret picks up the new value when it restarts.
+- Storage is an `emptyDir` volume, so data is lost when the Pod is replaced, which includes every redeployment.
+- MongoDB creates the database named by `database` on the first write. The Recipe does not create it in advance.
+
+| Output | Value |
+| --- | --- |
+| `endpoint` | The DNS name and port of the MongoDB `Service`, `<resource-name>.<namespace>.svc.cluster.local:27017`. |
+| `database` | The database name from `database`, `mongo_db` by default. |
+| `secrets.connectionString` | `mongodb://admin:<password>@<endpoint>/<database>?authSource=admin`. Delivered through the managed secret. |
 
 ## Using the resource type
 
