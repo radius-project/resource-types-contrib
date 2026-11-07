@@ -28,6 +28,14 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 | Azure | [`recipe-packs/azure-aks/azure-aks.bicep`](../../recipe-packs/azure-aks/azure-aks.bicep) | In-cluster RabbitMQ `Deployment` + `Service` on AKS [`recipes/kubernetes`](recipes/kubernetes) |
 | Kubernetes | [`recipe-packs/kubernetes/default.bicep`](../../recipe-packs/kubernetes/default.bicep) | In-cluster RabbitMQ `Deployment` + `Service` [`recipes/kubernetes`](recipes/kubernetes) |
 
+### Kubernetes Recipe in Terraform
+
+The Kubernetes Recipe is also available as a Terraform module, [`recipes/kubernetes/terraform`](recipes/kubernetes/terraform). It deploys the same broker from the official `rabbitmq` image as the Bicep Recipe: a single-replica `Deployment`, a `ClusterIP` `Service`, a `ConfigMap` that enables the definitions import, and an init container that pre-provisions the user and the `queue`. When `password` is omitted, it creates a Kubernetes `Secret` with a generated password. It returns the same `host`, `port`, `username`, and `secrets.password` outputs.
+
+One difference: the Bicep Recipe generates a new fallback password on every deployment, while the Terraform module keeps the generated password in the Terraform state, so it stays the same when the resource is deployed again.
+
+The checked-in Kubernetes Recipe Pack, [`recipe-packs/kubernetes/default.bicep`](../../recipe-packs/kubernetes/default.bicep), registers only Bicep Recipes published to GHCR, so it does not reference this Terraform module. To use the module, add a `Radius.Messaging/rabbitMQ` entry with `kind: 'terraform'` to a Recipe Pack and set its `source` to the location where you host the module, as the repository's CI does when it tests Terraform Recipes.
+
 ## Using the resource type
 
 Add a `rabbitMQ` resource and connect a container to it. With Radius control-plane support from `radius-project/radius#12709` and Kubernetes Container Recipe support from `resource-types-contrib#300` or later, omitting `password` lets one connection named `rabbitmq` inject ordinary `CONNECTION_RABBITMQ_HOST`, `CONNECTION_RABBITMQ_PORT`, and `CONNECTION_RABBITMQ_USERNAME` values plus the Recipe-generated, secret-backed `CONNECTION_RABBITMQ_PASSWORD`. In that case, `queue.properties.secrets.name` remains available for explicitly authored custom or backward-compatible `secretKeyRef` wiring.
