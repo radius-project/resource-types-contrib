@@ -37,7 +37,7 @@ function fixture(platform, callback) {
     }
     run(bicep, ['build', path.join(dir, 'recipe.bicep'), '--outfile', path.join(dir, 'recipe.json')]);
     const template = JSON.parse(fs.readFileSync(path.join(dir, 'recipe.json'), 'utf8'));
-    const snapshot = (properties = '', configurations = '[]', name = 'pgsql-fixture') => {
+    const snapshot = (properties = '', configurations = '[]', name = 'pgsql-fixture', scope = {}) => {
       fs.writeFileSync(path.join(dir, 'test.bicepparam'), `using './recipe.bicep'
 param context = {
   application: { name: 'fixture' }
@@ -54,11 +54,11 @@ param context = {
     }
   }
 }
-${platform === 'azure' ? `param name = '${name}'\nparam configurations = ${configurations}` : ''}
+${platform === 'azure' ? `${name === null ? '' : `param postgreSqlServerName = '${name}'`}\nparam postgreSqlServerConfigurations = ${configurations}` : ''}
 `);
       run(bicep, ['snapshot', path.join(dir, 'test.bicepparam'), '--mode', 'Overwrite',
-        '--subscription-id', '00000000-0000-0000-0000-000000000000',
-        '--resource-group', 'fixture', '--location', 'westus3']);
+        '--subscription-id', scope.subscriptionId ?? '00000000-0000-0000-0000-000000000000',
+        '--resource-group', scope.resourceGroup ?? 'fixture', '--location', 'westus3']);
       return JSON.parse(fs.readFileSync(path.join(dir, 'test.snapshot.json'), 'utf8')).predictedResources;
     };
     callback({ dir, template, snapshot });
@@ -71,7 +71,7 @@ test('Azure settings retain the AVM contract and merge operator pins without reg
   fixture('azure', ({ template, snapshot }) => {
     assert.equal(template.languageVersion, '2.0', 'Use symbolic references across Radius and Azure scopes');
     assert.equal(template.resources.server.type, 'Microsoft.Resources/deployments');
-    assert.equal(template.resources.server.name, "[parameters('name')]");
+    assert.equal(template.resources.server.name, "[parameters('postgreSqlServerName')]");
     assert.deepEqual(Object.keys(template.resources), ['initialize', 'server']);
     assert.ok(template.outputs.result.value.resources.includes("reference('server').outputs.resourceId.value"));
     assert.equal(template.outputs.result.value.values.host, "[reference('server').outputs.fqdn.value]");
@@ -119,6 +119,17 @@ serverSettings: {
       assert.equal(setting(resources, 'azure.extensions'), 'vector');
       assert.equal(setting(resources, 'require_secure_transport'), 'ON');
       assert.equal(hasSetting(resources, 'port'), false);
+      resources = snapshot("extensions: ['pg_trgm', 'btree_gin']", `[
+  { name: '${casing('azure.extensions')}', source: 'user-override', value: ' VECTOR, PG_TRGM ' }
+]`);
+      assert.equal(setting(resources, 'azure.extensions'), 'vector,pg_trgm,btree_gin',
+        'Nonempty operator and application lists must merge, with case-insensitive duplicates removed');
+      const mergedExtensions = resources.find(r =>
+        r.type === 'Microsoft.DBforPostgreSQL/flexibleServers/configurations' &&
+        r.name.toLowerCase().endsWith('/azure.extensions'));
+      assert.ok(mergedExtensions.name.endsWith(`/${casing('azure.extensions')}`),
+        'Preserve the operator setting name');
+      assert.equal(mergedExtensions.properties.source, 'user-override');
       resources = snapshot(`extensions: ['vector']
 tls: 'optional'
 serverSettings: { log_min_duration_statement: '1000' }`, `[
@@ -135,6 +146,21 @@ serverSettings: { log_min_duration_statement: '1000' }`, `[
     resources = snapshot("serverSettings: { LOG_MIN_DURATION_STATEMENT: '1000' }",
       "[{ name: 'log_min_duration_statement', source: 'user-override', value: '2000' }]");
     assert.equal(setting(resources, 'log_min_duration_statement'), '2000');
+    for (const properties of ['', 'extensions: []']) {
+      resources = snapshot(properties, "[{ name: 'azure.extensions', source: 'user-override', value: 'VECTOR' }]");
+      assert.equal(setting(resources, 'azure.extensions'), 'VECTOR',
+        'An absent application list must leave the operator value unchanged');
+    }
+
+    const defaultName = (scope = {}) => snapshot('', '[]', null, scope)
+      .find(r => r.type === 'Microsoft.DBforPostgreSQL/flexibleServers').name;
+    const first = defaultName();
+    assert.match(first, /^pgsql-[a-z0-9]{13}$/);
+    assert.equal(defaultName(), first, 'Repeated deployment in the same scope must keep the name');
+    assert.notEqual(defaultName({ resourceGroup: 'other-fixture' }), first,
+      'The same Radius resource ID in another Azure resource group needs a distinct name');
+    assert.notEqual(defaultName({ subscriptionId: '11111111-1111-1111-1111-111111111111' }), first,
+      'The same Radius resource ID in another subscription needs a distinct name');
   });
 });
 
@@ -150,6 +176,7 @@ test('Azure initSql runs after provisioning with secure inputs and cleanup track
     const initialize = template.resources.initialize;
     assert.equal(initialize.type, 'Microsoft.Resources/deploymentScripts');
     assert.equal(initialize.apiVersion, '2023-08-01');
+    assert.equal(initialize.name, "[format('{0}-init', parameters('postgreSqlServerName'))]");
     assert.equal(initialize.condition, "[variables('hasInitSql')]");
     assert.equal(template.variables.hasInitSql, "[not(empty(trim(variables('initSql'))))]");
     assert.deepEqual(initialize.dependsOn, ['server'], 'Wait for server, database, and all AVM configurations');
@@ -169,7 +196,7 @@ test('Azure initSql runs after provisioning with secure inputs and cleanup track
     assert.equal(template.variables[scriptVariable[1]],
       fs.readFileSync(path.join(recipes, 'azure/bicep/initialize-database.sh'), 'utf8').replace(/\r\n/g, '\n'));
     assert.equal(template.outputs.result.value.resources,
-      "[concat(createArray(reference('server').outputs.resourceId.value), if(variables('hasInitSql'), createArray(resourceId('Microsoft.Resources/deploymentScripts', format('{0}-init', parameters('name')))), createArray()))]");
+      "[concat(createArray(reference('server').outputs.resourceId.value), if(variables('hasInitSql'), createArray(resourceId('Microsoft.Resources/deploymentScripts', format('{0}-init', parameters('postgreSqlServerName')))), createArray()))]");
     assert.ok(!JSON.stringify({ initialize, result: template.outputs.result })
       .includes("resourceId('Microsoft.Resources/deployments'"), 'Preserve scoped symbolic AVM references');
 

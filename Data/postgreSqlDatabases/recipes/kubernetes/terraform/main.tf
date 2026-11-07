@@ -201,6 +201,7 @@ resource "kubernetes_deployment" "postgresql" {
             exec docker-entrypoint.sh postgres "$@" -c port=5432 -c ssl=on -c ssl_cert_file=/tls-runtime/server.crt -c ssl_key_file=/tls-runtime/server.key -c hba_file=/tls-runtime/pg_hba.conf
           EOT
           ]
+          # The first argument is the sh -ec $0 placeholder; "$@" contains only setting arguments.
           args = concat(["postgres"], local.server_args)
 
           dynamic "volume_mount" {

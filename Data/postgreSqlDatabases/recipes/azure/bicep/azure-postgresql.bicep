@@ -2,11 +2,11 @@
 @secure()
 param context object
 
-@description('Stable Azure server name. The Recipe Pack supplies its existing hash-based name; standalone Recipes derive a name from the Radius resource ID.')
-param name string = 'pgsql-${uniqueString(context.resource.id)}'
+@description('Stable Azure server name. The Recipe Pack supplies its existing hash-based name; standalone Recipes hash the subscription, resource group, and Radius resource ID.')
+param postgreSqlServerName string = 'pgsql-${uniqueString(subscription().id, resourceGroup().id, context.resource.id)}'
 
-@description('Operator server settings in AVM name, source, value form. These override application settings. The server port stays fixed at 5432.')
-param configurations array = []
+@description('Operator server settings in AVM name, source, value form. See the Azure Recipe README for merge and override rules.')
+param postgreSqlServerConfigurations array = []
 
 var properties = context.resource.properties
 var database = properties.?database ?? 'postgres_db'
@@ -14,7 +14,11 @@ var initSql = properties.?initSql ?? ''
 var hasInitSql = !empty(trim(initSql))
 var extensions = properties.?extensions ?? []
 var serverSettings = properties.?serverSettings ?? {}
-var operatorConfigurations = filter(configurations, config => toLower(config.name) != 'port')
+var operatorConfigurations = [
+  for config in filter(postgreSqlServerConfigurations, config => toLower(config.name) != 'port'): toLower(config.name) == 'azure.extensions' && !empty(config.value) && !empty(extensions) ? union(config, {
+    value: join(union(map(split(config.value, ','), name => toLower(trim(name))), extensions), ',')
+  }) : config
+]
 var operatorNames = map(operatorConfigurations, config => toLower(config.name))
 // Azure resource names and PostgreSQL parameter names are case-insensitive.
 var applicationSettings = filter(items(serverSettings), setting => !contains(operatorNames, toLower(setting.key)) && !contains(['azure.extensions', 'require_secure_transport', 'port'], toLower(setting.key)))
@@ -42,9 +46,9 @@ var extensionConfiguration = contains(operatorNames, 'azure.extensions') || empt
 ]
 
 module server 'br/public:avm/res/db-for-postgre-sql/flexible-server:0.15.2' = {
-  name: name
+  name: postgreSqlServerName
   params: {
-    name: name
+    name: postgreSqlServerName
     administratorLogin: properties.username
     administratorLoginPassword: properties.password
     authConfig: {
@@ -81,7 +85,7 @@ module server 'br/public:avm/res/db-for-postgre-sql/flexible-server:0.15.2' = {
 }
 
 resource initialize 'Microsoft.Resources/deploymentScripts@2023-08-01' = if (hasInitSql) {
-  name: '${name}-init'
+  name: '${postgreSqlServerName}-init'
   location: resourceGroup().location
   kind: 'AzureCLI'
   properties: {

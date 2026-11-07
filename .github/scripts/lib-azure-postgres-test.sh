@@ -38,7 +38,7 @@ rtc_validate_postgres_test_pack() {
     # Keep direct-module checks for historical packs; current settings live in the wrapper.
     if grep -Fq "source: 'ghcr.io/radius-project/azure-aks-recipes/postgresqldatabases:" <<<"$entry"; then
         wrapper="${2:-$(dirname "$pack")/../../Data/postgreSqlDatabases/recipes/azure/bicep/azure-postgresql.bicep}"
-        if [[ ! -f "$wrapper" ]] || ! grep -Fq "name: 'pgsql-{{context.azure.resourceNameHash}}'" <<<"$entry"; then
+        if [[ ! -f "$wrapper" ]] || ! grep -Fq "postgreSqlServerName: 'pgsql-{{context.azure.resourceNameHash}}'" <<<"$entry"; then
             echo "Error: PostgreSQL wrapper or stable server name is missing: $pack" >&2
             return 1
         fi
