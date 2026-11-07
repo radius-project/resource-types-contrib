@@ -111,7 +111,9 @@ preflight() {
                 if [[ ! -f "$RTC_AZURE_SELECTION_FILE" ]] || ! jq -e '
                     type == "object" and .version == 1 and
                     (.status == "selected" or .status == "capacity_exhausted" or
-                     .status == "probe_error" or .status == "deadline_exceeded") and
+                     .status == "unsupported" or .status == "restricted" or
+                     .status == "catalog_unavailable" or .status == "probe_error" or
+                     .status == "deadline_exceeded") and
                     (if has("deadlineEpochSeconds") then
                         (.deadlineEpochSeconds | type == "number" and floor == . and . > 0 and . < 100000000000)
                      else true end) and
