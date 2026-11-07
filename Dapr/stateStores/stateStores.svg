@@ -1,0 +1,9 @@
+<svg width="500" height="500" viewBox="0 0 500 500" fill="none" xmlns="http://www.w3.org/2000/svg">
+<mask id="stateStores-icon" maskUnits="userSpaceOnUse" x="0" y="0" width="500" height="500">
+<ellipse cx="250" cy="125" rx="140" ry="46.875" fill="black" stroke="white" stroke-width="18"/>
+<path d="M110 125V375C110 400.888 172.68 421.875 250 421.875C327.32 421.875 390 400.888 390 375V125" stroke="white" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M110 208.333C110 234.222 172.68 255.208 250 255.208C327.32 255.208 390 234.222 390 208.333" stroke="white" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M110 291.667C110 317.555 172.68 338.542 250 338.542C327.32 338.542 390 317.555 390 291.667" stroke="white" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+</mask>
+<rect x="0" y="0" width="500" height="500" fill="currentColor" mask="url(#stateStores-icon)"/>
+</svg>
