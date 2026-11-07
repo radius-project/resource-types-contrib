@@ -32,6 +32,8 @@ jobs:
       contents: read
     env:
       RAD_ENVIRONMENT_NAME: default
+      RTC_TEST_DIAGNOSTICS_DIR: test-diagnostics
+      RTC_TEST_PLATFORM: kubernetes
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -114,6 +116,21 @@ jobs:
         id: kubernetes_pack_entries
         continue-on-error: true
         run: make test-recipe-pack-entries PLATFORM_GROUP=kubernetes WORKSPACE=default ENVIRONMENT="$RAD_ENVIRONMENT_NAME"
+
+      - name: Collect workflow failure diagnostics
+        if: ${{ !cancelled() && (failure() || steps.kubernetes_bicep.outcome == 'failure' || steps.kubernetes_terraform.outcome == 'failure' || steps.kubernetes_pack_deploy.outcome == 'failure' || steps.kubernetes_pack_entries.outcome == 'failure') }}
+        continue-on-error: true
+        run: |
+          source .github/scripts/lib-recipe-test.sh
+          rtc_collect_test_diagnostics workflow workflow-failure "$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
+
+      - name: Upload failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-diagnostics-nightly-kubernetes
+          path: test-diagnostics
+          if-no-files-found: ignore
 
       - name: Report Kubernetes test failures
         if: ${{ !cancelled() }}
@@ -239,6 +256,8 @@ jobs:
       id-token: write
       contents: read
     env:
+      RTC_TEST_DIAGNOSTICS_DIR: azure-test-diagnostics
+      RTC_TEST_PLATFORM: azure
       AZURE_RESOURCE_GROUP: ${{ needs.nightly-azure-context.outputs.resource_group }}
       AZURE_GROUP_OWNER_TOKEN: ${{ needs.nightly-azure-context.outputs.owner_token }}
       AZURE_PROBE_RESOURCE_GROUP: ${{ needs.nightly-azure-context.outputs.probe_resource_group }}
@@ -344,7 +363,9 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
           RTC_AZURE_PACK_ENTRY_PHASE: postgres
-        run: make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+        run: |
+          export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 45 * 60 ))
+          make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
 
       - name: Test unrelated Recipe Pack entries
         id: azure_pack_entries
@@ -354,7 +375,9 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
           RTC_AZURE_PACK_ENTRY_PHASE: unrelated
-        run: make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+        run: |
+          export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 60 * 60 ))
+          make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
 
       - name: Test Azure Bicep recipes
         id: azure_bicep
@@ -366,6 +389,7 @@ jobs:
         run: |
           set -euo pipefail
           pack_name="nightlyazurebiceprecipepack"
+          export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 55 * 60 ))
           pack_file="recipe-pack-nightly-azure-bicep.bicep"
           RECIPE_PLATFORM_FILTER=azure make generate-recipe-pack \
             PACK_NAME="$pack_name" \
@@ -392,6 +416,7 @@ jobs:
         run: |
           set -euo pipefail
           pack_name="nightlyazureterraformrecipepack"
+          export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 55 * 60 ))
           pack_file="recipe-pack-nightly-azure-terraform.bicep"
           RECIPE_PLATFORM_FILTER=azure make generate-recipe-pack \
             PACK_NAME="$pack_name" \
@@ -407,6 +432,13 @@ jobs:
           RECIPE_PLATFORM_FILTER=azure make test \
             ENVIRONMENT="$AZURE_ENVIRONMENT_NAME" \
             RECIPE_TYPE=terraform
+
+      - name: Collect workflow failure diagnostics
+        if: ${{ !cancelled() && (failure() || steps.azure_postgres_entry.outcome == 'failure' || steps.azure_bicep.outcome == 'failure' || steps.azure_terraform.outcome == 'failure' || steps.azure_pack_deploy.outcome == 'failure' || steps.azure_pack_entries.outcome == 'failure') }}
+        continue-on-error: true
+        run: |
+          source .github/scripts/lib-recipe-test.sh
+          rtc_collect_test_diagnostics workflow workflow-failure "$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
 
       - name: Upload pre-cleanup Azure diagnostics
         if: always()

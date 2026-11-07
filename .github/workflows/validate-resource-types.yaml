@@ -91,6 +91,8 @@ jobs:
       contents: read
     env:
       RAD_ENVIRONMENT_NAME: default
+      RTC_TEST_DIAGNOSTICS_DIR: test-diagnostics
+      RTC_TEST_PLATFORM: kubernetes
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -156,6 +158,21 @@ jobs:
 
       - name: Test ${{ matrix.recipe }} recipes
         run: RECIPE_PLATFORM_FILTER=kubernetes make test ENVIRONMENT="$RAD_ENVIRONMENT_NAME" RECIPE_TYPE=${{ matrix.recipe }}
+
+      - name: Collect workflow failure diagnostics
+        if: ${{ !cancelled() && failure() }}
+        continue-on-error: true
+        run: |
+          source .github/scripts/lib-recipe-test.sh
+          rtc_collect_test_diagnostics workflow workflow-failure "$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
+
+      - name: Upload failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-diagnostics-${{ matrix.recipe }}
+          path: test-diagnostics
+          if-no-files-found: ignore
 
       - name: Collect Radius pod logs
         if: always()

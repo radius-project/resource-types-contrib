@@ -50,6 +50,7 @@ EOF
 cat >"$TEST_ROOT/bin/kubectl" <<'EOF'
 #!/bin/bash
 echo "kubectl $*" >>"$CALL_LOG"
+if [[ "$1" == wait && "${ASSERT_HANG:-0}" == 1 ]]; then exec sleep 30; fi
 exit "${CLEANUP_STATUS:-0}"
 EOF
 cat >"$TEST_ROOT/bin/node" <<'EOF'
@@ -57,6 +58,7 @@ cat >"$TEST_ROOT/bin/node" <<'EOF'
 echo collector >>"$CALL_LOG"
 [[ "$1" == */collect-azure-test-diagnostics.js ]] || exit 99
 [[ "$3" == "${AZURE_SUBSCRIPTION_ID:-}" && "$4" == "$AZURE_RESOURCE_GROUP" && "$6" == *T*Z ]] || exit 98
+[[ "$8" == "${RTC_TEST_PLATFORM:-kubernetes}" ]] || exit 98
 echo '{"mock":"safe-evidence"}' >"$2/azure.json"
 exit "${COLLECTOR_STATUS:-0}"
 EOF
@@ -65,9 +67,10 @@ cat >"$TEST_ROOT/bin/timeout" <<'EOF'
 [[ "$1" == --kill-after=5s ]] || exit 97
 case "$2 $3 $4" in
     "100s node "*) ;;
-    "15m bash -c"|"3m rad app")
+    "15m bash -c"|"3m rad app"|[0-9]*"s bash -c")
         echo "bounded $2 $3 $4" >>"$CALL_LOG"
-        if [[ "${DEPLOY_HANG:-0}" == 1 || "${CLEANUP_HANG:-0}" == 1 ]]; then
+        if [[ "${DEPLOY_HANG:-0}" == 1 || "${CLEANUP_HANG:-0}" == 1 ||
+              ( "${ASSERT_HANG:-0}" == 1 && "$5" == *rtc_assert_recipe_result* ) ]]; then
             shift 2
             exec "$REAL_TIMEOUT" --kill-after=1s 1s "$@"
         fi ;;
@@ -78,6 +81,7 @@ exec "$@"
 EOF
 cat >"$TEST_ROOT/bin/az" <<'EOF'
 #!/bin/bash
+echo "az $1 $2" >>"$CALL_LOG"
 if [[ "$1 $2" == "lock list" ]]; then exit 0; fi
 echo "Unexpected Azure CLI call outside collector" >&2
 exit 99
@@ -139,11 +143,90 @@ grep -q '^bounded 3m rad app$' "$CALL_LOG" || fail "assertion failure cleanup mu
 
 for platform in kubernetes aws ""; do
     GITHUB_ACTIONS=true RTC_TEST_PLATFORM="$platform" assert_failure_cleanup run_helper
-    if grep -q '^collector' "$CALL_LOG"; then fail "non-Azure tests must not collect"; fi
+    assert_before_cleanup
     if grep -q '^bounded' "$CALL_LOG"; then fail "non-Azure tests must not acquire new time limits"; fi
 done
 RESOURCE_TYPE=Radius.Data/widgets assert_failure_cleanup run_helper
-if grep -q '^collector' "$CALL_LOG"; then fail "unrelated tests must not collect"; fi
+assert_before_cleanup
+for resource_type in Radius.AI/models Radius.Data/mongoDatabases; do
+    RESOURCE_TYPE="$resource_type" assert_failure_cleanup run_helper
+    assert_before_cleanup
+    GITHUB_ACTIONS=true RESOURCE_TYPE="$resource_type" DEPLOY_HANG=1 \
+        RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$(( $(date +%s) + 600 ))" assert_failure_cleanup run_helper
+    assert_before_cleanup
+    grep -q 'collecting diagnostics before the step deadline' "$TEST_ROOT/output" ||
+        fail "non-container stalls must reach diagnostics before workflow timeout"
+    grep -q '^bounded 3m rad app$' "$CALL_LOG" || fail "failure cleanup must be bounded"
+done
+(
+    : >"$CALL_LOG"
+    status=0
+    GITHUB_ACTIONS=true RESOURCE_TYPE=Radius.AI/models \
+        RTC_AZURE_LOCK_GUARD=1 \
+        RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$(( $(date +%s) + 300 ))" \
+        run_helper >"$TEST_ROOT/output" 2>&1 || status=$?
+    [[ "$status" == 1 ]] || fail "exhausted step budget must fail"
+    if grep -q '^rad deploy ' "$CALL_LOG"; then fail "must not allocate after the step budget expires"; fi
+    grep -q 'step budget exhausted' "$TEST_ROOT/output" || fail "budget failure must be explicit"
+    [[ "$(grep -c '^collector$' "$CALL_LOG")" == 1 ]] || fail "exhausted budget must collect immediately"
+    if grep -q '^az ' "$CALL_LOG"; then fail "exhausted budget must precede lock snapshots"; fi
+)
+(
+    : >"$CALL_LOG"
+    status=0
+    GITHUB_ACTIONS=true RESOURCE_TYPE=Radius.Data/postgreSqlDatabases RTC_POSTGRES_CAPACITY_RECOVERY=1 \
+        RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$(( $(date +%s) + 900 ))" \
+        run_helper >"$TEST_ROOT/output" 2>&1 || status=$?
+    [[ "$status" == 1 ]] || fail "exhausted PostgreSQL cleanup reserve must fail"
+    [[ "$(grep -c '^collector$' "$CALL_LOG")" == 1 ]] || fail "PostgreSQL budget failure must collect"
+    if grep -qE '^(rad|az) ' "$CALL_LOG"; then fail "PostgreSQL budget must precede snapshots and allocation"; fi
+)
+(
+    # shellcheck disable=SC2329 # Called by the sourced helper.
+    command() {
+        if [[ "$*" == "-v timeout" ]]; then return 1; fi
+        builtin command "$@"
+    }
+    : >"$CALL_LOG"
+    status=0
+    GITHUB_ACTIONS=true RESOURCE_TYPE=Radius.AI/models \
+        RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$(( $(date +%s) + 600 ))" \
+        run_helper >"$TEST_ROOT/output" 2>&1 || status=$?
+    [[ "$status" == 1 ]] || fail "non-container deadlines must require GNU timeout"
+    grep -q 'Azure test deadlines require GNU timeout' "$TEST_ROOT/output" || fail "missing timeout must be explicit"
+    if grep -q '^rad ' "$CALL_LOG"; then fail "missing timeout must prevent allocation"; fi
+)
+(
+    deadline=$(( $(date +%s) + 600 ))
+    # shellcheck disable=SC2329 # Called by the sourced helper.
+    date() {
+        if [[ "$*" == +%s ]] && grep -q '^rad deploy ' "$CALL_LOG"; then
+            printf '%s\n' "$clock_after_deploy"
+        else
+            command date "$@"
+        fi
+    }
+    for remaining in 0 1 60; do
+        clock_after_deploy=$((deadline - 360 - remaining))
+        GITHUB_ACTIONS=true RESOURCE_TYPE=Radius.Data/mySqlDatabases DEPLOY_STATUS=0 ASSERT_HANG=1 \
+            RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$deadline" assert_failure_cleanup run_helper
+        assert_before_cleanup
+        grep -q '^bounded 3m rad app$' "$CALL_LOG" || fail "assertion timeout must retain bounded cleanup"
+        if ((remaining == 0)); then
+            if grep -q '^kubectl wait ' "$CALL_LOG"; then fail "expired assertion budget must not start assertions"; fi
+            grep -q 'budget exhausted before assertions' "$TEST_ROOT/output" || fail "expired assertion budget must be explicit"
+        else
+            grep -q "^bounded ${remaining}s bash -c$" "$CALL_LOG" || fail "assertions must use the recalculated budget"
+            grep -q 'assertions exceeded the step budget' "$TEST_ROOT/output" || fail "stalled assertions must reach diagnostics"
+        fi
+    done
+    : >"$CALL_LOG"
+    GITHUB_ACTIONS=true RESOURCE_TYPE=Radius.Data/mySqlDatabases DEPLOY_STATUS=0 \
+        RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$deadline" run_helper >"$TEST_ROOT/output" 2>&1 ||
+        fail "bounded successful assertions must remain successful"
+    grep -q '^kubectl wait ' "$CALL_LOG" || fail "bounded assertions must run"
+    if grep -q '^collector' "$CALL_LOG"; then fail "successful assertions must not collect"; fi
+)
 : >"$CALL_LOG"
 DEPLOY_STATUS=0 run_helper >"$TEST_ROOT/output" 2>&1 || fail "successful test must remain successful"
 if grep -q '^collector' "$CALL_LOG"; then fail "success must not collect"; fi
@@ -159,16 +242,16 @@ grep -q '^bounded 15m bash -c$' "$CALL_LOG" || fail "CI deployment retries must 
 (
     # shellcheck disable=SC2329 # Called by the sourced helper.
     command() {
-        if [[ "$*" == "-v az" ]]; then return 1; fi
+        if [[ "$*" == "-v node" ]]; then return 1; fi
         builtin command "$@"
     }
     assert_failure_cleanup run_helper
-    grep -q 'Azure diagnostics require az' "$TEST_ROOT/output" || fail "missing tool must be explicit"
+    grep -q 'Failure diagnostics require node' "$TEST_ROOT/output" || fail "missing tool must be explicit"
 )
 # A bad output path must not prevent app cleanup.
 touch "$TEST_ROOT/not-a-directory"
 RTC_AZURE_DIAGNOSTICS_DIR="$TEST_ROOT/not-a-directory" assert_failure_cleanup run_helper
-grep -q 'Could not create Azure diagnostic directory' "$TEST_ROOT/output" || fail "output failure must be explicit"
+grep -q 'Could not create failure diagnostic directory' "$TEST_ROOT/output" || fail "output failure must be explicit"
 
 run_recipe() {
     (cd "$TEST_ROOT"; bash "$REPO_ROOT/.github/scripts/test-recipe.sh" Compute/containers/recipes/azure/bicep)
@@ -217,6 +300,14 @@ for github_actions in true false; do
     GITHUB_ACTIONS="$github_actions" RTC_AZURE_DIAGNOSTICS_DIR="" assert_failure_cleanup run_recipe
     if grep -q '^collector' "$CALL_LOG"; then fail "explicit empty directory must disable collection"; fi
 done
+DEPLOY_STATUS=0 CLEANUP_STATUS=8 assert_failure_cleanup run_helper
+[[ "$(grep -c '^collector$' "$CALL_LOG")" == 1 ]] || fail "cleanup-only failures must collect once"
+: >"$CALL_LOG"
+RTC_TEST_PLATFORM=kubernetes RTC_TEST_DIAGNOSTICS_DIR="$TEST_ROOT/workflow-diagnostics" \
+    rtc_collect_test_diagnostics workflow workflow-failure "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    >"$TEST_ROOT/output" 2>&1 || fail "workflow failures must collect without a test app"
+[[ "$(grep -c '^collector$' "$CALL_LOG")" == 1 ]] || fail "workflow fallback must collect"
+if grep -q '^rad ' "$CALL_LOG"; then fail "workflow fallback must not deploy or delete an app"; fi
 grep -Rq 'collector exit 124' "$RTC_AZURE_DIAGNOSTICS_DIR" || fail "timeout status must persist"
 grep -Rq 'safe-evidence' "$RTC_AZURE_DIAGNOSTICS_DIR" || fail "evidence must persist after cleanup"
 echo "Azure diagnostics integration tests passed"

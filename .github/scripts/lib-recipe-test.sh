@@ -263,20 +263,23 @@ rtc_test_azure_postgresql_app() (
 # Best-effort cleanup for fast-fail paths. The request timeout and non-blocking
 # delete keep cleanup bounded when the cluster or resource controllers are unhealthy.
 rtc_cleanup_kubernetes_resources_bounded() {
-    local kubernetes_namespace="$1" app_name="$2" kind
+    local kubernetes_namespace="$1" app_name="$2" kind status=0
     if [[ -z "$kubernetes_namespace" ]]; then
         return
     fi
 
     echo "==> Cleaning up leftover K8s resources for $app_name in $kubernetes_namespace (bounded)"
     for kind in secrets deployments services; do
-        kubectl delete "$kind" \
+        if ! kubectl delete "$kind" \
             -l "radapp.io/application=$app_name" \
             -n "$kubernetes_namespace" \
             --request-timeout=10s \
-            --wait=false ||
+            --wait=false; then
             echo "Error: Could not clean up $kind for '$app_name'." >&2
+            status=1
+        fi
     done
+    return "$status"
 }
 
 rtc_snapshot_azure_management_locks() {
@@ -540,22 +543,39 @@ def is_provider_reset(message):
         and all(provider_reset.fullmatch(item) for item in diagnostics[1:])
     )
 
-def visit(value, failure_context=False):
+def visit(value, failure_context=False, resource_target=""):
     global invalid
     if isinstance(value, list):
         for item in value:
-            visit(item, failure_context)
+            visit(item, failure_context, resource_target)
     elif isinstance(value, dict):
         before = len(reasons)
         code = value.get("code")
         message = value.get("message")
         target = value.get("target")
+        if isinstance(target, str) and target.startswith("/"):
+            resource_target = target
         status = value.get("status", "")
         is_failure = failure_context or (
             isinstance(status, str) and status.lower() in {"failed", "failure", "error"}
         )
         if code:
-            if code not in wrappers:
+            if code == "AzureContainerInstance/ContainerGroupTransitioning":
+                if (
+                    re.fullmatch(
+                        r"/subscriptions/[^/]+/resourceGroups/[^/]+/providers/"
+                        r"Microsoft\.ContainerInstance/ngroups/[^/]+",
+                        resource_target,
+                        re.I,
+                    )
+                    and isinstance(message, str)
+                    and '"ErrorCode": "AzureContainerInstance/ContainerGroupTransitioning"' in message
+                    and "still transitioning, please retry later." in message
+                ):
+                    reasons.append("Azure Container Instance group is still transitioning")
+                else:
+                    invalid = True
+            elif code not in wrappers:
                 invalid = True
             elif code == "RecipeDeploymentFailed" and isinstance(message, str) and is_provider_reset(message):
                 reasons.append("Terraform provider download connection reset")
@@ -566,16 +586,32 @@ def visit(value, failure_context=False):
                 and re.match(r'/subscriptions/[^"]*/providers/Microsoft\.', target)
             ):
                 reasons.append("Azure deployment connection reset")
+        elif (
+            value.get("ErrorCode") == "AzureContainerInstance/ContainerGroupTransitioning"
+            and re.fullmatch(
+                r"/subscriptions/[^/]+/resourceGroups/[^/]+/providers/"
+                r"Microsoft\.ContainerInstance/ngroups/[^/]+",
+                resource_target,
+                re.I,
+            )
+            and isinstance(value.get("SampleErrorMessage"), str)
+            and "still transitioning, please retry later." in value["SampleErrorMessage"]
+        ):
+            reasons.append("Azure Container Instance group is still transitioning")
         elif is_failure or (
             "message" in value and status not in {"Succeeded", "Running", "Accepted"}
         ):
             invalid = True
         for key, item in value.items():
             if isinstance(item, (dict, list)):
-                visit(item, is_failure or (code in wrappers and key in {"details", "error"}))
+                visit(
+                    item,
+                    is_failure or (code in wrappers and key in {"details", "error"}),
+                    resource_target,
+                )
         if isinstance(message, str):
             for item, _, _ in objects(message):
-                visit(item, True)
+                visit(item, True, resource_target)
         if code in wrappers and len(reasons) == before:
             invalid = True
     elif failure_context:
@@ -638,32 +674,31 @@ rtc_deploy_with_retry() (
     done
 )
 
-rtc_collect_azure_test_diagnostics() {
+rtc_collect_test_diagnostics() {
     local resource_type="$1" app_name="$2" started="$3" directory status script_dir dependency
-    local diagnostics_root="${RTC_AZURE_DIAGNOSTICS_DIR:-}"
-    if [[ "${RTC_TEST_PLATFORM:-}" != azure || "$resource_type" != Radius.Compute/containers ||
-          -z "$diagnostics_root" ]]; then
+    local diagnostics_root="${RTC_TEST_DIAGNOSTICS_DIR-${RTC_AZURE_DIAGNOSTICS_DIR:-}}"
+    if [[ -z "$diagnostics_root" ]]; then
         return 0
     fi
     if ! mkdir -p "$diagnostics_root" ||
        ! directory=$(mktemp -d "$diagnostics_root/failure-XXXXXXXX"); then
-        echo "Error: Could not create Azure diagnostic directory." >&2
+        echo "Error: Could not create failure diagnostic directory." >&2
         return 1
     fi
-    for dependency in node timeout az; do
+    for dependency in node timeout; do
         if ! command -v "$dependency" >/dev/null 2>&1; then
-            echo "Error: Azure diagnostics require $dependency." | tee "$directory/collector-status.txt" >&2
+            echo "Error: Failure diagnostics require $dependency." | tee "$directory/collector-status.txt" >&2
             return 1
         fi
     done
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    echo "==> Collecting Azure failure diagnostics before test app cleanup"
+    echo "==> Collecting failure diagnostics"
     if timeout --kill-after=5s 100s node "$script_dir/collect-azure-test-diagnostics.js" \
-        "$directory" "${AZURE_SUBSCRIPTION_ID:-}" "${AZURE_RESOURCE_GROUP:-}" "$app_name" "$started"; then
-        echo "Azure diagnostic collection completed." >"$directory/collector-status.txt"
+        "$directory" "${AZURE_SUBSCRIPTION_ID:-}" "${AZURE_RESOURCE_GROUP:-}" "$app_name" "$started" "$resource_type" "${RTC_TEST_PLATFORM:-kubernetes}"; then
+        echo "Failure diagnostic collection completed." >"$directory/collector-status.txt"
     else
         status=$?
-        echo "Error: Azure diagnostics incomplete (collector exit $status); test failure and cleanup are unchanged." |
+        echo "Error: Failure diagnostics incomplete (collector exit $status); test failure and cleanup are unchanged." |
             tee "$directory/collector-status.txt" >&2
         return "$status"
     fi
@@ -686,11 +721,43 @@ rtc_collect_azure_test_diagnostics() {
 rtc_deploy_and_assert_test_app() {
     local test_file="$1" resource_type="$2" app_name_prefix="$3" environment_path="$4" workspace_name="$5" kubernetes_namespace="$6"
     local app_name started locks_before="" inventory_locks="" deploy_status=0 azure_before="" azure_after=""
+    local step_remaining="" step_deadline="${RTC_AZURE_TEST_STEP_DEADLINE_EPOCH:-}" step_reserve=360
+    local diagnostics_collected=0
     local -a params=() deploy_timeout=() cleanup_timeout=()
     local -a deploy_command=(rtc_deploy_with_retry)
     shift 6
 
     app_name="${app_name_prefix}-$(date +%s)"
+    started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
+        # Preserve the twelve-minute deletion budget plus diagnostics and verification.
+        step_reserve=1080
+    fi
+
+    if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ||
+          ( "${GITHUB_ACTIONS:-}" == true && "${RTC_TEST_PLATFORM:-}" == azure &&
+            ( -n "$step_deadline" || "$resource_type" == Radius.Compute/containers ) ) ]]; then
+        if ! command -v timeout >/dev/null 2>&1; then
+            echo "Error: Azure test deadlines require GNU timeout." >&2
+            rtc_collect_test_diagnostics "$resource_type" "$app_name" "$started" ||
+                echo "Error: Diagnostic collection failed before deployment." >&2
+            return 1
+        fi
+    fi
+
+    if [[ "${GITHUB_ACTIONS:-}" == true && "${RTC_TEST_PLATFORM:-}" == azure && -n "$step_deadline" ]]; then
+        if [[ ! "$step_deadline" =~ ^[1-9][0-9]{0,10}$ ]]; then
+            echo "Error: Invalid Azure test step deadline." >&2
+            return 1
+        fi
+        step_remaining=$((step_deadline - $(date +%s) - step_reserve))
+        if ((step_remaining <= 0)); then
+            echo "Error: Azure test step budget exhausted before deployment; collecting diagnostics." >&2
+            rtc_collect_test_diagnostics "$resource_type" "$app_name" "$started" ||
+                echo "Error: Diagnostic collection failed before deployment." >&2
+            return 1
+        fi
+    fi
 
     if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
         app_name+="-$RANDOM"
@@ -701,10 +768,6 @@ rtc_deploy_and_assert_test_app() {
         cleanup_timeout=(timeout --kill-after=5s 12m)
     elif [[ "${GITHUB_ACTIONS:-}" == true && "${RTC_TEST_PLATFORM:-}" == azure &&
           "$resource_type" == Radius.Compute/containers ]]; then
-        if ! command -v timeout >/dev/null 2>&1; then
-            echo "Error: Azure container CI tests require GNU timeout." >&2
-            return 1
-        fi
         deploy_timeout=(timeout --kill-after=5s 15m)
         # shellcheck disable=SC2016 # Expanded by the child shell.
         deploy_command=("${deploy_timeout[@]}" bash -c \
@@ -738,7 +801,15 @@ rtc_deploy_and_assert_test_app() {
     fi
 
     echo "==> Deploying test application from $test_file"
-    started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    if [[ "${GITHUB_ACTIONS:-}" == true && "${RTC_TEST_PLATFORM:-}" == azure && -n "$step_deadline" ]]; then
+        step_remaining=$((step_deadline - $(date +%s) - step_reserve))
+        if ((step_remaining <= 0)); then
+            echo "Error: Azure test step budget exhausted before deployment; collecting diagnostics." >&2
+            rtc_collect_test_diagnostics "$resource_type" "$app_name" "$started" ||
+                echo "Error: Diagnostic collection failed before deployment." >&2
+            return 1
+        fi
+    fi
     if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
         local deadline="${RTC_POSTGRES_TEST_DEADLINE_EPOCH:-}" remaining
         if [[ ! "$deadline" =~ ^[1-9][0-9]{0,10}$ ]]; then
@@ -757,11 +828,44 @@ rtc_deploy_and_assert_test_app() {
             'source "$1"; shift; rtc_deploy_with_retry "$@"' \
             bash "${BASH_SOURCE[0]}")
     fi
+    if [[ -n "$step_remaining" ]]; then
+        if [[ "$resource_type" == Radius.Compute/containers ]] && ((step_remaining > 900)); then
+            step_remaining=900
+        fi
+        if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]] && ((step_remaining > remaining)); then
+            step_remaining="$remaining"
+        fi
+        deploy_timeout=(timeout --kill-after=5s "${step_remaining}s")
+        # shellcheck disable=SC2016 # Expanded by the child shell.
+        deploy_command=("${deploy_timeout[@]}" bash -c \
+            'source "$1"; shift; rtc_deploy_with_retry "$@"' \
+            bash "${BASH_SOURCE[0]}")
+    fi
     if "${deploy_command[@]}" "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
         echo "==> Test deployment successful"
 
-        if ! rtc_assert_recipe_result "$resource_type" "$app_name" "$workspace_name" "$kubernetes_namespace"; then
-            deploy_status=1
+        local assertion_remaining="" assertion_status=0
+        local -a assertion_command=(rtc_assert_recipe_result)
+        if [[ -n "$step_remaining" ]]; then
+            assertion_remaining=$((step_deadline - $(date +%s) - step_reserve))
+            if ((assertion_remaining <= 0)); then
+                echo "Error: Azure test step budget exhausted before assertions; collecting diagnostics." >&2
+                deploy_status=1
+            else
+                # shellcheck disable=SC2016 # Expanded by the child shell.
+                assertion_command=(timeout --kill-after=5s "${assertion_remaining}s" bash -c \
+                    'source "$1"; shift; rtc_assert_recipe_result "$@"' \
+                    bash "${BASH_SOURCE[0]}")
+            fi
+        fi
+        if [[ "$deploy_status" == 0 ]]; then
+            "${assertion_command[@]}" "$resource_type" "$app_name" "$workspace_name" "$kubernetes_namespace" || assertion_status=$?
+            if [[ "$assertion_status" -ne 0 ]]; then
+                deploy_status=1
+                if [[ -n "$assertion_remaining" && ( "$assertion_status" == 124 || "$assertion_status" == 137 ) ]]; then
+                    echo "Error: Azure test assertions exceeded the step budget; collecting diagnostics." >&2
+                fi
+            fi
         fi
     else
         deploy_status=$?
@@ -769,6 +873,8 @@ rtc_deploy_and_assert_test_app() {
         if [[ -n "${deploy_timeout[*]:-}" && ( "$deploy_status" == 124 || "$deploy_status" == 137 ) ]]; then
             if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
                 echo "Error: PostgreSQL test deployment exceeded its time limit." >&2
+            elif [[ -n "$step_remaining" ]]; then
+                echo "Error: Azure test deployment exceeded its time limit; collecting diagnostics before the step deadline." >&2
             else
                 echo "Error: Azure container test deployment exceeded its 15-minute limit." >&2
             fi
@@ -777,11 +883,13 @@ rtc_deploy_and_assert_test_app() {
     fi
 
     if [[ "$deploy_status" -ne 0 ]]; then
-        if [[ -n "${deploy_timeout[*]:-}" && "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" != 1 ]]; then
+        if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" != 1 &&
+              ( -n "$step_remaining" || -n "${deploy_timeout[*]:-}" ) ]]; then
             cleanup_timeout=(timeout --kill-after=5s 3m)
         fi
-        rtc_collect_azure_test_diagnostics "$resource_type" "$app_name" "$started" ||
-            echo "Error: Azure diagnostic collection failed; continuing cleanup." >&2
+        rtc_collect_test_diagnostics "$resource_type" "$app_name" "$started" ||
+            echo "Error: Diagnostic collection failed; continuing cleanup." >&2
+        diagnostics_collected=1
     fi
 
     if [[ "${RTC_AZURE_LOCK_GUARD:-0}" == "1" ]]; then
@@ -792,6 +900,10 @@ rtc_deploy_and_assert_test_app() {
         fi
         if ! rtc_delete_owned_new_azure_management_locks "$locks_before" "$inventory_locks" "$app_name"; then
             echo "Error: Skipping Radius application deletion because Azure lock cleanup or Radius lock inventory validation failed." >&2
+            if [[ "$deploy_status" == 0 ]]; then
+                rtc_collect_test_diagnostics "$resource_type" "$app_name" "$started" ||
+                    echo "Error: Diagnostic collection failed after lock cleanup failure." >&2
+            fi
             rtc_cleanup_kubernetes_resources_bounded "$kubernetes_namespace" "$app_name"
             return 1
         fi
@@ -799,10 +911,25 @@ rtc_deploy_and_assert_test_app() {
 
     echo "==> Cleaning up test application"
     local cleanup_status=0
-    ${cleanup_timeout[@]+"${cleanup_timeout[@]}"} rad app delete "$app_name" --workspace "$workspace_name" --yes || cleanup_status=1
-    rtc_cleanup_kubernetes_resources "$kubernetes_namespace" "$app_name" || cleanup_status=1
+    if ! ${cleanup_timeout[@]+"${cleanup_timeout[@]}"} rad app delete "$app_name" --workspace "$workspace_name" --yes; then
+        cleanup_status=1
+        if [[ "$deploy_status" == 0 ]]; then
+            rtc_collect_test_diagnostics "$resource_type" "$app_name" "$started" ||
+                echo "Error: Diagnostic collection failed after application cleanup failure." >&2
+            diagnostics_collected=1
+        fi
+    fi
+    if [[ -n "$step_remaining" && "$deploy_status" -ne 0 && "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" != 1 ]]; then
+        rtc_cleanup_kubernetes_resources_bounded "$kubernetes_namespace" "$app_name" || cleanup_status=1
+    else
+        rtc_cleanup_kubernetes_resources "$kubernetes_namespace" "$app_name" || cleanup_status=1
+    fi
     if [[ "$cleanup_status" -ne 0 ]]; then
         echo "Error: Test app cleanup failed." >&2
+        if [[ "$diagnostics_collected" == 0 ]]; then
+            rtc_collect_test_diagnostics "$resource_type" "$app_name" "$started" ||
+                echo "Error: Diagnostic collection failed after cleanup failure." >&2
+        fi
         return 1
     fi
     if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then

@@ -35,6 +35,11 @@ const LISTS = [
   ["Microsoft.Network/loadBalancers", "2024-05-01"],
   ["Microsoft.Network/publicIPAddresses", "2024-05-01"],
 ];
+const SERVICE_LISTS = [
+  ["Microsoft.CognitiveServices/accounts", "2025-06-01"],
+  ["Microsoft.DocumentDB/databaseAccounts", "2024-11-15"],
+  ["Microsoft.DBforPostgreSQL/flexibleServers", "2024-08-01"],
+];
 
 const text = (value, pattern = TOKEN) =>
   typeof value === "string" && value.length <= 2048 && pattern.test(value) ? value : null;
@@ -68,10 +73,16 @@ function instanceView(value) {
 }
 
 function scopedId(value, scope) {
-  return typeof value === "string" &&
+  return typeof scope === "string" && typeof value === "string" &&
     value.toLowerCase().startsWith(`${scope.toLowerCase()}/providers/`) &&
     /^\/[a-z0-9_./()-]+$/i.test(value) && value.length <= 2048 &&
     !value.split("/").some((part) => part === "." || part === "..") ? value : null;
+}
+
+function radiusId(value) {
+  const id = text(value,
+    /^\/planes\/(?:radius|kubernetes)\/local\/(?:resourcegroups|namespaces)\/[a-z0-9_()-]+\/providers\/[a-z0-9_.-]+(?:\/[a-z0-9_().-]+){2,}$/i);
+  return id && !id.split("/").some((part) => part === "." || part === "..") ? id : null;
 }
 
 function resource(value, scope) {
@@ -84,7 +95,7 @@ function resource(value, scope) {
   });
   return {
     id: scopedId(v.id, scope), type: text(v.type), name: text(v.name), location: text(v.location),
-    provisioningState: text(p.provisioningState),
+    provisioningState: text(p.provisioningState) ?? text(v.provisioningState), state: text(p.state),
     instanceView: instanceView(p.instanceView),
     containers: containers(p.containers), initContainers: containers(p.initContainers),
     containersTruncated: [p.containers, p.initContainers].some((v) => Array.isArray(v) && v.length > LIMITS.items),
@@ -119,11 +130,94 @@ function activity(value, scope) {
     serviceRequestId: text(object(v.properties).serviceRequestId, UUID),
     operation: text(object(v.operationName).value),
     status: text(object(v.status).value), subStatus: text(object(v.subStatus).value),
+    errorCodes: errorCodes(object(v.properties).statusMessage),
   };
 }
 
+function errorCodes(value) {
+  if (typeof value === "string") {
+    try { value = JSON.parse(value); } catch { return []; }
+  }
+  const codes = new Set();
+  function visit(item, depth) {
+    if (depth > 8 || codes.size >= LIMITS.items) return;
+    if (Array.isArray(item)) {
+      for (const child of item.slice(0, LIMITS.items)) visit(child, depth + 1);
+    } else if (item && typeof item === "object") {
+      const code = text(item.code, /^[a-z][a-z0-9_.-]{0,127}$/i);
+      if (code) codes.add(code);
+      visit(item.error, depth + 1);
+      visit(item.details, depth + 1);
+    }
+  }
+  visit(value, 0);
+  return [...codes];
+}
+
+function requestTarget(value, scope) {
+  if (typeof value !== "string") return null;
+  let url;
+  try { url = new URL(value); } catch { return null; }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  if (url.username || url.password) return null;
+  const azure = url.hostname === "management.azure.com" && scopedId(url.pathname, scope);
+  const radius = /^(ucp|dynamic-rp|applications-rp)\.radius-system$/.test(url.hostname) &&
+    /^\/(?:apis\/api\.ucp\.dev\/v1alpha3\/)?planes\/radius\/local\/[a-z0-9_./()-]+$/i.test(url.pathname);
+  return azure || radius ? { host: url.hostname, path: url.pathname } : null;
+}
+
+function recipeSource(value) {
+  const image = text(value, IMAGE);
+  if (image) return image;
+  if (typeof value !== "string" || value.length > 2048 || /[?#]/.test(value)) return null;
+  let url;
+  try { url = new URL(value); } catch { return null; }
+  return (url.protocol === "https:" || url.protocol === "http:") &&
+    !url.username && !url.password &&
+    text(url.hostname, /^[a-z0-9.-]+$/i) &&
+    text(url.pathname, /^\/[a-z0-9_./()-]+$/i) ? value : null;
+}
+
+function logRecords(output, scope) {
+  const records = [];
+  let omitted = 0;
+  for (const line of output.split("\n")) {
+    if (!line.trim()) continue;
+    let v;
+    try { v = object(JSON.parse(line)); } catch { omitted++; continue; }
+    if (records.length >= LIMITS.items * 100) { omitted++; continue; }
+    const message = typeof v.message === "string" ? v.message : "";
+    const recipe = /^Deploying recipe: "[a-z0-9._-]+", template: "([^"]+)"$/i.exec(message);
+    const httpEvent = [
+      ["Start processing HTTP request ", "logical-start"],
+      ["Sending HTTP request ", "request-send"],
+      ["Received HTTP response headers ", "response-headers"],
+      ["End processing HTTP request ", "logical-end"],
+    ].find(([prefix]) => message.startsWith(prefix))?.[1] ?? null;
+    const resourceId = v.resourceId ?? v.ResourceId ?? v.resourceID;
+    records.push({
+      timestamp: text(v.timestamp, TIME), severity: text(v.severity),
+      traceId: text(v.traceId, /^[a-f0-9]{32}$/i), spanId: text(v.spanId, /^[a-f0-9]{16}$/i),
+      resourceId: scopedId(resourceId, scope) ?? radiusId(resourceId),
+      operationId: text(v.operationId, UUID),
+      operationType: text(v.operationType, /^[a-z0-9_./|()-]{1,256}$/i),
+      operationName: text(v.OperationName),
+      state: text(v.message, /^(Accepted|Running|Succeeded|Failed|Canceled|Creating|Updating|Deleting)$/),
+      version: text(v.version),
+      recipeSource: recipeSource(recipe?.[1]),
+      httpEvent,
+      logger: text(v.scope ?? v.name, /^[a-z0-9_.:/ -]{1,256}$/i),
+      request: requestTarget(v.Uri, scope),
+      method: text(v.HttpMethod), statusCode: integer(v.StatusCode),
+      elapsedMilliseconds: integer(v.ElapsedMilliseconds),
+      errorCodes: errorCodes(v.error),
+    });
+  }
+  return { records, omitted };
+}
+
 // Never save CLI stderr: preview API errors can echo a resource body or credentials.
-function runAz(args, timeoutMs, command = "az", prefix = []) {
+function runAz(args, timeoutMs, command = "az", prefix = [], parse = JSON.parse) {
   return new Promise((resolve) => {
     let child;
     let output = [];
@@ -162,42 +256,96 @@ function runAz(args, timeoutMs, command = "az", prefix = []) {
     child.on("close", (code) => {
       if (finished) return;
       if (code !== 0) return finish({ error: "azure-cli-failed", exitCode: integer(code) });
-      try { finish({ value: JSON.parse(Buffer.concat(output).toString("utf8")) }); }
+      try { finish({ value: parse(Buffer.concat(output).toString("utf8")) }); }
       catch { finish({ error: "invalid-json" }); }
       output = [];
     });
   });
 }
 
-async function collect({ subscription, group, app, started, save, run = runAz, now = Date.now }) {
+async function collect({ subscription, group, app, started, resourceType = "", platform = "azure",
+  save, run = runAz, runKubernetes = (args, timeout, parse) => runAz(args, timeout, "kubectl", [], parse),
+  now = Date.now }) {
   const deadline = now() + LIMITS.totalMs;
   let requests = 0;
-  if (!/^[a-z0-9_-]{1,90}$/i.test(group) ||
-      !/^[a-z0-9_-]{1,128}$/i.test(app) || !TIME.test(started)) {
+  if (!/^[a-z0-9_-]{1,128}$/i.test(app) || !TIME.test(started)) {
     throw new Error("invalid-diagnostic-context");
   }
+  const report = {
+    schemaVersion: 1, app, resourceType, platform, scope: null, deploymentStarted: started,
+    collectedAt: new Date(now()).toISOString(), limits: LIMITS,
+    scopeNote: "Cluster log snapshot and optional Azure test resource group snapshot; records are not attributed to an app.",
+    omitted: "Free-text messages, detailStatus, raw errors, headers, URL queries, tags, env, commands, credentials, deployment parameters and outputs.",
+    providerLimitations: "The 2024-11-01-preview API has no NGroups child-list or NGroup instanceView. Resource-group containerGroups may not expose managed children. Activity Log records can be delayed; original PUT/poll headers and registry responses are not available through these reads.",
+    resources: [], activity: [], radiusLogs: [], collections: [], errors: [], truncations: [],
+  };
+  save(report);
   // Older base workflows log in to Azure but do not export the subscription
   // to the test step. Read only the selected account ID, never credentials.
-  if (subscription === "") {
+  if (platform === "azure" && subscription === "" && /^[a-z0-9_-]{1,90}$/i.test(group)) {
     requests++;
     const result = await run(["account", "show", "--query", "id", "--only-show-errors", "--output", "json"],
       LIMITS.requestMs);
     if (result.error || typeof result.value !== "string" || !UUID.test(result.value)) {
-      throw new Error("azure-subscription-context-unavailable");
+      report.errors.push({ operation: "azure-context", reason: "azure-subscription-context-unavailable" });
+    } else {
+      subscription = result.value;
     }
-    subscription = result.value;
   }
-  if (!UUID.test(subscription)) throw new Error("invalid-diagnostic-context");
-  const scope = `/subscriptions/${subscription}/resourceGroups/${group}`;
-  const report = {
-    schemaVersion: 1, app, scope, deploymentStarted: started,
-    collectedAt: new Date(now()).toISOString(), limits: LIMITS,
-    scopeNote: "Test resource group snapshot; resources are not attributed to an app.",
-    omitted: "Free-text messages, detailStatus, raw errors, headers, tags, env, commands, credentials, deployment parameters and outputs.",
-    providerLimitations: "The 2024-11-01-preview API has no NGroups child-list or NGroup instanceView. Resource-group containerGroups may not expose managed children. Activity Log records can be delayed; original PUT/poll headers and registry responses are not available through these reads.",
-    resources: [], activity: [], collections: [], errors: [], truncations: [],
-  };
+  const scope = platform === "azure" && UUID.test(subscription) && /^[a-z0-9_-]{1,90}$/i.test(group)
+    ? `/subscriptions/${subscription}/resourceGroups/${group}` : null;
+  report.scope = scope;
+  if (platform === "azure" && !scope && report.errors.length === 0) {
+    report.errors.push({ operation: "azure-context", reason: "invalid-or-missing-azure-context" });
+  }
   save(report);
+  async function kubernetes(label, args, parse = JSON.parse) {
+    if (requests >= LIMITS.requests || now() >= deadline) {
+      report.errors.push({ operation: label, reason: "collection-budget-exhausted" });
+      save(report);
+      return null;
+    }
+    requests++;
+    const result = await runKubernetes(args, Math.min(LIMITS.requestMs, deadline - now()), parse);
+    if (result.error) {
+      report.errors.push({ operation: label, reason: result.error, exitCode: result.exitCode ?? null });
+      save(report);
+      return null;
+    }
+    return result.value;
+  }
+  const pods = await kubernetes("radius-pods", ["get", "pods", "-n", "radius-system", "-o", "json"]);
+  if (pods !== null && !Array.isArray(object(pods).items)) {
+    report.errors.push({ operation: "radius-pods", reason: "invalid-list-shape" });
+    save(report);
+  }
+  const seen = new Set();
+  if (Array.isArray(object(pods).items) && pods.items.length > LIMITS.items) {
+    report.truncations.push("radius-pods");
+  }
+  for (const pod of array(object(pods).items)) {
+    const name = object(object(pod).metadata).name;
+    const component = typeof name === "string" &&
+      /^(deployment-engine|bicep-de|dynamic-rp|applications-rp|ucp)-[a-z0-9-]+$/.exec(name)?.[1];
+    if (!component) continue;
+    seen.add(component);
+    const logs = await kubernetes(`radius-logs:${component}`, [
+      "logs", name, "-n", "radius-system", "--all-containers=true",
+      `--since-time=${started}`, "--tail=2000", "--limit-bytes=524288",
+    ], (output) => logRecords(output, scope));
+    const images = array(object(pod.spec).containers).map((container) => text(object(container).image, IMAGE));
+    const imageIds = array(object(pod.status).containerStatuses).map((container) => {
+      const id = object(container).imageID;
+      return typeof id === "string" ? text(id.replace(/^(docker-pullable|containerd|docker):\/\//, ""), IMAGE) : null;
+    });
+    report.radiusLogs.push({ component, pod: name, images, imageIds, tailOnly: true, ...(logs ?? { records: [], omitted: 0 }) });
+    save(report);
+  }
+  if (pods !== null && seen.size === 0) {
+    report.errors.push({ operation: "radius-pods", reason: "no-radius-pods" });
+    save(report);
+  }
+  if (!scope) return report;
   async function get(label, url) {
     if (requests >= LIMITS.requests || now() >= deadline) {
       report.errors.push({ operation: label, reason: "collection-budget-exhausted" });
@@ -229,8 +377,26 @@ async function collect({ subscription, group, app, started, save, run = runAz, n
     report.collections.push({ operation: label, returned: response.value.length, kept: Math.min(response.value.length, LIMITS.items) });
     return array(response.value);
   }
+  function recordResource(value) {
+    const next = resource(value, scope);
+    const previous = report.resources.find((item) => item.id.toLowerCase() === next.id.toLowerCase());
+    if (previous) {
+      Object.assign(previous, Object.fromEntries(Object.entries(next).filter(([, value]) => value !== null)));
+    } else {
+      report.resources.push(next);
+    }
+  }
   const groups = [];
-  for (const [type, version] of LISTS) {
+  const inventory = await get("resource-inventory",
+    `https://management.azure.com${scope}/resources?api-version=2021-04-01&$expand=provisioningState`);
+  for (const item of page("resource-inventory", inventory)) {
+    if (scopedId(object(item).id, scope)) recordResource(item);
+  }
+  save(report);
+  const children = [];
+  // These API-specific reads enrich the general inventory; they do not select
+  // which applications or failures get logs.
+  for (const [type, version] of [...LISTS, ...SERVICE_LISTS]) {
     const label = `list:${type}`;
     const response = await get(label, `https://management.azure.com${scope}/providers/${type}?api-version=${version}`);
     for (const item of page(label, response)) {
@@ -242,8 +408,28 @@ async function collect({ subscription, group, app, started, save, run = runAz, n
         report.errors.push({ operation: label, reason: "invalid-resource-id" });
         continue;
       }
-      report.resources.push(resource(item, scope));
+      recordResource(item);
       if (type === "Microsoft.ContainerInstance/containerGroups") groups.push(id);
+      if (type === "Microsoft.CognitiveServices/accounts") {
+        children.push([`${id}/deployments`, version]);
+      }
+      if (type === "Microsoft.DocumentDB/databaseAccounts") {
+        children.push([`${id}/mongodbDatabases`, version]);
+      }
+    }
+    save(report);
+  }
+  for (const [collection, version] of children) {
+    const label = `children:${collection}`;
+    const response = await get(label, `https://management.azure.com${collection}?api-version=${version}`);
+    for (const item of page(label, response)) {
+      const id = scopedId(object(item).id, scope);
+      if (!id || !id.toLowerCase().startsWith(`${collection.toLowerCase()}/`) ||
+          id.slice(collection.length + 1).includes("/")) {
+        report.errors.push({ operation: label, reason: "invalid-resource-id" });
+        continue;
+      }
+      recordResource(item);
     }
     save(report);
   }
@@ -257,7 +443,7 @@ async function collect({ subscription, group, app, started, save, run = runAz, n
     const detail = await get("container-group-instance-view", `https://management.azure.com${id}?api-version=2024-11-01-preview`);
     if (detail) {
       if (scopedId(detail.id, scope)?.toLowerCase() === id.toLowerCase()) {
-        report.resources.push(resource(detail, scope));
+        recordResource(detail);
       } else {
         report.errors.push({ operation: "container-group-instance-view", reason: "invalid-resource-id" });
       }
@@ -268,19 +454,20 @@ async function collect({ subscription, group, app, started, save, run = runAz, n
 }
 
 if (require.main === module) {
-  const [directory, subscription, group, app, started] = process.argv.slice(2);
+  const [directory, subscription, group, app, started, resourceType, platform = "azure"] = process.argv.slice(2);
+  const file = platform === "azure" ? "azure.json" : "radius.json";
   collect({
-    subscription, group, app, started,
-    save: (report) => fs.writeFileSync(path.join(directory, "azure.json"), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 }),
+    subscription, group, app, started, resourceType, platform,
+    save: (report) => fs.writeFileSync(path.join(directory, file), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 }),
   }).then((report) => {
     if (report.errors.length || report.truncations.length) {
-      console.error("Azure diagnostics incomplete; see azure.json errors and truncations.");
+      console.error(`Failure diagnostics incomplete; see ${file} errors and truncations.`);
       process.exitCode = 1;
     }
   }).catch(() => {
-    console.error("Azure diagnostics failed: invalid context or collector/output error. Raw error withheld.");
+    console.error("Failure diagnostics failed: invalid context or collector/output error. Raw error withheld.");
     process.exitCode = 1;
   });
 }
 
-module.exports = { collect, runAz, resource, activity, LIMITS };
+module.exports = { collect, runAz, resource, activity, logRecords, LIMITS };

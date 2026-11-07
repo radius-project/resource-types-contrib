@@ -186,6 +186,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     name: Validate Azure ${{ matrix.recipe }} Recipes
+    env:
+      RTC_TEST_DIAGNOSTICS_DIR: azure-test-diagnostics
+      RTC_TEST_PLATFORM: azure
     strategy:
       fail-fast: false
       matrix:
@@ -337,6 +340,13 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
         run: RECIPE_PLATFORM_FILTER=azure make test ENVIRONMENT="$AZURE_ENVIRONMENT_NAME" RECIPE_TYPE=${{ matrix.recipe }}
+
+      - name: Collect workflow failure diagnostics
+        if: ${{ !cancelled() && failure() }}
+        continue-on-error: true
+        run: |
+          source .github/scripts/lib-recipe-test.sh
+          rtc_collect_test_diagnostics workflow workflow-failure "$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
 
       - name: Upload pre-cleanup Azure diagnostics
         if: always()

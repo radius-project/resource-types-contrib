@@ -18,7 +18,7 @@ limitations under the License.
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { collect, runAz, resource, activity, LIMITS } = require("../collect-azure-test-diagnostics.js");
+const { collect, runAz, resource, activity, logRecords, LIMITS } = require("../collect-azure-test-diagnostics.js");
 
 const subscription = "11111111-1111-1111-1111-111111111111";
 const group = "rrttest-123-1-bicep";
@@ -60,6 +60,9 @@ async function withMock(run, extra = {}) {
     subscription, group, app: "testapp-123", started,
     save: (value) => snapshots.push(JSON.stringify(value)),
     run: async (args, timeout) => { calls.push(args); return run(args, timeout); },
+    runKubernetes: async (args) => ({ value: args[0] === "get"
+      ? { items: [{ metadata: { name: "deployment-engine-test" } }] }
+      : { records: [], omitted: 0 } }),
     ...extra,
   });
   return { report, calls, snapshots };
@@ -98,7 +101,7 @@ test("collects preview ACI, images, network state and operation IDs using scoped
     }
     return { value: { value: [] } };
   });
-  assert.equal(calls.length, 9);
+  assert.equal(calls.length, 13);
   for (const args of calls) {
     assert.deepEqual(args.slice(0, 3), ["rest", "--method", "get"]);
     const url = new URL(args[4]);
@@ -107,13 +110,13 @@ test("collects preview ACI, images, network state and operation IDs using scoped
       assert.equal(url.searchParams.get("$filter"), `eventTimestamp ge '${started}' and resourceGroupName eq '${group}'`);
       assert.equal(url.searchParams.get("$top"), "20");
     } else {
-      assert.ok(url.pathname.startsWith(`${scope}/providers/`));
+      assert.ok(url.pathname === `${scope}/resources` || url.pathname.startsWith(`${scope}/providers/`));
     }
   }
   assert.equal(report.resources.find((r) => r.id.endsWith("/ng")).provisioningState, "Failed");
   assert.equal(report.resources.find((r) => r.id.endsWith("/vnet")).subnets[0].provisioningState, "Succeeded");
-  assert.equal(report.resources.at(-1).containers[0].image, image);
-  assert.equal(report.resources.at(-1).containers[0].instanceView.events[0].count, 2);
+  assert.equal(report.resources.find((r) => r.id === containerId).containers[0].image, image);
+  assert.equal(report.resources.find((r) => r.id === containerId).containers[0].instanceView.events[0].count, 2);
   assert.equal(report.activity[0].serviceRequestId, subscription);
   assert.equal(report.errors.length, 0);
   assert.ok(snapshots.length > calls.length, "partial evidence must be saved before later calls");
@@ -124,35 +127,249 @@ test("allowlists typed leaves; never copies nested objects, free text or credent
   const input = fixture();
   input.name = { secret };
   input.properties.provisioningState = { secret };
+  input.properties.state = { secret };
   input.properties.containers[0].properties.image = `https://user:${secret}@host/image?token=${secret}`;
   input.properties.instanceView.events[0].name = { secret };
   const safe = resource(input, scope);
   assert.equal(safe.name, null);
   assert.equal(safe.provisioningState, null);
+  assert.equal(safe.state, null);
   assert.equal(safe.containers[0].image, null);
   assert.ok(!JSON.stringify(safe).includes(secret));
   assert.ok(!JSON.stringify(activity({ properties: { serviceRequestId: secret }, status: { value: { secret } } }, scope)).includes(secret));
   assert.equal(resource(null, scope).instanceView.available, false);
 });
 
+test("expands inventory state and merges provider details by resource ID", async () => {
+  const other = id("Microsoft.Storage/storageAccounts", "storage");
+  const { report } = await withMock(async (args) => {
+    const url = new URL(args[4]);
+    if (url.pathname.endsWith("/resources")) {
+      assert.equal(url.searchParams.get("$expand"), "provisioningState");
+      return { value: { value: [
+        { id: containerId, name: "child", type: "Microsoft.ContainerInstance/containerGroups", provisioningState: "Creating" },
+        { id: other, provisioningState: "Succeeded" },
+      ] } };
+    }
+    if (url.pathname.endsWith("/containerGroups")) {
+      return { value: { value: [{ id: containerId.toUpperCase(), properties: { provisioningState: "Succeeded" } }] } };
+    }
+    if (url.pathname.toLowerCase().endsWith("/containergroups/child")) return { value: fixture() };
+    return { value: { value: [] } };
+  });
+  assert.equal(report.resources.length, 2);
+  const container = report.resources.find((r) => r.id.toLowerCase() === containerId.toLowerCase());
+  assert.equal(container.name, "child");
+  assert.equal(container.provisioningState, "Failed");
+  assert.equal(container.containers[0].image, image);
+  assert.equal(report.resources.find((r) => r.id === other).provisioningState, "Succeeded");
+  assert.equal(resource({ provisioningState: { secret } }, scope).provisioningState, null);
+});
+
+test("caps discovered pod replicas and reports truncation", async () => {
+  const podCalls = [];
+  const { report } = await withMock(() => assert.fail("must not call Azure"), {
+    platform: "kubernetes",
+    runKubernetes: async (args) => {
+      podCalls.push(args);
+      return { value: args[0] === "get"
+        ? { items: Array.from({ length: LIMITS.items + 5 }, (_, i) => ({ metadata: { name: `dynamic-rp-${i}` } })) }
+        : { records: [], omitted: 0 } };
+    },
+  });
+  assert.equal(report.radiusLogs.length, LIMITS.items);
+  assert.equal(podCalls.filter((args) => args[0] === "logs").length, LIMITS.items);
+  assert.ok(report.truncations.includes("radius-pods"));
+});
+
+test("non-container failures collect account, model, MongoDB and PostgreSQL state", async () => {
+  const account = id("Microsoft.CognitiveServices/accounts", "openai");
+  const mongo = id("Microsoft.DocumentDB/databaseAccounts", "mongo");
+  const postgres = id("Microsoft.DBforPostgreSQL/flexibleServers", "postgres");
+  const { report, calls } = await withMock(async (args) => {
+    const url = new URL(args[4]);
+    if (url.pathname.endsWith("/accounts")) {
+      return { value: { value: [{ id: account, properties: { provisioningState: "Creating", secret } }] } };
+    }
+    if (url.pathname.endsWith("/databaseAccounts")) return { value: { value: [{ id: mongo }] } };
+    if (url.pathname.endsWith("/accounts/openai/deployments")) {
+      return { value: { value: [{ id: `${account}/deployments/chat`, properties: { provisioningState: "Failed" } }] } };
+    }
+    if (url.pathname.endsWith("/mongodbDatabases")) {
+      return { value: { value: [{ id: `${mongo}/mongodbDatabases/test`, properties: { provisioningState: "Creating" } }] } };
+    }
+    if (url.pathname.endsWith("/flexibleServers")) {
+      return { value: { value: [{ id: postgres, properties: { state: "Ready", secret } }] } };
+    }
+    return { value: { value: [] } };
+  }, { resourceType: "Radius.AI/models" });
+  assert.equal(calls.length, 14);
+  assert.equal(report.resourceType, "Radius.AI/models");
+  assert.equal(report.resources.find((r) => r.id === account).provisioningState, "Creating");
+  assert.equal(report.resources.find((r) => r.id.endsWith("/deployments/chat")).provisioningState, "Failed");
+  assert.equal(report.resources.find((r) => r.id === postgres).state, "Ready");
+  assert.equal(report.resources.find((r) => r.id === postgres).provisioningState, null);
+  assert.ok(calls.some((args) => args[4].includes("/flexibleServers?")));
+  assert.ok(!JSON.stringify(report).includes(secret));
+});
+
+test("saves filtered Radius request records before Azure reads, without bodies or URL queries", async () => {
+  const order = [];
+  const request = `${scope}/providers/Microsoft.CognitiveServices/accounts/openai/deployments/chat`;
+  const raw = JSON.stringify({
+    timestamp: started, severity: "info", scope: "System.Net.Http.HttpClient",
+    traceId: "a".repeat(32), spanId: "b".repeat(16),
+    Uri: `https://management.azure.com${request}?api-version=2025-06-01&token=${secret}`,
+    HttpMethod: "PUT", StatusCode: 409, message: secret, body: { secret }, headers: { secret },
+    error: { code: "RequestConflict", message: secret },
+  });
+  const { report } = await withMock(async () => {
+    order.push("azure");
+    return { value: { value: [] } };
+  }, {
+    runKubernetes: async (args, timeout, parse) => {
+      order.push(args[0]);
+      assert.ok(timeout <= LIMITS.requestMs);
+      if (args[0] === "get") return { value: { items: [
+        { metadata: { name: "deployment-engine-abc" },
+          spec: { containers: [{ image: "ghcr.io/azure-octo/deployment-engine:edge" }, { image: `https://user:${secret}@host` }] },
+          status: { containerStatuses: [{ imageID: `docker-pullable://ghcr.io/azure-octo/deployment-engine@sha256:${"a".repeat(64)}` }] } },
+        { metadata: { name: "unrelated-pod" } },
+        { metadata: { name: "deployment-engine-def" } },
+      ] } };
+      assert.ok(args.includes(`--since-time=${started}`));
+      assert.ok(args.includes("--limit-bytes=524288"));
+      return { value: parse(`${raw}\n${secret}\n`) };
+    },
+  });
+  assert.deepEqual(order.slice(0, 4), ["get", "logs", "logs", "azure"]);
+  assert.equal(report.radiusLogs.length, 2);
+  const logs = report.radiusLogs[0];
+  assert.equal(logs.omitted, 1);
+  assert.deepEqual(logs.records[0].request, { host: "management.azure.com", path: request });
+  assert.equal(logs.records[0].method, "PUT");
+  assert.equal(logs.records[0].statusCode, 409);
+  assert.deepEqual(logs.records[0].errorCodes, ["RequestConflict"]);
+  assert.equal(logs.images[1], null);
+  assert.equal(logs.imageIds[0], `ghcr.io/azure-octo/deployment-engine@sha256:${"a".repeat(64)}`);
+  assert.equal(logs.tailOnly, true);
+  assert.ok(!JSON.stringify(report).includes(secret));
+  for (const uri of [`https://evil.invalid${request}`, `https://management.azure.com${request.replace(group, "other")}`,
+    `https://user:password@management.azure.com${request}`]) {
+    assert.equal(logRecords(JSON.stringify({ Uri: uri }), scope).records[0].request, null);
+  }
+});
+
+test("records HTTP phases and exact recipe references without free-text messages", () => {
+  const source = "mcr.microsoft.com/bicep/avm/res/cognitive-services/account:0.15.0";
+  const { records } = logRecords([
+    JSON.stringify({ message: `Sending HTTP request PUT https://example.invalid/?password=${secret}` }),
+    JSON.stringify({ message: `Deploying recipe: "default", template: "${source}"` }),
+    JSON.stringify({ message: "Succeeded" }),
+    JSON.stringify({ resourceID: "/planes/radius/local/resourcegroups/default/providers/Radius.Data/widgets/test" }),
+  ].join("\n"), scope);
+  assert.equal(records[0].httpEvent, "request-send");
+  assert.equal(records[1].recipeSource, source);
+  assert.equal(records[2].state, "Succeeded");
+  assert.equal(records[3].resourceId, "/planes/radius/local/resourcegroups/default/providers/Radius.Data/widgets/test");
+  assert.ok(!JSON.stringify(records).includes(secret));
+});
+
+test("preserves native Radius IDs without Azure context and rejects unsafe paths", () => {
+  for (const resourceId of [
+    "/planes/radius/local/resourceGroups/default/providers/Radius.AI/models/testmodel",
+    "/planes/kubernetes/local/namespaces/default/providers/core/Secret/test",
+  ]) {
+    for (const key of ["resourceId", "ResourceId", "resourceID"]) {
+      assert.equal(logRecords(JSON.stringify({ [key]: resourceId }), null).records[0].resourceId, resourceId);
+    }
+  }
+  for (const resourceId of [
+    "/planes/radius/local/resourceGroups/default/providers/Radius.AI/models/../test",
+    "/planes/radius/local/resourceGroups/default/providers/Radius.AI/models/test?token=hidden",
+    "/planes/radius/local/resourceGroups/default/providers/Radius.AI/models/test#hidden",
+    "/planes/radius/local/resourceGroups/default/unrelated/path",
+    "/planes/other/local/resourceGroups/default/providers/Radius.AI/models/test",
+    { secret },
+    "x".repeat(2049),
+  ]) {
+    assert.equal(logRecords(JSON.stringify({ resourceId }), null).records[0].resourceId, null);
+  }
+});
+
+test("preserves HTTP Terraform recipe sources without credentials, queries or fragments", () => {
+  const source = (value) => logRecords(JSON.stringify({
+    message: `Deploying recipe: "default", template: "${value}"`,
+  }), scope).records[0].recipeSource;
+  for (const value of [
+    "http://tf-module-server.radius-test-tf-module-server.svc.cluster.local/secrets-azure.zip",
+    "https://modules.example.invalid:8443/recipes/secrets-azure.zip",
+  ]) {
+    assert.equal(source(value), value);
+  }
+  for (const value of [
+    `https://user:${secret}@modules.example.invalid/recipe.zip`,
+    `https://modules.example.invalid/recipe.zip?token=${secret}`,
+    `https://modules.example.invalid/recipe.zip#${secret}`,
+    "https://modules.example.invalid/recipe.zip?",
+    "https://modules.example.invalid/recipe.zip#",
+    "https://modules.example.invalid/recipe with spaces.zip",
+    "file:///recipe.zip",
+    "ftp://modules.example.invalid/recipe.zip",
+    "https://modules.example.invalid/" + "a".repeat(2048),
+  ]) {
+    assert.equal(source(value), null);
+  }
+});
+
+test("preserves bounded logger names with spaces without accepting free text", () => {
+  for (const key of ["scope", "name"]) {
+    for (const value of ["applications.core.Applications.Core async worker", "ucp async worker"]) {
+      assert.equal(logRecords(JSON.stringify({ [key]: value }), scope).records[0].logger, value);
+    }
+    for (const value of [{ secret }, "a".repeat(257), "worker\nhidden", "worker?token=hidden"]) {
+      assert.equal(logRecords(JSON.stringify({ [key]: value }), scope).records[0].logger, null);
+    }
+  }
+});
+
+test("pod log failures are explicit and cannot block Azure evidence", async () => {
+  const { report, calls } = await withMock(async () => ({ value: { value: [] } }), {
+    runKubernetes: async () => ({ error: "cli-unavailable" }),
+  });
+  assert.equal(calls.length, 12);
+  assert.deepEqual(report.errors[0], { operation: "radius-pods", reason: "cli-unavailable", exitCode: null });
+});
+
+test("Activity Log saves structured error codes but discards provider messages", () => {
+  const safe = activity({
+    resourceId: containerId,
+    properties: { statusMessage: JSON.stringify({ error: {
+      code: "DeploymentFailed", message: secret, details: [{ code: "RequestConflict", message: secret }],
+    } }) },
+  }, scope);
+  assert.deepEqual(safe.errorCodes, ["DeploymentFailed", "RequestConflict"]);
+  assert.ok(!JSON.stringify(safe).includes(secret));
+});
+
 test("records denied/unsupported calls without copying CLI errors and continues", async () => {
   const { report, calls } = await withMock(async () => ({ error: "azure-cli-failed", exitCode: 3 }));
-  assert.equal(calls.length, 8);
-  assert.equal(report.errors.length, 8);
-  assert.deepEqual(report.errors[0], { operation: "list:Microsoft.ContainerInstance/ngroups", reason: "azure-cli-failed", exitCode: 3 });
+  assert.equal(calls.length, 12);
+  assert.equal(report.errors.length, 12);
+  assert.deepEqual(report.errors[0], { operation: "resource-inventory", reason: "azure-cli-failed", exitCode: 3 });
 });
 
 test("records missing data and invalid API shapes explicitly", async () => {
   const empty = await withMock(async () => ({ value: { value: [] } }));
-  assert.equal(empty.report.collections.length, 8);
+  assert.equal(empty.report.collections.length, 12);
   assert.ok(empty.report.collections.every((c) => c.returned === 0));
   assert.match(empty.report.providerLimitations, /no NGroups child-list/);
   const bad = await withMock(async () => ({ value: { value: { secret } } }));
-  assert.equal(bad.report.errors.length, 8);
+  assert.equal(bad.report.errors.length, 12);
   assert.ok(bad.report.errors.every((e) => e.reason === "invalid-list-shape"));
   for (const value of [null, false, [], secret]) {
     const malformed = await withMock(async () => ({ value }));
-    assert.equal(malformed.report.errors.length, 8);
+    assert.equal(malformed.report.errors.length, 12);
     assert.ok(malformed.report.errors.every((e) => e.reason === "invalid-response-shape"));
   }
 });
@@ -165,8 +382,8 @@ test("never follows nextLink or cross-group, wrong-type or traversal resource ID
       { id: "https://example.invalid/credentials" },
     ], nextLink: `https://example.invalid/${secret}` },
   }));
-  assert.equal(calls.length, 8);
-  assert.equal(report.truncations.length, 8);
+  assert.equal(calls.length, 12);
+  assert.equal(report.truncations.length, 12);
   assert.equal(report.resources.length, 0);
   assert.ok(!JSON.stringify(report).includes(secret));
 });
@@ -179,7 +396,7 @@ test("caps request count, pages and nested items", async () => {
     if (args[4].includes("/containerGroups/")) return { value: fixture(args[4].split("?")[0].replace("https://management.azure.com", "")) };
     return { value: { value: [] } };
   });
-  assert.equal(calls.length, LIMITS.requests);
+  assert.equal(calls.length, LIMITS.requests - 2);
   assert.ok(report.errors.some((e) => e.reason === "collection-budget-exhausted"));
   assert.ok(report.truncations.includes("list:Microsoft.ContainerInstance/containerGroups"));
   const input = fixture();
@@ -199,9 +416,38 @@ test("stops all new requests when the total time budget is spent", async () => {
   assert.equal(report.errors[1].reason, "collection-budget-exhausted");
 });
 
-test("rejects invalid context before calling Azure", async () => {
-  await assert.rejects(withMock(() => assert.fail("must not call"), { group: "group' or true" }));
-  await assert.rejects(withMock(() => assert.fail("must not call"), { subscription: "not-a-subscription" }));
+test("invalid Azure context cannot block Radius logs or cause an unscoped Azure read", async () => {
+  for (const context of [{ group: "group' or true" }, { subscription: "not-a-subscription" },
+    { group: "", subscription: "" }]) {
+    const { report, calls } = await withMock(() => assert.fail("must not call Azure"), context);
+    assert.equal(calls.length, 0);
+    assert.equal(report.radiusLogs.length, 1);
+    assert.equal(report.errors[0].reason, "invalid-or-missing-azure-context");
+  }
+});
+
+test("every resource type and non-Azure platform gets Radius logs without Azure credentials", async () => {
+  for (const platform of ["kubernetes", "aws", ""]) {
+    for (const resourceType of ["Radius.Data/widgets", "Radius.Security/secrets", "workflow"]) {
+      const { report, calls } = await withMock(() => assert.fail("must not call Azure"), {
+        subscription: "", group: "", platform, resourceType,
+      });
+      assert.equal(calls.length, 0);
+      assert.equal(report.radiusLogs.length, 1);
+      assert.equal(report.scope, null);
+      assert.equal(report.errors.length, 0);
+    }
+  }
+});
+
+test("Azure log and inventory collection has no resource-type allowlist", async () => {
+  for (const resourceType of ["Radius.Compute/containers", "Radius.Data/futureType", "workflow"]) {
+    const { report, calls } = await withMock(async () => ({ value: { value: [] } }), { resourceType });
+    assert.equal(report.radiusLogs.length, 1);
+    assert.equal(calls.length, 12);
+    assert.ok(report.collections.some((item) => item.operation === "resource-inventory"));
+    assert.equal(report.errors.length, 0);
+  }
 });
 
 test("older base workflows can use the selected Azure account without listing other subscriptions", async () => {
@@ -214,7 +460,7 @@ test("older base workflows can use the selected Azure account without listing ot
     assert.ok(args[4].includes(`/subscriptions/${subscription}/`));
     return { value: { value: [] } };
   }, { subscription: "" });
-  assert.equal(calls.length, 9);
+  assert.equal(calls.length, 13);
   assert.equal(report.scope, scope);
   assert.equal(report.errors.length, 0);
 });
@@ -223,8 +469,10 @@ test("account lookup failure cannot fall back to an unscoped resource request", 
   for (const response of [{ error: "request-timeout" }, { error: "azure-cli-failed", exitCode: 3 },
     { value: { id: subscription, credentials: secret } }, { value: secret }]) {
     let calls = 0;
-    await assert.rejects(withMock(async () => { calls++; return response; }, { subscription: "" }));
+    const { report } = await withMock(async () => { calls++; return response; }, { subscription: "" });
     assert.equal(calls, 1);
+    assert.equal(report.radiusLogs.length, 1);
+    assert.equal(report.errors[0].reason, "azure-subscription-context-unavailable");
   }
 });
 
