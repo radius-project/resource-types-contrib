@@ -31,7 +31,10 @@ function fixture(platform, callback) {
     // fixture and use dummy credentials; never modify the production template.
     fs.writeFileSync(path.join(dir, 'recipe.bicep'),
       fs.readFileSync(path.join(source, `${platform}-postgresql.bicep`), 'utf8').replace(/^@secure\(\)\r?\n/m, ''));
-    if (platform === 'azure') fs.copyFileSync(path.join(source, 'bicepconfig.json'), path.join(dir, 'bicepconfig.json'));
+    if (platform === 'azure') {
+      fs.copyFileSync(path.join(source, 'bicepconfig.json'), path.join(dir, 'bicepconfig.json'));
+      fs.copyFileSync(path.join(source, 'initialize-database.sh'), path.join(dir, 'initialize-database.sh'));
+    }
     run(bicep, ['build', path.join(dir, 'recipe.bicep'), '--outfile', path.join(dir, 'recipe.json')]);
     const template = JSON.parse(fs.readFileSync(path.join(dir, 'recipe.json'), 'utf8'));
     const snapshot = (properties = '', configurations = '[]', name = 'pgsql-fixture', scope = {}) => {
@@ -69,8 +72,8 @@ test('Azure settings retain the AVM contract and merge operator pins without reg
     assert.equal(template.languageVersion, '2.0', 'Use symbolic references across Radius and Azure scopes');
     assert.equal(template.resources.server.type, 'Microsoft.Resources/deployments');
     assert.equal(template.resources.server.name, "[parameters('postgreSqlServerName')]");
-    assert.deepEqual(Object.keys(template.resources), ['server'], 'Settings must not add an SQL runner');
-    assert.deepEqual(template.outputs.result.value.resources, ["[reference('server').outputs.resourceId.value]"]);
+    assert.deepEqual(Object.keys(template.resources), ['initialize', 'server']);
+    assert.ok(template.outputs.result.value.resources.includes("reference('server').outputs.resourceId.value"));
     assert.equal(template.outputs.result.value.values.host, "[reference('server').outputs.fqdn.value]");
     assert.equal(template.outputs.result.value.values.port, 5432);
     const hasSetting = (resources, name) => resources.some(r =>
@@ -158,6 +161,68 @@ serverSettings: { log_min_duration_statement: '1000' }`, `[
       'The same Radius resource ID in another Azure resource group needs a distinct name');
     assert.notEqual(defaultName({ subscriptionId: '11111111-1111-1111-1111-111111111111' }), first,
       'The same Radius resource ID in another subscription needs a distinct name');
+  });
+});
+
+test('Azure initSql runs after provisioning with secure inputs and cleanup tracking', () => {
+  fixture('azure', ({ dir, snapshot }) => {
+    run(bicep, ['build', path.join(recipes, 'azure/bicep/azure-postgresql.bicep'),
+      '--outfile', path.join(dir, 'secure-recipe.json')]);
+    const template = JSON.parse(fs.readFileSync(path.join(dir, 'secure-recipe.json'), 'utf8'));
+    assert.equal(template.parameters.context.type, 'secureObject');
+    assert.match(fs.readFileSync(path.join(root, 'Data/postgreSqlDatabases/postgreSqlDatabases.yaml'), 'utf8'),
+      /initSql:\r?\n\s+type: string\r?\n\s+x-radius-sensitive: true/);
+
+    const initialize = template.resources.initialize;
+    assert.equal(initialize.type, 'Microsoft.Resources/deploymentScripts');
+    assert.equal(initialize.apiVersion, '2023-08-01');
+    assert.equal(initialize.name, "[format('{0}-init', parameters('postgreSqlServerName'))]");
+    assert.equal(initialize.condition, "[variables('hasInitSql')]");
+    assert.equal(template.variables.hasInitSql, "[not(empty(trim(variables('initSql'))))]");
+    assert.deepEqual(initialize.dependsOn, ['server'], 'Wait for server, database, and all AVM configurations');
+    const inputs = Object.fromEntries(initialize.properties.environmentVariables.map(variable => [variable.name, variable]));
+    assert.deepEqual(inputs.PGPASSWORD, { name: 'PGPASSWORD', secureValue: "[variables('properties').password]" });
+    assert.deepEqual(inputs.INIT_SQL, { name: 'INIT_SQL', secureValue: "[variables('initSql')]" });
+    assert.equal(inputs.PGHOST.value, "[reference('server').outputs.fqdn.value]");
+    assert.equal(inputs.PGHOST.value, template.outputs.result.value.values.host);
+    assert.equal(inputs.PGSSLMODE.value, 'require');
+    assert.equal(inputs.PGCONNECT_TIMEOUT.value, '15');
+    assert.equal(initialize.properties.timeout, 'PT15M');
+    assert.equal(initialize.properties.cleanupPreference, 'Always');
+    assert.equal(initialize.properties.retentionInterval, 'P1D');
+    assert.equal(initialize.properties.forceUpdateTag, "[uniqueString(variables('initSql'), variables('database'))]");
+    const scriptVariable = /^\[variables\('([^']+)'\)\]$/.exec(initialize.properties.scriptContent);
+    assert.ok(scriptVariable, 'The runner must embed the checked-in initialization script');
+    assert.equal(template.variables[scriptVariable[1]],
+      fs.readFileSync(path.join(recipes, 'azure/bicep/initialize-database.sh'), 'utf8').replace(/\r\n/g, '\n'));
+    assert.equal(template.outputs.result.value.resources,
+      "[concat(createArray(reference('server').outputs.resourceId.value), if(variables('hasInitSql'), createArray(resourceId('Microsoft.Resources/deploymentScripts', format('{0}-init', parameters('postgreSqlServerName')))), createArray()))]");
+    assert.ok(!JSON.stringify({ initialize, result: template.outputs.result })
+      .includes("resourceId('Microsoft.Resources/deployments'"), 'Preserve scoped symbolic AVM references');
+
+    for (const properties of ['', 'initSql: null', "initSql: ''", "initSql: '  \\n\\t '"]) {
+      assert.equal(snapshot(properties).some(resource => resource.type === 'Microsoft.Resources/deploymentScripts'), false);
+    }
+    const sql = 'CREATE SCHEMA IF NOT EXISTS app;';
+    let tag;
+    for (const name of ['pgsql-first', 'pgsql-second']) {
+      const resources = snapshot(`database: 'appdb'\ntls: 'optional'\ninitSql: '${sql}'`, '[]', name);
+      const scripts = resources.filter(resource => resource.type === 'Microsoft.Resources/deploymentScripts');
+      assert.equal(scripts.length, 1);
+      const script = scripts[0];
+      assert.equal(script.name, `${name}-init`);
+      const variables = Object.fromEntries(script.properties.environmentVariables.map(variable => [variable.name, variable]));
+      assert.deepEqual(variables.INIT_SQL, { name: 'INIT_SQL', secureValue: sql });
+      assert.deepEqual(variables.PGPASSWORD, { name: 'PGPASSWORD', secureValue: 'fixture-only' });
+      assert.equal(variables.PGDATABASE.value, 'appdb');
+      assert.equal(variables.PGUSER.value, 'fixture');
+      assert.equal(variables.PGPORT.value, '5432');
+      assert.equal(variables.PGSSLMODE.value, 'require', 'The runner still requires TLS when application TLS is optional');
+      tag = script.properties.forceUpdateTag;
+    }
+    const changed = snapshot("database: 'appdb'\ninitSql: 'SELECT 1;'");
+    assert.notEqual(changed.find(resource => resource.type === 'Microsoft.Resources/deploymentScripts')
+      .properties.forceUpdateTag, tag, 'SQL changes must update the execution tag');
   });
 });
 

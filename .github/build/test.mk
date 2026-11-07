@@ -122,8 +122,9 @@ test-azure-secret-inputs: ## Run Azure secret input tests in a temporary directo
 	terraform -chdir="$$test_dir" test -no-color
 
 .PHONY: test-postgresql-settings
-test-postgresql-settings: ## Check compiled PostgreSQL settings and Azure snapshots (requires Radius Bicep and Node)
+test-postgresql-settings: ## Check PostgreSQL settings, Azure snapshots, and SQL initialization (requires Radius Bicep and Node)
 	@node --test ./.github/scripts/tests/test-postgresql-settings.js
+	@bash ./.github/scripts/tests/test-postgresql-init.sh
 
 .PHONY: test-postgresql-inputs
 test-postgresql-inputs: ## Test PostgreSQL Kubernetes settings with a mock provider (requires Terraform 1.7+)
