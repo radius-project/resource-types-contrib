@@ -17,7 +17,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `database` | string | Optional | The name of the database. Defaults to `postgres_db`. |
 | `size` | string (`S`, `M`, `L`) | Optional | The size of the PostgreSQL database. Defaults to `S`. The Recipe maps the size onto a concrete cloud SKU/tier. |
 | `extensions` | array of strings | Optional | Extension names. Azure allow-lists them; the application must create each extension in its database. Kubernetes creates them when the database is first initialized. Defaults to `[]`. |
-| `serverSettings` | object of strings | Optional | PostgreSQL server parameter names and values. Azure operator settings take precedence. Reserved TLS and port settings cannot be changed through this object. Defaults to `{}`. |
+| `serverSettings` | object of strings | Optional | PostgreSQL server parameter names and values. Reserved TLS and port settings cannot be changed through this object. Defaults to `{}`. See [Azure configuration rules](recipes/azure/README.md#settings-and-operator-overrides). |
 | `initSql` | string | Optional | Optional SQL script executed on first initialization to create tables, indexes, and seed data. |
 | `tls` | string (`required`, `optional`) | Optional | The requested transport policy for connections to the database server. Defaults to `required`. Use `optional`, which permits non-TLS connections, only when the server is not publicly reachable. See below for platform behavior and operator overrides. |
 | `host` | string | Read only | The host name used to connect to the database. Set from the Recipe module's output. |
@@ -36,7 +36,7 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 Add a `postgreSqlDatabases` resource to your application and connect a container to it. Radius injects the database's connection properties into the container as environment variables named `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` (for example `CONNECTION_POSTGRESQL_HOST`, `CONNECTION_POSTGRESQL_PORT`, `CONNECTION_POSTGRESQL_DATABASE`, and `CONNECTION_POSTGRESQL_TLS`). See [`test/app.bicep`](test/app.bicep) for a complete example.
 
-Because `tls` defaults to `required`, configure your PostgreSQL client for TLS and trust the server's certificate authority (CA). Both Kubernetes Recipes enable TLS for every policy and reject plaintext TCP connections when `tls` is omitted or `required`. With `optional`, both TLS and password-authenticated plaintext connections work. A platform engineer can still pin the Azure server's transport policy to `ON` or `OFF`; the connection variable reports the application's request. See [PostgreSQL transport policy](../../recipe-packs/azure-aks/README.md#postgresql-transport-policy) for Azure precedence and public-network restrictions.
+Because `tls` defaults to `required`, configure your PostgreSQL client for TLS and trust the server's certificate authority (CA). Both Kubernetes Recipes enable TLS for every policy and reject plaintext TCP connections when `tls` is omitted or `required`. With `optional`, both TLS and password-authenticated plaintext connections work. See the [Azure configuration rules](recipes/azure/README.md#settings-and-operator-overrides) for operator overrides and effective transport policy.
 
 Use `optional` only when the server is not publicly reachable. Non-TLS connections can expose administrator credentials and query traffic in transit. Private reachability does not encrypt traffic, so TLS remains preferred; keep it required with the Azure pack as written.
 
@@ -59,16 +59,11 @@ Use extension names supported by the target server. The default
 extension. For example, `vector` needs an image that includes pgvector.
 These Recipes do not install extension packages.
 
-On Azure, `extensions` sets the server's `azure.extensions` allow-list.
-The application must then create each extension in its database. An omitted
-or empty list leaves an existing allow-list unchanged; it does not remove
-extensions. An explicit operator `azure.extensions` value replaces the
-application list and can clear it. Generic `serverSettings` entries for
-`azure.extensions`, `require_secure_transport`, or `port` are ignored,
-without regard to case. Use the dedicated `extensions` and `tls` properties.
-Operator settings override matching application names without regard to case.
-See the [Azure Recipe](recipes/azure/README.md) for the AVM conversion and
-the publication prerequisite for the new Recipe image.
+On Azure, `extensions` requests a server allow-list; the application must
+create each extension in its database. The [Azure configuration rules](recipes/azure/README.md#settings-and-operator-overrides)
+define list merging, explicit clearing, operator overrides, and protected
+settings. The same document explains the AVM conversion and the publication
+prerequisite for the new Recipe image.
 
 On Kubernetes, both Recipes generate `CREATE EXTENSION IF NOT EXISTS`
 statements in `/docker-entrypoint-initdb.d/00-extensions.sql`. PostgreSQL

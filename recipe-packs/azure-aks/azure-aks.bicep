@@ -12,7 +12,7 @@ param containerImagesRegistry string
 @description('Name of the Kubernetes Secret holding registry credentials for Radius.Compute/containerImages. Leave empty for an unauthenticated registry.')
 param containerImagesRegistrySecretName string = ''
 
-@description('Operator PostgreSQL settings in AVM name, source, value form. These override application serverSettings, extensions, and tls without regard to name case. An azure.extensions entry replaces the application allow-list; a require_secure_transport entry pins the transport policy. The port stays fixed at 5432. Defaults to no operator overrides. See recipe-packs/azure-aks/README.md.')
+@description('Operator PostgreSQL settings in AVM name, source, value form. Defaults to no operator settings. See Data/postgreSqlDatabases/recipes/azure/README.md for merge and override rules.')
 param postgreSqlServerConfigurations array = []
 
 resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
@@ -179,8 +179,8 @@ resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
         kind: 'bicep'
         source: 'ghcr.io/radius-project/azure-aks-recipes/postgresqldatabases:latest'
         parameters: {
-          name: 'pgsql-{{context.azure.resourceNameHash}}'
-          configurations: postgreSqlServerConfigurations
+          postgreSqlServerName: 'pgsql-{{context.azure.resourceNameHash}}'
+          postgreSqlServerConfigurations: postgreSqlServerConfigurations
         }
       }
       'Radius.Data/sqlServerDatabases': {
