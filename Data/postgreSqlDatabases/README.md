@@ -124,27 +124,17 @@ Kubernetes tests keep that default. Azure pack-entry tests use only `S`
 `L` is not a recovery option because it maps to the same Azure SKU as `M`.
 The Resource Type schema and production pack defaults do not change.
 
+The reusable Azure preflight job creates every candidate server in one
+disposable, owner-tagged probe resource group. It deletes the complete group
+after selection. The unconditional workflow cleanup job retries deletion, so a
+timed-out provider request can complete late only inside that owned group. A
+successful probe does not reserve capacity.
+
 The all-entry runner reads `RTC_AZURE_SELECTION_FILE` when it is set. Only a
 valid version 1 result with `status: selected` permits PostgreSQL deployment.
 The result must match the existing resource group's region and the approved
-size, SKU, and tier. A missing, invalid, exhausted, or failed result fails the
-PostgreSQL entry; later entries still run. Without a result file, the runner
-makes one bounded `S` probe in the existing group's region.
-
-The probe uses a 128-bit random server name and checks that the name is absent
-before creation. It sets an ownership tag at creation and verifies that tag
-before deletion, including after a failed or timed-out create. Azure reads are
-bounded: absence checks use the create budget; ownership checks and deletion
-use the cleanup reserve. Unknown ownership or unconfirmed cleanup stops the
-probe without another allocation.
-
-A timed-out create can finish after the client exits. An immediate
-`ResourceNotFound` response does not rule out later creation. On create
-timeout, the probe prints the exact server name, resource group, and expected
-`rtc-probe-owner` tag. Use `az postgres flexible-server show --resource-group
-<group> --name <server> --output json` with the original subscription to check
-the target again. Delete it only after its `tags["rtc-probe-owner"]` value
-matches the printed tag. If ownership cannot be verified, do not delete it.
+size, SKU, and tier. A safe no-selection result skips and fails the PostgreSQL
+phase while unrelated Azure tests continue.
 
 For a direct Azure entry test, set `RTC_TEST_PLATFORM=azure`,
 `AZURE_RESOURCE_GROUP`, and `RTC_POSTGRES_TEST_SIZE=S` or `M`. The runner passes
