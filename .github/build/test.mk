@@ -147,6 +147,10 @@ test-azure-recipes: ## Run recipe tests for Azure platform only (requires Azure 
 list-resource-types: ## List resource type folders under the specified root
 	@./.github/scripts/list-resource-type-folders.sh "$(RESOURCE_TYPE_ROOT)"
 
+.PHONY: test-recipe-discovery
+test-recipe-discovery: ## Run offline tests for recipe discovery and scan errors
+	@bash ./.github/scripts/tests/test-recipe-discovery.sh
+
 .PHONY: list-recipes
 list-recipes: ## List all recipe folders (Bicep and Terraform) under the specified root
 	@./.github/scripts/list-recipe-folders.sh "$(RESOURCE_TYPE_ROOT)"

@@ -73,6 +73,10 @@ should_include_platform() {
 }
 
 # Iterate over all resource type folders
+if ! TYPE_DIRS="$(./.github/scripts/list-resource-type-folders.sh ${ROOT_DIR:+"$ROOT_DIR"})"; then
+    echo "Error: Failed to discover resource types" >&2
+    exit 1
+fi
 while IFS= read -r type_dir; do
     [[ -z "$type_dir" ]] && continue
 
@@ -81,6 +85,9 @@ while IFS= read -r type_dir; do
     # Build/publish all Bicep recipes under this resource type, if any
     recipes_root="$type_dir/recipes"
     if [[ -d "$recipes_root" ]]; then
+        # Keep the producer PID so EOF does not hide a failed scan.
+        exec 3< <(find "$recipes_root" -type f -name '*.bicep' -print0)
+        scan_pid=$!
         while IFS= read -r -d '' recipe_file; do
             recipe_rel_path="${recipe_file#$type_dir/}"
             if should_include_platform "$recipe_rel_path"; then
@@ -89,11 +96,18 @@ while IFS= read -r type_dir; do
             else
                 echo "Skipping Bicep recipe (platform filter): $recipe_file"
             fi
-        done < <(find "$recipes_root" -type f -name '*.bicep' -print0)
+        done <&3
+        exec 3<&-
+        if ! wait "$scan_pid"; then
+            echo "Error: Failed to scan Bicep recipes in '$recipes_root'" >&2
+            exit 1
+        fi
     fi
 
     # Build/publish all Terraform recipes under this resource type, if any
     if [[ -d "$recipes_root" ]]; then
+        exec 3< <(find "$recipes_root" -type d -name 'terraform' -print0)
+        scan_pid=$!
         while IFS= read -r -d '' recipe_dir; do
             recipe_rel_path="${recipe_dir#$type_dir/}"
             if should_include_platform "$recipe_rel_path"; then
@@ -102,6 +116,11 @@ while IFS= read -r type_dir; do
             else
                 echo "Skipping Terraform recipe (platform filter): $recipe_dir"
             fi
-        done < <(find "$recipes_root" -type d -name 'terraform' -print0)
+        done <&3
+        exec 3<&-
+        if ! wait "$scan_pid"; then
+            echo "Error: Failed to scan Terraform recipes in '$recipes_root'" >&2
+            exit 1
+        fi
     fi
-done < <(./.github/scripts/list-resource-type-folders.sh ${ROOT_DIR:+"$ROOT_DIR"})
+done <<< "$TYPE_DIRS"

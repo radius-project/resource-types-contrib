@@ -125,16 +125,31 @@ RECIPE_DIRS=()
 
 # Find Bicep recipe directories (directories containing .bicep files under recipes/)
 if [[ "$RECIPE_TYPE_FILTER" == "all" || "$RECIPE_TYPE_FILTER" == "bicep" ]]; then
+    # Keep the producer PID so EOF does not hide a failed scan.
+    exec 3< <(find "$ROOT_DIR" -type f -path "*/recipes/*/*.bicep" -print0)
+    scan_pid=$!
     while IFS= read -r -d '' matched_path; do
         add_recipe_dir "$(dirname "$matched_path")" "bicep"
-    done < <(find "$ROOT_DIR" -type f -path "*/recipes/*/*.bicep" -print0 2>/dev/null)
+    done <&3
+    exec 3<&-
+    if ! wait "$scan_pid"; then
+        echo "Error: Failed to scan Bicep recipes in '$ROOT_DIR'" >&2
+        exit 1
+    fi
 fi
 
 # Find Terraform recipe directories (directories containing main.tf under recipes/terraform)
 if [[ "$RECIPE_TYPE_FILTER" == "all" || "$RECIPE_TYPE_FILTER" == "terraform" ]]; then
+    exec 3< <(find "$ROOT_DIR" -type f -path "*/recipes/*/terraform/main.tf" -print0)
+    scan_pid=$!
     while IFS= read -r -d '' matched_path; do
         add_recipe_dir "$(dirname "$matched_path")" "terraform"
-    done < <(find "$ROOT_DIR" -type f -path "*/recipes/*/terraform/main.tf" -print0 2>/dev/null)
+    done <&3
+    exec 3<&-
+    if ! wait "$scan_pid"; then
+        echo "Error: Failed to scan Terraform recipes in '$ROOT_DIR'" >&2
+        exit 1
+    fi
 fi
 
 if [[ ${#RECIPE_DIRS[@]} -eq 0 ]]; then

@@ -15,6 +15,19 @@ Before testing, ensure you have:
 
 ## Quick Start
 
+### Offline Discovery Tests
+
+Run `make test-recipe-discovery` from the repository root with Bash 4+ and
+standard Unix tools. This suite does not need Radius, a cluster, or cloud access.
+It uses temporary files and stub build/test commands to check invalid roots,
+invalid recipe kinds, discovery command failures, failed Bicep and Terraform
+scans, paths with spaces, and empty readable directories.
+
+Discovery and scan errors must return a nonzero exit status. A readable directory
+with no matching recipes remains a successful no-op. A nested build scan can
+fail after some builds have run; the script reports failure but does not undo
+those builds.
+
 ### 1. Set Up Your Environment
 
 Create a local Kubernetes cluster with Radius (and Dapr) installed:

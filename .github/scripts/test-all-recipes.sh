@@ -34,8 +34,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 echo "==> Finding all recipes in $REPO_ROOT"
 
 # Use while read loop for better compatibility (mapfile requires bash 4+)
+if ! RECIPE_LIST="$("$SCRIPT_DIR"/list-recipe-folders.sh "$REPO_ROOT" "$RECIPE_TYPE")"; then
+    echo "Error: Failed to discover recipes in '$REPO_ROOT'" >&2
+    exit 1
+fi
 RECIPE_DIRS=()
 while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
     # Filter by recipe type if specified
     if [[ "$RECIPE_TYPE" == "all" ]]; then
         RECIPE_DIRS+=("$line")
@@ -44,7 +49,7 @@ while IFS= read -r line; do
     elif [[ "$RECIPE_TYPE" == "terraform" ]] && [[ "$line" == *"/terraform" ]] && [[ -f "$line/main.tf" ]]; then
         RECIPE_DIRS+=("$line")
     fi
-done < <("$SCRIPT_DIR"/list-recipe-folders.sh "$REPO_ROOT" "$RECIPE_TYPE")
+done <<< "$RECIPE_LIST"
 
 if [[ ${#RECIPE_DIRS[@]} -eq 0 ]]; then
     echo "==> No $RECIPE_TYPE recipes found"
