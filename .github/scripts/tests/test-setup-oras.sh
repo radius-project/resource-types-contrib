@@ -74,7 +74,13 @@ cat >"$TEST_ROOT/bin/oras" <<'EOF'
 echo "Must not use an existing ORAS executable" >&2
 exit 1
 EOF
-chmod +x "$TEST_ROOT/bin/docker" "$TEST_ROOT/bin/oras"
+cat >"$TEST_ROOT/bin/wc" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+count="$(command -p wc "$@")"
+printf '%8s\n' "$count"
+EOF
+chmod +x "$TEST_ROOT/bin/docker" "$TEST_ROOT/bin/oras" "$TEST_ROOT/bin/wc"
 export PATH="$TEST_ROOT/bin:$PATH"
 
 for SCENARIO in success unavailable integrity copy executable version metadata cleanup path; do
@@ -92,7 +98,7 @@ for SCENARIO in success unavailable integrity copy executable version metadata c
     bash "$REPO_ROOT/.github/scripts/setup-oras.sh" >"$RUNNER_TEMP/output" 2>&1 || status=$?
     if [[ "$SCENARIO" == success ]]; then
         [[ "$status" == 0 ]]
-        [[ "$(wc -l <"$GITHUB_PATH")" == 1 ]]
+        [[ "$(wc -l <"$GITHUB_PATH")" -eq 1 ]]
         install_dir="$(cat "$GITHUB_PATH")"
         [[ "$install_dir" == "$RUNNER_TEMP"/rtc-oras-* ]]
         [[ -x "$install_dir/oras" ]]
@@ -106,7 +112,7 @@ for SCENARIO in success unavailable integrity copy executable version metadata c
         fi
         [[ -z "$(find "$RUNNER_TEMP" -name oras -print)" ]]
         if [[ "$SCENARIO" == unavailable || "$SCENARIO" == integrity ]]; then
-            [[ "$(wc -l <"$CALLS")" == 1 ]]
+            [[ "$(wc -l <"$CALLS")" -eq 1 ]]
         else
             grep -Fxq 'rm oras-test-container' "$CALLS"
         fi
