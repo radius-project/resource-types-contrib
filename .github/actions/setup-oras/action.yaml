@@ -1,8 +1,0 @@
-name: Set up ORAS
-description: Install ORAS 1.2.0 from its digest-pinned official container image
-runs:
-  using: composite
-  steps:
-    - name: Install ORAS
-      shell: bash
-      run: bash "$GITHUB_ACTION_PATH/../../scripts/setup-oras.sh"

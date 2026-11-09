@@ -16,10 +16,6 @@
 
 ##@ Testing
 
-.PHONY: test-oras-setup
-test-oras-setup: ## Test ORAS setup without network access or a Docker daemon
-	@bash ./.github/scripts/tests/test-setup-oras.sh
-
 RESOURCE_TYPE_ROOT ?=$(shell pwd)
 ENVIRONMENT ?= default
 WORKSPACE ?= default
