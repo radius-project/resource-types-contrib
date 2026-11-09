@@ -1028,7 +1028,7 @@ RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg RTC_POSTGRES_TEST_SIZE=M \
     run_postgres_entry >/dev/null || fail "single-entry Azure runner must retain the source configuration and pass selected M"
 grep -q -- '--parameters postgresSize=M' "$CALL_LOG" || fail "single-entry runner must pass M to Bicep"
 deployed_harness="$(sed -n 's/^rad deploy \([^ ]*\) .*/\1/p' "$CALL_LOG")"
-[[ -n "$deployed_harness" && ! -e "$deployed_harness" ]] ||
+[[ -n "$deployed_harness" && ! -e "$REPO_ROOT/$deployed_harness" ]] ||
     fail "successful PostgreSQL deployment must remove its temporary harness"
 : >"$CALL_LOG"
 if RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg DEPLOY_EXIT_CODE=1 \
@@ -1037,7 +1037,7 @@ if RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg DEPLOY_EXIT_CODE=1 \
     fail "failed PostgreSQL deployment must still fail"
 fi
 deployed_harness="$(sed -n 's/^rad deploy \([^ ]*\) .*/\1/p' "$CALL_LOG")"
-[[ -n "$deployed_harness" && ! -e "$deployed_harness" ]] ||
+[[ -n "$deployed_harness" && ! -e "$REPO_ROOT/$deployed_harness" ]] ||
     fail "failed PostgreSQL deployment must remove its temporary harness"
 : >"$CALL_LOG"
 RTC_TEST_PLATFORM=kubernetes RTC_POSTGRES_TEST_SIZE=M run_postgres_entry >/dev/null ||
