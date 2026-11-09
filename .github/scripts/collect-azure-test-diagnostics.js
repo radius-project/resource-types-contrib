@@ -513,7 +513,9 @@ async function collect({ subscription, group, app, started, resourceType = "", p
       ...operationState(response),
     };
     report.cosmosOperations.push(snapshot);
-    if (response && !snapshot.status && !snapshot.provisioningState) {
+    if (response && ((!snapshot.status && !snapshot.provisioningState) ||
+        (response.status !== undefined && !snapshot.status) ||
+        (object(response.properties).provisioningState !== undefined && !snapshot.provisioningState))) {
       report.errors.push({ operation: "cosmos-operation-status", reason: "missing-or-unrecognized-operation-state" });
     }
     save(report);
