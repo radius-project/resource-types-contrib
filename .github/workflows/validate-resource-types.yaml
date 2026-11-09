@@ -67,6 +67,9 @@ jobs:
       - name: Run recipe namespace tests
         run: make test-recipe-namespace
 
+      - name: Run recipe platform filter tests
+        run: make test-recipe-platform-filter
+
       - name: Validate resource type icons
         run: make validate-icons
 
