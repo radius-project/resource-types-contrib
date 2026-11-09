@@ -13,6 +13,30 @@ Before testing, ensure you have:
 - `jq` installed (also required by the Recipe Pack unit tests)
 - `make` available in your environment
 
+### ORAS setup in recipe CI
+
+Recipe validation installs ORAS 1.2.0 from the [official ORAS container
+image](https://oras.land/docs/1.2/installation/#docker-image). The shared
+`.github/actions/setup-oras` action pins the image by SHA-256 digest. Docker
+checks the image manifest and layers against their digests. The action copies
+the static `/bin/oras` executable from a stopped container, checks its version,
+and adds its directory to the runner's path. ORAS runs on the host, not in a
+container, so existing registry credentials and file paths still apply.
+
+This avoids the GitHub release archive endpoint, including on a runner with no
+cached image. It does not repair that endpoint or remove all network failures.
+A cold install requires GHCR and a Linux Docker daemon for the runner's
+architecture. Image download, integrity, copy, version, and cleanup errors fail
+setup; recipe tests are not skipped. To update ORAS, verify the new official
+image digest and update the digest and expected version together. The publish
+workflow uses ORAS 1.3.4 and is unchanged.
+
+Run the setup regression tests without network access or a Docker daemon:
+
+```bash
+make test-oras-setup
+```
+
 ## Quick Start
 
 ### 1. Set Up Your Environment

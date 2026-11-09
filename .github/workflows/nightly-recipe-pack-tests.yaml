@@ -46,9 +46,7 @@ jobs:
           node-version-file: .node-version
 
       - name: Set up ORAS
-        uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
-        with:
-          version: "1.2.0"
+        uses: ./.github/actions/setup-oras
 
       - name: Install Radius CLI
         run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
@@ -299,9 +297,7 @@ jobs:
           node-version-file: .node-version
 
       - name: Set up ORAS
-        uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
-        with:
-          version: "1.2.0"
+        uses: ./.github/actions/setup-oras
 
       - name: Install Radius CLI
         run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
