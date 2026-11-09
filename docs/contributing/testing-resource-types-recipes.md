@@ -463,6 +463,9 @@ logger names, operation names, recipe references, terminal-state markers, HTTP p
 hosts/paths, response status codes, and elapsed times when the component emits
 them. Image references and image IDs identify the running component builds.
 Request queries, headers, bodies, and free-text log messages are not saved.
+The one subscription-scoped path exception is the Cosmos DB
+`Microsoft.DocumentDB/locations/<region>/operationsStatus/<UUID>` endpoint
+in the selected Azure subscription.
 Each pod log read has at most 2,000 records and a 512 KiB limit.
 `tailOnly` and `omitted` identify a bounded, filtered snapshot, not a complete log.
 Log rotation or a pod restart can remove earlier records before collection.
@@ -470,6 +473,33 @@ Workflow snapshots use a six-hour lookback to include setup and preflight activi
 Their collection limits remain the same as per-test snapshots. If setup failed
 before the cluster was ready, the report records the failed collection attempt
 instead of claiming that logs are complete.
+
+For MongoDB account polling, `cosmosOperations` records up to four unique
+operation paths observed in deployment-engine GET logs since deployment began.
+The collector makes one GET per path with API version `2025-04-15`, within the
+existing request and time budgets, after the other Azure reads. It reads only
+paths in the selected subscription and a region with a Cosmos account in the
+test resource-group inventory. It does not follow logged queries, headers, or
+provider response links. Denied requests, missing states, and unknown states
+are reported in `errors`. A read that fails has `responseAvailable: false`;
+an absent state stays null, not `Succeeded`.
+
+Each snapshot saves only recognized operation `status` and
+`properties.provisioningState`, structured error codes, the operation UUID,
+trace/span IDs, observation and collection times, and candidate account IDs.
+It never saves response bodies, keys, connection strings, or credentials.
+The path is subscription-scoped. A region match does **not** prove that the
+operation belongs to a candidate account or the failed app. Use trace IDs
+and the original account request to check that link. Log limits can remove
+the initial request or all poll records.
+
+This is diagnostic evidence, not a polling fix. HTTP 200 can contain a pending
+operation state. Account provisioning success is not proof that the async
+operation endpoint returned success. A collector GET is a later snapshot,
+not the response that the engine received. The initial `Azure-AsyncOperation`
+or `Location` header and the engine's poll-body interpretation still require
+engine-side evidence. Do not change timeouts or retry the deployment to hide
+this gap.
 
 For an OpenAI provisioning conflict, compare account and model-deployment
 Activity Log timestamps and statuses, then use trace IDs and request paths to

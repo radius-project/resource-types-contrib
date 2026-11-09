@@ -18,7 +18,7 @@ limitations under the License.
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { collect, runAz, resource, activity, logRecords, LIMITS } = require("../collect-azure-test-diagnostics.js");
+const { collect, runAz, resource, activity, logRecords, operationState, LIMITS } = require("../collect-azure-test-diagnostics.js");
 
 const subscription = "11111111-1111-1111-1111-111111111111";
 const group = "rrttest-123-1-bicep";
@@ -273,6 +273,157 @@ test("records HTTP phases and exact recipe references without free-text messages
   assert.equal(records[2].state, "Succeeded");
   assert.equal(records[3].resourceId, "/planes/radius/local/resourcegroups/default/providers/Radius.Data/widgets/test");
   assert.ok(!JSON.stringify(records).includes(secret));
+});
+
+const operationPath = `/subscriptions/${subscription}/providers/Microsoft.DocumentDB/locations/centralus/operationsStatus/${subscription}`;
+const mongoId = id("Microsoft.DocumentDB/databaseAccounts", "mongo");
+const mongoAccount = {
+  id: mongoId, type: "Microsoft.DocumentDB/databaseAccounts", location: "centralus",
+  properties: { provisioningState: "Succeeded", connectionStrings: [secret], keys: { secret } },
+};
+function pollLog(uri = `https://management.azure.com${operationPath}?api-version=old&token=${secret}`, extra = {}) {
+  return JSON.stringify({
+    timestamp: started, traceId: "a".repeat(32), spanId: "b".repeat(16),
+    Uri: uri, HttpMethod: "GET", StatusCode: 200, body: { secret }, headers: { Authorization: secret },
+    ...extra,
+  });
+}
+async function withCosmos({ logs = pollLog(), account = mongoAccount, response = {
+  value: { status: "Succeeded", properties: { provisioningState: "Succeeded", secret }, connectionStrings: [secret] },
+}, ...extra } = {}) {
+  return withMock(async (args) => {
+    const url = new URL(args[4]);
+    if (url.pathname.endsWith("/databaseAccounts")) return { value: { value: account ? [account] : [] } };
+    if (/\/operationsStatus\//i.test(url.pathname)) return response;
+    return { value: { value: [] } };
+  }, {
+    runKubernetes: async (args, _timeout, parse) => ({ value: args[0] === "get"
+      ? { items: [{ metadata: { name: "bicep-de-test" } }] } : parse(logs) }),
+    ...extra,
+  });
+}
+
+test("snapshots observed Cosmos operation state once without treating HTTP 200 as completion", async () => {
+  for (const status of ["InProgress", "Succeeded", "Failed", "Canceled"]) {
+    const { report, calls, snapshots } = await withCosmos({
+      logs: `${pollLog()}\n${pollLog(undefined, { timestamp: "2026-10-22T17:01:00Z" })}\n${pollLog()}`,
+      response: { value: { status, properties: { provisioningState: "Succeeded", secret },
+        error: { code: "OperationFailed", message: secret, details: [{ code: "RequestConflict", message: secret }] },
+        connectionStrings: [secret], primaryMasterKey: secret, headers: { Authorization: secret },
+      } },
+    });
+    const reads = calls.filter((args) => args[4].includes("/operationsStatus/"));
+    assert.equal(reads.length, 1);
+    assert.equal(reads[0][4], `https://management.azure.com${operationPath}?api-version=2025-04-15`);
+    const op = report.cosmosOperations[0];
+    assert.equal(op.status, status);
+    assert.equal(op.provisioningState, "Succeeded");
+    assert.equal(op.operationId, subscription);
+    assert.equal(op.traceId, "a".repeat(32));
+    assert.equal(op.spanId, "b".repeat(16));
+    assert.equal(op.observedAt, "2026-10-22T17:01:00Z");
+    assert.equal(op.responseAvailable, true);
+    assert.deepEqual(op.candidateAccountIds, [mongoId]);
+    assert.match(op.attribution, /ownership is not proved/);
+    assert.deepEqual(op.errorCodes, ["OperationFailed", "RequestConflict"]);
+    assert.ok(snapshots.every((s) => !s.includes(secret)));
+    assert.ok(!JSON.stringify(report).includes("api-version=old"));
+    assert.equal(report.errors.length, 0);
+  }
+});
+
+test("Cosmos log paths reject other subscriptions, providers, hosts and unsafe URL shapes", () => {
+  assert.deepEqual(logRecords(pollLog(), scope).records[0].request,
+    { host: "management.azure.com", path: operationPath });
+  const valid = `https://management.azure.com${operationPath}`;
+  for (const uri of [
+    valid.replace(subscription, "22222222-2222-2222-2222-222222222222"),
+    valid.replace("Microsoft.DocumentDB", "Microsoft.Storage"),
+    valid.replace("operationsStatus", "listKeys"),
+    valid.replace("management.azure.com", "evil.invalid"),
+    valid.replace("https:", "http:"),
+    valid.replace("management.azure.com", `user:${secret}@management.azure.com`),
+    valid.replace("management.azure.com", "management.azure.com:8443"),
+    valid.replace("/operationsStatus/", "/extra/../operationsStatus/"),
+    valid.replace("/operationsStatus/", "/%2e%2e/operationsStatus/"),
+    valid.replace("/operationsStatus/", "\\operationsStatus\\"),
+    `${valid}/child`, `${valid}#${secret}`, `${valid.slice(0, -36)}not-a-uuid`,
+  ]) {
+    assert.equal(logRecords(pollLog(uri), scope).records[0].request, null, uri);
+  }
+  assert.equal(logRecords(pollLog(), null).records[0].request, null);
+});
+
+test("Cosmos reads require engine GET traces since deployment and a scoped account in the same region", async () => {
+  for (const options of [
+    { account: null },
+    { account: { ...mongoAccount, id: mongoId.replace(group, "other-group") } },
+    { account: { ...mongoAccount, location: "westus3" } },
+    { logs: pollLog(undefined, { HttpMethod: "PUT" }) },
+    { logs: pollLog(undefined, { traceId: null }) },
+    { logs: pollLog(undefined, { timestamp: "2026-10-22T16:59:59Z" }) },
+    { logs: pollLog(undefined, { timestamp: "2026-99-22T17:00:00Z" }) },
+    { logs: pollLog(undefined, { timestamp: null }) },
+    { runKubernetes: async (args, _timeout, parse) => ({ value: args[0] === "get"
+      ? { items: [{ metadata: { name: "ucp-test" } }] } : parse(pollLog()) }) },
+  ]) {
+    const { report, calls } = await withCosmos(options);
+    assert.equal(report.cosmosOperations.length, 0);
+    assert.ok(calls.every((args) => !args[4].includes("/operationsStatus/")));
+  }
+});
+
+test("Cosmos unavailable and unknown states remain explicit, never inferred from account success", async () => {
+  for (const response of [
+    { error: "azure-cli-failed", exitCode: 3 },
+    { error: "request-timeout" },
+    { value: { status: secret, properties: { provisioningState: { secret } } } },
+    { value: { status: { secret }, properties: { provisioningState: secret } } },
+    { value: {} },
+  ]) {
+    const { report, snapshots } = await withCosmos({ response });
+    assert.equal(report.cosmosOperations[0].status, null);
+    assert.equal(report.cosmosOperations[0].provisioningState, null);
+    assert.equal(report.cosmosOperations[0].responseAvailable, !response.error);
+    assert.ok(report.errors.some((e) => e.operation === "cosmos-operation-status"));
+    assert.ok(snapshots.every((s) => !s.includes(secret)));
+  }
+  for (const value of [null, [], secret]) {
+    assert.deepEqual(operationState(value), { status: null, provisioningState: null, errorCodes: [] });
+  }
+});
+
+test("Cosmos snapshots cap unique operations and use the existing request and time budgets", async () => {
+  const logs = Array.from({ length: 6 }, (_, i) => pollLog(
+    `https://management.azure.com${operationPath.slice(0, -1)}${i}`,
+    { timestamp: `2026-10-22T17:0${i}:00Z` },
+  )).join("\n");
+  const capped = await withCosmos({ logs });
+  assert.equal(capped.report.cosmosOperations.length, 4);
+  assert.equal(capped.report.cosmosOperations[0].observedAt, "2026-10-22T17:05:00Z");
+  assert.ok(capped.report.truncations.includes("cosmos-operation-status"));
+  let clock = 0;
+  const spent = await withCosmos({ now: () => clock, run: async (args) => {
+    if (args[4].includes("/databaseAccounts?")) return { value: { value: [mongoAccount] } };
+    if (args[4].includes("/management/values?")) clock = LIMITS.totalMs + 1;
+    assert.ok(!args[4].includes("/operationsStatus/"));
+    return { value: { value: [] } };
+  } });
+  assert.equal(spent.report.cosmosOperations[0].responseAvailable, false);
+  assert.ok(spent.report.errors.some((e) => e.operation === "cosmos-operation-status" &&
+    e.reason === "collection-budget-exhausted"));
+  const requestLimited = await withCosmos({ run: async (args) => {
+    const url = new URL(args[4]);
+    if (url.pathname.endsWith("/containerGroups")) {
+      return { value: { value: Array.from({ length: LIMITS.items }, (_, i) => fixture(`${containerId}${i}`)) } };
+    }
+    if (url.pathname.endsWith("/databaseAccounts")) return { value: { value: [mongoAccount] } };
+    assert.ok(!url.pathname.includes("/operationsStatus/"), "no request after the shared limit");
+    return { value: { value: [] } };
+  } });
+  assert.equal(requestLimited.report.cosmosOperations[0].responseAvailable, false);
+  assert.ok(requestLimited.report.errors.some((e) => e.operation === "cosmos-operation-status" &&
+    e.reason === "collection-budget-exhausted"));
 });
 
 test("preserves native Radius IDs without Azure context and rejects unsafe paths", () => {
