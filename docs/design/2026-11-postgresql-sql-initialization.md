@@ -46,10 +46,12 @@ Both options still need a SQL runner, protected credentials, network access, exe
 
 ## Failed initialization, cleanup, and retries
 
-**Failed initialization can leave an already-created database and committed SQL behind.** The wrapper provides no implicit whole-script transaction or undo. Its final `result` lists cleanup resource IDs, but that alone does not prove Radius recorded them if initialization fails before outputs reach Radius. Failed-path tracking and deletion still need verification in [#472](https://github.com/radius-project/resource-types-contrib/issues/472).
+**Initialization failure must report deployment failure while preserving the database and committed SQL.** Database deletion must require a separate explicit action; initialization failure alone must not trigger it. The wrapper provides no implicit whole-script transaction or undo.
 
 `cleanupPreference: Always` requests cleanup of the temporary runner container and storage account. It does not delete PostgreSQL or roll back SQL.
 
+Cleanup IDs in the final `result` do not prove Radius recorded resources if failure occurs before outputs reach Radius. Tracking resources for later explicit deletion is separate from runner cleanup and database teardown; verify failed-path tracking and deletion in [#472](https://github.com/radius-project/resource-types-contrib/issues/472).
+
 Retries require SQL that is safe to repeat. The runner stops on the first SQL error; it does not resume at that statement. Do not assume exactly-once execution or that an unchanged deployment will rerun a failed script.
 
-Proposed composition must save completed-step resource IDs before initialization, retain them if initialization fails, and track resources created by a failed step, even when it returns no outputs. It would expose step boundaries, not provide automatic cleanup or SQL rollback.
+Proposed composition must save completed-step resource IDs before initialization, retain them on failure, and track resources created by failed steps even without outputs.
