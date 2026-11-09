@@ -494,7 +494,8 @@ and the original account request to check that link. Log limits can remove
 the initial request or all poll records.
 
 This is diagnostic evidence, not a polling fix. HTTP 200 can contain a pending
-operation state. Account provisioning success is not proof that the async
+operation state, including Cosmos DB `Enqueued` and `Dequeued` states.
+Account provisioning success is not proof that the async
 operation endpoint returned success. A collector GET is a later snapshot,
 not the response that the engine received. The initial `Azure-AsyncOperation`
 or `Location` header and the engine's poll-body interpretation still require

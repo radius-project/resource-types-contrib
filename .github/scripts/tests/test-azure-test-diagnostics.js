@@ -304,7 +304,7 @@ async function withCosmos({ logs = pollLog(), account = mongoAccount, response =
 }
 
 test("snapshots observed Cosmos operation state once without treating HTTP 200 as completion", async () => {
-  for (const status of ["InProgress", "Succeeded", "Failed", "Canceled"]) {
+  for (const status of ["InProgress", "Enqueued", "Dequeued", "Succeeded", "Failed", "Canceled"]) {
     const { report, calls, snapshots } = await withCosmos({
       logs: `${pollLog()}\n${pollLog(undefined, { timestamp: "2026-10-22T17:01:00Z" })}\n${pollLog()}`,
       response: { value: { status, properties: { provisioningState: "Succeeded", secret },
