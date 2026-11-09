@@ -68,6 +68,13 @@ recipes you built, deploy it, and attach it to the Environment. The pack name
 sets the recipe kind: a name that contains `terraform` selects Terraform
 recipes. All other names select Bicep recipes.
 
+Use a dedicated generated file for `OUTPUT_FILE`. If a valid selection has no
+recipes, the generator reports no recipes, removes that output, and exits
+successfully. It removes an output symlink, not its target. It does not remove
+directories. If removal fails, the command reports an error and exits nonzero.
+After a successful run, check that the output file exists before you deploy it.
+Run `make test-generate-recipe-pack-empty` for the offline output-cleanup tests.
+
 ```bash
 # Bicep recipes
 RECIPE_PLATFORM_FILTER=kubernetes make generate-recipe-pack PACK_NAME=biceprecipepack OUTPUT_FILE=recipe-pack-bicep.bicep

@@ -60,6 +60,10 @@ endif
 generate-recipe-pack: ## Generate a recipe pack Bicep template from available recipes (set PACK_NAME and OUTPUT_FILE to override defaults)
 	@./.github/scripts/generate-recipe-pack.sh "$(RESOURCE_TYPE_ROOT)" "$(PACK_NAME)" "$(OUTPUT_FILE)"
 
+.PHONY: test-generate-recipe-pack-empty
+test-generate-recipe-pack-empty: ## Test empty Recipe Pack output cleanup (no live environment needed)
+	@bash ./.github/scripts/tests/test-generate-recipe-pack-empty.sh
+
 .PHONY: deploy-recipe-pack
 deploy-recipe-pack: ## Deploy a recipe pack using a Bicep template (requires BICEP_FILE parameter)
 ifndef BICEP_FILE
