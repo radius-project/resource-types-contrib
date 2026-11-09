@@ -41,6 +41,9 @@ for script in list-recipe-folders list-resource-type-folders generate-recipe-pac
     cp "$REPO_ROOT/.github/scripts/$script.sh" "$SCRIPTS/"
     chmod +x "$SCRIPTS/$script.sh"
 done
+if [[ -f "$REPO_ROOT/.github/scripts/lib-recipe-platform-filter.sh" ]]; then
+    cp "$REPO_ROOT/.github/scripts/lib-recipe-platform-filter.sh" "$SCRIPTS/"
+fi
 printf 'namespace: Radius.Data\ntypes:\n  caches: {}\n' >"$TYPE_DIR/caches.yaml"
 printf 'output result object = {}\n' >"$BICEP_DIR/cache recipe.bicep"
 printf 'output "result" { value = {} }\n' >"$TERRAFORM_DIR/main.tf"
