@@ -247,12 +247,13 @@ The nightly and release-candidate Azure pack tests select a PostgreSQL region
 before they create the main resource group or configure the Azure provider.
 The release-candidate workflow keeps the released source and pack pins. A pack
 mapping that does not match the test tuple fails the PostgreSQL check.
-For older release pins whose PostgreSQL test app fixes `size: 'S'`, the workflow
+The release-candidate workflow passes the original pinned test app to the shared
+test helper, without first copying it to the runner's temporary directory.
+For older release pins whose PostgreSQL test app fixes `size: 'S'`, the helper
 creates a temporary parameterized test harness beside the source test app. This
 keeps the same `bicepconfig.json` lookup and relative file paths. The runner
 removes the temporary file on success or failure and does not change the source.
-The harness
-lets the selected `S` or `M` reach the deployment without changing the pinned
+The harness lets the selected `S` or `M` reach the deployment without changing the pinned
 resource type, recipe, pack, or test app. Unsupported test-app shapes fail before
 deployment rather than silently testing the wrong size.
 

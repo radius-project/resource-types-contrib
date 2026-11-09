@@ -301,14 +301,6 @@ jobs:
           RADIUS_VERSION: ${{ inputs.version }}
         run: ./.github/scripts/release/prepare-release-candidate-sources.sh
 
-      - name: Prepare parameterized PostgreSQL test harness
-        run: |
-          set -euo pipefail
-          harness="$RUNNER_TEMP/postgresql-test-app.bicep"
-          bash .github/scripts/prepare-postgres-test-harness.sh \
-            Data/postgreSqlDatabases/test/app.bicep "$harness"
-          echo "RTC_POSTGRES_TEST_HARNESS=$harness" >> "$GITHUB_ENV"
-
       - name: Verify published Recipe sources resolve
         run: |
           set -euo pipefail
