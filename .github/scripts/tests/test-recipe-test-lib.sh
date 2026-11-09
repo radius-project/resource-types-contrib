@@ -53,6 +53,11 @@ case "$1 $2" in
         fi
         ;;
     "deploy "*)
+        if [[ -n "${EXPECTED_POSTGRES_HARNESS_DIRECTORY:-}" &&
+            "$(cd "$(dirname "$2")" && pwd)" != "$EXPECTED_POSTGRES_HARNESS_DIRECTORY" ]]; then
+            echo 'Error BCP204: Extension "radius" is not recognized outside the source configuration.' >&2
+            exit 1
+        fi
         deploy_attempt=$(grep -c '^rad deploy ' "$CALL_LOG")
         deploy_exit_code="${DEPLOY_EXIT_CODE:-0}"
         if (( deploy_attempt <= ${DEPLOY_FAILURES:-0} )); then
@@ -1019,8 +1024,21 @@ run_postgres_entry() {
 }
 : >"$CALL_LOG"
 RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg RTC_POSTGRES_TEST_SIZE=M \
-    run_postgres_entry >/dev/null || fail "single-entry Azure runner must pass selected M"
+    EXPECTED_POSTGRES_HARNESS_DIRECTORY="$REPO_ROOT/Data/postgreSqlDatabases/test" \
+    run_postgres_entry >/dev/null || fail "single-entry Azure runner must retain the source configuration and pass selected M"
 grep -q -- '--parameters postgresSize=M' "$CALL_LOG" || fail "single-entry runner must pass M to Bicep"
+deployed_harness="$(sed -n 's/^rad deploy \([^ ]*\) .*/\1/p' "$CALL_LOG")"
+[[ -n "$deployed_harness" && ! -e "$deployed_harness" ]] ||
+    fail "successful PostgreSQL deployment must remove its temporary harness"
+: >"$CALL_LOG"
+if RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg DEPLOY_EXIT_CODE=1 \
+    EXPECTED_POSTGRES_HARNESS_DIRECTORY="$REPO_ROOT/Data/postgreSqlDatabases/test" \
+    run_postgres_entry >/dev/null 2>&1; then
+    fail "failed PostgreSQL deployment must still fail"
+fi
+deployed_harness="$(sed -n 's/^rad deploy \([^ ]*\) .*/\1/p' "$CALL_LOG")"
+[[ -n "$deployed_harness" && ! -e "$deployed_harness" ]] ||
+    fail "failed PostgreSQL deployment must remove its temporary harness"
 : >"$CALL_LOG"
 RTC_TEST_PLATFORM=kubernetes RTC_POSTGRES_TEST_SIZE=M run_postgres_entry >/dev/null ||
     fail "Kubernetes entry must retain the default template size"
@@ -1046,6 +1064,7 @@ fi
 for selected_size in S M; do
     : >"$CALL_LOG"
     RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg RTC_POSTGRES_TEST_SIZE="$selected_size" \
+        EXPECTED_POSTGRES_HARNESS_DIRECTORY="$TEST_ROOT" \
         RTC_POSTGRES_TEST_HARNESS="$POSTGRES_TEST_HARNESS" run_postgres_entry >/dev/null ||
         fail "pinned fixed-S harness must deploy selected size $selected_size"
     grep -q -- "--parameters postgresSize=$selected_size" "$CALL_LOG" ||
