@@ -432,6 +432,7 @@ jobs:
         continue-on-error: true
         timeout-minutes: 55
         env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
         run: |
           set -euo pipefail
@@ -458,6 +459,7 @@ jobs:
         continue-on-error: true
         timeout-minutes: 55
         env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
         run: |
           set -euo pipefail
