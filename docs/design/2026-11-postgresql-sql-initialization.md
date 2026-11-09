@@ -38,22 +38,18 @@ Radius already manages resource dependencies, and Bicep already orders resources
 
 Both options still need a SQL runner, protected credentials, network access, execution limits, and SQL that is safe to repeat. Neither guarantees exactly-once execution, automatic undo, or an implicit whole-script transaction. These requirements concern reliable initialization, not a database migration system.
 
-## Failed initialization, cleanup, and retries
-
-**A failed Recipe can leave a running database behind.** In the wrapper, the server and database can finish provisioning before client installation, connection, or SQL execution fails. The failure must fail the resource deployment, but it does not undo infrastructure creation or SQL statements that already committed. A timeout or lost connection can also leave the caller uncertain whether a statement completed.
-
-The wrapper returns the server and deployment-script IDs through its final `result` output. If initialization fails before that output reaches Radius, those IDs are not available through that result. Declaring cleanup IDs is therefore not proof that Radius records or deletes resources from a failed deployment. Existing records from an earlier deployment also do not prove that newly created resources are tracked. Until verified, operators must not assume that deleting the failed Radius resource removes everything created by the attempt.
-
-**Temporary runner cleanup is a separate operation.** The wrapper sets `cleanupPreference: Always` to request removal of the deployment script's container and storage account after success or failure. That setting does not delete the PostgreSQL server or undo database changes. The deployment-script resource has a one-day retention period. Cleanup requests can fail; inspect Azure deployment operations and resource state, and confirm ownership before removing any remaining resources.
-
-Before retrying, identify the failure, correct its cause, and check whether SQL already changed the database. Retry against the same intended server and database, with SQL that is safe to repeat. The runner stops on the first SQL error; it does not resume at the failed statement. SQL changes update its execution tag, and retention expiry can cause another run. Do not promise that an unchanged redeployment always reruns a failed script or that a retry runs only once.
-
-Composition would make the boundary between steps visible to Radius, but would not solve cleanup by itself. A proposed implementation must save the database step's resource IDs before starting initialization, retain them when initialization fails, and track resources created by the failed step even when it returns no outputs. It must also define whether retry reruns completed steps and how operators request another initialization attempt. It should preserve the database by default rather than treat SQL failure as permission to delete application data.
-
-Verification belongs in [#472](https://github.com/radius-project/resource-types-contrib/issues/472): fail initialization after database creation but before the Recipe returns outputs; inspect Radius tracking and Azure resources; retry after both a connection failure and partially committed SQL; then verify deletion and temporary-resource cleanup. These deployment tests are not part of the current local-only checks.
-
 ## Recommendation
 
 **Use the wrapper to close the implementation gap now.** Keep live execution and cleanup verification in [#472](https://github.com/radius-project/resource-types-contrib/issues/472).
 
 **Evaluate composition separately as a reuse improvement.** It becomes worthwhile when several Resource Types need the same staged workflow. It should not be a prerequisite for making the existing `initSql` property work.
+
+## Failed initialization, cleanup, and retries
+
+**Failed initialization can leave an already-created database and committed SQL behind.** The wrapper provides no implicit whole-script transaction or undo. Its final `result` lists cleanup resource IDs, but that alone does not prove Radius recorded them if initialization fails before outputs reach Radius. Failed-path tracking and deletion still need verification in [#472](https://github.com/radius-project/resource-types-contrib/issues/472).
+
+`cleanupPreference: Always` requests cleanup of the temporary runner container and storage account. It does not delete PostgreSQL or roll back SQL.
+
+Retries require SQL that is safe to repeat. The runner stops on the first SQL error; it does not resume at that statement. Do not assume exactly-once execution or that an unchanged deployment will rerun a failed script.
+
+Proposed composition must save completed-step resource IDs before initialization, retain them if initialization fails, and track resources created by a failed step, even when it returns no outputs. It would expose step boundaries, not provide automatic cleanup or SQL rollback.
