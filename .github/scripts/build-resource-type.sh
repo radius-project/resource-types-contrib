@@ -28,9 +28,6 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-
 validate_dependencies() {
     if ! command -v rad >/dev/null 2>&1; then
         echo "Error: 'rad' command not found in PATH" >&2
@@ -53,10 +50,8 @@ create_resource_type() {
 publish_extension() {
     local yaml_file="$1"
 
-    local base_name extension_name target_path
-    base_name="$(basename "$yaml_file")"
-    extension_name="${base_name%.*}"
-    target_path="${REPO_ROOT}/${extension_name}-extension.tgz"
+    # Keep the source path and suffix so equal basenames cannot share an output.
+    local target_path="${yaml_file}-extension.tgz"
 
     if ! rad bicep publish-extension -f "$yaml_file" --target "$target_path"; then
         echo "FAILED PUBLISHING EXTENSION: $yaml_file"

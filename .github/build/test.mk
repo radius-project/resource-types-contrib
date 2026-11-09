@@ -41,6 +41,10 @@ endif
 	@./.github/scripts/build-resource-type.sh "$(TYPE_FOLDER)"
 	./.github/scripts/update-bicepconfig.sh
 
+.PHONY: test-resource-type-extensions
+test-resource-type-extensions: ## Test local extension paths and config references without a cluster
+	@bash ./.github/scripts/tests/test-resource-type-extensions.sh
+
 .PHONY: build-bicep-recipe
 build-bicep-recipe: ## Build a Bicep recipe at the specified path (requires RECIPE_PATH parameter)
 ifndef RECIPE_PATH
