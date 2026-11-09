@@ -30,6 +30,7 @@ permissions: {}
 concurrency:
   group: release-candidate-recipe-pack-tests-${{ inputs.version }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   rc-kubernetes-recipe-pack-tests:
@@ -270,6 +271,10 @@ jobs:
 
   rc-azure-recipe-pack-tests:
     name: Release Candidate Recipe and Pack Tests (Azure)
+    concurrency:
+      group: azure-recipe-test-capacity
+      cancel-in-progress: false
+      queue: max
     needs:
       - rc-azure-context
       - rc-azure-postgres-preflight
@@ -546,6 +551,13 @@ jobs:
           name: radius-pod-logs-rc-azure
           path: radius-pod-logs
           if-no-files-found: warn
+
+      - name: Release Azure capacity before leaving the queue
+        if: always()
+        timeout-minutes: 26
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: bash .github/scripts/azure-postgres-workflow.sh cleanup-run-groups rc
 
   cleanup-azure-resources:
     name: Cleanup Azure Resources

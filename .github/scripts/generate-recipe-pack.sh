@@ -31,6 +31,11 @@ PACK_NAME="${2:-biceprecipepack}"
 OUTPUT_FILE="${3:-recipe-pack.bicep}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+if [[ -n "${RTC_ACI_TEST_DESIRED_COUNT+x}" && "${RTC_ACI_TEST_DESIRED_COUNT}" != 1 ]]; then
+    echo "Error: RTC_ACI_TEST_DESIRED_COUNT must be 1 when set." >&2
+    exit 1
+fi
+
 # Determine recipe type from pack name
 if [[ "$PACK_NAME" == *"terraform"* ]]; then
     RECIPE_TYPE="terraform"
@@ -107,8 +112,16 @@ for recipe_dir in "${RECIPE_DIRS[@]}"; do
         kind: '$RECIPE_KIND'
         source: '$TEMPLATE_PATH'
         plainHttp: true
-      }
 EOF
+    if [[ "${RTC_ACI_TEST_DESIRED_COUNT:-}" == 1 &&
+          "$RESOURCE_TYPE" == Radius.Compute/containers && "$RECIPES_SUBPATH" == azure/bicep ]]; then
+        cat >> "$OUTPUT_FILE" <<'EOF'
+        parameters: {
+          desiredCount: 1
+        }
+EOF
+    fi
+    echo "      }" >> "$OUTPUT_FILE"
 done
 
 # Close the Bicep template

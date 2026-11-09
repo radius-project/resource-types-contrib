@@ -36,12 +36,12 @@ on:
 
 permissions: {}
 
-# Only one Azure validation run per PR (or per ref) at a time. This keeps a single
-# pending approval per PR, so a reviewer can't be presented with several runs for
-# different head SHAs and approve the wrong one.
+# Queue runs for each PR (or ref) without cancelling active deployment cleanup.
+# The approval gate still binds credential access to the reviewed head SHA.
 concurrency:
   group: validate-azure-recipes-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
+  queue: max
 
 jobs:
   # Detect whether Azure-related files changed. For non-PR events (push, merge_group,
@@ -184,11 +184,16 @@ jobs:
          needs.approval-gate.result == 'skipped')
       )
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     name: Validate Azure ${{ matrix.recipe }} Recipes
+    concurrency:
+      group: azure-recipe-test-capacity
+      cancel-in-progress: false
+      queue: max
     env:
       RTC_TEST_DIAGNOSTICS_DIR: azure-test-diagnostics
       RTC_TEST_PLATFORM: azure
+      RTC_ACI_TEST_DESIRED_COUNT: "1"
     strategy:
       fail-fast: false
       matrix:
@@ -395,4 +400,5 @@ jobs:
 
       - name: Cleanup Azure Resources
         if: always()
+        timeout-minutes: 15
         run: make cleanup-azure-resources

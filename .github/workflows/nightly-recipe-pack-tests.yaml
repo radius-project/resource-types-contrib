@@ -246,6 +246,10 @@ jobs:
 
   nightly-azure-recipe-pack-tests:
     name: Nightly Recipe and Pack Tests (Azure)
+    concurrency:
+      group: azure-recipe-test-capacity
+      cancel-in-progress: false
+      queue: max
     needs:
       - nightly-azure-context
       - nightly-azure-postgres-preflight
@@ -384,6 +388,7 @@ jobs:
         continue-on-error: true
         timeout-minutes: 55
         env:
+          RTC_ACI_TEST_DESIRED_COUNT: "1"
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
         run: |
@@ -500,6 +505,13 @@ jobs:
           name: radius-pod-logs-nightly-azure
           path: radius-pod-logs
           if-no-files-found: warn
+
+      - name: Release Azure capacity before leaving the queue
+        if: always()
+        timeout-minutes: 26
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: bash .github/scripts/azure-postgres-workflow.sh cleanup-run-groups nightly
 
   cleanup-azure-resources:
     name: Cleanup Azure Resources

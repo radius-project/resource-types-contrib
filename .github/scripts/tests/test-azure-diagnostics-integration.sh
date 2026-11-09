@@ -66,7 +66,7 @@ cat >"$TEST_ROOT/bin/timeout" <<'EOF'
 #!/bin/bash
 [[ "$1" == --kill-after=5s ]] || exit 97
 case "$2 $3 $4" in
-    "100s node "*) ;;
+    "100s node "*|"30s az resource") ;;
     "15m bash -c"|"3m rad app"|[0-9]*"s bash -c")
         echo "bounded $2 $3 $4" >>"$CALL_LOG"
         if [[ "${DEPLOY_HANG:-0}" == 1 || "${CLEANUP_HANG:-0}" == 1 ||
@@ -83,6 +83,7 @@ cat >"$TEST_ROOT/bin/az" <<'EOF'
 #!/bin/bash
 echo "az $1 $2" >>"$CALL_LOG"
 if [[ "$1 $2" == "lock list" ]]; then exit 0; fi
+if [[ "$1 $2" == "resource list" ]]; then echo '[]'; exit 0; fi
 echo "Unexpected Azure CLI call outside collector" >&2
 exit 99
 EOF
@@ -94,7 +95,7 @@ source "$REPO_ROOT/.github/scripts/lib-recipe-test.sh"
 
 fail() { echo "FAIL: $1" >&2; exit 1; }
 run_helper() {
-    rtc_deploy_and_assert_test_app "$TEST_ROOT/Compute/containers/test/app.bicep" \
+    rtc_deploy_and_assert_test_app_once "$TEST_ROOT/Compute/containers/test/app.bicep" \
         "${RESOURCE_TYPE:-Radius.Compute/containers}" testapp /envs/test workspace test-ns
 }
 assert_failure_cleanup() {

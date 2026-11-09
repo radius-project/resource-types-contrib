@@ -122,6 +122,45 @@ parameters, so Radius can reuse resources from earlier work. It does not delete
 partially deployed resources between attempts. These rules apply to both
 per-recipe and Recipe Pack entry tests.
 
+#### Azure Container Instance quota recovery
+
+Azure Recipe validation, nightly Azure tests, and release-candidate Azure tests
+share the `azure-recipe-test-capacity` job concurrency group. `queue: max` keeps
+up to 100 pending jobs instead of replacing a pending job with a new one. These
+jobs wait for resource-group deletion before releasing the queue slot. Separate
+cleanup jobs remain as a fallback. Manual cancellation or a lost runner can still
+interrupt cleanup; a failed cleanup does not prove that quota is available.
+
+The basic Azure Bicep CI tests set `RTC_ACI_TEST_DESIRED_COUNT=1` when generating
+their Recipe Pack. This sets the ACI Recipe's `desiredCount` to one per container
+resource. It does not change CPU requests or production defaults. The nightly
+checked-in `azure-aci` Recipe Pack tests and release-candidate tests retain the
+default of three instances per resource. These test multi-instance deployment,
+not an autoscaling operation. Without the variable, the generator keeps Recipe
+defaults; a value other than `1` fails generation.
+
+In GitHub Actions, both Azure container per-recipe tests and Recipe Pack entry
+tests allow one clean redeployment for the exact structured
+`AzureContainerInstance/ContainerGroupQuotaReached` error on an ACI NGroups
+resource. All failure details must qualify. The runner collects diagnostics,
+deletes the failed application, and confirms that the Azure resource-group
+inventory has no new resource IDs before it waits 60 seconds and retries with a
+new application name. Failed cleanup, failed inventory, mixed errors, registry
+errors, and regional-capacity errors do not qualify.
+
+The full ACI test has a 20-minute limit, shortened by any enclosing test-step
+deadline. It reserves six minutes for diagnostics and cleanup and starts a
+retry only if enough time remains. Existing transport retries still use the
+same application within each deployment attempt. A second quota rejection
+fails with `deployment was not validated`; quota rejection never counts as a
+passing test.
+
+Run the offline regression tests with:
+
+```bash
+bash .github/scripts/tests/test-aci-quota-recovery.sh
+```
+
 ### 6. Test All Recipes
 
 Run tests for all recipes in the repository:
