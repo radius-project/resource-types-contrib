@@ -898,6 +898,11 @@ rtc_deploy_and_assert_test_app() {
             inventory_locks=""
             deploy_status=1
             cleanup_timeout=(timeout --kill-after=5s 3m)
+            if [[ "$diagnostics_collected" == 0 ]]; then
+                rtc_collect_test_diagnostics "$resource_type" "$app_name" "$started" ||
+                    echo "Error: Diagnostic collection failed after lock inventory failure; continuing cleanup." >&2
+                diagnostics_collected=1
+            fi
         fi
         if ! rtc_delete_owned_new_azure_management_locks "$locks_before" "$inventory_locks" "$app_name"; then
             echo "Error: Skipping Radius application deletion because Azure lock cleanup or Radius lock inventory validation failed." >&2

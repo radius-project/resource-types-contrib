@@ -22,7 +22,7 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 export CALL_LOG="$TEST_ROOT/calls"
 export RTC_AZURE_LOCK_GUARD=1 AZURE_RESOURCE_GROUP=rg AZURE_SUBSCRIPTION_ID=sub
 export GITHUB_ACTIONS=false RTC_POSTGRES_CAPACITY_RECOVERY=0
-export RTC_AZURE_DIAGNOSTICS_DIR="" RTC_TEST_DIAGNOSTICS_DIR=""
+export RTC_AZURE_DIAGNOSTICS_DIR="" RTC_TEST_DIAGNOSTICS_DIR="$TEST_ROOT/diagnostics"
 unset RTC_AZURE_TEST_STEP_DEADLINE_EPOCH RTC_LIB_RECIPE_TEST_SOURCED
 export EXISTING_LOCK="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Authorization/locks/existing"
 export OWNED_LOCK="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Cache/redis/test/providers/Microsoft.Authorization/locks/new"
@@ -76,10 +76,20 @@ cat >"$TEST_ROOT/bin/kubectl" <<'EOF'
 echo "kubectl $*" >>"$CALL_LOG"
 exit "${KUBECTL_STATUS:-0}"
 EOF
+cat >"$TEST_ROOT/bin/node" <<'EOF'
+#!/bin/bash
+[[ "$1" == */collect-azure-test-diagnostics.js ]] || exit 99
+echo "diagnostics $6" >>"$CALL_LOG"
+echo '{"fixture":true}' >"$2/azure.json"
+exit "${DIAGNOSTICS_STATUS:-0}"
+EOF
 cat >"$TEST_ROOT/bin/timeout" <<'EOF'
 #!/bin/bash
 echo "timeout $*" >>"$CALL_LOG"
-[[ "$1 $2 $3 $4" == "--kill-after=5s 3m rad app" ]] || exit 99
+case "$1 $2 $3 $4" in
+    "--kill-after=5s 3m rad app"|"--kill-after=5s 100s node "*) ;;
+    *) exit 99 ;;
+esac
 shift 2
 # Check the production limits above, then shorten only the fixture's wait.
 exec "$REAL_TIMEOUT" --kill-after=1s 1s "$@"
@@ -119,10 +129,19 @@ assert_no_lock_deletes() {
         fail "must not delete locks without verified ownership"
     fi
 }
+assert_diagnostics() {
+    local diagnostics_line cleanup_line
+    [[ "$(grep -c '^diagnostics ' "$CALL_LOG")" == 1 ]] || fail "collect diagnostics exactly once"
+    diagnostics_line="$(grep -n '^diagnostics ' "$CALL_LOG" | cut -d: -f1)"
+    cleanup_line="$(grep -nE '^rad app delete |^kubectl delete ' "$CALL_LOG" | head -n1 | cut -d: -f1)"
+    ((diagnostics_line < cleanup_line)) || fail "collect diagnostics before app or Kubernetes cleanup"
+}
 assert_fallback() {
     assert_cleanup
     assert_no_lock_deletes
-    [[ "$(grep -c '^timeout ' "$CALL_LOG")" == 1 ]] || fail "bound fallback deletion exactly once"
+    assert_diagnostics
+    [[ "$(grep -c '^timeout --kill-after=5s 3m rad app delete ' "$CALL_LOG")" == 1 ]] ||
+        fail "bound fallback deletion exactly once"
     grep -q '^timeout --kill-after=5s 3m rad app delete ' "$CALL_LOG" ||
         fail "fallback deletion needs a three-minute timeout and a five-second kill limit"
     grep -Fq 'Continuing with bounded Radius application deletion without lock ownership data.' "$TEST_ROOT/output" ||
@@ -134,6 +153,18 @@ for mode in failed malformed; do
     INVENTORY_MODE="$mode" run_case 1
     assert_fallback
     DEPLOY_STATUS=17 INVENTORY_MODE="$mode" run_case 1
+    assert_fallback
+done
+
+# Failed diagnostics must not hide the inventory failure or prevent cleanup.
+for mode in failed malformed; do
+    DIAGNOSTICS_STATUS=6 INVENTORY_MODE="$mode" run_case 1
+    assert_fallback
+    grep -Fq 'Error: Diagnostic collection failed after lock inventory failure; continuing cleanup.' "$TEST_ROOT/output" ||
+        fail "report diagnostic collection failure"
+    DIAGNOSTICS_STATUS=6 DELETE_STATUS=7 KUBECTL_STATUS=8 INVENTORY_MODE="$mode" run_case 1
+    assert_fallback
+    DEPLOY_STATUS=17 DIAGNOSTICS_STATUS=6 INVENTORY_MODE="$mode" run_case 1
     assert_fallback
 done
 
@@ -168,4 +199,5 @@ if grep -q '^timeout ' "$CALL_LOG"; then fail "do not shorten healthy cleanup"; 
 
 DEPLOY_STATUS=17 INVENTORY_MODE=normal run_case 1
 assert_cleanup
+assert_diagnostics
 echo "PASS: Azure lock inventory failures, bounded fallback, and ownership checks"

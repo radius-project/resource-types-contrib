@@ -378,7 +378,9 @@ Set `RTC_AZURE_DIAGNOSTICS_DIR` for local collection.
 
 If the post-deploy Radius inventory request fails or returns malformed JSON,
 the test fails and discards all lock IDs from that response. It does not delete
-Azure locks without proof of ownership. Fallback application deletion uses
+Azure locks without proof of ownership. If diagnostics are enabled, the test
+attempts collection before cleanup unless it has already done so. A collection
+failure is reported but does not stop cleanup. Fallback application deletion uses
 `timeout --kill-after=5s 3m`, and cleanup of Kubernetes resources selected by
 the test application's label is still attempted.
 Run `bash .github/scripts/tests/test-azure-lock-inventory.sh` to check these
