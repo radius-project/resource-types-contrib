@@ -519,6 +519,7 @@ harmless_progress = re.compile(
     r"\s*(?:Location:\s*[a-z][a-z0-9-]*|Status:\s*(?:Running|Accepted|Succeeded)"
     r"|WARNING: Radius type compatibility is not verified\.)\s*"
 )
+harmless_quota_metadata = re.compile(r"TraceId: [0-9a-fA-F]{32}")
 wrappers = {"DeploymentFailed", "RecipeDeploymentFailed", "ResourceDeploymentFailure", "ResourceOperationFailure"}
 reasons = []
 invalid = False
@@ -647,7 +648,10 @@ else:
         visit(root)
         residual[start:end] = ["\n" if char == "\n" else " " for char in transcript[start:end]]
     for line in "".join(residual).splitlines():
-        if (bare_failure.search(line) and not harmless_progress.fullmatch(line)) or (
+        if (bare_failure.search(line) and not (
+            harmless_progress.fullmatch(line)
+            or (quota_only and harmless_quota_metadata.fullmatch(line))
+        )) or (
             failure_prefix.search(line) and failure_prefix.sub("", line).strip()
         ):
             invalid = True

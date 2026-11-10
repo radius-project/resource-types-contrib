@@ -95,6 +95,7 @@ QUOTA="$(jq -cn --arg target "$NGROUP" \
       details:[{code:"AzureContainerInstance/ContainerGroupQuotaReached",target:"child-id",
       message:("[{\"ErrorCode\":\"AzureContainerInstance/ContainerGroupQuotaReached\","
       + "\"SampleErrorMessage\":\"StandardCores exceeded in westus3\"}]")}]}]}')"
+QUOTA+=$'\nTraceId: 0123456789abcdef0123456789abcdef'
 export DEPLOY_ERROR="$QUOTA"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -143,6 +144,7 @@ for error in \
     "$(jq -cn --argjson quota "$QUOTA" \
         '$quota | .details[0].details[0].message = "[{\"ErrorCode\":\"AzureContainerInstance/ContainerGroupQuotaReached\",\"SampleErrorMessage\":\"quota\"},{\"ErrorCode\":\"RegistryErrorResponse\",\"SampleErrorMessage\":\"registry\"}]"')" \
     "$QUOTA"$'\nError: InvalidTemplate: invalid property' \
+    "${QUOTA/0123456789abcdef0123456789abcdef/0123456789abcdef0123456789abcdeg}" \
     'AzureContainerInstance/ContainerGroupQuotaReached: unstructured error'; do
     if DEPLOY_ERROR="$error" run_test; then fail "unconfirmed or mixed quota must fail"; fi
     attempts 1
