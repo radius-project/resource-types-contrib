@@ -639,6 +639,30 @@ sys.exit(1)
 PY
 }
 
+rtc_save_deployment_error() {
+    local transcript="$1" directory script_dir
+    local diagnostics_root="${RTC_TEST_DIAGNOSTICS_DIR-${RTC_AZURE_DIAGNOSTICS_DIR:-}}"
+    if [[ "${RTC_TEST_PLATFORM:-}" != azure || -z "$diagnostics_root" ]]; then
+        return 0
+    fi
+    if ! command -v node >/dev/null 2>&1 || ! command -v timeout >/dev/null 2>&1; then
+        echo "Error: Deployment error capture requires Node.js and GNU timeout." >&2
+        return 1
+    fi
+    if ! mkdir -p "$diagnostics_root" ||
+       ! directory=$(mktemp -d "$diagnostics_root/deployment-error-XXXXXXXX"); then
+        echo "Error: Could not create deployment error diagnostic directory." >&2
+        return 1
+    fi
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if ! timeout --kill-after=5s 5s node "$script_dir/collect-azure-test-diagnostics.js" \
+        --deployment-error "$transcript" "$directory" "${AZURE_SUBSCRIPTION_ID:-}" "${AZURE_RESOURCE_GROUP:-}" \
+        "${RTC_TEST_DIAGNOSTIC_APP:-}" "${RTC_TEST_DIAGNOSTIC_STARTED:-}"; then
+        echo "Error: Deployment error capture incomplete; deployment status and cleanup are unchanged." >&2
+        return 1
+    fi
+}
+
 # Retry confirmed download or Azure transport failures without deleting partially
 # deployed resources. Terraform init fails before apply; keep deployment arguments.
 rtc_deploy_with_retry() (
@@ -655,6 +679,8 @@ rtc_deploy_with_retry() (
             pipeline_status=("${PIPESTATUS[@]}")
         fi
 
+        rtc_save_deployment_error "$deploy_log" ||
+            echo "Error: Could not save filtered deployment error evidence; continuing failure handling." >&2
         if [[ "${pipeline_status[1]}" -ne 0 ]]; then
             return 1
         fi
@@ -841,7 +867,8 @@ rtc_deploy_and_assert_test_app() {
             'source "$1"; shift; rtc_deploy_with_retry "$@"' \
             bash "${BASH_SOURCE[0]}")
     fi
-    if "${deploy_command[@]}" "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
+    if RTC_TEST_DIAGNOSTIC_APP="$app_name" RTC_TEST_DIAGNOSTIC_STARTED="$started" \
+        "${deploy_command[@]}" "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
         echo "==> Test deployment successful"
 
         local assertion_remaining="" assertion_status=0
