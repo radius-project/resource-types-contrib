@@ -143,11 +143,11 @@ function errorCodes(value) {
   }
   const codes = new Set();
   function visit(item, depth) {
-    if (depth > 8 || codes.size >= LIMITS.items) return;
+    if (depth > 16 || codes.size >= LIMITS.items) return;
     if (Array.isArray(item)) {
       for (const child of item.slice(0, LIMITS.items)) visit(child, depth + 1);
     } else if (item && typeof item === "object") {
-      const code = text(item.code, /^[a-z][a-z0-9_.-]{0,127}$/i);
+      const code = text(item.code, /^(?=.{1,128}$)[a-z][a-z0-9_.-]*(?:\/[a-z][a-z0-9_.-]*)*$/i);
       if (code) codes.add(code);
       visit(item.error, depth + 1);
       visit(item.details, depth + 1);
@@ -155,6 +155,107 @@ function errorCodes(value) {
   }
   visit(value, 0);
   return [...codes];
+}
+
+function deploymentErrors(transcript, scope) {
+  const errors = new Map();
+  let truncated = false;
+  function objects(input) {
+    const values = [];
+    let start = -1;
+    let depth = 0;
+    let quoted = false;
+    let escaped = false;
+    for (let i = 0; i < input.length; i++) {
+      const char = input[i];
+      if (start < 0) {
+        if (char === "{") { start = i; depth = 1; }
+        continue;
+      }
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (char === "\\") escaped = true;
+        else if (char === '"') quoted = false;
+      } else if (char === '"') quoted = true;
+      else if (char === "{") depth++;
+      else if (char === "}" && --depth === 0) {
+        try {
+          const value = JSON.parse(input.slice(start, i + 1));
+          if (values.length >= LIMITS.items) { truncated = true; break; }
+          values.push(value);
+        }
+        catch { truncated = true; }
+        start = -1;
+      }
+    }
+    if (start >= 0) truncated = true;
+    return values;
+  }
+  function visit(value, resourceId = null, depth = 0) {
+    if (depth > 16) { truncated = true; return; }
+    if (Array.isArray(value)) {
+      if (value.length > LIMITS.items) truncated = true;
+      for (const child of array(value)) visit(child, resourceId, depth + 1);
+      return;
+    }
+    const v = object(value);
+    if (typeof v.target === "string" && v.target.startsWith("/")) {
+      const target = scopedId(v.target, scope);
+      resourceId = target && /^\/providers\/Microsoft\.ContainerInstance\/ngroups\/[a-z0-9_-]+$/i.test(target.slice(scope.length))
+        ? target : null;
+    }
+    const code = "AzureContainerInstance/RegistryErrorResponse";
+    if (resourceId && v.code === code) {
+      const key = resourceId.toLowerCase();
+      if (!errors.has(key) && errors.size >= LIMITS.items) { truncated = true; return; }
+      const record = errors.get(key) ?? { code, resourceId, errorTargets: [] };
+      errors.set(key, record);
+      if (typeof v.target === "string" && !v.target.startsWith("/")) {
+        if (v.target.length > 2048) { truncated = true; return; }
+        for (const target of v.target.split(",").map((id) => id.trim())) {
+          if (!UUID.test(target) || record.errorTargets.includes(target.toLowerCase())) continue;
+          if (record.errorTargets.length >= LIMITS.items) { truncated = true; break; }
+          record.errorTargets.push(target.toLowerCase());
+        }
+      }
+    }
+    if (v.error !== undefined) visit(v.error, resourceId, depth + 1);
+    if (v.details !== undefined) visit(v.details, resourceId, depth + 1);
+  }
+  for (const value of objects(transcript)) visit(value);
+  const traceIds = [];
+  for (const match of transcript.matchAll(/^TraceId:[ \t]*([a-f0-9]{32})[ \t]*\r?$/gmi)) {
+    const id = match[1].toLowerCase();
+    if (traceIds.includes(id)) continue;
+    if (traceIds.length >= LIMITS.items) { truncated = true; break; }
+    traceIds.push(id);
+  }
+  return { errors: [...errors.values()], traceIds, truncated };
+}
+
+function saveDeploymentErrors([transcriptFile, directory, subscription, group, app, started]) {
+  if (!UUID.test(subscription) || !/^[a-z0-9_-]{1,90}$/i.test(group) ||
+      !/^[a-z0-9_-]{1,128}$/i.test(app) || !TIME.test(started)) {
+    throw new Error("invalid-diagnostic-context");
+  }
+  const scope = `/subscriptions/${subscription}/resourceGroups/${group}`;
+  const fd = fs.openSync(transcriptFile, "r");
+  const buffer = Buffer.alloc(LIMITS.bytes + 1);
+  let bytes = 0;
+  try {
+    while (bytes < buffer.length) {
+      const read = fs.readSync(fd, buffer, bytes, buffer.length - bytes, null);
+      if (read === 0) break;
+      bytes += read;
+    }
+  } finally { fs.closeSync(fd); }
+  const report = {
+    schemaVersion: 1, app, scope, deploymentStarted: started, collectedAt: new Date().toISOString(),
+    ...deploymentErrors(buffer.subarray(0, Math.min(bytes, LIMITS.bytes)).toString("utf8"), scope),
+    transcriptTruncated: bytes > LIMITS.bytes,
+    limitation: "ACI error codes and target IDs only; no registry HTTP response or original Azure response headers.",
+  };
+  fs.writeFileSync(path.join(directory, "deployment-error.json"), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
 }
 
 function requestTarget(value, scope) {
@@ -524,20 +625,28 @@ async function collect({ subscription, group, app, started, resourceType = "", p
 }
 
 if (require.main === module) {
-  const [directory, subscription, group, app, started, resourceType, platform = "azure"] = process.argv.slice(2);
-  const file = platform === "azure" ? "azure.json" : "radius.json";
-  collect({
-    subscription, group, app, started, resourceType, platform,
-    save: (report) => fs.writeFileSync(path.join(directory, file), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 }),
-  }).then((report) => {
-    if (report.errors.length || report.truncations.length) {
-      console.error(`Failure diagnostics incomplete; see ${file} errors and truncations.`);
+  if (process.argv[2] === "--deployment-error") {
+    try { saveDeploymentErrors(process.argv.slice(3)); }
+    catch {
+      console.error("Deployment error capture failed: invalid context or input/output error. Raw error withheld.");
       process.exitCode = 1;
     }
-  }).catch(() => {
-    console.error("Failure diagnostics failed: invalid context or collector/output error. Raw error withheld.");
-    process.exitCode = 1;
-  });
+  } else {
+    const [directory, subscription, group, app, started, resourceType, platform = "azure"] = process.argv.slice(2);
+    const file = platform === "azure" ? "azure.json" : "radius.json";
+    collect({
+      subscription, group, app, started, resourceType, platform,
+      save: (report) => fs.writeFileSync(path.join(directory, file), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 }),
+    }).then((report) => {
+      if (report.errors.length || report.truncations.length) {
+        console.error(`Failure diagnostics incomplete; see ${file} errors and truncations.`);
+        process.exitCode = 1;
+      }
+    }).catch(() => {
+      console.error("Failure diagnostics failed: invalid context or collector/output error. Raw error withheld.");
+      process.exitCode = 1;
+    });
+  }
 }
 
-module.exports = { collect, runAz, resource, activity, logRecords, operationState, LIMITS };
+module.exports = { collect, runAz, resource, activity, logRecords, operationState, deploymentErrors, LIMITS };

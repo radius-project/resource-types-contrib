@@ -22,6 +22,9 @@ export AZURE_RESOURCE_GROUP=rrttest-123-1-bicep
 export RTC_TEST_PLATFORM=azure
 export GITHUB_ACTIONS=false
 export REAL_TIMEOUT
+export REAL_NODE
+REAL_NODE="$(command -v node)"
+export RAW_TRANSCRIPT_PATH="$TEST_ROOT/raw-transcript-path"
 if ! REAL_TIMEOUT="$(command -v timeout)"; then
     echo "Error: GNU timeout is required for Azure diagnostics integration tests." >&2
     exit 1
@@ -35,6 +38,7 @@ echo "rad $1 $2" >>"$CALL_LOG"
 case "$1 $2" in
     "deploy "*)
         if [[ "${DEPLOY_HANG:-0}" == 1 ]]; then exec sleep 30; fi
+        if [[ -n "${DEPLOY_ERROR_FILE:-}" ]]; then cat "$DEPLOY_ERROR_FILE"; fi
         exit "${DEPLOY_STATUS:-37}" ;;
     "app delete")
         if [[ "${CLEANUP_HANG:-0}" == 1 ]]; then exec sleep 30; fi
@@ -55,8 +59,15 @@ exit "${CLEANUP_STATUS:-0}"
 EOF
 cat >"$TEST_ROOT/bin/node" <<'EOF'
 #!/bin/bash
-echo collector >>"$CALL_LOG"
 [[ "$1" == */collect-azure-test-diagnostics.js ]] || exit 99
+if [[ "$2" == --deployment-error ]]; then
+    echo deployment-error >>"$CALL_LOG"
+    printf '%s\n' "$3" >"$RAW_TRANSCRIPT_PATH"
+    if [[ "${CAPTURE_HANG:-0}" == 1 ]]; then exec sleep 30; fi
+    if [[ "${CAPTURE_STATUS:-0}" != 0 ]]; then exit "$CAPTURE_STATUS"; fi
+    exec "$REAL_NODE" "$@"
+fi
+echo collector >>"$CALL_LOG"
 [[ "$3" == "${AZURE_SUBSCRIPTION_ID:-}" && "$4" == "$AZURE_RESOURCE_GROUP" && "$6" == *T*Z ]] || exit 98
 [[ "$8" == "${RTC_TEST_PLATFORM:-kubernetes}" ]] || exit 98
 echo '{"mock":"safe-evidence"}' >"$2/azure.json"
@@ -67,6 +78,11 @@ cat >"$TEST_ROOT/bin/timeout" <<'EOF'
 [[ "$1" == --kill-after=5s ]] || exit 97
 case "$2 $3 $4" in
     "100s node "*) ;;
+    "5s node "*)
+        if [[ "${CAPTURE_HANG:-0}" == 1 ]]; then
+            shift 2
+            exec "$REAL_TIMEOUT" --kill-after=1s 1s "$@"
+        fi ;;
     "15m bash -c"|"3m rad app"|[0-9]*"s bash -c")
         echo "bounded $2 $3 $4" >>"$CALL_LOG"
         if [[ "${DEPLOY_HANG:-0}" == 1 || "${CLEANUP_HANG:-0}" == 1 ||
@@ -114,6 +130,49 @@ assert_before_cleanup() {
     ' "$CALL_LOG" || fail "collector must run exactly once before cleanup"
 }
 
+cat >"$TEST_ROOT/registry-error" <<EOF
+Deployment failed:
+{"error":{"code":"ResourceDeploymentFailure","target":"/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP/providers/Microsoft.ContainerInstance/ngroups/test","details":[{"code":"AzureContainerInstance/RegistryErrorResponse","target":"4114cc1a-89b4-4c63-ac08-97e82f0fa1e8","message":"An error response is received from the docker registry. Please retry later. DO-NOT-SAVE-this-secret"}]}}
+TraceId: a9a189ce38e40f636c756f328a897ea0
+EOF
+DEPLOY_ERROR_FILE="$TEST_ROOT/registry-error" assert_failure_cleanup run_helper
+assert_before_cleanup
+awk '
+    /^deployment-error$/ { captured++; if (collected) exit 1 }
+    /^collector$/ { collected++; if (captured != 1) exit 1 }
+    END { if (captured != 1 || collected != 1) exit 1 }
+' "$CALL_LOG" || fail "deployment error capture must precede snapshots and cleanup"
+[[ ! -e "$(cat "$RAW_TRANSCRIPT_PATH")" ]] || fail "raw deployment transcript must be removed"
+reports=("$RTC_AZURE_DIAGNOSTICS_DIR"/deployment-error-*/deployment-error.json)
+[[ "${#reports[@]}" == 1 && -f "${reports[0]}" ]] || fail "must save one filtered deployment report"
+jq -e '
+    .app | startswith("testapp-")
+' "${reports[0]}" >/dev/null || fail "report must identify the test application"
+jq -e '
+    .errors[0].code == "AzureContainerInstance/RegistryErrorResponse" and
+    .errors[0].errorTargets == ["4114cc1a-89b4-4c63-ac08-97e82f0fa1e8"] and
+    .traceIds == ["a9a189ce38e40f636c756f328a897ea0"]
+' "${reports[0]}" >/dev/null || fail "must retain provider code, targets, and CLI trace ID"
+if grep -Rq 'DO-NOT-SAVE-this-secret' "$RTC_AZURE_DIAGNOSTICS_DIR"; then fail "must not save raw errors"; fi
+for status in 9 124; do
+    CAPTURE_STATUS="$status" assert_failure_cleanup run_helper
+    assert_before_cleanup
+    grep -q 'Deployment error capture incomplete' "$TEST_ROOT/output" || fail "capture failure must be explicit"
+done
+CAPTURE_HANG=1 assert_failure_cleanup run_helper
+assert_before_cleanup
+grep -q 'Deployment error capture incomplete' "$TEST_ROOT/output" || fail "stalled capture must be explicit"
+for capture_status in 0 124; do
+    : >"$CALL_LOG"
+    status=0
+    RTC_TEST_DIAGNOSTICS_DIR="$TEST_ROOT/direct-helper" RTC_TEST_DIAGNOSTIC_APP=testapp \
+        RTC_TEST_DIAGNOSTIC_STARTED=2026-11-07T09:30:00Z CAPTURE_STATUS="$capture_status" \
+        DEPLOY_ERROR_FILE="$TEST_ROOT/registry-error" \
+        rtc_deploy_with_retry test.bicep >"$TEST_ROOT/output" 2>&1 || status=$?
+    [[ "$status" == 37 ]] || fail "capture must preserve the raw deployment exit code"
+    [[ "$(grep -c '^rad deploy ' "$CALL_LOG")" == 1 ]] || fail "registry errors must not retry"
+done
+
 for status in 0 9 124 137; do
     COLLECTOR_STATUS="$status" assert_failure_cleanup run_helper
     assert_before_cleanup
@@ -145,6 +204,7 @@ for platform in kubernetes aws ""; do
     GITHUB_ACTIONS=true RTC_TEST_PLATFORM="$platform" assert_failure_cleanup run_helper
     assert_before_cleanup
     if grep -q '^bounded' "$CALL_LOG"; then fail "non-Azure tests must not acquire new time limits"; fi
+    if grep -q '^deployment-error$' "$CALL_LOG"; then fail "non-Azure tests must not capture ACI errors"; fi
 done
 RESOURCE_TYPE=Radius.Data/widgets assert_failure_cleanup run_helper
 assert_before_cleanup
@@ -225,14 +285,15 @@ done
         RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$deadline" run_helper >"$TEST_ROOT/output" 2>&1 ||
         fail "bounded successful assertions must remain successful"
     grep -q '^kubectl wait ' "$CALL_LOG" || fail "bounded assertions must run"
-    if grep -q '^collector' "$CALL_LOG"; then fail "successful assertions must not collect"; fi
+    if grep -qE '^(collector|deployment-error)$' "$CALL_LOG"; then fail "successful assertions must not collect"; fi
 )
 : >"$CALL_LOG"
 DEPLOY_STATUS=0 run_helper >"$TEST_ROOT/output" 2>&1 || fail "successful test must remain successful"
-if grep -q '^collector' "$CALL_LOG"; then fail "success must not collect"; fi
+if grep -qE '^(collector|deployment-error)$' "$CALL_LOG"; then fail "success must not collect"; fi
 if grep -q '^bounded' "$CALL_LOG"; then fail "local runs must retain their existing time limits"; fi
 : >"$CALL_LOG"
 GITHUB_ACTIONS=true DEPLOY_STATUS=0 run_helper >"$TEST_ROOT/output" 2>&1 || fail "CI success must remain successful"
+if grep -q '^deployment-error$' "$CALL_LOG"; then fail "CI success must not capture errors"; fi
 if grep -q '^bounded 3m rad app$' "$CALL_LOG"; then
     fail "successful CI cleanup must not have a timeout"
 fi
@@ -294,12 +355,14 @@ for github_actions in true false; do
         unset RTC_AZURE_DIAGNOSTICS_DIR
         export GITHUB_ACTIONS="$github_actions"
         assert_failure_cleanup run_recipe
-        if grep -q '^collector' "$CALL_LOG"; then fail "unset directory must disable collection"; fi
+        if grep -qE '^(collector|deployment-error)$' "$CALL_LOG"; then fail "unset directory must disable collection"; fi
         [[ ! -e radius-pod-logs ]] || fail "unset directory must not create a default output path"
     )
     GITHUB_ACTIONS="$github_actions" RTC_AZURE_DIAGNOSTICS_DIR="" assert_failure_cleanup run_recipe
-    if grep -q '^collector' "$CALL_LOG"; then fail "explicit empty directory must disable collection"; fi
+    if grep -qE '^(collector|deployment-error)$' "$CALL_LOG"; then fail "explicit empty directory must disable collection"; fi
 done
+RTC_TEST_DIAGNOSTICS_DIR="" assert_failure_cleanup run_helper
+if grep -qE '^(collector|deployment-error)$' "$CALL_LOG"; then fail "empty new directory setting must disable fallback"; fi
 DEPLOY_STATUS=0 CLEANUP_STATUS=8 assert_failure_cleanup run_helper
 [[ "$(grep -c '^collector$' "$CALL_LOG")" == 1 ]] || fail "cleanup-only failures must collect once"
 : >"$CALL_LOG"

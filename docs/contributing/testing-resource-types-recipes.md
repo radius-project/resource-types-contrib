@@ -455,6 +455,27 @@ PostgreSQL server states. Activity Log records also include structured error
 codes, but not provider error messages. These provider-specific reads add detail;
 they are not an application or resource-type filter.
 
+When an Azure deployment command returns an error, the test helper also saves
+`deployment-error-*/deployment-error.json` before it removes the temporary CLI
+transcript. This report contains the app name, deployment start and capture times,
+CLI trace IDs, and scoped ACI `RegistryErrorResponse` codes and error-target UUIDs.
+The targets come from structured error fields, not free-text messages.
+Use the app name and start time to match this report to the resource snapshot.
+Qualified error codes, such as `AzureContainerInstance/RegistryErrorResponse`,
+are also retained in filtered component logs and Activity Log records.
+
+This capture requires `AZURE_SUBSCRIPTION_ID` and `AZURE_RESOURCE_GROUP`, in
+addition to an enabled diagnostic output directory. It makes no cloud requests.
+It reads at most 2 MiB of the transcript, keeps at most 20 records and targets
+per resource, and has a five-second limit with a further five-second kill limit.
+`truncated` and `transcriptTruncated` identify incomplete evidence. An empty
+`errors` list means no matching structured ACI registry error was captured;
+it does not prove that no registry error occurred. Capture errors are reported
+without changing the deployment exit status, retry rules, or cleanup.
+This is evidence capture, not a fix for the ACI failure.
+If the outer deployment deadline kills the command, this report may be absent.
+The existing resource and log snapshots still run before cleanup.
+
 The `radiusLogs` field contains filtered records from the deployment engine,
 Dynamic RP, Applications RP, and UCP pods, including each discovered replica.
 The collector reads these before Azure resource API calls and failed-test cleanup.
