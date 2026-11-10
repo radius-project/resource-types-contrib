@@ -44,6 +44,77 @@ if [[ "$*" == "postgres flexible-server create --help" ]]; then
     fi
     exit 0
 fi
+if [[ "$*" == "postgres flexible-server list-skus "* ]]; then
+    echo "az $*" >>"$CALL_LOG"
+    case "${CATALOG_MODE:-available}" in
+        available)
+            cat <<'JSON'
+[{
+  "name": "default",
+  "status": "Default",
+  "restricted": "Disabled",
+  "supportedServerVersions": [{"name": "16", "status": "Visible"}],
+  "supportedServerEditions": [
+    {
+      "name": "Burstable",
+      "status": "Available",
+      "supportedServerSkus": [{"name": "Standard_B1ms", "status": "Visible"}],
+      "supportedStorageEditions": [{
+        "name": "Premium_LRS",
+        "status": "Default",
+        "supportedStorageMb": [{"storageSizeMb": 32768, "status": "Available"}]
+      }]
+    },
+    {
+      "name": "GeneralPurpose",
+      "status": "Default",
+      "supportedServerSkus": [{"name": "Standard_D2ds_v5", "status": "Visible"}],
+      "supportedStorageEditions": [{
+        "name": "Premium_LRS",
+        "status": "Available",
+        "supportedStorageMb": [{"storageSizeMb": 32768, "status": "Default"}]
+      }]
+    }
+  ]
+}]
+JSON
+            ;;
+        restricted) printf '%s\n' '[]' ;;
+        location-restricted)
+            printf '%s\n' \
+                '[{"name":"default","status":"Visible","restricted":"Enabled","supportedServerVersions":[],"supportedServerEditions":[]}]'
+            ;;
+        offer-restricted)
+            cat <<'JSON'
+[{
+  "name": "default",
+  "supportedFeatures": [{"name": "OfferRestricted", "status": "Enabled"}],
+  "supportedServerVersions": [],
+  "supportedServerEditions": []
+}]
+JSON
+            ;;
+        unsupported) sed 's/"16"/"15"/' <<'JSON'
+[{
+  "name": "default",
+  "supportedServerVersions": [{"name": "16"}],
+  "supportedServerEditions": []
+}]
+JSON
+            ;;
+        malformed) printf '%s\n' '[{"supportedServerVersions":"16"}]' ;;
+        malformed-restricted)
+            printf '%s\n' \
+                '[{"name":"default","restricted":true,"supportedServerVersions":[],"supportedServerEditions":[]}]'
+            ;;
+        malformed-status)
+            printf '%s\n' \
+                '[{"name":"default","status":"Unknown","supportedServerVersions":[],"supportedServerEditions":[]}]'
+            ;;
+        error) echo '(AuthorizationFailed) denied' >&2; exit 1 ;;
+    esac
+    exit 0
+fi
 echo "az $*" >>"$CALL_LOG"
 case "$3" in
     delete)
@@ -179,18 +250,59 @@ expect_status 0 env RTC_POSTGRES_TEST_SIZE=M AZURE_RESOURCE_GROUP=rg AZURE_LOCAT
 grep -q -- '--sku-name Standard_D2ds_v5 --storage-size' "$CALL_LOG" || fail "M SKU"
 grep -q -- '--tier GeneralPurpose' "$CALL_LOG" || fail "M tier"
 
+reset ok
+expect_status 5 env CATALOG_MODE=restricted RTC_POSTGRES_PROBE_GROUP_LIFECYCLE=true \
+    RTC_POSTGRES_PROBE_ATTEMPTS=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \
+    PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+[[ "$(count create)" == 0 ]] || fail "restricted catalog must not create"
+jq -e '.outcome == "restricted" and .errorCode == "RegionRestricted"' \
+    "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "restricted result"
+reset ok
+expect_status 5 env CATALOG_MODE=location-restricted RTC_POSTGRES_PROBE_GROUP_LIFECYCLE=true \
+    RTC_POSTGRES_PROBE_ATTEMPTS=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \
+    PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+jq -e '.outcome == "restricted" and .errorCode == "RegionRestricted"' \
+    "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "location restriction result"
+reset ok
+expect_status 5 env CATALOG_MODE=offer-restricted RTC_POSTGRES_PROBE_GROUP_LIFECYCLE=true \
+    RTC_POSTGRES_PROBE_ATTEMPTS=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \
+    PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+jq -e '.outcome == "restricted" and .errorCode == "RegionRestricted"' \
+    "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "offer restriction result"
+reset ok
+expect_status 4 env CATALOG_MODE=unsupported RTC_POSTGRES_PROBE_GROUP_LIFECYCLE=true \
+    RTC_POSTGRES_PROBE_ATTEMPTS=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \
+    PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+[[ "$(count create)" == 0 ]] || fail "unsupported catalog must not create"
+jq -e '.outcome == "unsupported" and .errorCode == "UnsupportedVersion"' \
+    "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "unsupported result"
+for mode in malformed malformed-restricted malformed-status error; do
+    reset ok
+    expect_status 1 env CATALOG_MODE="$mode" RTC_POSTGRES_PROBE_GROUP_LIFECYCLE=true \
+        RTC_POSTGRES_PROBE_ATTEMPTS=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 \
+        PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+    [[ "$(count create)" == 0 ]] || fail "$mode catalog must not create"
+done
+
 reset capacity busy ok
 expect_status 0 run_probe
 [[ "$(count create)" == 3 && "$(count delete)" == 3 && "$(count show)" == 9 ]] || fail "retry cleanup"
 [[ "$(grep -oE -- '--name [^ ]+' "$CALL_LOG" | sort -u | wc -l)" -eq 3 ]] || fail "unique server names"
-[[ "$(awk '/^az / {print $4}' "$CALL_LOG" | paste -sd,)" == "show,create,show,delete,show,show,create,show,delete,show,show,create,show,delete,show" ]] ||
+[[ "$(awk '/^az postgres flexible-server (show|create|delete) / {print $4}' "$CALL_LOG" | paste -sd,)" == "show,create,show,delete,show,show,create,show,delete,show,show,create,show,delete,show" ]] ||
     fail "must confirm deletion before next allocation"
 
 reset ok
 expect_status 1 env DELETE_MISSING=1 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
 reset ok
 expect_status 0 env AZURE_SUBSCRIPTION_ID=sub-123 AZURE_RESOURCE_GROUP=rg AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
-[[ "$(grep -c -- '--subscription sub-123' "$CALL_LOG")" == 5 ]] || fail "subscription on all calls"
+[[ "$(grep -c -- '--subscription sub-123' "$CALL_LOG")" == 6 ]] || fail "subscription on all calls"
+
+reset timeout
+expect_status 3 env RTC_POSTGRES_PROBE_GROUP_LIFECYCLE=true RTC_POSTGRES_PROBE_ATTEMPTS=1 \
+    AZURE_RESOURCE_GROUP=owned-probe-group AZURE_LOCATION=westus3 PATH="$TEST_ROOT/bin:$PATH" "$PROBE"
+[[ "$(count delete)" == 0 ]] || fail "group lifecycle must not delete individual servers"
+grep -q -- '--resource-group owned-probe-group' "$CALL_LOG" ||
+    fail "timed-out create must stay in the owned probe group"
 
 reset capacity capacity capacity
 expect_status 2 run_probe
@@ -204,6 +316,10 @@ for result in other misleading text quota policy mixed; do
     expect_status 1 run_probe
     [[ "$(count create)" == 1 && "$(count show)" == 3 ]] || fail "$result must stop after confirmed cleanup"
 done
+reset quota
+expect_status 1 run_probe
+jq -e '.outcome == "probe_error" and .errorCode == "QuotaExceeded"' \
+    "$RTC_POSTGRES_PROBE_RESULT_FILE" >/dev/null || fail "safe provider error code"
 reset leak
 expect_status 1 run_probe
 password="$(grep -oE -- '--admin-password [^ ]+' "$CALL_LOG" | cut -d' ' -f2)"

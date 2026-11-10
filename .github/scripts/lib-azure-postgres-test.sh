@@ -53,6 +53,135 @@ rtc_postgres_positive_limit() {
     [[ "$value" =~ ^[1-9][0-9]{0,5}$ ]] && ((10#$value <= maximum))
 }
 
+rtc_postgres_catalog_result() {
+    python3 - "$1" "$2" "$3" <<'PY'
+import json
+import sys
+
+AVAILABLE_STATUSES = {"available", "default", "enabled", "supported", "visible"}
+RESTRICTED_STATUSES = {"disabled", "restricted", "unavailable"}
+
+
+def is_restricted(item):
+    status = item.get("status")
+    reason = item.get("reason")
+    restricted = item.get("restricted")
+    if status is not None and not isinstance(status, str):
+        raise ValueError("status")
+    if reason is not None and not isinstance(reason, str):
+        raise ValueError("reason")
+    if restricted is not None:
+        if not isinstance(restricted, str):
+            raise ValueError("restricted")
+        normalized_restriction = restricted.lower()
+        if normalized_restriction not in {"enabled", "disabled"}:
+            raise ValueError("restricted")
+    else:
+        normalized_restriction = None
+    normalized = status.lower() if status is not None else None
+    if normalized is not None and normalized not in AVAILABLE_STATUSES | RESTRICTED_STATUSES:
+        raise ValueError("status")
+    return (
+        normalized_restriction == "enabled"
+        or bool(reason)
+        or normalized in RESTRICTED_STATUSES
+    )
+
+
+def objects(parent, key):
+    items = parent[key]
+    if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
+        raise ValueError(key)
+    return items
+
+
+def named(items):
+    if not all(isinstance(item.get("name"), str) for item in items):
+        raise ValueError("name")
+    return items
+
+
+def classify(catalog, tier, sku):
+    if not isinstance(catalog, list) or not all(isinstance(item, dict) for item in catalog):
+        return "InvalidCatalog"
+    if not catalog:
+        return "RegionRestricted"
+    region_restricted = False
+    for root in catalog:
+        region_restricted = is_restricted(root) or region_restricted
+        if "supportedFeatures" in root:
+            for feature in named(objects(root, "supportedFeatures")):
+                if feature["name"] == "OfferRestricted":
+                    if feature.get("status") == "Enabled":
+                        region_restricted = True
+                    elif feature.get("status") != "Disabled":
+                        return "InvalidCatalog"
+        versions = named(objects(root, "supportedServerVersions"))
+        editions = named(objects(root, "supportedServerEditions"))
+        if not versions and not editions:
+            region_restricted = True
+        for version in versions:
+            is_restricted(version)
+        for edition in editions:
+            is_restricted(edition)
+            for server_sku in named(objects(edition, "supportedServerSkus")):
+                is_restricted(server_sku)
+            for storage in named(objects(edition, "supportedStorageEditions")):
+                is_restricted(storage)
+                for size in objects(storage, "supportedStorageMb"):
+                    if type(size.get("storageSizeMb")) is not int:
+                        raise ValueError("storageSizeMb")
+                    is_restricted(size)
+    if region_restricted:
+        return "RegionRestricted"
+    roots = [
+        root
+        for root in catalog
+        if any(
+            item["name"] == "16" and not is_restricted(item)
+            for item in root["supportedServerVersions"]
+        )
+    ]
+    if not roots:
+        return "UnsupportedVersion"
+    editions = [
+        edition
+        for root in roots
+        for edition in root["supportedServerEditions"]
+        if edition["name"] == tier and not is_restricted(edition)
+    ]
+    if not editions:
+        return "UnsupportedTier"
+    editions = [
+        edition
+        for edition in editions
+        if any(
+            item["name"] == sku and not is_restricted(item)
+            for item in edition["supportedServerSkus"]
+        )
+    ]
+    if not editions:
+        return "UnsupportedSku"
+    if not any(
+        size["storageSizeMb"] == 32768 and not is_restricted(size)
+        for edition in editions
+        for storage in edition["supportedStorageEditions"]
+        if not is_restricted(storage)
+        for size in storage["supportedStorageMb"]
+    ):
+        return "UnsupportedStorage"
+    return ""
+
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as source:
+        result = classify(json.load(source), sys.argv[2], sys.argv[3])
+except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+    result = "InvalidCatalog"
+print(result)
+PY
+}
+
 # Read Azure CLI codes, not words in an error message. Reject mixed failures.
 rtc_postgres_error_codes() {
     local file="$1"

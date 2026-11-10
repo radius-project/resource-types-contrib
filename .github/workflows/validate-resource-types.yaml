@@ -64,6 +64,9 @@ jobs:
       - name: Run workspace bootstrap tests
         run: make test-workspace-bootstrap
 
+      - name: Run resource type extension tests
+        run: make test-resource-type-extensions
+
       - name: Run recipe namespace tests
         run: make test-recipe-namespace
 
@@ -72,6 +75,9 @@ jobs:
 
       - name: Validate checked-in Recipe Packs
         run: make validate-recipe-packs
+
+      - name: Test empty Recipe Pack generation
+        run: make test-generate-recipe-pack-empty
 
       - name: Validate direct-module Recipe Pack mappings
         run: make validate-direct-module-mappings
@@ -91,6 +97,8 @@ jobs:
       contents: read
     env:
       RAD_ENVIRONMENT_NAME: default
+      RTC_TEST_DIAGNOSTICS_DIR: test-diagnostics
+      RTC_TEST_PLATFORM: kubernetes
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -103,7 +111,7 @@ jobs:
           node-version-file: .node-version
 
       - name: Set up ORAS
-        uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
+        uses: oras-project/setup-oras@5e2f2482b30b0cb3e14e67f89a80c88c659a7c63 # v2.0.3
         with:
           version: "1.2.0"
 
@@ -113,6 +121,10 @@ jobs:
       - name: Validate MySQL Recipe result contract
         if: matrix.recipe == 'bicep'
         run: Data/mySqlDatabases/test/assert-recipe-result.sh
+
+      - name: Validate OpenAI Recipe dependencies
+        if: matrix.recipe == 'bicep'
+        run: node --test .github/scripts/tests/test-openai-dependencies.js
 
       - name: Validate containerImages local context resolver
         if: matrix.recipe == 'terraform'
@@ -156,6 +168,21 @@ jobs:
 
       - name: Test ${{ matrix.recipe }} recipes
         run: RECIPE_PLATFORM_FILTER=kubernetes make test ENVIRONMENT="$RAD_ENVIRONMENT_NAME" RECIPE_TYPE=${{ matrix.recipe }}
+
+      - name: Collect workflow failure diagnostics
+        if: ${{ !cancelled() && failure() }}
+        continue-on-error: true
+        run: |
+          source .github/scripts/lib-recipe-test.sh
+          rtc_collect_test_diagnostics workflow workflow-failure "$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
+
+      - name: Upload failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-diagnostics-${{ matrix.recipe }}
+          path: test-diagnostics
+          if-no-files-found: ignore
 
       - name: Collect Radius pod logs
         if: always()

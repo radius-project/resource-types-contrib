@@ -1,0 +1,163 @@
+namespace: Radius.Dapr
+types:
+  pubSubBrokers:
+    description: |
+      The Radius.Dapr/pubSubBrokers Resource Type deploys a Dapr pub/sub broker
+      component. It replaces the legacy `Applications.Dapr/pubSubBrokers` type.
+
+      If you do not set `componentType`, the default Recipe deploys a Redis instance and a
+      `pubsub.redis` component that uses it:
+      ```bicep
+      resource pubSub 'Radius.Dapr/pubSubBrokers@2025-08-01-preview' = {
+        name: 'pubsub'
+        properties: {
+          environment: environment
+          application: myApplication.id
+        }
+      }
+      ```
+
+      To use a different Dapr pub/sub broker, set `componentType`, `version`, and
+      `metadata`. The Recipe then deploys only the Dapr component and does not
+      deploy a broker. This replaces `resourceProvisioning: 'manual'` in the
+      legacy type. Use `secretKeyRef` and `auth.secretStore` for secret values:
+      ```bicep
+      resource pubSub 'Radius.Dapr/pubSubBrokers@2025-08-01-preview' = {
+        name: 'pubsub'
+        properties: {
+          environment: environment
+          application: myApplication.id
+          componentType: 'pubsub.kafka'
+          version: 'v1'
+          metadata: {
+            brokers: {
+              value: 'kafka.messaging.svc.cluster.local:9092'
+            }
+            authType: {
+              value: 'password'
+            }
+            saslUsername: {
+              value: 'orders'
+            }
+            saslPassword: {
+              secretKeyRef: {
+                name: 'kafka-credentials'
+                key: 'password'
+              }
+            }
+          }
+          auth: {
+            secretStore: secretStore.properties.componentName
+          }
+        }
+      }
+      ```
+
+      To use the pub/sub broker, enable the Dapr sidecar on a container and
+      connect the container to the pub/sub broker:
+      ```bicep
+      resource backend 'Radius.Compute/containers@2025-08-01-preview' = {
+        name: 'backend'
+        properties: {
+          environment: environment
+          application: myApplication.id
+          containers: {
+            backend: {
+              image: 'myregistry/backend:latest'
+              ports: {
+                web: {
+                  containerPort: 3000
+                }
+              }
+            }
+          }
+          connections: {
+            orders: {
+              source: pubSub.id
+            }
+          }
+          extensions: {
+            daprSidecar: {
+              appId: 'backend'
+              appPort: 3000
+            }
+          }
+        }
+      }
+      ```
+
+      A connection gives the container the component name, but it does not
+      limit access. To limit the component to its consumers, set `scopes` to
+      the Dapr app IDs of the consumer containers:
+      ```bicep
+      resource pubSub 'Radius.Dapr/pubSubBrokers@2025-08-01-preview' = {
+        name: 'pubsub'
+        properties: {
+          environment: environment
+          application: myApplication.id
+          scopes: [
+            'backend'
+          ]
+        }
+      }
+      ```
+
+      The Dapr component name is the resource name. On compatible Kubernetes
+      Container Recipes, the connection injects environment variables named
+      `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>`. In this example, the
+      application reads the component name from `CONNECTION_ORDERS_COMPONENTNAME`.
+
+    apiVersions:
+      '2025-08-01-preview':
+        schema:
+          type: object
+          properties:
+            environment:
+              type: string
+              description: "(Required) The Radius Environment ID. Typically set by the rad CLI. Typically value should be `environment`."
+            application:
+              type: string
+              description: "(Optional) The Radius Application ID. `myApplication.id` for example."
+            componentType:
+              type: string
+              description: "(Optional) The Dapr component type, such as `pubsub.redis` or `pubsub.kafka`. If not set, the Recipe deploys a default Redis pub/sub broker. See https://docs.dapr.io/reference/components-reference/supported-pubsub/ for values."
+            version:
+              type: string
+              description: "(Optional) The Dapr component version. Defaults to `v1`."
+            metadata:
+              type: object
+              description: "(Optional) Map of Dapr component metadata names to values. Each entry must set `value` or `secretKeyRef`. Do not put secret material in `value`; use `secretKeyRef`. When the Recipe deploys the default pub/sub broker, these entries override the default metadata."
+              additionalProperties:
+                type: object
+                properties:
+                  value:
+                    type: string
+                    description: "(Optional) The plain text value of the metadata entry."
+                  secretKeyRef:
+                    type: object
+                    description: "(Optional) A reference to a value in the Dapr secret store set in `auth.secretStore`."
+                    properties:
+                      name:
+                        type: string
+                        description: "(Required) The secret name in the Dapr secret store."
+                      key:
+                        type: string
+                        description: "(Required) The key to select in the secret. If the secret value is a string, use the secret name."
+                    required: [name, key]
+            auth:
+              type: object
+              description: "(Optional) Authentication settings for the Dapr component."
+              properties:
+                secretStore:
+                  type: string
+                  description: "(Optional) The name of the Dapr secret store component that resolves `secretKeyRef` values. Defaults to the Kubernetes secret store."
+            scopes:
+              type: array
+              description: "(Optional) The Dapr app IDs that can use this component. Set each value to the `daprSidecar.appId` of a consumer container. A Radius connection does not limit access by itself. If not set, every Dapr app in the namespace can use the component."
+              items:
+                type: string
+            componentName:
+              type: string
+              readOnly: true
+              description: "(Read Only) The name of the Dapr component. Use this value with the Dapr client."
+          required: [environment]

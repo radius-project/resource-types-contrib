@@ -105,6 +105,17 @@ Kubernetes recipes they reference. Missing or ambiguous recipe sources and
 build failures stop the test; there is no fallback to a published artifact.
 The checked-in files are not changed.
 
+ACI deployments run separately from the other Azure tests.
+[`validate-azure-aci-recipes.yaml`](../.github/workflows/validate-azure-aci-recipes.yaml)
+tests ACI changes in CI, and
+[`nightly-azure-aci-tests.yaml`](../.github/workflows/nightly-azure-aci-tests.yaml)
+tests the ACI Recipe Pack once a day. Release-candidate ACI tests use the same
+worker. Four shared slot groups allow up to four ACI jobs at once. General
+Azure jobs do not use those slots. The checked-in ACI pack retains the Recipe
+default of three instances per container resource. See
+[ACI quota recovery](../docs/contributing/testing-resource-types-recipes.md#azure-container-instance-quota-recovery)
+for test selection, queue limits, and cleanup rules.
+
 Local preparation requires each entry's `source` to be a nonempty,
 single-quoted literal on its own line, indented two spaces below the entry key.
 Variables, interpolation, missing or duplicate sources, and inline entries fail
@@ -116,27 +127,22 @@ a default branch. The nightly deployment checks the values used by each test
 app, not every possible property value. A type used by two packs is tested
 once per pack, with that pack active.
 
-Azure has no API that reports live regional capacity. Before the nightly
-deploys an Azure PostgreSQL pack entry, it runs
-[`probe-azure-postgres-capacity.sh`](../.github/scripts/probe-azure-postgres-capacity.sh).
-The probe creates and deletes a `Standard_B1ms` (Burstable) flexible server in
-the test resource group. It retries only on `SkuNotAvailable` or `ServerIsBusy`
-(`RTC_POSTGRES_PROBE_ATTEMPTS`, default 3; `RTC_POSTGRES_PROBE_WAIT_SECONDS`,
-default 600). If capacity stays unavailable, the entry fails with an Azure
-capacity error and the entry is not deployed. After a successful create, the
-probe waits for the delete (`RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS`,
-default 900), so the probe does not hold capacity that the entry needs. If
-that delete fails, the preflight fails. The probe uses `AZURE_SUBSCRIPTION_ID`
-when it is set, and the Azure CLI default subscription otherwise. Keep the
-probe SKU in sync with the size `S` mapping in the `azure-aks` pack.
+Azure has no API that reserves live regional capacity. The nightly and
+release-candidate workflows call the reusable
+[`azure-postgres-preflight.yaml`](../.github/workflows/azure-postgres-preflight.yaml)
+job before the main Azure test job. It tries the approved `S` and `M` tuples in
+the configured region order and reports a typed result. All probe servers are
+created in one disposable, owner-tagged resource group. The preflight deletes
+the group after selection, and the unconditional workflow cleanup job retries
+that deletion. Therefore, a timed-out Azure create can finish late only inside
+the owned probe group.
 
-Before the nightly creates its Azure resource group,
-[`select-azure-test-location.sh`](../.github/scripts/select-azure-test-location.sh)
-runs one probe in the preferred region (`AZURE_LOCATION` repository variable,
-default `westus3`) and, if it has no capacity, one in the fallback region
-(`AZURE_FALLBACK_LOCATION`, default `eastus2`). All Azure tests then use the
-first region with capacity. If neither region has capacity, the preferred
-region is used.
+Capacity, unsupported tuple, and catalog restriction results continue to the
+next candidate. Authentication, configuration, malformed catalog, timeout,
+and uncertain cleanup errors fail the preflight. If no candidate is selected
+safely, unrelated Azure tests continue and the PostgreSQL phase is reported as
+skipped and failed. A successful probe improves reliability but does not
+reserve capacity for the later deployment.
 
 MySQL pack entries that map `tls` to `require_secure_transport` run both
 `tls: required` and `tls: optional`. They pass `verifyTransport` through
@@ -165,7 +171,8 @@ which:
   `publish-bicep-recipes.yaml` publishes it.
 
 The workflow checks that every pack source can be pulled, installs that Radius
-version, and runs the nightly steps unchanged. It supports only releases whose
+version, and runs the nightly tests with ACI deployments in a separate job.
+It supports only releases whose
 pinned packs all have a platform mapping in `lib-recipe-packs.sh`; older
 releases that pin a pack without one are not supported.
 

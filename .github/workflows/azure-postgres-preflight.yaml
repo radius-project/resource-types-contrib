@@ -1,0 +1,146 @@
+name: Azure PostgreSQL Preflight
+
+on:
+  workflow_call:
+    inputs:
+      probe_resource_group:
+        description: Exact disposable resource group for all probe servers
+        required: true
+        type: string
+      owner_token:
+        description: 128-bit ownership token for the probe group
+        required: true
+        type: string
+      regions:
+        description: Ordered comma-separated Azure regions
+        required: true
+        type: string
+      sizes:
+        description: Ordered comma-separated Radius PostgreSQL sizes
+        default: S,M
+        type: string
+      artifact_name:
+        description: Name for the sanitized selection record artifact
+        required: true
+        type: string
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+    outputs:
+      status:
+        description: selected or a typed safe no-selection status
+        value: ${{ jobs.preflight.outputs.status }}
+      location:
+        description: Selected region, or the first region for unrelated tests
+        value: ${{ jobs.preflight.outputs.location }}
+      size:
+        description: Selected Radius PostgreSQL size
+        value: ${{ jobs.preflight.outputs.size }}
+      sku:
+        description: Selected Azure PostgreSQL SKU
+        value: ${{ jobs.preflight.outputs.sku }}
+      tier:
+        description: Selected Azure PostgreSQL tier
+        value: ${{ jobs.preflight.outputs.tier }}
+      probe_resource_group:
+        description: Exact disposable probe resource group
+        value: ${{ jobs.preflight.outputs.probe_resource_group }}
+      attempts:
+        description: Sanitized JSON candidate attempt records
+        value: ${{ jobs.preflight.outputs.attempts }}
+
+jobs:
+  preflight:
+    name: Select PostgreSQL capacity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      status: ${{ steps.select.outputs.status }}
+      location: ${{ steps.select.outputs.location }}
+      size: ${{ steps.select.outputs.size }}
+      sku: ${{ steps.select.outputs.sku }}
+      tier: ${{ steps.select.outputs.tier }}
+      probe_resource_group: ${{ inputs.probe_resource_group }}
+      attempts: ${{ steps.select.outputs.attempts }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Azure Login
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Probe ordered PostgreSQL candidates
+        id: select
+        timeout-minutes: 61
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          RTC_AZURE_TEST_REGIONS: ${{ inputs.regions }}
+          RTC_POSTGRES_TEST_SIZES: ${{ inputs.sizes }}
+          RTC_POSTGRES_PROBE_OWNER_TOKEN: ${{ inputs.owner_token }}
+          RTC_POSTGRES_PREFLIGHT_TIMEOUT_SECONDS: "2700"
+          RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS: "900"
+          RTC_AZURE_SELECTION_FILE: ${{ runner.temp }}/postgres-selection.json
+        run: |
+          set +e
+          bash .github/scripts/select-azure-test-location.sh \
+            "${{ inputs.probe_resource_group }}"
+          command_status=$?
+          set -e
+
+          if ! jq -e '
+            .version == 1 and
+            (.status == "selected" or .status == "capacity_exhausted" or
+             .status == "unsupported" or .status == "restricted" or
+             .status == "catalog_unavailable" or .status == "probe_error") and
+            (.location | type == "string") and
+            (.attempts | type == "array")
+          ' "$RTC_AZURE_SELECTION_FILE" >/dev/null 2>&1; then
+            echo "::error::PostgreSQL preflight did not produce a valid selection record."
+            exit 1
+          fi
+
+          {
+            echo "status=$(jq -r '.status' "$RTC_AZURE_SELECTION_FILE")"
+            echo "location=$(jq -r '.location' "$RTC_AZURE_SELECTION_FILE")"
+            echo "size=$(jq -r '.postgres.size // ""' "$RTC_AZURE_SELECTION_FILE")"
+            echo "sku=$(jq -r '.postgres.skuName // ""' "$RTC_AZURE_SELECTION_FILE")"
+            echo "tier=$(jq -r '.postgres.tier // ""' "$RTC_AZURE_SELECTION_FILE")"
+            echo "attempts=$(jq -c '.attempts' "$RTC_AZURE_SELECTION_FILE")"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## PostgreSQL capacity preflight"
+            echo
+            echo "Status: **$(jq -r '.status' "$RTC_AZURE_SELECTION_FILE")**"
+            echo
+            echo "| Region | Size | SKU | Tier | Outcome | Error code |"
+            echo "| --- | --- | --- | --- | --- | --- |"
+            jq -r '.attempts[] |
+              "| \(.region) | \(.size) | \(.skuName) | \(.tier) | \(.outcome) | \(.errorCode) |"' \
+              "$RTC_AZURE_SELECTION_FILE"
+            echo
+            echo "A successful probe does not reserve capacity for deployment."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          exit "$command_status"
+
+      - name: Upload sanitized preflight record
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ${{ runner.temp }}/postgres-selection.json
+          if-no-files-found: warn

@@ -22,8 +22,11 @@
 # RTC_POSTGRES_PROBE_WAIT_SECONDS=600 (0..600). Selection uses one attempt.
 # Create/delete limits: RTC_POSTGRES_PROBE_{CREATE,DELETE}_TIMEOUT_SECONDS=900
 # (1..900 each). Cleanup has its own time reserve.
+# RTC_POSTGRES_PROBE_GROUP_LIFECYCLE=true leaves server cleanup to the owned
+# resource group. Use it only for workflow preflight.
 # Optional RTC_POSTGRES_PROBE_RESULT_FILE receives a credential-free JSON record.
-# Exit: 0 available, 1 other/cleanup error, 2 capacity exhausted, 3 create timeout.
+# Exit: 0 available, 1 operational error, 2 capacity exhausted, 3 create timeout,
+# 4 unsupported tuple, 5 region or offer restriction.
 
 set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,12 +39,14 @@ attempts="${RTC_POSTGRES_PROBE_ATTEMPTS-3}"
 wait_seconds="${RTC_POSTGRES_PROBE_WAIT_SECONDS-600}"
 create_timeout="${RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS-900}"
 delete_timeout="${RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS-900}"
+group_lifecycle="${RTC_POSTGRES_PROBE_GROUP_LIFECYCLE-false}"
 rtc_postgres_test_tuple "${RTC_POSTGRES_TEST_SIZE-S}" || exit 1
 if [[ -z "$resource_group" || ! "$location" =~ ^[a-z0-9]+$ ]] ||
     ! rtc_postgres_positive_limit "$attempts" 3 ||
     ! rtc_postgres_positive_limit "$create_timeout" 900 ||
     ! rtc_postgres_positive_limit "$delete_timeout" 900 ||
-    [[ ! "$wait_seconds" =~ ^(0|[1-9][0-9]{0,2})$ ]] || ((10#$wait_seconds > 600)); then
+    [[ ! "$wait_seconds" =~ ^(0|[1-9][0-9]{0,2})$ ]] || ((10#$wait_seconds > 600)) ||
+    [[ "$group_lifecycle" != true && "$group_lifecycle" != false ]]; then
     echo "Error: invalid probe environment or time/attempt limit." >&2
     exit 1
 fi
@@ -96,7 +101,7 @@ delete_server() {
 finish() {
     local status=$?
     trap - EXIT INT TERM
-    if [[ -n "$server_name" ]] && ! delete_server; then
+    if [[ "$group_lifecycle" == false && -n "$server_name" ]] && ! delete_server; then
         echo "Error: probe server '$server_name' deletion was not confirmed." >&2
         outcome="probe_error"; error_code="CleanupFailed"; status=1
     fi
@@ -152,6 +157,35 @@ if ((first_create_timeout <= 0)); then
     echo "Error: PostgreSQL probe used its create budget while reading CLI options." >&2
     exit 3
 fi
+catalog_status=0
+timeout --signal=KILL "$first_create_timeout" az postgres flexible-server list-skus \
+    "${subscription_args[@]}" --location "$location" --only-show-errors --output json \
+    >"$work_dir/catalog" 2>"$work_dir/catalog-error" || catalog_status=$?
+if ((catalog_status == 124 || catalog_status == 137)); then
+    outcome="timeout"; error_code="CreateTimeout"
+    echo "Error: PostgreSQL capability discovery exceeded the create budget." >&2
+    exit 3
+elif ((catalog_status != 0)) || [[ -s "$work_dir/catalog-error" ]]; then
+    error_code="CatalogReadFailed"
+    echo "Error: PostgreSQL capability discovery failed; refusing allocation." >&2
+    exit 1
+fi
+error_code="$(rtc_postgres_catalog_result "$work_dir/catalog" "$postgres_tier" "$postgres_sku")"
+if [[ -n "$error_code" ]]; then
+    echo "Error: PostgreSQL capability check failed: $error_code." >&2
+    case "$error_code" in
+        UnsupportedVersion|UnsupportedTier|UnsupportedSku|UnsupportedStorage)
+            outcome="unsupported"
+            exit 4
+            ;;
+        RegionRestricted)
+            outcome="restricted"
+            exit 5
+            ;;
+        *) exit 1 ;;
+    esac
+fi
+error_code="UnknownError"
 for ((attempt = 1; attempt <= attempts; attempt++)); do
     create_deadline=$((SECONDS + create_timeout))
     if ((attempt == 1)); then create_deadline=$((help_started + create_timeout)); fi
@@ -207,10 +241,10 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
         echo "A current ResourceNotFound response does not rule out later creation. Check this target again and verify its ownership tag before deletion." >&2
     fi
     codes="$(rtc_postgres_error_codes "$work_dir/create-error")"
-    if ! delete_server; then
+    if [[ "$group_lifecycle" == false ]] && ! delete_server; then
         echo "Error: probe server '$server_name' deletion was not confirmed." >&2
         # Do not allocate again after failed cleanup. The caller owns group recovery.
-        server_name=""
+        if [[ "$group_lifecycle" == false ]]; then server_name=""; fi
         outcome="probe_error"; error_code="CleanupFailed"
         exit 1
     fi

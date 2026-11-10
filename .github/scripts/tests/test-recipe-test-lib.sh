@@ -107,6 +107,12 @@ chmod +x "$MOCK_BIN/rad"
 cat >"$MOCK_BIN/kubectl" <<'EOF'
 #!/bin/bash
 echo "kubectl $*" >>"$CALL_LOG"
+if [[ "$1" == "wait" && -n "${KUBECTL_WAIT_EXIT_CODE:-}" ]]; then
+    exit "$KUBECTL_WAIT_EXIT_CODE"
+fi
+if [[ "$1" == "get" ]]; then
+    printf '%s' "${KUBECTL_GET_OUTPUT:-}"
+fi
 exit "${KUBECTL_EXIT_CODE:-0}"
 EOF
 chmod +x "$MOCK_BIN/kubectl"
@@ -252,6 +258,53 @@ done
 actual="$(ENV_JSON='[{"id":"/envs/array-env"}]' run_lib rtc_resolve_environment_path myenv myws)"
 assert_eq $'/envs/array-env\t' "$actual" "array environment output"
 
+# Dapr assertions wait for the runtime clients and need the namespace.
+: >"$CALL_LOG"
+run_lib rtc_assert_recipe_result "Radius.Dapr/stateStores" testapp myws my-ns >/dev/null \
+    || fail "Dapr state store assertion should pass when the clients are ready"
+grep -q -- 'kubectl wait deployment -n my-ns -l radapp.io/application=testapp --for=condition=Available' "$CALL_LOG" ||
+    fail "Dapr assertion must wait for the test app deployments"
+if grep -q -- 'kubectl exec' "$CALL_LOG"; then
+    fail "only the configuration store assertion writes to Redis"
+fi
+if run_lib rtc_assert_recipe_result "Radius.Dapr/stateStores" testapp myws >/dev/null 2>&1; then
+    fail "Dapr assertion must fail without a namespace"
+fi
+if KUBECTL_WAIT_EXIT_CODE=1 run_lib rtc_assert_recipe_result "Radius.Dapr/secretStores" testapp myws my-ns >/dev/null 2>&1; then
+    fail "Dapr assertion must fail when a client does not become ready"
+fi
+
+# The secret store assertion gives get access to the allowed secret only, and
+# deletes the access after the clients finish.
+: >"$CALL_LOG"
+run_lib rtc_assert_recipe_result "Radius.Dapr/secretStores" testapp myws my-ns >/dev/null \
+    || fail "Dapr secret store assertion should pass"
+grep -q -- 'kubectl create role dapr-secret-reader-testapp -n my-ns --verb=get --resource=secrets --resource-name=dapr-allowed-secret' "$CALL_LOG" ||
+    fail "secret store assertion must give get access to the allowed secret only"
+grep -q -- 'kubectl create rolebinding dapr-secret-reader-testapp -n my-ns --role=dapr-secret-reader-testapp --serviceaccount=my-ns:default' "$CALL_LOG" ||
+    fail "secret store assertion must bind the Role to the default ServiceAccount"
+tail -n 1 "$CALL_LOG" | grep -q -- 'kubectl delete rolebinding,role dapr-secret-reader-testapp -n my-ns' ||
+    fail "secret store assertion must delete the Role and RoleBinding last"
+: >"$CALL_LOG"
+if KUBECTL_WAIT_EXIT_CODE=1 run_lib rtc_assert_recipe_result "Radius.Dapr/secretStores" testapp myws my-ns >/dev/null 2>&1; then
+    fail "Dapr secret store assertion must fail when a client does not become ready"
+fi
+grep -q -- 'kubectl delete rolebinding,role dapr-secret-reader-testapp' "$CALL_LOG" ||
+    fail "secret store assertion must delete the Role and RoleBinding after a failure"
+
+# The configuration store assertion writes the expected value to Redis first.
+: >"$CALL_LOG"
+KUBECTL_GET_OUTPUT=daprconfig-abc run_lib rtc_assert_recipe_result "Radius.Dapr/configurationStores" testapp myws my-ns >/dev/null \
+    || fail "Dapr configuration store assertion should pass"
+grep -q -- "kubectl exec -n my-ns deployment/daprconfig-abc -- redis-cli SET radius-test-key dapr-config-ok||1" "$CALL_LOG" ||
+    fail "configuration store assertion must write the test value"
+exec_line="$(grep -n -- 'kubectl exec' "$CALL_LOG" | cut -d: -f1)"
+client_wait_line="$(grep -n -- '-l radapp.io/application=testapp --for' "$CALL_LOG" | cut -d: -f1)"
+(( exec_line < client_wait_line )) || fail "the test value must be written before the client wait"
+if run_lib rtc_assert_recipe_result "Radius.Dapr/configurationStores" testapp myws my-ns >/dev/null 2>&1; then
+    fail "configuration store assertion must fail when the Redis deployment is not found"
+fi
+
 # ... and is a no-op success for any other Resource Type.
 run_lib rtc_assert_recipe_result "Radius.Data/somethingElse" testapp myws \
     || fail "rtc_assert_recipe_result should default to success for an unknown type"
@@ -381,6 +434,13 @@ if grep -q '^rad app delete' "$CALL_LOG"; then
 fi
 
 # Healthy Azure cleanup is not subject to a short harness timeout.
+(
+    : >"$CALL_LOG"
+    if KUBECTL_EXIT_CODE=1 run_lib rtc_cleanup_kubernetes_resources_bounded my-ns testapp >/dev/null 2>&1; then
+        fail "bounded Kubernetes cleanup failures must return failure"
+    fi
+    assert_eq 3 "$(grep -c '^kubectl delete ' "$CALL_LOG")" "bounded cleanup must attempt every kind"
+)
 : >"$CALL_LOG"
 rm -f "$AZ_LOCK_STATE_FILE"
 started_at="$(date +%s)"
@@ -437,8 +497,14 @@ DEPLOY_EXIT_CODE=0 run_lib rtc_deploy_and_assert_test_app \
 grep -Fq -- '--parameters password=Aa1!mock-generated-password' "$CALL_LOG" \
     || fail "rtc_deploy_and_assert_test_app should pass a generated password value to rad deploy"
 
-# Retry only the Azure transport and Terraform provider download failures.
+# Retry only confirmed transient deployment and Terraform provider download failures.
 TRANSIENT_DEPLOY_ERROR='Error: {"code":"ResourceDeploymentFailure","message":"System.IO.IOException: Connection reset by peer","target":"/subscriptions/test/resourceGroups/test/providers/Microsoft.KeyVault/vaults/test"}'
+ACI_CONTAINER_TRANSITION_MESSAGE='Error(s) encountered during update of the Container Scale Set. [{"ErrorCode": "AzureContainerInstance/ContainerGroupTransitioning", "SampleErrorMessage": "The container group is still transitioning, please retry later."}]'
+ACI_CONTAINER_TRANSITION_JSON="$(jq -cn --arg message "$ACI_CONTAINER_TRANSITION_MESSAGE" \
+    '{code:"DeploymentFailed",details:[{code:"ResourceDeploymentFailure",target:"/subscriptions/test/resourceGroups/test/providers/Microsoft.ContainerInstance/ngroups/ngroups-test",details:[{code:"AzureContainerInstance/ContainerGroupTransitioning",message:$message,target:"19bc9d8e-0987-44ca-870f-9a3a524f6c16"}]}]}')"
+ACI_CONTAINER_TRANSITION_ERROR="Error: $ACI_CONTAINER_TRANSITION_JSON"
+ACI_WRONG_TARGET_ERROR="Error: $(jq -cn --argjson error "$ACI_CONTAINER_TRANSITION_JSON" \
+    '$error | .details[0].target |= sub("/ngroups/"; "/other/")')"
 TERRAFORM_DOWNLOAD_ERROR='terraform init failure: exit status 1
 
 Error: Failed to install provider
@@ -489,6 +555,17 @@ for deploy_error in "$TRANSIENT_DEPLOY_ERROR" "$TERRAFORM_DOWNLOAD_ERROR" "$WRAP
         [[ -z "$(find "$DEPLOY_LOG_DIR" -type f -print -quit)" ]] || fail "deployment transcripts must be removed"
     done
 done
+
+: >"$CALL_LOG"
+DEPLOY_FAILURES=1 DEPLOY_ERROR="$ACI_CONTAINER_TRANSITION_ERROR" \
+    run_lib rtc_deploy_and_assert_test_app \
+    "$TEST_APP_WITH_PASSWORD" Radius.Compute/containers rtc-test /envs/myenv myws my-ns \
+    >"$TEST_ROOT/retry-output" 2>&1 ||
+    fail "an ACI container-group transition should recover"
+assert_eq "2" "$(grep -c '^rad deploy ' "$CALL_LOG")" "ACI transition retry attempts"
+assert_eq "1" "$(grep -c '^rad app delete ' "$CALL_LOG")" "ACI transition cleanup"
+grep -Fq 'Azure Container Instance group is still transitioning; retrying' "$TEST_ROOT/retry-output" ||
+    fail "ACI transition retry must log its reason"
 
 # Permanent diagnostics must not qualify even if a download reset is also present.
 for permanent_error in \
@@ -555,6 +632,10 @@ for deploy_error in \
     "$MIXED_DEPLOY_ERROR" \
     '{"code":"ResourceDeploymentFailure","message":"VaultAlreadyExists","target":"/subscriptions/test/resourceGroups/test/providers/Microsoft.KeyVault/vaults/test","details":[{"message":"Connection reset by peer"}]}' \
     '{"code":"ResourceDeploymentFailure","message":"VaultAlreadyExists","target":"/subscriptions/test/resourceGroups/test/providers/Microsoft.KeyVault/vaults/test"}' \
+    "${ACI_CONTAINER_TRANSITION_ERROR/please retry later/transitioning failed}" \
+    "$ACI_WRONG_TARGET_ERROR" \
+    "$(jq -cn --argjson error "$ACI_CONTAINER_TRANSITION_JSON" \
+        '{code:"DeploymentFailed",details:[$error,{code:"ResourceDeploymentFailure",message:"AuthorizationFailed: access denied"}]}')" \
     'Connection reset by peer' \
     '{"code":"ResourceDeploymentFailure","message":"Connection reset by peer","target":"/planes/radius/local/resourceGroups/test/providers/Radius.Data/widgets/test"}'; do
     : >"$CALL_LOG"
@@ -648,7 +729,7 @@ while IFS= read -r template; do
         app && /^  name:/ { if ($0 != "  name: applicationName") exit 1; found++; app = 0 }
         END { if (found != 1) exit 1 }
     ' "$template" || fail "$template must use applicationName for its application"
-done < <(find "$REPO_ROOT/AI" "$REPO_ROOT/Compute" "$REPO_ROOT/Data" "$REPO_ROOT/Messaging" \
+done < <(find "$REPO_ROOT/AI" "$REPO_ROOT/Compute" "$REPO_ROOT/Dapr" "$REPO_ROOT/Data" "$REPO_ROOT/Messaging" \
     "$REPO_ROOT/Security" "$REPO_ROOT/Storage" -path '*/test/app.bicep' -type f)
 
 # The existing per-recipe caller must preserve failure and cleanup behavior.
@@ -819,6 +900,27 @@ assert_eq 2 "$(grep '^rad deploy ' "$CALL_LOG" | sed -E 's/.*applicationName=([^
 awk '/^rad app delete / { cleaned++ } /^az resource list / { snapshots++ }
     /^rad deploy / { attempts++; if (attempts == 2 && (cleaned != 1 || snapshots < 3)) exit 1 }' "$CALL_LOG" ||
     fail "recovery must follow Radius cleanup and Azure deletion verification"
+
+(
+    export GITHUB_ACTIONS=true RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$(( $(date +%s) + 2700 ))"
+    export RTC_TEST_DIAGNOSTICS_DIR="$TEST_ROOT/capacity-diagnostics"
+    : >"$CALL_LOG"
+    DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres >/dev/null 2>&1 ||
+        fail "CI capacity recovery with a step deadline must succeed"
+    assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "CI recovery attempts"
+    assert_eq 2 "$(grep -c '^timeout --kill-after=5s 12m rad app delete ' "$CALL_LOG")" "CI recovery must preserve twelve-minute cleanup"
+    if grep -q -- '--wait=false' "$CALL_LOG"; then fail "CI recovery must wait for Kubernetes cleanup"; fi
+    [[ -n "$(find "$RTC_TEST_DIAGNOSTICS_DIR" -name azure.json -print -quit)" ]] ||
+        fail "failed capacity attempt must retain diagnostics after recovery"
+    for failure in APP_DELETE_EXIT_CODE KUBECTL_EXIT_CODE AZ_RESOURCE_LIST_FAIL; do
+        : >"$CALL_LOG"
+        if (
+            export "$failure=1"
+            DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres
+        ) >/dev/null 2>&1; then fail "CI $failure must block recovery"; fi
+        [[ "$(grep -c '^rad deploy ' "$CALL_LOG")" -le 1 ]] || fail "CI cleanup uncertainty must block recovery"
+    done
+)
 
 RADIUS_POSTGRES_CAPACITY_ERROR='Error: {"code":"RecipeDeploymentFailed","message":"Recipe deployment failed","details":[{"code":"DeploymentFailed","details":[{"code":"ResourceDeploymentFailure","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg","message":"{\"code\":\"SkuNotAvailable\",\"message\":\"capacity unavailable\"}"}]}]}'
 : >"$CALL_LOG"

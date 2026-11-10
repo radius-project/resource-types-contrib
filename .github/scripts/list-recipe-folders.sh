@@ -34,6 +34,12 @@ ROOT_DIR="${1:-$(pwd)}"
 RECIPE_TYPE_FILTER="${2:-all}"
 RECIPE_TYPE_FILTER="$(echo "$RECIPE_TYPE_FILTER" | tr '[:upper:]' '[:lower:]')"
 PLATFORM_FILTER_RAW="${RECIPE_PLATFORM_FILTER:-}"
+ACI_TEST_SCOPE="${RTC_ACI_TEST_SCOPE:-all}"
+
+case "$ACI_TEST_SCOPE" in
+    all | only | exclude) ;;
+    *) echo "Error: RTC_ACI_TEST_SCOPE must be all, only, or exclude." >&2; exit 1 ;;
+esac
 
 if [[ ! -d "$ROOT_DIR" ]]; then
     echo "Error: Root directory '$ROOT_DIR' does not exist" >&2
@@ -114,6 +120,13 @@ add_recipe_dir() {
     platform_lower="$(echo "$platform" | tr '[:upper:]' '[:lower:]')"
 
     if ! matches_platform "$platform_lower"; then
+        return
+    fi
+
+    local is_aci=false
+    [[ "$dir" != */Compute/containers/recipes/azure/bicep ]] || is_aci=true
+    if [[ "$ACI_TEST_SCOPE" == only && "$is_aci" != true ||
+          "$ACI_TEST_SCOPE" == exclude && "$is_aci" == true ]]; then
         return
     fi
 
