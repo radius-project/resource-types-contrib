@@ -223,6 +223,59 @@ if grep -q 'test-recipe-pack-entry.sh Compute/containerImages' "$CALL_LOG"; then
     fail "the explicitly excluded containerImages entry should not run"
 fi
 
+: >"$CALL_LOG"
+RTC_ACI_TEST_SCOPE=only run_driver azure azure-ws azure-env >/dev/null ||
+    fail "ACI-only pack entries must pass without PostgreSQL preflight"
+expected="rad env update azure-env --workspace azure-ws --recipe-packs azure-aci
+test-recipe-pack-entry.sh Compute/containers azure-ws azure-env"
+diff -u <(echo "$expected") "$CALL_LOG" || fail "ACI-only must deploy only the ACI container entry"
+
+: >"$CALL_LOG"
+RTC_ACI_TEST_SCOPE=exclude run_driver azure azure-ws azure-env >/dev/null ||
+    fail "non-ACI pack entries must pass"
+! grep -q 'test-recipe-pack-entry.sh Compute/containers' "$CALL_LOG" ||
+    fail "general Azure tests must not deploy ACI containers"
+grep -q 'test-recipe-pack-entry.sh Data/redisCaches' "$CALL_LOG" ||
+    fail "non-ACI entries must retain coverage"
+if RTC_ACI_TEST_SCOPE=invalid run_driver azure azure-ws azure-env >/dev/null 2>&1; then
+    fail "invalid ACI scope must fail"
+fi
+
+# Excluding ACI must retain non-container entries from the same pack.
+aci_pack="$FIXTURE_ROOT/recipe-packs/azure-aci/azure-aci.bicep"
+cp "$aci_pack" "$TEST_ROOT/aci-pack.bicep"
+sed "/    recipes: {/a\\
+      'Radius.Compute/persistentVolumes': {\\
+        kind: 'bicep'\\
+        source: 'ghcr.io/radius-project/azure-aci-recipes/persistentvolumes:latest'\\
+      }" "$TEST_ROOT/aci-pack.bicep" >"$aci_pack"
+: >"$CALL_LOG"
+RTC_ACI_TEST_SCOPE=exclude run_driver azure azure-ws azure-env >/dev/null ||
+    fail "non-container entries in the ACI pack must pass"
+[[ "$(grep -c 'test-recipe-pack-entry.sh Compute/persistentVolumes' "$CALL_LOG")" == 2 ]] ||
+    fail "volume recipes in both Azure packs must remain covered"
+: >"$CALL_LOG"
+RTC_ACI_TEST_SCOPE=only run_driver azure azure-ws azure-env >/dev/null ||
+    fail "ACI-only must ignore other entries in its pack"
+! grep -q 'test-recipe-pack-entry.sh Compute/persistentVolumes' "$CALL_LOG" ||
+    fail "ACI-only must not repeat independent volume tests"
+cp "$TEST_ROOT/aci-pack.bicep" "$aci_pack"
+
+# The same resource type backed by Kubernetes must remain outside the ACI slots.
+aks_pack="$FIXTURE_ROOT/recipe-packs/azure-aks/azure-aks.bicep"
+cp "$aks_pack" "$TEST_ROOT/aks-pack.bicep"
+sed "/    recipes: {/a\\
+      'Radius.Compute/containers': {\\
+        kind: 'bicep'\\
+        source: 'ghcr.io/radius-project/kube-recipes/containers:latest'\\
+      }" "$TEST_ROOT/aks-pack.bicep" >"$aks_pack"
+: >"$CALL_LOG"
+RTC_ACI_TEST_SCOPE=exclude run_driver azure azure-ws azure-env >/dev/null ||
+    fail "Kubernetes-backed containers must remain covered"
+[[ "$(grep -c 'test-recipe-pack-entry.sh Compute/containers' "$CALL_LOG")" == 1 ]] ||
+    fail "only the Kubernetes-backed container entry must run outside ACI"
+cp "$TEST_ROOT/aks-pack.bicep" "$aks_pack"
+
 rm "$FIXTURE_ROOT/Messaging/rabbitMQ/test/app.bicep"
 : >"$CALL_LOG"
 if output=$(FAIL_TYPE="" run_driver azure azure-ws azure-env 2>&1); then

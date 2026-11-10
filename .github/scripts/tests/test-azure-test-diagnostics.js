@@ -18,7 +18,11 @@ limitations under the License.
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { collect, runAz, resource, activity, logRecords, LIMITS } = require("../collect-azure-test-diagnostics.js");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
+const { collect, runAz, resource, activity, logRecords, deploymentErrors, LIMITS } = require("../collect-azure-test-diagnostics.js");
 
 const subscription = "11111111-1111-1111-1111-111111111111";
 const group = "rrttest-123-1-bicep";
@@ -350,6 +354,140 @@ test("Activity Log saves structured error codes but discards provider messages",
   }, scope);
   assert.deepEqual(safe.errorCodes, ["DeploymentFailed", "RequestConflict"]);
   assert.ok(!JSON.stringify(safe).includes(secret));
+});
+
+const registryCode = "AzureContainerInstance/RegistryErrorResponse";
+const nGroupId = id("Microsoft.ContainerInstance/ngroups", "ngroups-test");
+const aciTargets = [
+  "4114cc1a-89b4-4c63-ac08-97e82f0fa1e8",
+  "caf77f84-473e-4273-afd4-4ddbb77639a0",
+  "e6e62358-13ba-4923-8480-233a17ff432b",
+];
+function registryFailure(target = nGroupId) {
+  let error = {
+    code: "ResourceDeploymentFailure", target, message: secret,
+    details: [{ code: registryCode, target: aciTargets.join(", "), message: secret }],
+  };
+  for (const code of ["DeploymentFailed", "RecipeDeploymentFailed", "ResourceDeploymentFailure", "DeploymentFailed"]) {
+    error = { code, message: secret, details: [error] };
+  }
+  return { error, parameters: { secret }, headers: { secret } };
+}
+
+test("qualified ACI codes survive nested Radius errors in logs and Activity Log", () => {
+  const failure = registryFailure();
+  for (const codes of [
+    activity({ properties: { statusMessage: JSON.stringify(failure) } }, scope).errorCodes,
+    logRecords(JSON.stringify(failure), scope).records[0].errorCodes,
+  ]) {
+    assert.ok(codes.includes(registryCode));
+    assert.ok(!JSON.stringify(codes).includes(secret));
+  }
+  for (const code of ["AzureContainerInstance/RegistryErrorResponse?token=hidden", "a".repeat(129),
+    "AzureContainerInstance//RegistryErrorResponse", { secret }]) {
+    assert.deepEqual(logRecords(JSON.stringify({ error: { code } }), scope).records[0].errorCodes, []);
+  }
+  failure.error.code = "a".repeat(129);
+  assert.ok(logRecords(JSON.stringify(failure), scope).records[0].errorCodes.includes(registryCode));
+});
+
+test("captures the retained CLI error shape and trace ID without messages or duplicate targets", () => {
+  const failure = registryFailure();
+  failure.error.message = `${secret} { "quoted": "}\\\\{" }`;
+  failure.error.details.push(failure.error.details[0]);
+  const transcript = `Deployment failed:\r\n${JSON.stringify(failure, null, 2)}\r\nTraceId:  ${"a".repeat(32)}\r\n${secret}\n`;
+  const report = deploymentErrors(transcript, scope);
+  assert.deepEqual(report, {
+    errors: [{ code: registryCode, resourceId: nGroupId, errorTargets: aciTargets }],
+    traceIds: ["a".repeat(32)], truncated: false,
+  });
+  assert.ok(!JSON.stringify(report).includes(secret));
+});
+
+test("deployment capture rejects foreign resources and accepts only UUID error targets", () => {
+  for (const target of [
+    nGroupId.replace(group, "other-group"), nGroupId.replace(subscription, aciTargets[0]),
+    containerId, `${scope}/providers/other/type/providers/Microsoft.ContainerInstance/ngroups/test`,
+    `${nGroupId}/../test`, `${nGroupId}?token=${secret}`,
+  ]) {
+    assert.deepEqual(deploymentErrors(JSON.stringify(registryFailure(target)), scope).errors, []);
+  }
+  const report = deploymentErrors(JSON.stringify({
+    error: { code: "ResourceDeploymentFailure", target: nGroupId, details: [
+      { code: registryCode, target: `${aciTargets[0].toUpperCase()}, ${secret}, ${aciTargets[0]}`, message: secret },
+      { code: "DifferentFailure", target: aciTargets[1] },
+    ] },
+  }), scope);
+  assert.deepEqual(report.errors[0].errorTargets, [aciTargets[0]]);
+  assert.ok(!JSON.stringify(report).includes(secret));
+  assert.deepEqual(deploymentErrors(`${secret}\nTraceId: ${secret}\n{incomplete`, scope), {
+    errors: [], traceIds: [], truncated: true,
+  });
+});
+
+test("deployment capture reports record, depth, and target bounds", () => {
+  const targets = Array.from({ length: LIMITS.items + 1 }, (_, i) =>
+    `00000000-0000-0000-0000-${String(i).padStart(12, "0")}`);
+  const report = deploymentErrors(JSON.stringify({
+    code: registryCode, target: nGroupId, details: [{
+      code: registryCode, target: targets.join(", "),
+    }],
+  }), scope);
+  assert.equal(report.errors[0].errorTargets.length, LIMITS.items);
+  assert.equal(report.truncated, true);
+  assert.equal(deploymentErrors("{}\n".repeat(LIMITS.items), scope).truncated, false);
+  assert.equal(deploymentErrors("{}\n".repeat(LIMITS.items + 1), scope).truncated, true);
+  assert.equal(deploymentErrors("{not-json}\n", scope).truncated, true);
+  const manyResources = deploymentErrors(JSON.stringify({ details: targets.map((_, i) => ({
+    code: registryCode, target: `${nGroupId}-${i}`,
+  })) }), scope);
+  assert.equal(manyResources.errors.length, LIMITS.items);
+  assert.equal(manyResources.truncated, true);
+  let deep = registryFailure();
+  for (let i = 0; i < 17; i++) deep = { error: deep };
+  assert.equal(deploymentErrors(JSON.stringify(deep), scope).truncated, true);
+});
+
+test("deployment capture CLI saves only filtered evidence, bounds input, and reports I/O/context errors", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "rtc-deployment-errors-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const transcript = path.join(directory, "raw.txt");
+  const output = path.join(directory, "deployment-error.json");
+  const execute = (args = []) => spawnSync(process.execPath, [
+    path.join(__dirname, "../collect-azure-test-diagnostics.js"), "--deployment-error",
+    transcript, directory, subscription, group, "testapp-123", started, ...args,
+  ], { encoding: "utf8", timeout: 5000 });
+  fs.writeFileSync(transcript, JSON.stringify(registryFailure()));
+  const success = execute();
+  assert.equal(success.status, 0, success.stderr);
+  const report = JSON.parse(fs.readFileSync(output, "utf8"));
+  assert.equal(report.app, "testapp-123");
+  assert.equal(report.scope, scope);
+  assert.equal(report.deploymentStarted, started);
+  assert.deepEqual(report.errors[0].errorTargets, aciTargets);
+  assert.equal(report.transcriptTruncated, false);
+  assert.ok(!fs.readFileSync(output, "utf8").includes(secret));
+  if (process.platform !== "win32") assert.equal(fs.statSync(output).mode & 0o777, 0o600);
+  fs.writeFileSync(transcript, " ".repeat(LIMITS.bytes + 1) + JSON.stringify(registryFailure()));
+  assert.equal(execute().status, 0);
+  assert.equal(JSON.parse(fs.readFileSync(output, "utf8")).transcriptTruncated, true);
+  fs.unlinkSync(transcript);
+  const failure = execute();
+  assert.equal(failure.status, 1);
+  assert.match(failure.stderr, /capture failed/);
+  assert.ok(!failure.stderr.includes(directory));
+  const badContext = spawnSync(process.execPath, [
+    path.join(__dirname, "../collect-azure-test-diagnostics.js"), "--deployment-error",
+    secret, directory, subscription, `group'${secret}`, "testapp-123", started,
+  ], { encoding: "utf8", timeout: 5000 });
+  assert.equal(badContext.status, 1);
+  assert.ok(!badContext.stderr.includes(secret));
+  const missingContext = spawnSync(process.execPath, [
+    path.join(__dirname, "../collect-azure-test-diagnostics.js"), "--deployment-error",
+    transcript, directory, "", group, "testapp-123", started,
+  ], { encoding: "utf8", timeout: 5000 });
+  assert.equal(missingContext.status, 1);
+  assert.match(missingContext.stderr, /invalid context/);
 });
 
 test("records denied/unsupported calls without copying CLI errors and continues", async () => {

@@ -43,6 +43,45 @@ This command:
 - Updates `bicepconfig.json` to reference the extension
 - Enables IntelliSense and validation in your Bicep files
 
+The extension package is stored beside its schema. For example,
+`Data/mySqlDatabases/mySqlDatabases.yaml` produces
+`Data/mySqlDatabases/mySqlDatabases.yaml-extension.tgz`. Keeping the full path
+and schema suffix prevents collisions between categories, type folders, and
+`.yaml`/`.yml` files.
+
+Run the config updater from the repository root. It adds a path-based alias
+such as `Data_mySqlDatabases_mySqlDatabases_yaml` and keeps the short
+`mySqlDatabases` alias when only one package uses that basename. Existing
+`extension mySqlDatabases` statements therefore continue to work.
+If two schemas have the same basename, use their path-based aliases instead:
+
+```bicep
+extension Data_shared_shared_yaml
+extension Messaging_shared_shared_yaml
+```
+
+Path-based aliases replace each character other than a letter, digit, or
+underscore with an underscore. If this produces duplicate aliases, the updater
+fails without replacing the config. Rename the conflicting schema or folder.
+The aliases `radius` and `aws` are reserved for the base extensions.
+
+Old root-level packages such as `mySqlDatabases-extension.tgz` remain supported
+until the schema is rebuilt. The updater then prefers the new package, even
+if the old file remains on disk. It removes a generated local short alias when
+that basename becomes ambiguous, but keeps an explicit remote alias for that
+basename. Unrelated config settings remain unchanged. Duplicate legacy packages
+cause an error until the schemas are rebuilt. Scripts that read an old package
+path directly must switch to the new path; the build does not write a second
+copy at the old path.
+
+Run the offline path and config regression tests with Bash, `jq`, and `make`:
+
+```bash
+make test-resource-type-extensions
+```
+
+These tests use a stub `rad`. They do not require a cluster or registry access.
+
 ### 3. Build Your Recipes
 
 #### Bicep Recipe
@@ -67,6 +106,13 @@ The Environment gets its Recipes from a Recipe Pack. Generate a pack from the
 recipes you built, deploy it, and attach it to the Environment. The pack name
 sets the recipe kind: a name that contains `terraform` selects Terraform
 recipes. All other names select Bicep recipes.
+
+Use a dedicated generated file for `OUTPUT_FILE`. If a valid selection has no
+recipes, the generator reports no recipes, removes that output, and exits
+successfully. It removes an output symlink, not its target. It does not remove
+directories. If removal fails, the command reports an error and exits nonzero.
+After a successful run, check that the output file exists before you deploy it.
+Run `make test-generate-recipe-pack-empty` for the offline output-cleanup tests.
 
 ```bash
 # Bicep recipes
@@ -121,6 +167,74 @@ The runner repeats the same deployment, with the same application name and
 parameters, so Radius can reuse resources from earlier work. It does not delete
 partially deployed resources between attempts. These rules apply to both
 per-recipe and Recipe Pack entry tests.
+
+#### Azure Container Instance quota recovery
+
+`validate-azure-aci-recipes.yaml` runs the ACI CI tests.
+`nightly-azure-aci-tests.yaml` runs once a day and also tests the checked-in
+ACI Recipe Pack. The general Azure workflows exclude ACI deployments and
+do not wait for ACI capacity. Release-candidate ACI coverage runs as a separate
+job, without waiting for PostgreSQL preflight.
+
+All three call `test-azure-aci.yaml`. It assigns each run to one of four shared
+job concurrency groups, `azure-aci-test-capacity-0` through
+`azure-aci-test-capacity-3`, using the workflow run ID modulo four. Each group
+allows one running job, so at most four ACI test jobs can run at once across
+CI, nightly, and release-candidate workflows. Runs assigned to the same slot
+wait in that slot even if another slot is free. This is a fixed assignment,
+not a quota-aware scheduler. The four-job limit does not reserve Azure cores
+or guarantee that concurrent tests fit the regional quota.
+
+Each slot uses `queue: max`, which allows up to 100 pending jobs per slot.
+The limit of four applies to **running ACI test jobs**, not waiting jobs.
+GitHub Actions does not support a pending queue size of four. Jobs retain their
+slot through confirmed resource-group deletion. A separate cleanup job remains
+as a fallback. Manual cancellation or a lost runner can still interrupt cleanup;
+a failed cleanup releases the job slot but does not prove that quota is available.
+
+`RTC_ACI_TEST_SCOPE=only` selects the Azure Bicep containers recipe and the
+containers entry in the checked-in `azure-aci` pack. `exclude` omits those tests
+but keeps the other Azure tests, including non-container entries in that pack
+and Kubernetes-backed containers in the `azure-aks` pack. Unset or `all` keeps
+the full test set. Other values fail. The generated ACI pack still includes the
+volume and secret recipes needed by its container test.
+An ACI-only test run fails if no ACI recipe is found.
+
+To run the daily ACI tests manually:
+
+```bash
+gh workflow run nightly-azure-aci-tests.yaml -f version=edge
+```
+
+The basic Azure Bicep CI tests set `RTC_ACI_TEST_DESIRED_COUNT=1` when generating
+their Recipe Pack. This sets the ACI Recipe's `desiredCount` to one per container
+resource. It does not change CPU requests or production defaults. The nightly
+checked-in `azure-aci` Recipe Pack tests and release-candidate tests retain the
+default of three instances per resource. These test multi-instance deployment,
+not an autoscaling operation. Without the variable, the generator keeps Recipe
+defaults; a value other than `1` fails generation.
+
+In GitHub Actions, both Azure container per-recipe tests and Recipe Pack entry
+tests allow one clean redeployment for the exact structured
+`AzureContainerInstance/ContainerGroupQuotaReached` error on an ACI NGroups
+resource. All failure details must qualify. The runner collects diagnostics,
+deletes the failed application, and confirms that the Azure resource-group
+inventory has no new resource IDs before it waits 60 seconds and retries with a
+new application name. Failed cleanup, failed inventory, mixed errors, registry
+errors, and regional-capacity errors do not qualify.
+
+The full ACI test has a 20-minute limit, shortened by any enclosing test-step
+deadline. It reserves six minutes for diagnostics and cleanup and starts a
+retry only if enough time remains. Existing transport retries still use the
+same application within each deployment attempt. A second quota rejection
+fails with `deployment was not validated`; quota rejection never counts as a
+passing test.
+
+Run the offline regression tests with:
+
+```bash
+bash .github/scripts/tests/test-aci-quota-recovery.sh
+```
 
 ### 6. Test All Recipes
 
@@ -458,6 +572,27 @@ OpenAI account, model deployment, Cosmos DB account, MongoDB database, and
 PostgreSQL server states. Activity Log records also include structured error
 codes, but not provider error messages. These provider-specific reads add detail;
 they are not an application or resource-type filter.
+
+When an Azure deployment command returns an error, the test helper also saves
+`deployment-error-*/deployment-error.json` before it removes the temporary CLI
+transcript. This report contains the app name, deployment start and capture times,
+CLI trace IDs, and scoped ACI `RegistryErrorResponse` codes and error-target UUIDs.
+The targets come from structured error fields, not free-text messages.
+Use the app name and start time to match this report to the resource snapshot.
+Qualified error codes, such as `AzureContainerInstance/RegistryErrorResponse`,
+are also retained in filtered component logs and Activity Log records.
+
+This capture requires `AZURE_SUBSCRIPTION_ID` and `AZURE_RESOURCE_GROUP`, in
+addition to an enabled diagnostic output directory. It makes no cloud requests.
+It reads at most 2 MiB of the transcript, keeps at most 20 records and targets
+per resource, and has a five-second limit with a further five-second kill limit.
+`truncated` and `transcriptTruncated` identify incomplete evidence. An empty
+`errors` list means no matching structured ACI registry error was captured;
+it does not prove that no registry error occurred. Capture errors are reported
+without changing the deployment exit status, retry rules, or cleanup.
+This is evidence capture, not a fix for the ACI failure.
+If the outer deployment deadline kills the command, this report may be absent.
+The existing resource and log snapshots still run before cleanup.
 
 The `radiusLogs` field contains filtered records from the deployment engine,
 Dynamic RP, Applications RP, and UCP pods, including each discovered replica.
