@@ -90,11 +90,12 @@ source "$REPO_ROOT/.github/scripts/lib-recipe-test.sh"
 APP="$TEST_ROOT/app.bicep"
 printf 'param applicationName string\n' >"$APP"
 NGROUP="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.ContainerInstance/ngroups/test"
-QUOTA="$(jq -cn --arg target "$NGROUP" \
+QUOTA_JSON="$(jq -cn --arg target "$NGROUP" \
     '{code:"DeploymentFailed",details:[{code:"ResourceDeploymentFailure",target:$target,
       details:[{code:"AzureContainerInstance/ContainerGroupQuotaReached",target:"child-id",
       message:("[{\"ErrorCode\":\"AzureContainerInstance/ContainerGroupQuotaReached\","
       + "\"SampleErrorMessage\":\"StandardCores exceeded in westus3\"}]")}]}]}')"
+QUOTA="$QUOTA_JSON"
 QUOTA+=$'\nTraceId: 0123456789abcdef0123456789abcdef'
 export DEPLOY_ERROR="$QUOTA"
 
@@ -140,8 +141,8 @@ for error in \
     "${QUOTA//ContainerGroupQuotaReached/InternalOperationError}" \
     "${QUOTA//ContainerGroupQuotaReached/QuotaExceeded}" \
     "${QUOTA//ContainerInstance\/ngroups/Storage\/storageAccounts}" \
-    "$(jq -cn --argjson quota "$QUOTA" '{code:"DeploymentFailed",details:[$quota,{code:"AuthorizationFailed",message:"denied"}]}')" \
-    "$(jq -cn --argjson quota "$QUOTA" \
+    "$(jq -cn --argjson quota "$QUOTA_JSON" '{code:"DeploymentFailed",details:[$quota,{code:"AuthorizationFailed",message:"denied"}]}')" \
+    "$(jq -cn --argjson quota "$QUOTA_JSON" \
         '$quota | .details[0].details[0].message = "[{\"ErrorCode\":\"AzureContainerInstance/ContainerGroupQuotaReached\",\"SampleErrorMessage\":\"quota\"},{\"ErrorCode\":\"RegistryErrorResponse\",\"SampleErrorMessage\":\"registry\"}]"')" \
     "$QUOTA"$'\nError: InvalidTemplate: invalid property' \
     "${QUOTA/0123456789abcdef0123456789abcdef/0123456789abcdef0123456789abcdeg}" \
