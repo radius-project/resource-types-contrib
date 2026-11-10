@@ -134,6 +134,36 @@ function activity(value, scope) {
   };
 }
 
+function selectActivity(values, scope) {
+  const important = (event) => event.errorCodes.length > 0 || /^(failed|canceled|cancelled)$/i.test(event.status);
+  const recentFirst = (a, b) => (Date.parse(b.eventTimestamp) || 0) - (Date.parse(a.eventTimestamp) || 0);
+  const events = values.map((value) => activity(value, scope)).filter((event) => event.resourceId)
+    .sort((a, b) => Number(important(b)) - Number(important(a)) || recentFirst(a, b));
+  const seen = new Set();
+  const distinct = [];
+  const repeats = [];
+  for (const event of events) {
+    // Keep distinct failure/state evidence before repeated progress or retries.
+    const key = JSON.stringify([
+      event.resourceId.toLowerCase(), event.operation?.toLowerCase(), event.status?.toLowerCase(),
+      event.subStatus?.toLowerCase(), [...event.errorCodes].sort(),
+    ]);
+    if (seen.has(key)) repeats.push(event);
+    else { seen.add(key); distinct.push(event); }
+  }
+  return [...distinct, ...repeats].slice(0, LIMITS.items).sort(recentFirst);
+}
+
+function collectionOutcome(report, file) {
+  if (report.errors.length) {
+    return { exitCode: 1, message: `Failure diagnostics incomplete; see ${file} errors and truncations.` };
+  }
+  if (report.truncations.length) {
+    return { exitCode: 1, message: `Failure diagnostics truncated; reads succeeded but evidence is incomplete. See ${file} truncations.` };
+  }
+  return { exitCode: 0, message: null };
+}
+
 function errorCodes(value) {
   if (typeof value === "string") {
     try { value = JSON.parse(value); } catch { return []; }
@@ -535,9 +565,16 @@ async function collect({ subscription, group, app, started, resourceType = "", p
     save(report);
   }
   // Activity Log data can arrive late. Do not poll or retry the deployment.
-  const filter = `eventTimestamp ge '${started}' and resourceGroupName eq '${group}'`;
-  const log = await get("activity-log", `https://management.azure.com/subscriptions/${subscription}/providers/microsoft.insights/eventtypes/management/values?api-version=2015-04-01&$filter=${encodeURIComponent(filter)}&$top=20`);
-  report.activity = page("activity-log", log).map((v) => activity(v, scope)).filter((v) => v.resourceId);
+  const filter = `eventTimestamp ge '${started}' and eventTimestamp le '${report.collectedAt}' and resourceGroupName eq '${group}'`;
+  const select = "resourceId,eventTimestamp,correlationId,operationId,eventDataId,operationName,status,subStatus,properties";
+  const log = await get("activity-log", `https://management.azure.com/subscriptions/${subscription}/providers/microsoft.insights/eventtypes/management/values?api-version=2015-04-01&$filter=${encodeURIComponent(filter)}&$select=${select}`);
+  if (log !== null && Array.isArray(log.value)) {
+    report.activity = selectActivity(log.value, scope);
+    if (log.nextLink || log.value.length > LIMITS.items) report.truncations.push("activity-log");
+    report.collections.push({ operation: "activity-log", returned: log.value.length, kept: report.activity.length });
+  } else if (log !== null) {
+    report.errors.push({ operation: "activity-log", reason: "invalid-list-shape" });
+  }
   save(report);
   // The list API omits some instance-view data; GET each discovered child group.
   for (const id of groups) {
@@ -568,10 +605,9 @@ if (require.main === module) {
       subscription, group, app, started, resourceType, platform,
       save: (report) => fs.writeFileSync(path.join(directory, file), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 }),
     }).then((report) => {
-      if (report.errors.length || report.truncations.length) {
-        console.error(`Failure diagnostics incomplete; see ${file} errors and truncations.`);
-        process.exitCode = 1;
-      }
+      const outcome = collectionOutcome(report, file);
+      if (outcome.message) console.error(outcome.message);
+      process.exitCode = outcome.exitCode;
     }).catch(() => {
       console.error("Failure diagnostics failed: invalid context or collector/output error. Raw error withheld.");
       process.exitCode = 1;
@@ -579,4 +615,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { collect, runAz, resource, activity, logRecords, deploymentErrors, LIMITS };
+module.exports = { collect, runAz, resource, activity, logRecords, deploymentErrors, collectionOutcome, LIMITS };
