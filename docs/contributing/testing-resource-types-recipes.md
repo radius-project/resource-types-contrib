@@ -307,6 +307,25 @@ Build all resource types and recipes at once:
 make build
 ```
 
+`make build`, `make list-recipes`, and `make generate-recipe-pack` use the same
+`RECIPE_PLATFORM_FILTER` rule. Each comma-separated value matches the start of a
+platform folder name, without regard to case. For example, `azure` selects
+`azure`, `azure-aci`, and `azure-aks`; `AZURE, aws` also selects AWS recipes.
+Spaces around values and empty values are ignored. An unset, empty, or
+blank-only filter selects all platforms. The filter does not restrict Resource
+Type builds. Recipe Pack generation can still produce duplicate resource type
+keys if the selected platforms provide recipes for the same type.
+
+Run the filter regression tests from the repository root with Bash, `make`,
+and standard Unix tools. These tests use temporary fixtures and a stub build
+command. They do not publish recipes or need a cluster:
+
+```bash
+make test-recipe-platform-filter
+```
+
+The expected final output is `Recipe platform filter tests passed`.
+
 ## Utility Commands
 
 List available resource types:
