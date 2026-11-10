@@ -229,7 +229,8 @@ rtc_test_azure_postgresql_app() (
     local remaining status attempt test_harness script_dir
     case "$size" in S|M) ;; *) echo "Error: PostgreSQL test size must be S or M." >&2; return 1 ;; esac
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
-    test_harness=$(mktemp "${TMPDIR:-/tmp}/rtc-postgres-test-XXXXXX.bicep") || return 1
+    # Keep Bicep configuration and relative file paths tied to the source.
+    test_harness=$(mktemp "$(dirname "$test_file")/rtc-postgres-test-XXXXXX.bicep") || return 1
     trap 'rm -f -- "$test_harness"' EXIT
     if ! bash "$script_dir/prepare-postgres-test-harness.sh" "$test_file" "$test_harness"; then
         return 1
@@ -1020,7 +1021,13 @@ rtc_deploy_and_assert_test_app_once() {
         if ! inventory_locks=$(rtc_snapshot_application_azure_lock_inventory "$app_name" "$workspace_name"); then
             echo "Error: Continuing with bounded Radius application deletion without lock ownership data." >&2
             inventory_locks=""
-            if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 || "${RTC_ACI_QUOTA_RECOVERY:-0}" == 1 ]]; then deploy_status=1; fi
+            deploy_status=1
+            cleanup_timeout=(timeout --kill-after=5s 3m)
+            if [[ "$diagnostics_collected" == 0 ]]; then
+                rtc_collect_test_diagnostics "$resource_type" "$app_name" "$started" ||
+                    echo "Error: Diagnostic collection failed after lock inventory failure; continuing cleanup." >&2
+                diagnostics_collected=1
+            fi
         fi
         if ! rtc_delete_owned_new_azure_management_locks "$locks_before" "$inventory_locks" "$app_name"; then
             echo "Error: Skipping Radius application deletion because Azure lock cleanup or Radius lock inventory validation failed." >&2
