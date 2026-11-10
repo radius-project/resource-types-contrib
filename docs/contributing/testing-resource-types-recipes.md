@@ -191,6 +191,9 @@ GitHub Actions does not support a pending queue size of four. Jobs retain their
 slot through confirmed resource-group deletion. A separate cleanup job remains
 as a fallback. Manual cancellation or a lost runner can still interrupt cleanup;
 a failed cleanup releases the job slot but does not prove that quota is available.
+Cleanup checks whether the resource group exists before deletion. A verified
+absent group passes, so fallback cleanup can run after normal cleanup. Failed
+reads, invalid responses, and failed deletes still fail cleanup.
 
 `RTC_ACI_TEST_SCOPE=only` selects the Azure Bicep containers recipe and the
 containers entry in the checked-in `azure-aci` pack. `exclude` omits those tests
@@ -224,9 +227,16 @@ new application name. Failed cleanup, failed inventory, mixed errors, registry
 errors, and regional-capacity errors do not qualify.
 
 The full ACI test has a 20-minute limit, shortened by any enclosing test-step
-deadline. It reserves six minutes for diagnostics and cleanup and starts a
-retry only if enough time remains. Existing transport retries still use the
-same application within each deployment attempt. A second quota rejection
+deadline. It reserves eleven minutes for diagnostics, cleanup, and inventory
+checks. Application deletion has a six-minute limit on both successful and
+failed deployments. Radius deletes Azure output resources in parallel; network
+dependencies can cause 60-second retries while the NGroup, load balancer,
+virtual network, NAT gateway, and public IPs are removed. A three-minute limit
+can stop the test while those retries are still active. The longer limit does
+not fix control-plane deletion errors or prove that deletion will finish.
+Cleanup failure still fails the test and blocks quota recovery.
+A retry starts only if more than twelve minutes remain. Existing transport retries
+still use the same application within each deployment attempt. A second quota rejection
 fails with `deployment was not validated`; quota rejection never counts as a
 passing test.
 

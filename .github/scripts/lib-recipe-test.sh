@@ -71,7 +71,7 @@ rtc_resolve_environment_path() {
 rtc_cleanup_kubernetes_resources() {
     local kubernetes_namespace="$1" app_name="$2" kind status=0
     local -a limit=()
-    if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
+    if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 || "${RTC_ACI_QUOTA_RECOVERY:-0}" == 1 ]]; then
         limit=(timeout --kill-after=5s 30s)
     fi
     if [[ -z "$kubernetes_namespace" ]]; then
@@ -851,6 +851,9 @@ rtc_deploy_and_assert_test_app_once() {
     if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
         # Preserve the twelve-minute deletion budget plus diagnostics and verification.
         step_reserve=1080
+    elif [[ "${RTC_ACI_QUOTA_RECOVERY:-0}" == 1 ]]; then
+        # Parallel network deletes can need several 60-second dependency retries.
+        step_reserve=660
     fi
 
     if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ||
@@ -887,7 +890,7 @@ rtc_deploy_and_assert_test_app_once() {
         if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
             cleanup_timeout=(timeout --kill-after=5s 12m)
         else
-            cleanup_timeout=(timeout --kill-after=5s 3m)
+            cleanup_timeout=(timeout --kill-after=5s 6m)
         fi
     elif [[ "${GITHUB_ACTIONS:-}" == true && "${RTC_TEST_PLATFORM:-}" == azure &&
           "$resource_type" == Radius.Compute/containers ]]; then
@@ -1007,7 +1010,7 @@ rtc_deploy_and_assert_test_app_once() {
     fi
 
     if [[ "$deploy_status" -ne 0 ]]; then
-        if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" != 1 &&
+        if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" != 1 && "${RTC_ACI_QUOTA_RECOVERY:-0}" != 1 &&
               ( -n "$step_remaining" || -n "${deploy_timeout[*]:-}" ) ]]; then
             cleanup_timeout=(timeout --kill-after=5s 3m)
         fi
@@ -1079,7 +1082,7 @@ rtc_test_azure_aci_app() (
         rtc_deploy_and_assert_test_app_once "${test_args[@]}" || status=$?
         if ((status == 0)); then return 0; fi
         if ((status != 43)); then return 1; fi
-        if ((attempt == 2 || deadline - $(date +%s) <= 420)); then
+        if ((attempt == 2 || deadline - $(date +%s) <= 720)); then
             echo "Error: ACI quota recovery exhausted; deployment was not validated." >&2
             return 1
         fi
@@ -1104,7 +1107,7 @@ rtc_deploy_and_assert_test_app() {
         if ((inherited < deadline)); then deadline="$inherited"; fi
     fi
     local remaining=$((deadline - $(date +%s))) status
-    if ((remaining <= 360)); then
+    if ((remaining <= 660)); then
         echo "Error: Insufficient Azure test budget for ACI deployment and cleanup." >&2
         return 1
     fi

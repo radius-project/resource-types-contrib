@@ -38,7 +38,9 @@ case "$1 $2" in
             echo '{"properties":{"hosts":{"orderProcessor":"first"}}}'
         else echo '{"properties":{"hosts":{"simple":"second"}}}'; fi
         ;;
-    "app delete") exit "${DELETE_FAIL:-0}" ;;
+    "app delete")
+        if [[ "${CLEANUP_BUDGET_REQUIRED:-0}" == 1 && "${TEST_TIMEOUT_BUDGET:-}" != 6m ]]; then exit 124; fi
+        exit "${DELETE_FAIL:-0}" ;;
 esac
 EOF
 cat >"$TEST_ROOT/bin/az" <<'EOF'
@@ -54,8 +56,11 @@ case "$1 $2" in
         ;;
     "group delete") exit "${DELETE_FAIL:-0}" ;;
     "group exists")
-        if [[ "${INVENTORY_FAIL:-0}" == 1 ]]; then exit 1; fi
-        echo "${GROUP_EXISTS:-false}"
+        if [[ "${INVENTORY_FAIL:-0}" != 0 ]]; then exit "$INVENTORY_FAIL"; fi
+        if grep -q '^az group delete ' "$CALL_LOG"; then
+            if [[ "${AFTER_INVENTORY_FAIL:-0}" == 1 ]]; then exit 1; fi
+            echo "${GROUP_EXISTS_AFTER:-false}"
+        else echo "${GROUP_EXISTS:-true}"; fi
         ;;
 esac
 EOF
@@ -72,6 +77,7 @@ EOF
 cat >"$TEST_ROOT/bin/timeout" <<'EOF'
 #!/bin/bash
 echo "timeout $*" >>"$CALL_LOG"
+export TEST_TIMEOUT_BUDGET="$2"
 if [[ -n "${OUTER_TIMEOUT:-}" && "$*" == *'rtc_test_azure_aci_app'* ]]; then
     shift 2
     exec /usr/bin/timeout --kill-after=1s "$OUTER_TIMEOUT" "$@"
@@ -120,6 +126,16 @@ grep -Eq '^timeout --kill-after=5s (119[0-9]|1200)s bash -c .*rtc_test_azure_aci
     fail "full ACI test needs a 20-minute limit"
 [[ -z "$(find "$TMPDIR" -type f -print -quit)" ]] || fail "deployment transcript leaked"
 
+CLEANUP_BUDGET_REQUIRED=1 run_test || fail "ACI cleanup must allow dependency retries on both attempts"
+[[ "$(grep -c '^timeout --kill-after=5s 6m rad app delete ' "$CALL_LOG")" == 2 ]] ||
+    fail "successful and failed ACI deployments need six-minute cleanup"
+grep -Eq '^timeout --kill-after=5s (53[0-9]|540)s bash -c .*rtc_deploy_with_retry' "$CALL_LOG" ||
+    fail "ACI deployment must reserve eleven minutes for cleanup and diagnostics"
+[[ "$(grep -c '^timeout --kill-after=5s 30s kubectl delete ' "$CALL_LOG")" == 3 ]] ||
+    fail "successful deployment Kubernetes cleanup must be bounded"
+[[ "$(grep -c '^kubectl delete .*--request-timeout=10s --wait=false$' "$CALL_LOG")" == 3 ]] ||
+    fail "failed deployment Kubernetes cleanup must be bounded"
+
 RTC_TEST_DIAGNOSTICS_DIR="$TEST_ROOT/diagnostics" run_test || fail "quota recovery with diagnostics"
 [[ -n "$(find "$TEST_ROOT/diagnostics" -name azure.json -print -quit)" ]] || fail "quota diagnostics not saved"
 awk '/^diagnostics / { diagnostics++ } /^rad app delete / { if (!diagnostics) exit 1 }' "$CALL_LOG" ||
@@ -133,6 +149,13 @@ for control in DELETE_FAIL AFTER_INVENTORY_FAIL KUBECTL_FAIL LEAK SLEEP_FAIL ASS
     if (export "$control=1"; run_test); then fail "$control must fail"; fi
     if [[ "$control" == ASSERT_FAIL ]]; then attempts 2; else attempts 1; fi
 done
+for status in 124 137; do
+    if DELETE_FAIL="$status" run_test; then fail "cleanup timeout must fail"; fi
+    attempts 1
+    if grep -q '^sleep ' "$CALL_LOG"; then fail "cleanup timeout must block quota retry"; fi
+done
+FAILURES=0 CLEANUP_BUDGET_REQUIRED=1 run_test || fail "successful deployment cleanup budget"
+attempts 1
 if INVENTORY_FAIL=1 run_test; then fail "failed initial inventory must block allocation"; fi
 [[ ! -s "$CALL_LOG" || "$(grep -c '^rad deploy ' "$CALL_LOG")" == 0 ]] || fail "unsafe allocation"
 
@@ -164,11 +187,11 @@ if DEPLOY_EXIT_CODE=43 DEPLOY_ERROR='InvalidTemplate: invalid property' run_test
     fail "a native exit code must not qualify as a quota sentinel"
 fi
 attempts 1
-for deadline in invalid "$(( $(date +%s) + 360 ))"; do
+for deadline in invalid "$(( $(date +%s) + 660 ))"; do
     if RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$deadline" run_test; then fail "invalid or expired budget"; fi
     [[ ! -s "$CALL_LOG" ]] || fail "invalid budget must block allocation"
 done
-if RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$(( $(date +%s) + 415 ))" run_test; then fail "insufficient retry budget"; fi
+if RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$(( $(date +%s) + 715 ))" run_test; then fail "insufficient retry budget"; fi
 attempts 1
 if grep -q '^sleep ' "$CALL_LOG"; then fail "insufficient retry budget must block backoff"; fi
 status=0
@@ -176,20 +199,34 @@ OUTER_TIMEOUT=0.001s run_test || status=$?
 [[ "$status" == 1 ]] || fail "outer timeout must fail, not pass or redeploy"
 grep -q 'ACI test deadline expired' "$TEST_ROOT/output" || fail "outer timeout needs an explicit error"
 
-for result in success deletion-failed still-exists inventory-failed; do
+for result in success already-absent deletion-failed still-exists inventory-failed \
+    verification-failed invalid-inventory invalid-verification delete-timeout read-timeout; do
     : >"$CALL_LOG"
     status=0
     (
         case "$result" in
             deletion-failed) export DELETE_FAIL=1 ;;
-            still-exists) export GROUP_EXISTS=true ;;
+            delete-timeout) export DELETE_FAIL=124 ;;
+            read-timeout) export INVENTORY_FAIL=124 ;;
+            already-absent) export GROUP_EXISTS=false ;;
+            still-exists) export GROUP_EXISTS_AFTER=true ;;
             inventory-failed) export INVENTORY_FAIL=1 ;;
+            verification-failed) export AFTER_INVENTORY_FAIL=1 ;;
+            invalid-inventory) export GROUP_EXISTS=unknown ;;
+            invalid-verification) export GROUP_EXISTS_AFTER=unknown ;;
         esac
         bash "$REPO_ROOT/.github/scripts/cleanup-azure-resources.sh"
     ) >"$TEST_ROOT/cleanup-output" 2>&1 || status=$?
-    if [[ "$result" == success ]]; then
+    if [[ "$result" == success || "$result" == already-absent ]]; then
         [[ "$status" == 0 ]] || fail "confirmed group cleanup"
     else [[ "$status" != 0 ]] || fail "$result must fail group cleanup"; fi
+    if [[ "$result" == already-absent || "$result" == inventory-failed ||
+          "$result" == invalid-inventory || "$result" == read-timeout ]]; then
+        if grep -q '^az group delete ' "$CALL_LOG"; then fail "$result must not delete"; fi
+    else
+        [[ "$(grep -c '^az group exists ' "$CALL_LOG")" == 2 ]] ||
+            fail "$result must verify deletion"
+    fi
     if grep -q -- '--no-wait' "$CALL_LOG"; then fail "group cleanup must wait"; fi
 done
 
