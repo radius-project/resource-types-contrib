@@ -112,6 +112,7 @@ test-recipe-pack-entries-unit: ## Run fixture-based unit tests for all Recipe Pa
 	@./.github/scripts/tests/test-mysql-transport.sh
 	@./.github/scripts/tests/test-postgresql-transport.sh
 	@./.github/scripts/tests/test-recipe-test-lib.sh
+	@bash ./.github/scripts/tests/test-azure-lock-inventory.sh
 	@bash ./.github/scripts/tests/test-aci-quota-recovery.sh
 	@./.github/scripts/tests/test-test-direct-module-recipe.sh
 	@./.github/scripts/tests/test-test-all-direct-module-recipes.sh

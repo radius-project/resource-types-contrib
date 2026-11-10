@@ -191,6 +191,9 @@ GitHub Actions does not support a pending queue size of four. Jobs retain their
 slot through confirmed resource-group deletion. A separate cleanup job remains
 as a fallback. Manual cancellation or a lost runner can still interrupt cleanup;
 a failed cleanup releases the job slot but does not prove that quota is available.
+Cleanup checks whether the resource group exists before deletion. A verified
+absent group passes, so fallback cleanup can run after normal cleanup. Failed
+reads, invalid responses, and failed deletes still fail cleanup.
 
 `RTC_ACI_TEST_SCOPE=only` selects the Azure Bicep containers recipe and the
 containers entry in the checked-in `azure-aci` pack. `exclude` omits those tests
@@ -224,9 +227,16 @@ new application name. Failed cleanup, failed inventory, mixed errors, registry
 errors, and regional-capacity errors do not qualify.
 
 The full ACI test has a 20-minute limit, shortened by any enclosing test-step
-deadline. It reserves six minutes for diagnostics and cleanup and starts a
-retry only if enough time remains. Existing transport retries still use the
-same application within each deployment attempt. A second quota rejection
+deadline. It reserves eleven minutes for diagnostics, cleanup, and inventory
+checks. Application deletion has a six-minute limit on both successful and
+failed deployments. Radius deletes Azure output resources in parallel; network
+dependencies can cause 60-second retries while the NGroup, load balancer,
+virtual network, NAT gateway, and public IPs are removed. A three-minute limit
+can stop the test while those retries are still active. The longer limit does
+not fix control-plane deletion errors or prove that deletion will finish.
+Cleanup failure still fails the test and blocks quota recovery.
+A retry starts only if more than twelve minutes remain. Existing transport retries
+still use the same application within each deployment attempt. A second quota rejection
 fails with `deployment was not validated`; quota rejection never counts as a
 passing test.
 
@@ -380,9 +390,13 @@ The nightly and release-candidate Azure pack tests select a PostgreSQL region
 before they create the main resource group or configure the Azure provider.
 The release-candidate workflow keeps the released source and pack pins. A pack
 mapping that does not match the test tuple fails the PostgreSQL check.
-For older release pins whose PostgreSQL test app fixes `size: 'S'`, the workflow
-creates a temporary parameterized test harness outside the checkout. The harness
-lets the selected `S` or `M` reach the deployment without changing the pinned
+The release-candidate workflow passes the original pinned test app to the shared
+test helper, without first copying it to the runner's temporary directory.
+For older release pins whose PostgreSQL test app fixes `size: 'S'`, the helper
+creates a temporary parameterized test harness beside the source test app. This
+keeps the same `bicepconfig.json` lookup and relative file paths. The runner
+removes the temporary file on success or failure and does not change the source.
+The harness lets the selected `S` or `M` reach the deployment without changing the pinned
 resource type, recipe, pack, or test app. Unsupported test-app shapes fail before
 deployment rather than silently testing the wrong size.
 
@@ -509,6 +523,17 @@ Radius resource properties or secrets. Download
 `azure-test-diagnostics-nightly-azure` or `azure-test-diagnostics-rc-azure`.
 Set `RTC_AZURE_DIAGNOSTICS_DIR` for local collection.
 
+If the post-deploy Radius inventory request fails or returns malformed JSON,
+the test fails and discards all lock IDs from that response. It does not delete
+Azure locks without proof of ownership. If diagnostics are enabled, the test
+attempts collection before cleanup unless it has already done so. A collection
+failure is reported but does not stop cleanup. Fallback application deletion uses
+`timeout --kill-after=5s 3m`, and cleanup of Kubernetes resources selected by
+the test application's label is still attempted.
+Run `bash .github/scripts/tests/test-azure-lock-inventory.sh` to check these
+paths with offline fixtures, or `make test-recipe-pack-entries-unit` to run
+the full Recipe Pack entry unit test suite.
+
 Nightly and release candidate pod-log artifacts also include
 `deployment-engine.log`, alongside Dynamic RP logs that record the resource
 IDs returned by the Deployment Engine. These logs help identify conditional
@@ -617,6 +642,9 @@ logger names, operation names, recipe references, terminal-state markers, HTTP p
 hosts/paths, response status codes, and elapsed times when the component emits
 them. Image references and image IDs identify the running component builds.
 Request queries, headers, bodies, and free-text log messages are not saved.
+The one subscription-scoped path exception is the Cosmos DB
+`Microsoft.DocumentDB/locations/<region>/operationsStatus/<UUID>` endpoint
+in the selected Azure subscription.
 Each pod log read has at most 2,000 records and a 512 KiB limit.
 `tailOnly` and `omitted` identify a bounded, filtered snapshot, not a complete log.
 Log rotation or a pod restart can remove earlier records before collection.
@@ -624,6 +652,34 @@ Workflow snapshots use a six-hour lookback to include setup and preflight activi
 Their collection limits remain the same as per-test snapshots. If setup failed
 before the cluster was ready, the report records the failed collection attempt
 instead of claiming that logs are complete.
+
+For MongoDB account polling, `cosmosOperations` records up to four unique
+operation paths observed in deployment-engine GET logs since deployment began.
+The collector makes one GET per path with API version `2025-04-15`, within the
+existing request and time budgets, after the other Azure reads. It reads only
+paths in the selected subscription and a region with a Cosmos account in the
+test resource-group inventory. It does not follow logged queries, headers, or
+provider response links. Denied requests, missing states, and unknown states
+are reported in `errors`. A read that fails has `responseAvailable: false`;
+an absent state stays null, not `Succeeded`.
+
+Each snapshot saves only recognized operation `status` and
+`properties.provisioningState`, structured error codes, the operation UUID,
+trace/span IDs, observation and collection times, and candidate account IDs.
+It never saves response bodies, keys, connection strings, or credentials.
+The path is subscription-scoped. A region match does **not** prove that the
+operation belongs to a candidate account or the failed app. Use trace IDs
+and the original account request to check that link. Log limits can remove
+the initial request or all poll records.
+
+This is diagnostic evidence, not a polling fix. HTTP 200 can contain a pending
+operation state, including Cosmos DB `Enqueued` and `Dequeued` states.
+Account provisioning success is not proof that the async
+operation endpoint returned success. A collector GET is a later snapshot,
+not the response that the engine received. The initial `Azure-AsyncOperation`
+or `Location` header and the engine's poll-body interpretation still require
+engine-side evidence. Do not change timeouts or retry the deployment to hide
+this gap.
 
 For an OpenAI provisioning conflict, compare account and model-deployment
 Activity Log timestamps and statuses, then use trace IDs and request paths to
