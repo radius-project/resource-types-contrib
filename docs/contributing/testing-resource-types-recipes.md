@@ -490,6 +490,17 @@ Radius resource properties or secrets. Download
 `azure-test-diagnostics-nightly-azure` or `azure-test-diagnostics-rc-azure`.
 Set `RTC_AZURE_DIAGNOSTICS_DIR` for local collection.
 
+If the post-deploy Radius inventory request fails or returns malformed JSON,
+the test fails and discards all lock IDs from that response. It does not delete
+Azure locks without proof of ownership. If diagnostics are enabled, the test
+attempts collection before cleanup unless it has already done so. A collection
+failure is reported but does not stop cleanup. Fallback application deletion uses
+`timeout --kill-after=5s 3m`, and cleanup of Kubernetes resources selected by
+the test application's label is still attempted.
+Run `bash .github/scripts/tests/test-azure-lock-inventory.sh` to check these
+paths with offline fixtures, or `make test-recipe-pack-entries-unit` to run
+the full Recipe Pack entry unit test suite.
+
 Nightly and release candidate pod-log artifacts also include
 `deployment-engine.log`, alongside Dynamic RP logs that record the resource
 IDs returned by the Deployment Engine. These logs help identify conditional
