@@ -25,6 +25,9 @@ const LIMITS = { totalMs: 90000, requestMs: 10000, requests: 24, items: 20, byte
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TOKEN = /^[a-z0-9_.:/-]{1,256}$/i;
 const TIME = /^\d{4}-\d\d-\d\dT[\d:.]+Z$/;
+const OPERATION_STATE = /^(Accepted|Running|InProgress|Enqueued|Dequeued|Succeeded|Failed|Canceled|Cancelled|Creating|Updating|Deleting)$/i;
+const COSMOS_API_VERSION = "2025-04-15";
+const COSMOS_OPERATIONS = 4;
 const IMAGE = /^(?:[a-z0-9.-]+(?::[0-9]+)?\/)?[a-z0-9_./-]+(?::[a-zA-Z0-9_.-]+)?(?:@sha256:[a-f0-9]{64})?$/;
 const LISTS = [
   ["Microsoft.ContainerInstance/ngroups", "2024-11-01-preview"],
@@ -262,9 +265,31 @@ function requestTarget(value, scope) {
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
   if (url.username || url.password) return null;
   const azure = url.hostname === "management.azure.com" && scopedId(url.pathname, scope);
+  const cosmos = url.protocol === "https:" && url.port === "" && !url.hash &&
+    (value === `https://management.azure.com${url.pathname}` ||
+      value.startsWith(`https://management.azure.com${url.pathname}?`)) &&
+    cosmosOperation(url.pathname, scope);
   const radius = /^(ucp|dynamic-rp|applications-rp)\.radius-system$/.test(url.hostname) &&
     /^\/(?:apis\/api\.ucp\.dev\/v1alpha3\/)?planes\/radius\/local\/[a-z0-9_./()-]+$/i.test(url.pathname);
-  return azure || radius ? { host: url.hostname, path: url.pathname } : null;
+  return azure || radius || cosmos ? { host: url.hostname, path: url.pathname } : null;
+}
+
+function cosmosOperation(value, scope) {
+  const subscription = typeof scope === "string" &&
+    /^\/subscriptions\/([a-f0-9-]+)\/resourceGroups\/[a-z0-9_-]+$/i.exec(scope)?.[1];
+  if (!subscription || !UUID.test(subscription) || typeof value !== "string") return null;
+  const match = /^\/subscriptions\/([a-f0-9-]+)\/providers\/Microsoft\.DocumentDB\/locations\/([a-z0-9-]{1,64})\/operationsStatus\/([a-f0-9-]+)$/i.exec(value);
+  return match && match[1].toLowerCase() === subscription.toLowerCase() && UUID.test(match[3])
+    ? { location: match[2].toLowerCase(), operationId: match[3] } : null;
+}
+
+function operationState(value) {
+  const v = object(value);
+  return {
+    status: text(v.status, OPERATION_STATE),
+    provisioningState: text(object(v.properties).provisioningState, OPERATION_STATE),
+    errorCodes: errorCodes(v.error),
+  };
 }
 
 function recipeSource(value) {
@@ -377,8 +402,8 @@ async function collect({ subscription, group, app, started, resourceType = "", p
     collectedAt: new Date(now()).toISOString(), limits: LIMITS,
     scopeNote: "Cluster log snapshot and optional Azure test resource group snapshot; records are not attributed to an app.",
     omitted: "Free-text messages, detailStatus, raw errors, headers, URL queries, tags, env, commands, credentials, deployment parameters and outputs.",
-    providerLimitations: "The 2024-11-01-preview API has no NGroups child-list or NGroup instanceView. Resource-group containerGroups may not expose managed children. Activity Log records can be delayed; original PUT/poll headers and registry responses are not available through these reads.",
-    resources: [], activity: [], radiusLogs: [], collections: [], errors: [], truncations: [],
+    providerLimitations: "The 2024-11-01-preview API has no NGroups child-list or NGroup instanceView. Resource-group containerGroups may not expose managed children. Activity Log records can be delayed; original PUT/poll headers and registry responses are not available through these reads. Cosmos operation reads are later snapshots, not the engine's response. Subscription-scoped operation paths and matching account regions do not prove account or app ownership.",
+    resources: [], activity: [], radiusLogs: [], cosmosOperations: [], collections: [], errors: [], truncations: [],
   };
   save(report);
   // Older base workflows log in to Azure but do not export the subscription
@@ -551,6 +576,51 @@ async function collect({ subscription, group, app, started, resourceType = "", p
     }
     save(report);
   }
+  // Only read observed Cosmos status paths in this subscription and an
+  // inventoried account region. Never follow a logged query or response URL.
+  const candidates = new Map();
+  for (const logs of report.radiusLogs) {
+    if (!["deployment-engine", "bicep-de"].includes(logs.component)) continue;
+    for (const record of logs.records) {
+      if (record.method !== "GET" || record.request?.host !== "management.azure.com") continue;
+      const target = cosmosOperation(record.request.path, scope);
+      if (!target || !record.traceId || !record.timestamp ||
+          !Number.isFinite(Date.parse(record.timestamp)) ||
+          Date.parse(record.timestamp) < Date.parse(started)) continue;
+      const accounts = report.resources.filter((item) =>
+        item.type?.toLowerCase() === "microsoft.documentdb/databaseaccounts" &&
+        item.location?.toLowerCase().replaceAll(" ", "") === target.location);
+      if (!accounts.length) continue;
+      const key = record.request.path.toLowerCase();
+      const previous = candidates.get(key);
+      if (!previous || Date.parse(previous.record.timestamp) <= Date.parse(record.timestamp)) {
+        candidates.set(key, { record, target, accounts });
+      }
+    }
+  }
+  if (candidates.size > COSMOS_OPERATIONS) report.truncations.push("cosmos-operation-status");
+  const latest = [...candidates.values()].sort((a, b) =>
+    Date.parse(b.record.timestamp) - Date.parse(a.record.timestamp));
+  for (const { record, target, accounts } of latest.slice(0, COSMOS_OPERATIONS)) {
+    const response = await get("cosmos-operation-status",
+      `https://management.azure.com${record.request.path}?api-version=${COSMOS_API_VERSION}`);
+    const snapshot = {
+      path: record.request.path, operationId: target.operationId,
+      traceId: record.traceId, spanId: record.spanId, observedAt: record.timestamp,
+      collectedAt: new Date(now()).toISOString(), apiVersion: COSMOS_API_VERSION,
+      candidateAccountIds: accounts.map((item) => item.id),
+      attribution: "Subscription and account region only; account/app ownership is not proved.",
+      responseAvailable: response !== null,
+      ...operationState(response),
+    };
+    report.cosmosOperations.push(snapshot);
+    if (response && ((!snapshot.status && !snapshot.provisioningState) ||
+        (response.status !== undefined && !snapshot.status) ||
+        (object(response.properties).provisioningState !== undefined && !snapshot.provisioningState))) {
+      report.errors.push({ operation: "cosmos-operation-status", reason: "missing-or-unrecognized-operation-state" });
+    }
+    save(report);
+  }
   return report;
 }
 
@@ -579,4 +649,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { collect, runAz, resource, activity, logRecords, deploymentErrors, LIMITS };
+module.exports = { collect, runAz, resource, activity, logRecords, operationState, deploymentErrors, LIMITS };
