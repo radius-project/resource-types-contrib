@@ -41,7 +41,25 @@ if [[ -n "${AZURE_SUBSCRIPTION_ID:-}" ]]; then
     SUB_ARGS+=(--subscription "$AZURE_SUBSCRIPTION_ID")
 fi
 
+if ! exists="$(timeout --kill-after=5s 30s az group exists --name "$AZURE_RESOURCE_GROUP" "${SUB_ARGS[@]}" --output tsv)"; then
+    echo "Error: Could not verify whether Azure resource group '$AZURE_RESOURCE_GROUP' exists." >&2
+    exit 1
+fi
+if [[ "$exists" == false ]]; then
+    echo "Azure resource group '$AZURE_RESOURCE_GROUP' is already absent"
+    exit 0
+fi
+if [[ "$exists" != true ]]; then
+    echo "Error: Azure resource group existence check returned an unexpected result." >&2
+    exit 1
+fi
+
 if ! timeout --kill-after=5s 12m az group delete --name "$AZURE_RESOURCE_GROUP" --yes "${SUB_ARGS[@]}"; then
+    if exists="$(timeout --kill-after=5s 30s az group exists --name "$AZURE_RESOURCE_GROUP" "${SUB_ARGS[@]}" --output tsv)" &&
+        [[ "$exists" == false ]]; then
+        echo "Azure resource group '$AZURE_RESOURCE_GROUP' deletion confirmed"
+        exit 0
+    fi
     echo "Error: Azure resource group deletion failed or timed out; capacity release is not confirmed." >&2
     exit 1
 fi

@@ -123,10 +123,12 @@ add_recipe_dir() {
         return
     fi
 
-    local is_aci=false
-    [[ "$dir" != */Compute/containers/recipes/azure/bicep ]] || is_aci=true
-    if [[ "$ACI_TEST_SCOPE" == only && "$is_aci" != true ||
-          "$ACI_TEST_SCOPE" == exclude && "$is_aci" == true ]]; then
+    local aci_scoped=false
+    case "$dir" in
+        */Compute/containers/recipes/azure/bicep|*/AI/models/recipes/azure/bicep) aci_scoped=true ;;
+    esac
+    if [[ "$ACI_TEST_SCOPE" == only && "$aci_scoped" != true ||
+          "$ACI_TEST_SCOPE" == exclude && "$aci_scoped" == true ]]; then
         return
     fi
 

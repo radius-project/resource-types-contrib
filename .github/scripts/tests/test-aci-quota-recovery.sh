@@ -52,10 +52,17 @@ case "$1 $2" in
             echo '[{"id":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.ContainerInstance/ngroups/leak"}]'
         else echo '[]'; fi
         ;;
-    "group delete") exit "${DELETE_FAIL:-0}" ;;
+    "group delete")
+        if [[ "${GROUP_DELETE_NOT_FOUND:-0}" == 1 ]]; then exit 1; fi
+        exit "${DELETE_FAIL:-0}"
+        ;;
     "group exists")
         if [[ "${INVENTORY_FAIL:-0}" == 1 ]]; then exit 1; fi
-        echo "${GROUP_EXISTS:-false}"
+        if grep -q '^az group delete ' "$CALL_LOG"; then
+            echo "${GROUP_EXISTS_AFTER_DELETE:-false}"
+        else
+            echo "${GROUP_EXISTS:-true}"
+        fi
         ;;
 esac
 EOF
@@ -102,14 +109,17 @@ export DEPLOY_ERROR="$QUOTA"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 attempts() { [[ "$(grep -c '^rad deploy ' "$CALL_LOG")" == "$1" ]] || fail "expected $1 deployments"; }
 run_test() {
+    local resource_type="${1:-Radius.Compute/containers}"
     : >"$CALL_LOG"
-    rtc_deploy_and_assert_test_app "$APP" Radius.Compute/containers aci-test /envs/test default ns \
+    rtc_deploy_and_assert_test_app "$APP" "$resource_type" aci-test /envs/test default ns \
         >"$TEST_ROOT/output" 2>&1
 }
 
 run_test || { cat "$TEST_ROOT/output"; fail "quota followed by success"; }
 attempts 2
 [[ "$(grep -c '^rad app delete ' "$CALL_LOG")" == 2 ]] || fail "both attempts need cleanup"
+grep -q '^timeout --kill-after=5s 720s rad app delete ' "$CALL_LOG" ||
+    fail "ACI application cleanup must use the available bounded step budget"
 [[ "$(grep -c '^sleep 60$' "$CALL_LOG")" == 1 ]] || fail "one 60-second quota backoff required"
 awk '/^rad app delete / { cleaned++ } /^az resource list / { snapshots++ }
     /^rad deploy / { attempts++; if (attempts == 2 && (cleaned != 1 || snapshots < 3)) exit 1 }' "$CALL_LOG" ||
@@ -119,6 +129,13 @@ awk '/^rad app delete / { cleaned++ } /^az resource list / { snapshots++ }
 grep -Eq '^timeout --kill-after=5s (119[0-9]|1200)s bash -c .*rtc_test_azure_aci_app' "$CALL_LOG" ||
     fail "full ACI test needs a 20-minute limit"
 [[ -z "$(find "$TMPDIR" -type f -print -quit)" ]] || fail "deployment transcript leaked"
+
+FAILURES=0 run_test Radius.AI/models || fail "ACI-dependent model test"
+attempts 1
+grep -q '^timeout --kill-after=5s 720s rad app delete ' "$CALL_LOG" ||
+    fail "ACI-dependent model cleanup must use the bounded step budget"
+[[ "$(grep -c '^az resource list ' "$CALL_LOG")" == 2 ]] ||
+    fail "ACI-dependent model tests must verify Azure resource cleanup"
 
 RTC_TEST_DIAGNOSTICS_DIR="$TEST_ROOT/diagnostics" run_test || fail "quota recovery with diagnostics"
 [[ -n "$(find "$TEST_ROOT/diagnostics" -name azure.json -print -quit)" ]] || fail "quota diagnostics not saved"
@@ -176,25 +193,27 @@ OUTER_TIMEOUT=0.001s run_test || status=$?
 [[ "$status" == 1 ]] || fail "outer timeout must fail, not pass or redeploy"
 grep -q 'ACI test deadline expired' "$TEST_ROOT/output" || fail "outer timeout needs an explicit error"
 
-for result in success deletion-failed still-exists inventory-failed; do
+for result in success already-absent delete-race deletion-failed still-exists inventory-failed; do
     : >"$CALL_LOG"
     status=0
     (
         case "$result" in
-            deletion-failed) export DELETE_FAIL=1 ;;
-            still-exists) export GROUP_EXISTS=true ;;
+            already-absent) export GROUP_EXISTS=false ;;
+            delete-race) export GROUP_DELETE_NOT_FOUND=1 GROUP_EXISTS_AFTER_DELETE=false ;;
+            deletion-failed) export DELETE_FAIL=1 GROUP_EXISTS_AFTER_DELETE=true ;;
+            still-exists) export GROUP_EXISTS_AFTER_DELETE=true ;;
             inventory-failed) export INVENTORY_FAIL=1 ;;
         esac
         bash "$REPO_ROOT/.github/scripts/cleanup-azure-resources.sh"
     ) >"$TEST_ROOT/cleanup-output" 2>&1 || status=$?
-    if [[ "$result" == success ]]; then
+    if [[ "$result" == success || "$result" == already-absent || "$result" == delete-race ]]; then
         [[ "$status" == 0 ]] || fail "confirmed group cleanup"
     else [[ "$status" != 0 ]] || fail "$result must fail group cleanup"; fi
     if grep -q -- '--no-wait' "$CALL_LOG"; then fail "group cleanup must wait"; fi
 done
 
 FIXTURE="$TEST_ROOT/repo"
-for recipe in Compute/containers/azure/bicep Compute/containers/azure/terraform \
+for recipe in Compute/containers/azure/bicep AI/models/azure/bicep Compute/containers/azure/terraform \
     Compute/containers/kubernetes/bicep Security/secrets/azure/bicep; do
     type="${recipe%/*/*}" platform="${recipe#*/*/}"
     mkdir -p "$FIXTURE/$type/recipes/$platform"
@@ -224,9 +243,11 @@ for scope in only exclude; do
         bash "$REPO_ROOT/.github/scripts/generate-recipe-pack.sh" "$FIXTURE" basic "$PACK" >/dev/null
     if [[ "$scope" == only ]]; then
         grep -q "'Radius.Compute/containers':" "$PACK" || fail "ACI-only pack lost containers"
+        grep -q "'Radius.AI/models':" "$PACK" || fail "ACI-only pack lost its ACI-dependent model recipe"
         ! grep -q "'Radius.Security/secrets':" "$PACK" || fail "ACI-only scope included independent recipes"
     else
         ! grep -q "'Radius.Compute/containers':" "$PACK" || fail "general Azure pack included ACI"
+        ! grep -q "'Radius.AI/models':" "$PACK" || fail "general Azure pack included an ACI-dependent model recipe"
         grep -q "'Radius.Security/secrets':" "$PACK" || fail "general Azure pack lost secrets"
     fi
 done
@@ -244,9 +265,14 @@ for scope in only exclude; do
     (cd "$FIXTURE" && RTC_ACI_TEST_SCOPE="$scope" RECIPE_PLATFORM_FILTER=azure \
         bash "$REPO_ROOT/.github/scripts/test-all-recipes.sh" "$FIXTURE" default bicep >/dev/null) ||
         fail "scoped per-recipe runner"
-    [[ "$(wc -l <"$CALL_LOG")" == 1 ]] || fail "each scope must select exactly one fixture recipe"
+    if [[ "$scope" == only ]]; then
+        [[ "$(wc -l <"$CALL_LOG")" == 2 ]] || fail "ACI scope must select its recipe and its dependent model recipe"
+    else
+        [[ "$(wc -l <"$CALL_LOG")" == 1 ]] || fail "general Azure scope must select only the independent fixture recipe"
+    fi
     if [[ "$scope" == only ]]; then
         grep -q '/Compute/containers/recipes/azure/bicep$' "$CALL_LOG" || fail "ACI runner selected wrong recipe"
+        grep -q '/AI/models/recipes/azure/bicep$' "$CALL_LOG" || fail "ACI runner omitted the dependent model recipe"
     else
         grep -q '/Security/secrets/recipes/azure/bicep$' "$CALL_LOG" || fail "general Azure runner selected ACI"
     fi
@@ -265,6 +291,17 @@ if RTC_ACI_TEST_SCOPE=only bash "$REPO_ROOT/.github/scripts/test-all-recipes.sh"
 fi
 grep -q 'Error: no ACI recipes found to test.' "$TEST_ROOT/empty-output" ||
     fail "empty ACI scope needs an explicit error"
+AI_ONLY_FIXTURE="$TEST_ROOT/ai-only-repo"
+mkdir -p "$AI_ONLY_FIXTURE/AI/models/recipes/azure/bicep" "$AI_ONLY_FIXTURE/.github/scripts"
+touch "$AI_ONLY_FIXTURE/AI/models/recipes/azure/bicep/model.bicep"
+cp "$FIXTURE/.github/scripts/test-recipe.sh" "$AI_ONLY_FIXTURE/.github/scripts/test-recipe.sh"
+if RTC_ACI_TEST_SCOPE=only RECIPE_PLATFORM_FILTER=azure \
+    bash "$REPO_ROOT/.github/scripts/test-all-recipes.sh" "$AI_ONLY_FIXTURE" default bicep \
+    >"$TEST_ROOT/ai-only-output" 2>&1; then
+    fail "an ACI-dependent recipe without the ACI recipe must not pass the ACI-only scope"
+fi
+grep -q 'Error: no ACI recipes found to test.' "$TEST_ROOT/ai-only-output" ||
+    fail "ACI-only scope must require the containers recipe"
 grep -q '^param desiredCount int = 3$' \
     "$REPO_ROOT/Compute/containers/recipes/azure/bicep/azure-aci-containers.bicep" || fail "production count changed"
 if grep -q desiredCount "$REPO_ROOT/recipe-packs/azure-aci/azure-aci.bicep"; then
@@ -330,6 +367,7 @@ assert "prepare-release-candidate-sources.sh" in worker
 assert "verify-recipe-pack-sources.sh" in worker
 ci = (workflow_dir / "validate-azure-aci-recipes.yaml").read_text()
 assert "pull_request_target:" in ci and "merge_group:" in ci
+assert "AI/models/**" in ci
 assert "environment: azure" in ci
 assert "needs.check-trust.result == 'success'" in ci
 assert "needs.approval-gate.result == 'success'" in ci
