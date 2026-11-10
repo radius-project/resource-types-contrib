@@ -41,6 +41,10 @@ endif
 	@./.github/scripts/build-resource-type.sh "$(TYPE_FOLDER)"
 	./.github/scripts/update-bicepconfig.sh
 
+.PHONY: test-resource-type-extensions
+test-resource-type-extensions: ## Test local extension paths and config references without a cluster
+	@bash ./.github/scripts/tests/test-resource-type-extensions.sh
+
 .PHONY: build-bicep-recipe
 build-bicep-recipe: ## Build a Bicep recipe at the specified path (requires RECIPE_PATH parameter)
 ifndef RECIPE_PATH
@@ -59,6 +63,10 @@ endif
 .PHONY: generate-recipe-pack
 generate-recipe-pack: ## Generate a recipe pack Bicep template from available recipes (set PACK_NAME and OUTPUT_FILE to override defaults)
 	@./.github/scripts/generate-recipe-pack.sh "$(RESOURCE_TYPE_ROOT)" "$(PACK_NAME)" "$(OUTPUT_FILE)"
+
+.PHONY: test-generate-recipe-pack-empty
+test-generate-recipe-pack-empty: ## Test empty Recipe Pack output cleanup (no live environment needed)
+	@bash ./.github/scripts/tests/test-generate-recipe-pack-empty.sh
 
 .PHONY: deploy-recipe-pack
 deploy-recipe-pack: ## Deploy a recipe pack using a Bicep template (requires BICEP_FILE parameter)
@@ -105,6 +113,7 @@ test-recipe-pack-entries-unit: ## Run fixture-based unit tests for all Recipe Pa
 	@./.github/scripts/tests/test-postgresql-transport.sh
 	@./.github/scripts/tests/test-recipe-test-lib.sh
 	@bash ./.github/scripts/tests/test-azure-lock-inventory.sh
+	@bash ./.github/scripts/tests/test-aci-quota-recovery.sh
 	@./.github/scripts/tests/test-test-direct-module-recipe.sh
 	@./.github/scripts/tests/test-test-all-direct-module-recipes.sh
 	@./.github/scripts/tests/test-test-all-recipe-pack-entries.sh

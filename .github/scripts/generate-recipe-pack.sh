@@ -31,6 +31,11 @@ PACK_NAME="${2:-biceprecipepack}"
 OUTPUT_FILE="${3:-recipe-pack.bicep}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+if [[ -n "${RTC_ACI_TEST_DESIRED_COUNT+x}" && "${RTC_ACI_TEST_DESIRED_COUNT}" != 1 ]]; then
+    echo "Error: RTC_ACI_TEST_DESIRED_COUNT must be 1 when set." >&2
+    exit 1
+fi
+
 # Determine recipe type from pack name
 if [[ "$PACK_NAME" == *"terraform"* ]]; then
     RECIPE_TYPE="terraform"
@@ -44,16 +49,22 @@ echo "==> Generating recipe pack '$PACK_NAME' from $RECIPE_TYPE recipes in $REPO
 
 # Find recipe directories based on type
 RECIPE_DIRS=()
+recipe_folders=$("$SCRIPT_DIR/list-recipe-folders.sh" "$REPO_ROOT" "$RECIPE_TYPE")
 while IFS= read -r line; do
     if [[ "$RECIPE_TYPE" == "bicep" ]] && [[ "$line" == *"/bicep" ]] && ls "$line"/*.bicep &>/dev/null; then
         RECIPE_DIRS+=("$line")
     elif [[ "$RECIPE_TYPE" == "terraform" ]] && [[ "$line" == *"/terraform" ]] && [[ -f "$line/main.tf" ]]; then
         RECIPE_DIRS+=("$line")
     fi
-done < <("$SCRIPT_DIR"/list-recipe-folders.sh "$REPO_ROOT" "$RECIPE_TYPE")
+done <<<"$recipe_folders"
 
 if [[ ${#RECIPE_DIRS[@]} -eq 0 ]]; then
     echo "==> No $RECIPE_TYPE recipes found"
+    # Callers use output-file existence to decide whether to deploy a pack.
+    if ! rm -f -- "$OUTPUT_FILE"; then
+        echo "Error: Could not remove stale recipe pack output '$OUTPUT_FILE'" >&2
+        exit 1
+    fi
     exit 0
 fi
 
@@ -107,8 +118,16 @@ for recipe_dir in "${RECIPE_DIRS[@]}"; do
         kind: '$RECIPE_KIND'
         source: '$TEMPLATE_PATH'
         plainHttp: true
-      }
 EOF
+    if [[ "${RTC_ACI_TEST_DESIRED_COUNT:-}" == 1 &&
+          "$RESOURCE_TYPE" == Radius.Compute/containers && "$RECIPES_SUBPATH" == azure/bicep ]]; then
+        cat >> "$OUTPUT_FILE" <<'EOF'
+        parameters: {
+          desiredCount: 1
+        }
+EOF
+    fi
+    echo "      }" >> "$OUTPUT_FILE"
 done
 
 # Close the Bicep template
