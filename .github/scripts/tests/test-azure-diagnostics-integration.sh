@@ -77,13 +77,13 @@ cat >"$TEST_ROOT/bin/timeout" <<'EOF'
 #!/bin/bash
 [[ "$1" == --kill-after=5s ]] || exit 97
 case "$2 $3 $4" in
-    "100s node "*|"30s az resource") ;;
+    "100s node "*|"30s az resource"|"30s kubectl delete") ;;
     "5s node "*)
         if [[ "${CAPTURE_HANG:-0}" == 1 ]]; then
             shift 2
             exec "$REAL_TIMEOUT" --kill-after=1s 1s "$@"
         fi ;;
-    "15m bash -c"|"3m rad app"|[0-9]*"s bash -c")
+    "15m bash -c"|"3m rad app"|"6m rad app"|[0-9]*"s bash -c")
         echo "bounded $2 $3 $4" >>"$CALL_LOG"
         if [[ "${DEPLOY_HANG:-0}" == 1 || "${CLEANUP_HANG:-0}" == 1 ||
               ( "${ASSERT_HANG:-0}" == 1 && "$5" == *rtc_assert_recipe_result* ) ]]; then

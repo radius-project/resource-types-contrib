@@ -35,17 +35,34 @@ if ! command -v az >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "Deleting Azure resource group '$AZURE_RESOURCE_GROUP'"
 SUB_ARGS=()
 if [[ -n "${AZURE_SUBSCRIPTION_ID:-}" ]]; then
     SUB_ARGS+=(--subscription "$AZURE_SUBSCRIPTION_ID")
 fi
 
-if ! timeout --kill-after=5s 12m az group delete --name "$AZURE_RESOURCE_GROUP" --yes "${SUB_ARGS[@]}"; then
+if ! exists="$(timeout --kill-after=5s 30s az group exists --name "$AZURE_RESOURCE_GROUP" "${SUB_ARGS[@]}" --output tsv)"; then
+    echo "Error: Could not verify Azure resource group existence; capacity release is not confirmed." >&2
+    exit 1
+fi
+if [[ "$exists" == false ]]; then
+    echo "Azure resource group '$AZURE_RESOURCE_GROUP' is already absent; deletion confirmed"
+    exit 0
+elif [[ "$exists" != true ]]; then
+    echo "Error: Unexpected Azure resource group existence response; capacity release is not confirmed." >&2
+    exit 1
+fi
+
+echo "Deleting Azure resource group '$AZURE_RESOURCE_GROUP'"
+delete_status=0
+timeout --kill-after=5s 12m az group delete --name "$AZURE_RESOURCE_GROUP" --yes "${SUB_ARGS[@]}" || delete_status=$?
+if ! exists="$(timeout --kill-after=5s 30s az group exists --name "$AZURE_RESOURCE_GROUP" "${SUB_ARGS[@]}" --output tsv)"; then
+    echo "Error: Could not verify Azure resource group deletion; capacity release is not confirmed." >&2
+    exit 1
+fi
+if [[ "$delete_status" != 0 ]]; then
     echo "Error: Azure resource group deletion failed or timed out; capacity release is not confirmed." >&2
     exit 1
 fi
-exists="$(timeout --kill-after=5s 30s az group exists --name "$AZURE_RESOURCE_GROUP" "${SUB_ARGS[@]}" --output tsv)"
 if [[ "$exists" != false ]]; then
     echo "Error: Azure resource group '$AZURE_RESOURCE_GROUP' still exists; capacity release is not confirmed." >&2
     exit 1
