@@ -1,0 +1,164 @@
+# yaml-language-server: $schema=https://www.schemastore.org/github-workflow.json
+---
+name: Validate Azure ACI Recipes
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Compute/containers/**"
+      - "Compute/persistentVolumes/**"
+      - "Security/secrets/**"
+      - "recipe-packs/azure-aci/**"
+      - ".github/workflows/validate-azure-aci-recipes.yaml"
+      - ".github/workflows/test-azure-aci.yaml"
+      - ".github/scripts/**"
+      - ".github/build/**"
+      - "Makefile"
+  # Credentials are available only after the trust and exact-head approval gates.
+  pull_request_target:
+    branches: [main]
+  merge_group:
+    types: [checks_requested]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Radius version number to use."
+        required: false
+        default: edge
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: validate-azure-aci-recipes-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  check-paths:
+    name: Check ACI Paths
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      aci-changed: ${{ steps.result.outputs.aci-changed }}
+    steps:
+      - name: Detect ACI file changes
+        id: filter
+        if: github.event_name == 'pull_request_target'
+        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
+        with:
+          use_rest_api: true
+          files: |
+            Compute/containers/**
+            Compute/persistentVolumes/**
+            Security/secrets/**
+            recipe-packs/azure-aci/**
+            .github/workflows/validate-azure-aci-recipes.yaml
+            .github/workflows/test-azure-aci.yaml
+            .github/scripts/**
+            .github/build/**
+            Makefile
+
+      - name: Set result
+        id: result
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ANY_MODIFIED: ${{ steps.filter.outputs.any_modified }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == pull_request_target ]]; then
+            echo "aci-changed=$ANY_MODIFIED" >> "$GITHUB_OUTPUT"
+          else
+            echo "aci-changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  check-trust:
+    name: Check ACI Trust
+    needs: check-paths
+    if: github.event_name == 'pull_request_target' && needs.check-paths.outputs.aci-changed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      is-external: ${{ steps.check.outputs.is-external }}
+    steps:
+      - name: Determine trust level
+        id: check
+        env:
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$HEAD_REPO" == "$BASE_REPO" ]]; then
+            echo "is-external=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "is-external=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Keep the protected Environment on this gate, not the OIDC credential job.
+  # Approve only after reviewing all executable code at this exact head SHA.
+  approval-gate:
+    name: ACI Approval Gate
+    needs: check-trust
+    if: needs.check-trust.outputs.is-external == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: azure
+    steps:
+      - name: Approved
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          echo "Approving PR #$PR_NUMBER from $HEAD_REPO at $HEAD_SHA"
+          echo "Approval grants Azure credentials to this exact head SHA."
+
+  validate-aci:
+    name: ACI deployment tests
+    needs: [check-paths, check-trust, approval-gate]
+    if: |
+      !cancelled() &&
+      needs.check-paths.outputs.aci-changed == 'true' &&
+      (
+        (github.event_name == 'pull_request_target' &&
+         needs.check-trust.result == 'success' &&
+         (needs.approval-gate.result == 'success' ||
+          (needs.approval-gate.result == 'skipped' && needs.check-trust.outputs.is-external == 'false'))) ||
+        (github.event_name != 'pull_request_target' &&
+         needs.check-trust.result == 'skipped' &&
+         needs.approval-gate.result == 'skipped')
+      )
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/test-azure-aci.yaml
+    with:
+      version: ${{ inputs.version || 'edge' }}
+      checkout_ref: ${{ github.event.pull_request.head.sha || github.sha }}
+    secrets: inherit
+
+  aci-validation-result:
+    name: Validate Azure ACI Recipes
+    needs: [check-paths, validate-aci]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Report validation result
+        env:
+          PATH_RESULT: ${{ needs.check-paths.result }}
+          ACI_CHANGED: ${{ needs.check-paths.outputs.aci-changed }}
+          TEST_RESULT: ${{ needs.validate-aci.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$PATH_RESULT" == success && "$ACI_CHANGED" == false ]]; then
+            echo "No ACI files changed; skipping ACI recipe validation."
+          elif [[ "$PATH_RESULT" == success && "$ACI_CHANGED" == true && "$TEST_RESULT" == success ]]; then
+            echo "ACI recipe validation passed."
+          else
+            echo "::error::ACI validation did not pass (paths=$PATH_RESULT, changed=$ACI_CHANGED, tests=$TEST_RESULT)."
+            exit 1
+          fi

@@ -11,6 +11,8 @@ on:
       - "**/test/app.bicep"
       - "recipe-packs/**"
       - ".github/workflows/validate-azure-recipes.yaml"
+      - ".github/workflows/validate-azure-aci-recipes.yaml"
+      - ".github/workflows/test-azure-aci.yaml"
       - ".github/scripts/**"
       - ".github/build/**"
       - "Makefile"
@@ -69,6 +71,8 @@ jobs:
             **/test/app.bicep
             recipe-packs/**
             .github/workflows/validate-azure-recipes.yaml
+            .github/workflows/validate-azure-aci-recipes.yaml
+            .github/workflows/test-azure-aci.yaml
             .github/scripts/**
             .github/build/**
             Makefile
@@ -186,14 +190,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     name: Validate Azure ${{ matrix.recipe }} Recipes
-    concurrency:
-      group: azure-recipe-test-capacity
-      cancel-in-progress: false
-      queue: max
     env:
       RTC_TEST_DIAGNOSTICS_DIR: azure-test-diagnostics
       RTC_TEST_PLATFORM: azure
-      RTC_ACI_TEST_DESIRED_COUNT: "1"
+      RTC_ACI_TEST_SCOPE: exclude
     strategy:
       fail-fast: false
       matrix:

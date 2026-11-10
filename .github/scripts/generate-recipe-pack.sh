@@ -49,13 +49,14 @@ echo "==> Generating recipe pack '$PACK_NAME' from $RECIPE_TYPE recipes in $REPO
 
 # Find recipe directories based on type
 RECIPE_DIRS=()
+recipe_folders=$("$SCRIPT_DIR/list-recipe-folders.sh" "$REPO_ROOT" "$RECIPE_TYPE")
 while IFS= read -r line; do
     if [[ "$RECIPE_TYPE" == "bicep" ]] && [[ "$line" == *"/bicep" ]] && ls "$line"/*.bicep &>/dev/null; then
         RECIPE_DIRS+=("$line")
     elif [[ "$RECIPE_TYPE" == "terraform" ]] && [[ "$line" == *"/terraform" ]] && [[ -f "$line/main.tf" ]]; then
         RECIPE_DIRS+=("$line")
     fi
-done < <("$SCRIPT_DIR"/list-recipe-folders.sh "$REPO_ROOT" "$RECIPE_TYPE")
+done <<<"$recipe_folders"
 
 if [[ ${#RECIPE_DIRS[@]} -eq 0 ]]; then
     echo "==> No $RECIPE_TYPE recipes found"

@@ -215,6 +215,53 @@ for value in '' 0 2 invalid; do
     if RTC_ACI_TEST_DESIRED_COUNT="$value" bash "$REPO_ROOT/.github/scripts/generate-recipe-pack.sh" "$FIXTURE" basic "$PACK" \
         >/dev/null 2>&1; then fail "invalid CI count must fail"; fi
 done
+
+for scope in only exclude; do
+    RTC_ACI_TEST_SCOPE="$scope" RECIPE_PLATFORM_FILTER=azure \
+        bash "$REPO_ROOT/.github/scripts/generate-recipe-pack.sh" "$FIXTURE" basic "$PACK" >/dev/null
+    if [[ "$scope" == only ]]; then
+        grep -q "'Radius.Compute/containers':" "$PACK" || fail "ACI-only pack lost containers"
+        ! grep -q "'Radius.Security/secrets':" "$PACK" || fail "ACI-only scope included independent recipes"
+    else
+        ! grep -q "'Radius.Compute/containers':" "$PACK" || fail "general Azure pack included ACI"
+        grep -q "'Radius.Security/secrets':" "$PACK" || fail "general Azure pack lost secrets"
+    fi
+done
+if RTC_ACI_TEST_SCOPE=invalid bash "$REPO_ROOT/.github/scripts/generate-recipe-pack.sh" \
+    "$FIXTURE" basic "$PACK" >/dev/null 2>&1; then fail "invalid scope must fail generation"; fi
+
+mkdir -p "$FIXTURE/.github/scripts"
+cat >"$FIXTURE/.github/scripts/test-recipe.sh" <<'EOF'
+#!/bin/bash
+echo "$1" >>"$CALL_LOG"
+EOF
+chmod +x "$FIXTURE/.github/scripts/test-recipe.sh"
+for scope in only exclude; do
+    : >"$CALL_LOG"
+    (cd "$FIXTURE" && RTC_ACI_TEST_SCOPE="$scope" RECIPE_PLATFORM_FILTER=azure \
+        bash "$REPO_ROOT/.github/scripts/test-all-recipes.sh" "$FIXTURE" default bicep >/dev/null) ||
+        fail "scoped per-recipe runner"
+    [[ "$(wc -l <"$CALL_LOG")" == 1 ]] || fail "each scope must select exactly one fixture recipe"
+    if [[ "$scope" == only ]]; then
+        grep -q '/Compute/containers/recipes/azure/bicep$' "$CALL_LOG" || fail "ACI runner selected wrong recipe"
+    else
+        grep -q '/Security/secrets/recipes/azure/bicep$' "$CALL_LOG" || fail "general Azure runner selected ACI"
+    fi
+done
+: >"$CALL_LOG"
+RTC_ACI_TEST_SCOPE=exclude RECIPE_PLATFORM_FILTER=azure \
+    bash "$REPO_ROOT/.github/scripts/list-recipe-folders.sh" "$FIXTURE" terraform >"$TEST_ROOT/folders"
+grep -q '/Compute/containers/recipes/azure/terraform$' "$TEST_ROOT/folders" ||
+    fail "ACI exclusion must not suppress Terraform"
+if RTC_ACI_TEST_SCOPE=invalid bash "$REPO_ROOT/.github/scripts/test-all-recipes.sh" \
+    "$FIXTURE" default bicep >/dev/null 2>&1; then fail "invalid scope must fail testing"; fi
+mkdir -p "$TEST_ROOT/empty-repo"
+if RTC_ACI_TEST_SCOPE=only bash "$REPO_ROOT/.github/scripts/test-all-recipes.sh" \
+    "$TEST_ROOT/empty-repo" default bicep >"$TEST_ROOT/empty-output" 2>&1; then
+    fail "an empty ACI test scope must not pass"
+fi
+grep -q 'Error: no ACI recipes found to test.' "$TEST_ROOT/empty-output" ||
+    fail "empty ACI scope needs an explicit error"
 grep -q '^param desiredCount int = 3$' \
     "$REPO_ROOT/Compute/containers/recipes/azure/bicep/azure-aci-containers.bicep" || fail "production count changed"
 if grep -q desiredCount "$REPO_ROOT/recipe-packs/azure-aci/azure-aci.bicep"; then
@@ -224,28 +271,94 @@ fi
 python3 - "$REPO_ROOT" <<'PY'
 import pathlib
 import re
+import os
+import subprocess
 import sys
+import tempfile
+import textwrap
 
 root = pathlib.Path(sys.argv[1])
+workflow_dir = root / ".github/workflows"
+
 for workflow, job, kind in (
     ("validate-azure-recipes", "validate-azure-recipes", None),
     ("nightly-recipe-pack-tests", "nightly-azure-recipe-pack-tests", "nightly"),
     ("release-candidate-recipe-pack-tests", "rc-azure-recipe-pack-tests", "rc"),
 ):
-    source = (root / ".github/workflows" / f"{workflow}.yaml").read_text()
+    source = (workflow_dir / f"{workflow}.yaml").read_text()
     body = re.search(rf"^  {job}:\n(.*?)(?=^  [\w-]+:|\Z)", source, re.M | re.S).group(1)
-    assert re.search(r"^    concurrency:\n      group: azure-recipe-test-capacity\n"
-                     r"      cancel-in-progress: false\n      queue: max$", body, re.M), workflow
+    assert "concurrency:" not in body, workflow
+    assert "RTC_ACI_TEST_SCOPE: exclude" in body, workflow
+    assert "RTC_ACI_TEST_DESIRED_COUNT" not in body, workflow
     if kind:
         assert re.search(r"if: always\(\).*cleanup-run-groups " + kind, body, re.S), workflow
     else:
-        assert 'RTC_ACI_TEST_DESIRED_COUNT: "1"' in body
         assert "cancel-in-progress: true" not in source
-    if kind == "nightly":
-        basic = body.split("- name: Test Azure Bicep recipes", 1)[1]
-        assert 'RTC_ACI_TEST_DESIRED_COUNT: "1"' in basic.split("- name:", 1)[0]
-        assert 'RTC_ACI_TEST_DESIRED_COUNT: "1"' not in body.split("- name: Test Azure Bicep recipes", 1)[0]
-print("Azure capacity queue checks passed")
+
+worker = (workflow_dir / "test-azure-aci.yaml").read_text()
+assert "group: azure-aci-test-capacity-${{ needs.select-slot.outputs.slot }}" in worker
+assert "cancel-in-progress: false\n      queue: max" in worker
+slot_command = re.search(r'run: (echo "slot=.*)', worker).group(1)
+slots = set()
+with tempfile.TemporaryDirectory(prefix="rtc-aci-slots-") as directory:
+    output = pathlib.Path(directory) / "output"
+    for run_id in range(42686076121, 42686076133):
+        output.write_text("")
+        subprocess.run(["bash", "-c", slot_command], check=True,
+                       env={**os.environ, "GITHUB_RUN_ID": str(run_id), "GITHUB_OUTPUT": str(output)})
+        slot = int(output.read_text().strip().split("=")[1])
+        assert slot == run_id % 4
+        slots.add(slot)
+assert slots == {0, 1, 2, 3}
+assert re.search(r"name: Release ACI capacity.*?if: always\(\).*?run: make cleanup-azure-resources",
+                 worker, re.S)
+assert "rrttest-${{ github.run_id }}-${{ github.run_attempt }}-aci" in worker
+assert "RTC_ACI_TEST_SCOPE: only" in worker
+assert "RTC_ACI_TEST_SCOPE=only RECIPE_PLATFORM_FILTER=azure make test" in worker
+assert 'if [[ "$RELEASE_CANDIDATE" != true ]]; then\n            export RTC_ACI_TEST_DESIRED_COUNT=1' in worker
+pack_step = worker.split("- name: Test checked-in ACI Recipe Pack entry", 1)[1].split("- name:", 1)[0]
+assert "RTC_ACI_TEST_DESIRED_COUNT" not in pack_step
+for step_name in ("Deploy checked-in ACI Recipe Pack", "Test checked-in ACI Recipe Pack entry",
+                  "Test generated ACI Bicep recipe"):
+    step = worker.split(f"- name: {step_name}", 1)[1].split("- name:", 1)[0]
+    assert "continue-on-error:" not in step, step_name
+assert "RECIPE_PACK_USE_LOCAL_RECIPES: ${{ !inputs.release_candidate && 'true' || 'false' }}" in worker
+assert "prepare-release-candidate-sources.sh" in worker
+assert "verify-recipe-pack-sources.sh" in worker
+ci = (workflow_dir / "validate-azure-aci-recipes.yaml").read_text()
+assert "pull_request_target:" in ci and "merge_group:" in ci
+assert "environment: azure" in ci
+assert "needs.check-trust.result == 'success'" in ci
+assert "needs.approval-gate.result == 'success'" in ci
+assert "needs.check-trust.outputs.is-external == 'false'" in ci
+assert "checkout_ref: ${{ github.event.pull_request.head.sha || github.sha }}" in ci
+assert "uses: ./.github/workflows/test-azure-aci.yaml" in ci
+result_job = ci.split("  aci-validation-result:", 1)[1]
+assert "if: always()" in result_job
+result_command = textwrap.dedent(result_job.split("        run: |\n", 1)[1])
+for path_result in ("success", "failure", "cancelled", "skipped"):
+    for changed in ("true", "false", "", "invalid"):
+        for test_result in ("success", "failure", "cancelled", "skipped"):
+            result = subprocess.run(
+                ["bash", "-c", result_command], capture_output=True, text=True,
+                env={**os.environ, "PATH_RESULT": path_result,
+                     "ACI_CHANGED": changed, "TEST_RESULT": test_result})
+            should_pass = path_result == "success" and (
+                changed == "false" or changed == "true" and test_result == "success")
+            assert (result.returncode == 0) == should_pass, (
+                path_result, changed, test_result, result.stdout, result.stderr)
+            if not should_pass:
+                assert "::error::ACI validation did not pass" in result.stdout
+nightly = (workflow_dir / "nightly-azure-aci-tests.yaml").read_text()
+assert nightly.count('cron: "0 9 * * *"') == 1
+assert "uses: ./.github/workflows/test-azure-aci.yaml" in nightly
+assert "test_checked_in_pack: true" in nightly
+rc = (workflow_dir / "release-candidate-recipe-pack-tests.yaml").read_text()
+assert "rc-azure-aci-tests:" in rc and "release_candidate: true" in rc
+assert "uses: ./.github/workflows/test-azure-aci.yaml" in rc
+assert "azure-recipe-test-capacity" not in "".join(
+    path.read_text() for path in workflow_dir.glob("*.yaml"))
+print("ACI workflow isolation and four-slot checks passed")
 PY
 
 echo "ACI quota recovery tests passed"
