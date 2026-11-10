@@ -43,6 +43,45 @@ This command:
 - Updates `bicepconfig.json` to reference the extension
 - Enables IntelliSense and validation in your Bicep files
 
+The extension package is stored beside its schema. For example,
+`Data/mySqlDatabases/mySqlDatabases.yaml` produces
+`Data/mySqlDatabases/mySqlDatabases.yaml-extension.tgz`. Keeping the full path
+and schema suffix prevents collisions between categories, type folders, and
+`.yaml`/`.yml` files.
+
+Run the config updater from the repository root. It adds a path-based alias
+such as `Data_mySqlDatabases_mySqlDatabases_yaml` and keeps the short
+`mySqlDatabases` alias when only one package uses that basename. Existing
+`extension mySqlDatabases` statements therefore continue to work.
+If two schemas have the same basename, use their path-based aliases instead:
+
+```bicep
+extension Data_shared_shared_yaml
+extension Messaging_shared_shared_yaml
+```
+
+Path-based aliases replace each character other than a letter, digit, or
+underscore with an underscore. If this produces duplicate aliases, the updater
+fails without replacing the config. Rename the conflicting schema or folder.
+The aliases `radius` and `aws` are reserved for the base extensions.
+
+Old root-level packages such as `mySqlDatabases-extension.tgz` remain supported
+until the schema is rebuilt. The updater then prefers the new package, even
+if the old file remains on disk. It removes a generated local short alias when
+that basename becomes ambiguous, but keeps an explicit remote alias for that
+basename. Unrelated config settings remain unchanged. Duplicate legacy packages
+cause an error until the schemas are rebuilt. Scripts that read an old package
+path directly must switch to the new path; the build does not write a second
+copy at the old path.
+
+Run the offline path and config regression tests with Bash, `jq`, and `make`:
+
+```bash
+make test-resource-type-extensions
+```
+
+These tests use a stub `rad`. They do not require a cluster or registry access.
+
 ### 3. Build Your Recipes
 
 #### Bicep Recipe

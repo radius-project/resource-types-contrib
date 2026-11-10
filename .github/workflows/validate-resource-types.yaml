@@ -64,6 +64,9 @@ jobs:
       - name: Run workspace bootstrap tests
         run: make test-workspace-bootstrap
 
+      - name: Run resource type extension tests
+        run: make test-resource-type-extensions
+
       - name: Run recipe namespace tests
         run: make test-recipe-namespace
 
