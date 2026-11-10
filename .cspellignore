@@ -1,6 +1,7 @@
 appdb
 binfmt
 buildkitd
+centralus
 Dapr
 daprconfigurationstores
 daprpubsubbrokers
@@ -19,6 +20,7 @@ pgvector
 rrttest
 SLSA
 tmpfs
+urandom
 vnet
 westus
 ededed

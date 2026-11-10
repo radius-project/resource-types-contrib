@@ -52,9 +52,9 @@ resource-types-contrib/
     ├── azure-aci/                    # Azure ACI recipe pack (containers on ACI; Azure Files + Key Vault)
     │       ├── README.md                  # Documentation for the Azure ACI recipe pack
     │       └── azure-aci.bicep            # Recipe pack wiring the Bicep recipes
-    ├── aws-eks/                      # AWS recipe pack (planned; containers on EKS, with aws-ecs for ECS to follow)
-    │       ├── README.md
-    │       └── aws-eks.bicep
+    ├── aws-eks/                      # AWS EKS recipe pack (AWS services; containers on EKS)
+    │       ├── README.md                  # Documentation for the AWS EKS recipe pack
+    │       └── aws-eks.bicep              # Recipe pack wiring the Bicep recipes
     └── kubernetes/           # Kubernetes recipe pack (zero-config, in-cluster)
             ├── README.md
             └── default.bicep
@@ -297,7 +297,7 @@ A brief description of what the Recipe does and how to use it.
 
 ## Recipes and Recipe Packs
 
-Recipes for a Resource Type are added to the platform Recipe Packs under `recipe-packs/` at the repository root. Each pack has its own folder (`azure-aks/`, `azure-aci/`, and `kubernetes/` today, with `aws-eks/` and `aws-ecs/` planned) containing a Bicep file named after the pack (for example `azure-aks/azure-aks.bicep`) that wires its recipes. Each Recipe Pack file declares only a `Radius.Core/recipePacks` resource whose `recipes` map contains an entry for each Resource Type it covers. Environment creation, provider configuration, and Recipe Pack association are separate deployment responsibilities.
+Recipes for a Resource Type are added to the platform Recipe Packs under `recipe-packs/` at the repository root. Each pack has its own folder (`azure-aks/`, `azure-aci/`, `aws-eks/`, and `kubernetes/` today, with `aws-ecs/` planned) containing a Bicep file named after the pack (for example `azure-aks/azure-aks.bicep`) that wires its recipes. Each Recipe Pack file declares only a `Radius.Core/recipePacks` resource whose `recipes` map contains an entry for each Resource Type it covers. Environment creation, provider configuration, and Recipe Pack association are separate deployment responsibilities.
 
 Today Radius supports Bicep and Terraform Recipe drivers, so a Recipe can be a Bicep template or a Terraform configuration. It can also point to well-maintained community modules like the [Azure Verified Modules](https://azure.github.io/Azure-Verified-Modules/) or the [AWS Terraform modules](https://registry.terraform.io/namespaces/terraform-aws-modules). When pointing at a standard module, Radius resolves any `{{context.*}}` expressions in the Recipe's `parameters` against the resource being deployed and maps the module's outputs onto the resource's read-only properties via the `outputs` field, so no Radius-specific wrapping is required.
 
@@ -353,6 +353,8 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
 
 ### Recipe Guidelines
 
+- Published Bicep recipes use `edge` for main and `latest` for the newest stable Radius release. The **Publish Bicep Recipes** workflow requires an existing public Radius release for `release_version`; this version is independent of namespace and Recipe Pack versions. It publishes source-SHA and full-version tags first, then promotes `latest` from the attested digest after all recipes succeed. A newer full-version tag prevents an older manual run from moving `latest`. Retain those full-version tags, and finish a failed newer publication rather than promoting an older version over it. `pin_only` publishes only the immutable source pin and never moves aliases.
+- Every publication, including `pin_only` and retries, rebuilds the checked-out recipe into an internal `build-<source-sha>` staging tag. The publisher uses the digest reported by `rad`, verifies the staging readback, and reuses source-SHA and full-version tags only when they match that build. A conflict fails without overwriting those tags or recording an attestation subject, including when a compiler or dependency change alters the build. Alias promotion remains digest-only. Run `make test-release-automation` with Bash and jq for the offline publication and alias regressions.
 - Prefer standard, versioned modules (for example, Azure Verified Modules) where available, and pin the version with the `:<tag>` syntax so deployments are reproducible.
 - Recipes should be idempotent, meaning they can be run multiple times without causing issues.
 - Map developer-authored properties (such as `size`) onto concrete infrastructure settings using `{{context.*}}` parameter expressions rather than exposing platform-specific properties on the Resource Type.

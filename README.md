@@ -37,9 +37,9 @@ resource-types-contrib/
     ├── azure-aci/                      # Azure ACI recipe pack (containers on ACI; Azure Files + Key Vault)
     │       ├── README.md               # Documentation for the Azure ACI recipe pack
     │       └── azure-aci.bicep         # Recipe pack wiring the Bicep recipes
-    ├── aws-eks/                        # AWS recipe pack (planned; containers on EKS, with aws-ecs for ECS to follow)
-    │       ├── README.md
-    │       └── aws-eks.bicep
+    ├── aws-eks/                        # AWS EKS recipe pack (AWS services; containers on EKS)
+    │       ├── README.md               # Documentation for the AWS EKS recipe pack
+    │       └── aws-eks.bicep           # Recipe pack wiring the Bicep recipes
     ├── kubernetes/                     # Kubernetes recipe pack (zero-config, in-cluster)
             ├── README.md
             └── default.bicep
@@ -51,6 +51,8 @@ resource-types-contrib/
 Developers can discover the Resource Types in this repository and use them in a Radius application, and platform engineers can use the Recipe Packs to configure how those types are provisioned in an Environment. For a step-by-step guide on discovering, registering, and using Resource Types and Recipe Packs, see [Discovering and Using Resource Types and Recipe Packs](docs/using-resource-types.md).
 
 Every Resource Type in this repository can be registered via `rad resource-type create`. A subset is also registered as defaults in Radius, so they are available out of the box without any user action. The default resource types are paired with the default Recipe Pack under `recipe-packs/kubernetes/`, a zero-config, in-cluster Kubernetes pack that ships out of the box, so they can be deployed without any cloud provider configuration. The list of default resource types is managed in the [Radius repository](https://github.com/radius-project/radius) via [`deploy/manifest/defaults.yaml`](https://github.com/radius-project/radius/blob/main/deploy/manifest/defaults.yaml).
+
+Kubernetes PostgreSQL enables TLS with a generated self-signed development certificate by default. Use an operator-managed TLS Secret and client CA trust for verified identity; see [PostgreSQL Kubernetes TLS](Data/postgreSqlDatabases/README.md#kubernetes-tls).
 
 ## Contributing
 

@@ -32,6 +32,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=.github/scripts/lib-recipe-packs.sh
 source "$SCRIPT_DIR/lib-recipe-packs.sh"
+# shellcheck source=.github/scripts/lib-azure-postgres-test.sh
+source "$SCRIPT_DIR/lib-azure-postgres-test.sh"
 
 if [[ $# -lt 1 ]]; then
     echo "Usage: $0 <platform-group> [workspace] [environment]" >&2
@@ -41,8 +43,25 @@ fi
 platform_group="$1"
 workspace_name="${2:-default}"
 environment_name="${3:-default}"
+entry_phase="${RTC_AZURE_PACK_ENTRY_PHASE:-all}"
+
+if [[ "$platform_group" == azure && -n "${RTC_AZURE_SELECTION_FILE+x}" ]]; then
+    case "$entry_phase" in
+        all | postgres | unrelated) ;;
+        *) echo "Error: invalid Azure Recipe Pack entry phase '$entry_phase'." >&2; exit 1 ;;
+    esac
+elif [[ "$entry_phase" != all ]]; then
+    echo "Error: Azure entry phases require a PostgreSQL selection file." >&2
+    exit 1
+fi
 
 pack_list="$(rtc_recipe_packs_for_platform_group "$platform_group")"
+if [[ "$platform_group" == azure && -n "${RTC_AZURE_SELECTION_FILE+x}" &&
+    "$entry_phase" == all ]]; then
+    # Use the shared PostgreSQL deadline before unrelated cloud deployments.
+    pack_list="$(awk '$0 == "azure-aks" {print; next}
+        {rest = rest $0 ORS} END {printf "%s", rest}' <<<"$pack_list")"
+fi
 packs=()
 if [[ -n "$pack_list" ]]; then
     mapfile -t packs <<<"$pack_list"
@@ -72,15 +91,90 @@ skip_reason() {
 # Checks a cloud dependency immediately before its entry deploys, so a known
 # provider capacity limit is reported as such instead of as a recipe failure.
 preflight() {
+    postgres_test_size=S
+    postgres_deadline=""
     case "$platform_group:$1" in
         azure:Data/postgreSqlDatabases)
-            "$SCRIPT_DIR/probe-azure-postgres-capacity.sh"
+            rtc_validate_postgres_test_pack "$template" || return 1
+            local location selection_status
+            local -a subscription_args=()
+            [[ -z "${AZURE_SUBSCRIPTION_ID:-}" ]] || subscription_args=(--subscription "$AZURE_SUBSCRIPTION_ID")
+            if [[ -z "${AZURE_RESOURCE_GROUP:-}" ]] ||
+                ! location=$(timeout --kill-after=5s 30s az group show --name "$AZURE_RESOURCE_GROUP" \
+                    "${subscription_args[@]}" --query location --output tsv) ||
+                [[ ! "$location" =~ ^[a-z0-9]+$ ]]; then
+                echo "Error: PostgreSQL selection requires the existing resource group's region." >&2
+                return 1
+            fi
+            postgres_deadline=$(( $(date +%s) + 1800 ))
+            if [[ -n "${RTC_AZURE_SELECTION_FILE+x}" ]]; then
+                if [[ ! -f "$RTC_AZURE_SELECTION_FILE" ]] || ! jq -e '
+                    type == "object" and .version == 1 and
+                    (.status == "selected" or .status == "capacity_exhausted" or
+                     .status == "unsupported" or .status == "restricted" or
+                     .status == "catalog_unavailable" or .status == "probe_error" or
+                     .status == "deadline_exceeded") and
+                    (if has("deadlineEpochSeconds") then
+                        (.deadlineEpochSeconds | type == "number" and floor == . and . > 0 and . < 100000000000)
+                     else true end) and
+                    (if .status == "selected" then
+                        (.postgres.size == "S" or .postgres.size == "M") and
+                        (.location | type == "string")
+                     else true end)
+                ' "$RTC_AZURE_SELECTION_FILE" >/dev/null 2>&1; then
+                    echo "Error: PostgreSQL selection file is missing or malformed." >&2
+                    return 1
+                fi
+                selection_status=$(jq -r '.status' "$RTC_AZURE_SELECTION_FILE")
+                if [[ "$selection_status" != selected ]]; then
+                    echo "Error: PostgreSQL capacity selection failed: $selection_status." >&2
+                    return 1
+                fi
+                if [[ "$(jq -r '.location' "$RTC_AZURE_SELECTION_FILE")" != "$location" ]]; then
+                    echo "Error: PostgreSQL selection region differs from the existing resource group." >&2
+                    return 1
+                fi
+                postgres_test_size=$(jq -r '.postgres.size' "$RTC_AZURE_SELECTION_FILE")
+                rtc_postgres_test_tuple "$postgres_test_size" || return 1
+                if ! jq -e --arg sku "$postgres_sku" --arg tier "$postgres_tier" \
+                    '.postgres.skuName == $sku and .postgres.tier == $tier' "$RTC_AZURE_SELECTION_FILE" >/dev/null; then
+                    echo "Error: PostgreSQL selection size does not match the approved SKU and tier." >&2
+                    return 1
+                fi
+                postgres_deadline=$(jq -r --argjson fallback "$postgres_deadline" \
+                    '.deadlineEpochSeconds // $fallback' "$RTC_AZURE_SELECTION_FILE")
+                if ((postgres_deadline <= $(date +%s))); then
+                    echo "Error: PostgreSQL selection deadline has expired." >&2
+                    return 1
+                fi
+            else
+                # Never relocate an existing group or repeat the full region search.
+                AZURE_LOCATION="$location" RTC_POSTGRES_TEST_SIZE=S \
+                    RTC_POSTGRES_PROBE_ATTEMPTS=1 RTC_POSTGRES_PROBE_WAIT_SECONDS=0 \
+                    RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS=900 \
+                    "$SCRIPT_DIR/probe-azure-postgres-capacity.sh" || return 1
+            fi
             ;;
     esac
 }
 
 for pack_id in "${packs[@]}"; do
     resource_types="$(rtc_list_recipe_pack_types "$pack_id")"
+    if [[ "$platform_group" == azure && -n "${RTC_AZURE_SELECTION_FILE+x}" ]]; then
+        case "$entry_phase" in
+            all)
+                resource_types="$(awk '$0 == "Data/postgreSqlDatabases" {print; next}
+                    {rest = rest $0 ORS} END {printf "%s", rest}' <<<"$resource_types")"
+                ;;
+            postgres)
+                resource_types="$(awk '$0 == "Data/postgreSqlDatabases" {print}' <<<"$resource_types")"
+                ;;
+            unrelated)
+                resource_types="$(awk '$0 != "Data/postgreSqlDatabases" {print}' <<<"$resource_types")"
+                ;;
+        esac
+    fi
+    [[ -n "$resource_types" ]] || continue
     template="$(rtc_recipe_pack_template "$pack_id")"
     pack_name="$(rtc_recipe_pack_name "$template")"
     if [[ -z "$pack_name" ]]; then
@@ -115,6 +209,12 @@ for pack_id in "${packs[@]}"; do
                 mysql_test_mode="verify-transport"
             fi
             test_args+=("$mysql_test_mode")
+        elif [[ "$resource_type_dir" == "Data/postgreSqlDatabases" && "$platform_group" == kubernetes ]]; then
+            if [[ -f "$resource_type_dir/test/test-kubernetes.sh" ]]; then
+                test_args+=("verify-postgresql-transport")
+            else
+                echo "==> Pinned PostgreSQL sources have no transport lifecycle; running the legacy application test."
+            fi
         fi
 
         echo "=============================================================="
@@ -125,7 +225,9 @@ for pack_id in "${packs[@]}"; do
             failures=$((failures + 1))
             continue
         fi
-        if ! RTC_TEST_PLATFORM="$platform_group" "$SCRIPT_DIR/test-recipe-pack-entry.sh" "${test_args[@]}"; then
+        if ! RTC_TEST_PLATFORM="$platform_group" RTC_POSTGRES_TEST_SIZE="$postgres_test_size" \
+            RTC_POSTGRES_TEST_DEADLINE_EPOCH="$postgres_deadline" \
+            "$SCRIPT_DIR/test-recipe-pack-entry.sh" "${test_args[@]}"; then
             echo "==> FAILED: $resource_type_dir (from pack '$pack_id')" >&2
             failures=$((failures + 1))
         fi

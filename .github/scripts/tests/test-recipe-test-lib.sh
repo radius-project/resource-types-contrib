@@ -24,6 +24,8 @@
 set -euo pipefail
 
 command -v jq >/dev/null || { echo "Error: jq is required for these tests." >&2; exit 1; }
+REAL_SLEEP="$(command -v sleep)"
+export REAL_SLEEP
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/rtc-recipe-test-lib-tests-XXXXXX")"
@@ -51,7 +53,19 @@ case "$1 $2" in
         fi
         ;;
     "deploy "*)
-        exit "${DEPLOY_EXIT_CODE:-0}"
+        deploy_attempt=$(grep -c '^rad deploy ' "$CALL_LOG")
+        deploy_exit_code="${DEPLOY_EXIT_CODE:-0}"
+        if (( deploy_attempt <= ${DEPLOY_FAILURES:-0} )); then
+            deploy_exit_code=1
+        fi
+        if [[ "$deploy_exit_code" -ne 0 ]]; then
+            if [[ "$deploy_attempt" -gt 1 && -n "${DEPLOY_ERROR_AFTER_FIRST:-}" ]]; then
+                printf '%s\n' "$DEPLOY_ERROR_AFTER_FIRST" >&2
+            else
+                printf '%s\n' "${DEPLOY_ERROR:-}" >&2
+            fi
+        fi
+        exit "$deploy_exit_code"
         ;;
     "resource show")
         # Used by the containers/postgresql assertion helpers.
@@ -107,6 +121,15 @@ cat >"$MOCK_BIN/az" <<'EOF'
 #!/bin/bash
 echo "az $*" >>"$CALL_LOG"
 case "$1 $2" in
+    "resource list")
+        if [[ "${AZ_RESOURCE_LIST_FAIL:-0}" == 1 ]]; then exit 1; fi
+        if [[ -n "${AZ_RESOURCE_LIST_DELAY_SECONDS:-}" ]]; then sleep "$AZ_RESOURCE_LIST_DELAY_SECONDS"; fi
+        if grep -q '^rad app delete' "$CALL_LOG"; then
+            printf '%s\n' "${AZ_RESOURCES_AFTER:-[]}"
+        else
+            echo '[]'
+        fi
+        ;;
     "lock list")
         lock_list_calls=0
         if [[ -f "$AZ_LOCK_STATE_FILE" ]]; then
@@ -134,6 +157,16 @@ cat >"$MOCK_BIN/openssl" <<'EOF'
 echo "mock-generated-password"
 EOF
 chmod +x "$MOCK_BIN/openssl"
+
+cat >"$MOCK_BIN/sleep" <<'EOF'
+#!/bin/bash
+echo "sleep $*" >>"$CALL_LOG"
+case "$*" in
+    10|20) ;;
+    *) exec "$REAL_SLEEP" "$@" ;;
+esac
+EOF
+chmod +x "$MOCK_BIN/sleep"
 
 run_lib() {
     (
@@ -285,6 +318,7 @@ DEPLOY_EXIT_CODE=0 run_lib rtc_deploy_and_assert_test_app \
     "$TEST_APP_BICEP" "Radius.Data/somethingElse" "rtc-test" "/envs/myenv" "myws" "my-ns" \
     || fail "rtc_deploy_and_assert_test_app should succeed when rad deploy succeeds"
 grep -q '^rad app delete' "$CALL_LOG" || fail "rtc_deploy_and_assert_test_app should delete the app on success"
+assert_eq "1" "$(grep -c '^rad deploy ' "$CALL_LOG")" "successful deployment attempt count"
 assert_app_name() {
     local deployed_name
     deployed_name="$(sed -nE 's/^rad deploy .*--parameters applicationName=([^ ]+).*/\1/p' "$CALL_LOG")"
@@ -302,6 +336,7 @@ if DEPLOY_EXIT_CODE=1 run_lib rtc_deploy_and_assert_test_app \
     fail "rtc_deploy_and_assert_test_app should fail when rad deploy fails"
 fi
 grep -q '^rad app delete' "$CALL_LOG" || fail "rtc_deploy_and_assert_test_app should still attempt app cleanup after a failed deploy"
+assert_eq "1" "$(grep -c '^rad deploy ' "$CALL_LOG")" "ordinary failure attempt count"
 assert_app_name
 
 PREEXISTING_LOCK="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Authorization/locks/existing"
@@ -399,6 +434,13 @@ if grep -q '^rad app delete' "$CALL_LOG"; then
 fi
 
 # Healthy Azure cleanup is not subject to a short harness timeout.
+(
+    : >"$CALL_LOG"
+    if KUBECTL_EXIT_CODE=1 run_lib rtc_cleanup_kubernetes_resources_bounded my-ns testapp >/dev/null 2>&1; then
+        fail "bounded Kubernetes cleanup failures must return failure"
+    fi
+    assert_eq 3 "$(grep -c '^kubectl delete ' "$CALL_LOG")" "bounded cleanup must attempt every kind"
+)
 : >"$CALL_LOG"
 rm -f "$AZ_LOCK_STATE_FILE"
 started_at="$(date +%s)"
@@ -433,6 +475,7 @@ if POSTGRES_JSON='{"properties":{}}' run_lib rtc_deploy_and_assert_test_app \
     fail "post-deploy assertion failure must fail the test"
 fi
 grep -q '^rad app delete' "$CALL_LOG" || fail "assertion failure must still clean up"
+assert_eq "1" "$(grep -c '^rad deploy ' "$CALL_LOG")" "assertion failure deployment attempt count"
 
 : >"$CALL_LOG"
 if CONTAINERS_JSON='{"properties":{}}' run_lib rtc_deploy_and_assert_test_app \
@@ -453,6 +496,187 @@ DEPLOY_EXIT_CODE=0 run_lib rtc_deploy_and_assert_test_app \
     || fail "rtc_deploy_and_assert_test_app should succeed with an auto-generated password"
 grep -Fq -- '--parameters password=Aa1!mock-generated-password' "$CALL_LOG" \
     || fail "rtc_deploy_and_assert_test_app should pass a generated password value to rad deploy"
+
+# Retry only confirmed transient deployment and Terraform provider download failures.
+TRANSIENT_DEPLOY_ERROR='Error: {"code":"ResourceDeploymentFailure","message":"System.IO.IOException: Connection reset by peer","target":"/subscriptions/test/resourceGroups/test/providers/Microsoft.KeyVault/vaults/test"}'
+ACI_CONTAINER_TRANSITION_MESSAGE='Error(s) encountered during update of the Container Scale Set. [{"ErrorCode": "AzureContainerInstance/ContainerGroupTransitioning", "SampleErrorMessage": "The container group is still transitioning, please retry later."}]'
+ACI_CONTAINER_TRANSITION_JSON="$(jq -cn --arg message "$ACI_CONTAINER_TRANSITION_MESSAGE" \
+    '{code:"DeploymentFailed",details:[{code:"ResourceDeploymentFailure",target:"/subscriptions/test/resourceGroups/test/providers/Microsoft.ContainerInstance/ngroups/ngroups-test",details:[{code:"AzureContainerInstance/ContainerGroupTransitioning",message:$message,target:"19bc9d8e-0987-44ca-870f-9a3a524f6c16"}]}]}')"
+ACI_CONTAINER_TRANSITION_ERROR="Error: $ACI_CONTAINER_TRANSITION_JSON"
+ACI_WRONG_TARGET_ERROR="Error: $(jq -cn --argjson error "$ACI_CONTAINER_TRANSITION_JSON" \
+    '$error | .details[0].target |= sub("/ngroups/"; "/other/")')"
+TERRAFORM_DOWNLOAD_ERROR='terraform init failure: exit status 1
+
+Error: Failed to install provider
+
+Error while installing hashicorp/kubernetes v3.4.0: releases.hashicorp.com:
+Get
+"https://releases.hashicorp.com/terraform-provider-kubernetes/3.4.0/terraform-provider-kubernetes_3.4.0_linux_amd64.zip":
+read tcp 10.0.0.1:12345->10.0.0.2:443: read: connection reset by peer'
+WRAPPED_TERRAFORM_ERROR="Deploying resources...
+Error: $(jq -cn --arg message "$TERRAFORM_DOWNLOAD_ERROR" \
+    '{code:"DeploymentFailed",details:[{code:"RecipeDeploymentFailed",message:$message}]}')"
+DEPLOY_LOG_DIR="$TEST_ROOT/deploy-logs"
+mkdir -p "$DEPLOY_LOG_DIR"
+for deploy_error in "$TRANSIENT_DEPLOY_ERROR" "$TERRAFORM_DOWNLOAD_ERROR" "$WRAPPED_TERRAFORM_ERROR"; do
+    for failures in 1 2 3; do
+        : >"$CALL_LOG"
+        retry_status=0
+        TMPDIR="$DEPLOY_LOG_DIR" DEPLOY_FAILURES="$failures" DEPLOY_ERROR="$deploy_error" \
+            run_lib rtc_deploy_and_assert_test_app \
+            "$TEST_APP_WITH_PASSWORD" Radius.Security/secrets rtc-test /envs/myenv myws my-ns \
+            --parameters location=test-location >"$TEST_ROOT/retry-output" 2>&1 || retry_status=$?
+        if [[ "$failures" -lt 3 ]]; then
+            assert_eq "0" "$retry_status" "transient failure recovery"
+            expected_attempts=$((failures + 1))
+        else
+            [[ "$retry_status" -ne 0 ]] || fail "exhausted retries must fail"
+            expected_attempts=3
+        fi
+        assert_eq "$expected_attempts" "$(grep -c '^rad deploy ' "$CALL_LOG")" "bounded deployment attempts"
+        assert_eq "$((expected_attempts - 1))" "$(grep -c '^sleep ' "$CALL_LOG")" "retry delay count"
+        grep -Fxq 'sleep 10' "$CALL_LOG" || fail "first retry must back off for 10 seconds"
+        if [[ "$expected_attempts" -eq 3 ]]; then
+            grep -Fxq 'sleep 20' "$CALL_LOG" || fail "second retry must back off for 20 seconds"
+        fi
+        assert_eq "1" "$(grep '^rad deploy ' "$CALL_LOG" | sort -u | wc -l | tr -d ' ')" \
+            "retries must preserve all deployment arguments, including generated credentials"
+        assert_eq "1" "$(grep -c '^rad app delete ' "$CALL_LOG")" "cleanup after retries"
+        awk '/^rad app delete |^kubectl delete / { cleaned = 1 } /^rad deploy / && cleaned { exit 1 }' "$CALL_LOG" ||
+            fail "cleanup must not run between deployment attempts"
+        grep -Fiq 'connection reset by peer' "$TEST_ROOT/retry-output" || fail "deployment diagnostics must remain visible"
+        grep -Fq 'attempt 2/3' "$TEST_ROOT/retry-output" || fail "retry must log the next attempt and limit"
+        if [[ "$deploy_error" == "$TRANSIENT_DEPLOY_ERROR" ]]; then
+            reason="Azure deployment connection reset"
+        else
+            reason="Terraform provider download connection reset"
+        fi
+        grep -Fq "$reason; retrying" "$TEST_ROOT/retry-output" || fail "retry must log the reason"
+        [[ -z "$(find "$DEPLOY_LOG_DIR" -type f -print -quit)" ]] || fail "deployment transcripts must be removed"
+    done
+done
+
+: >"$CALL_LOG"
+DEPLOY_FAILURES=1 DEPLOY_ERROR="$ACI_CONTAINER_TRANSITION_ERROR" \
+    run_lib rtc_deploy_and_assert_test_app \
+    "$TEST_APP_WITH_PASSWORD" Radius.Compute/containers rtc-test /envs/myenv myws my-ns \
+    >"$TEST_ROOT/retry-output" 2>&1 ||
+    fail "an ACI container-group transition should recover"
+assert_eq "2" "$(grep -c '^rad deploy ' "$CALL_LOG")" "ACI transition retry attempts"
+assert_eq "1" "$(grep -c '^rad app delete ' "$CALL_LOG")" "ACI transition cleanup"
+grep -Fq 'Azure Container Instance group is still transitioning; retrying' "$TEST_ROOT/retry-output" ||
+    fail "ACI transition retry must log its reason"
+
+# Permanent diagnostics must not qualify even if a download reset is also present.
+for permanent_error in \
+    'Failed to query available provider packages: no available releases match the given constraints' \
+    'Failed to install provider: checksum list has no SHA-256 hash' \
+    'Failed to install provider: authentication signature from unknown issuer' \
+    'Failed to install provider: 403 Forbidden' \
+    'Invalid resource type'; do
+    for deploy_error in "terraform init failure: exit status 1"$'\n\nError: '"$permanent_error" \
+        "$TERRAFORM_DOWNLOAD_ERROR"$'\n\nError: '"$permanent_error"; do
+        : >"$CALL_LOG"
+        wrapped_error="$(jq -cn --arg message "$deploy_error" '{code:"RecipeDeploymentFailed",message:$message}')"
+        if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$wrapped_error" run_lib rtc_deploy_with_retry \
+            "$TEST_APP_BICEP" >"$TEST_ROOT/retry-output" 2>&1; then
+            fail "permanent Terraform errors must fail"
+        fi
+        assert_eq "1" "$(grep -c '^rad deploy ' "$CALL_LOG")" "permanent Terraform failure attempts"
+        grep -q '^sleep ' "$CALL_LOG" && fail "permanent Terraform errors must not back off"
+    done
+done
+
+for deploy_error in \
+    "${TERRAFORM_DOWNLOAD_ERROR/terraform init failure/terraform apply failure}" \
+    "${TERRAFORM_DOWNLOAD_ERROR/Failed to install provider/Failed to download module}" \
+    "${TERRAFORM_DOWNLOAD_ERROR/releases.hashicorp.com/registry.example.com}" \
+    "${TERRAFORM_DOWNLOAD_ERROR/connection reset by peer/403 Forbidden}" \
+    "${TERRAFORM_DOWNLOAD_ERROR/connection reset by peer/checksum mismatch}" \
+    "${TERRAFORM_DOWNLOAD_ERROR/connection reset by peer/signature verification failed}" \
+    "${TERRAFORM_DOWNLOAD_ERROR/connection reset by peer/no available releases match the given constraints}" \
+    "${TERRAFORM_DOWNLOAD_ERROR/connection reset by peer/i/o timeout}" \
+    "$(jq -cn --arg message "$TERRAFORM_DOWNLOAD_ERROR" \
+        '{code:"DeploymentFailed",details:[{code:"RecipeDeploymentFailed",message:$message},
+        {code:"RecipeDeploymentFailed",message:"Invalid Terraform configuration"}]}')" \
+    "$(jq -cn --arg message "$TERRAFORM_DOWNLOAD_ERROR" '{status:"Succeeded",message:$message}')" \
+    '{"code":"RecipeDeploymentFailed","message":"terraform init failure: exit status 1\n\nError: Failed to install provider","details":[{"message":"connection reset by peer"}]}'; do
+    : >"$CALL_LOG"
+    if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$deploy_error" run_lib rtc_deploy_with_retry \
+        "$TEST_APP_BICEP" >/dev/null 2>&1; then
+        fail "unconfirmed Terraform download errors must fail"
+    fi
+    assert_eq "1" "$(grep -c '^rad deploy ' "$CALL_LOG")" "unconfirmed Terraform failure attempts"
+    grep -q '^sleep ' "$CALL_LOG" && fail "unconfirmed Terraform errors must not back off"
+done
+
+: >"$CALL_LOG"
+retry_status=0
+DEPLOY_EXIT_CODE=17 DEPLOY_ERROR="$WRAPPED_TERRAFORM_ERROR" run_lib rtc_deploy_with_retry \
+    "$TEST_APP_BICEP" >/dev/null 2>&1 || retry_status=$?
+assert_eq "17" "$retry_status" "retry exhaustion must preserve the deployment exit code"
+assert_eq "3" "$(grep -c '^rad deploy ' "$CALL_LOG")" "Terraform exhaustion attempt count"
+
+# A successful Azure operation must not qualify an unrelated failure for retries.
+MIXED_DEPLOY_ERROR='Deployment operations:
+{"status":"Succeeded","target":"/subscriptions/test/resourceGroups/test/providers/Microsoft.ManagedIdentity/userAssignedIdentities/test"}
+Error: {
+  "code": "ResourceDeploymentFailure",
+  "message": "Connection reset by peer",
+  "target": "/planes/radius/local/resourceGroups/test/providers/Radius.Data/widgets/test"
+}'
+
+for deploy_error in \
+    'InvalidTemplate: invalid property' \
+    'AuthorizationFailed: access denied' \
+    "$MIXED_DEPLOY_ERROR" \
+    '{"code":"ResourceDeploymentFailure","message":"VaultAlreadyExists","target":"/subscriptions/test/resourceGroups/test/providers/Microsoft.KeyVault/vaults/test","details":[{"message":"Connection reset by peer"}]}' \
+    '{"code":"ResourceDeploymentFailure","message":"VaultAlreadyExists","target":"/subscriptions/test/resourceGroups/test/providers/Microsoft.KeyVault/vaults/test"}' \
+    "${ACI_CONTAINER_TRANSITION_ERROR/please retry later/transitioning failed}" \
+    "$ACI_WRONG_TARGET_ERROR" \
+    "$(jq -cn --argjson error "$ACI_CONTAINER_TRANSITION_JSON" \
+        '{code:"DeploymentFailed",details:[$error,{code:"ResourceDeploymentFailure",message:"AuthorizationFailed: access denied"}]}')" \
+    'Connection reset by peer' \
+    '{"code":"ResourceDeploymentFailure","message":"Connection reset by peer","target":"/planes/radius/local/resourceGroups/test/providers/Radius.Data/widgets/test"}'; do
+    : >"$CALL_LOG"
+    if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$deploy_error" run_lib rtc_deploy_and_assert_test_app \
+        "$TEST_APP_BICEP" Radius.Security/secrets rtc-test /envs/myenv myws my-ns >/dev/null 2>&1; then
+        fail "non-retryable errors must fail"
+    fi
+    assert_eq "1" "$(grep -c '^rad deploy ' "$CALL_LOG")" "non-retryable deployment attempt count"
+    grep -q '^sleep ' "$CALL_LOG" && fail "non-retryable errors must not back off"
+    grep -q '^rad app delete ' "$CALL_LOG" || fail "non-retryable failures must still clean up"
+done
+
+: >"$CALL_LOG"
+DEPLOY_FAILURES=1 DEPLOY_ERROR='Deploying resources...
+Error: {"code":"DeploymentFailed","details":[{
+  "target": "/subscriptions/test/resourceGroups/test/providers/Microsoft.KeyVault/vaults/test",
+  "message": "System.IO.IOException: Connection reset by peer (\"{transport}\")",
+  "code": "ResourceDeploymentFailure",
+  "details": []
+}]}
+Deployment failed.' run_lib rtc_deploy_with_retry "$TEST_APP_BICEP" >/dev/null 2>&1 ||
+    fail "nested multiline Azure connection-reset errors must retry"
+assert_eq "2" "$(grep -c '^rad deploy ' "$CALL_LOG")" "nested Azure failure attempt count"
+
+for deploy_error in "$TRANSIENT_DEPLOY_ERROR" "$WRAPPED_TERRAFORM_ERROR"; do
+    : >"$CALL_LOG"
+    if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$deploy_error" DEPLOY_ERROR_AFTER_FIRST='InvalidTemplate: invalid property' \
+        run_lib rtc_deploy_and_assert_test_app \
+        "$TEST_APP_BICEP" Radius.Security/secrets rtc-test /envs/myenv myws my-ns >/dev/null 2>&1; then
+        fail "permanent errors after a transient failure must fail"
+    fi
+    assert_eq "2" "$(grep -c '^rad deploy ' "$CALL_LOG")" "only the latest failure may trigger a retry"
+done
+
+: >"$CALL_LOG"
+if APP_DELETE_EXIT_CODE=1 DEPLOY_FAILURES=1 DEPLOY_ERROR="$TRANSIENT_DEPLOY_ERROR" \
+    run_lib rtc_deploy_and_assert_test_app \
+    "$TEST_APP_BICEP" Radius.Security/secrets rtc-test /envs/myenv myws my-ns >/dev/null 2>&1; then
+    fail "cleanup failures after recovery must still fail"
+fi
+assert_eq "2" "$(grep -c '^rad deploy ' "$CALL_LOG")" "cleanup must not trigger deployment retries"
 
 # Exercise the real SQL Server template, not a fixture with fewer parameters.
 : >"$CALL_LOG"
@@ -528,6 +752,366 @@ fi
 grep -q '^rad app delete' "$CALL_LOG" || fail "per-recipe failure must still delete the test app"
 if grep -q '^rad recipe ' "$CALL_LOG"; then
     fail "per-recipe failure must not call the removed 'rad recipe' command"
+fi
+
+POSTGRES_CAPACITY_ERROR='Error: {"code":"DeploymentFailed","details":[{"code":"ResourceDeploymentFailure","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg","message":"{\"code\":\"SkuNotAvailable\",\"message\":\"capacity unavailable\"}"}]}'
+POSTGRES_TEST_APP_BICEP="$REPO_ROOT/Data/postgreSqlDatabases/test/app.bicep"
+cat >"$MOCK_BIN/timeout" <<'EOF'
+#!/bin/bash
+echo "timeout $*" >>"$CALL_LOG"
+if [[ "${POSTGRES_DEPLOY_TIMEOUT:-0}" == 1 && " $* " == *" bash -c "* ]]; then exit 124; fi
+exec /usr/bin/timeout "$@"
+EOF
+chmod +x "$MOCK_BIN/timeout"
+run_postgres() {
+    AZURE_RESOURCE_GROUP=rg RTC_TEST_PLATFORM=azure run_lib rtc_test_azure_postgresql_app \
+        "$POSTGRES_TEST_APP_BICEP" /envs/myenv myws my-ns
+}
+
+RADIUS_PROGRESS="Building Data/mongoDatabases/test/app.bicep...
+WARNING: Radius type compatibility is not verified.
+    Configured Radius extension tag(s): latest
+    CLI release: edge
+    Target control-plane release: edge
+    The Radius extension and control-plane versions can differ.
+Deploying template 'app.bicep' ...
+Deployment In Progress..."
+for pure_error in "$WRAPPED_TERRAFORM_ERROR" "$TERRAFORM_DOWNLOAD_ERROR" "$TRANSIENT_DEPLOY_ERROR" "$POSTGRES_CAPACITY_ERROR"; do
+    for diagnostic in \
+        'AuthorizationFailed: access denied' \
+        'InvalidTemplate: invalid property' \
+        'UnknownDiagnostic: unclassified problem' \
+        '(AuthorizationFailed): access denied' \
+        'Forbidden: access denied' \
+        'Unauthorized: access denied' \
+        'Denied: access denied' \
+        'RESOURCE_EXHAUSTED: quota reached' \
+        'permission_denied: access denied' \
+        'Something: unrecognized diagnostic' \
+        'Status: Failed' \
+        'Status: Unknown' \
+        'WARNING: access denied' \
+        'unknown failure during resource deployment'; do
+        mixed_error="$pure_error"$'\n'"$diagnostic"
+        printf '%s\n' "$mixed_error" >"$TEST_ROOT/bare-failure.log"
+        for classifier in rtc_deployment_retry_reason rtc_has_postgresql_capacity_failure; do
+            if run_lib "$classifier" "$TEST_ROOT/bare-failure.log" >/dev/null; then
+                fail "$classifier must reject independent bare diagnostic: $diagnostic"
+            fi
+        done
+        : >"$CALL_LOG"
+        if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$mixed_error" run_postgres >/dev/null 2>&1; then
+            fail "bare failure mixtures must fail PostgreSQL"
+        fi
+        assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "bare failure deployment attempts"
+        if grep -q 'postgresSize=M' "$CALL_LOG"; then fail "bare failures must not change size"; fi
+    done
+    printf 'Deploying resources...\nLocation: westus3\nStatus: Running\nStatus: Accepted\nStatus: Succeeded\n%s\n' \
+        "$pure_error" >"$TEST_ROOT/pure-error-progress.log"
+    classifier=rtc_deployment_retry_reason
+    [[ "$pure_error" != "$POSTGRES_CAPACITY_ERROR" ]] || classifier=rtc_has_postgresql_capacity_failure
+    run_lib "$classifier" "$TEST_ROOT/pure-error-progress.log" >/dev/null ||
+        fail "$classifier must preserve pure errors with benign progress"
+    printf '%s\n%s\n' "$RADIUS_PROGRESS" "$pure_error" >"$TEST_ROOT/pure-error-progress.log"
+    run_lib "$classifier" "$TEST_ROOT/pure-error-progress.log" >/dev/null ||
+        fail "$classifier must preserve Radius compatibility warnings and progress"
+    : >"$CALL_LOG"
+    DEPLOY_FAILURES=1 DEPLOY_ERROR="$RADIUS_PROGRESS"$'\n'"$pure_error" \
+        run_postgres >/dev/null 2>&1 || fail "pure errors with Radius progress must recover"
+    assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "Radius progress recovery attempts"
+done
+
+for reset in \
+    "$(jq -cn --arg message "$TERRAFORM_DOWNLOAD_ERROR" '{code:"RecipeDeploymentFailed",message:$message}')" \
+    "${TRANSIENT_DEPLOY_ERROR#Error: }"; do
+    for sibling in \
+        '{"code":"AuthorizationFailed","message":"access denied"}' \
+        '{"code":"ServerIsBusy","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg","message":"capacity unavailable"}' \
+        '{"message":"unclassified deployment failure"}'; do
+        mixed_error="$(jq -cn --argjson reset "$reset" --argjson sibling "$sibling" \
+            '{code:"DeploymentFailed",details:[$reset,$sibling]}')"
+        printf '%s\n' "$mixed_error" >"$TEST_ROOT/mixed-reset.log"
+        if run_lib rtc_deployment_retry_reason "$TEST_ROOT/mixed-reset.log" >/dev/null; then
+            fail "a reset plus an unrelated or unknown failure must not qualify for retry"
+        fi
+        : >"$CALL_LOG"
+        if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$mixed_error" run_postgres >/dev/null 2>&1; then
+            fail "mixed reset failures must fail PostgreSQL"
+        fi
+        assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "mixed reset deployment attempts"
+        if grep -q 'postgresSize=M' "$CALL_LOG"; then fail "mixed resets must not change size"; fi
+    done
+    for prefix in Error ERROR error eRrOr fatal FaTaL failure fAiLuRe failed fAiLeD; do
+        mixed_error="Error: $reset"$'\n'"$prefix: AuthorizationFailed: access denied"
+        printf '%s\n' "$mixed_error" >"$TEST_ROOT/mixed-reset.log"
+        if run_lib rtc_deployment_retry_reason "$TEST_ROOT/mixed-reset.log" >/dev/null; then
+            fail "a reset plus a $prefix line must not qualify for retry"
+        fi
+        : >"$CALL_LOG"
+        if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$mixed_error" run_postgres >/dev/null 2>&1; then
+            fail "mixed plain reset failures must fail PostgreSQL"
+        fi
+        assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "mixed plain reset deployment attempts"
+        if grep -q 'postgresSize=M' "$CALL_LOG"; then fail "mixed plain resets must not change size"; fi
+    done
+done
+
+for mixed_error in \
+    "$TERRAFORM_DOWNLOAD_ERROR"$'\nerror: AuthorizationFailed: access denied' \
+    $'error: AuthorizationFailed: access denied\n'"$TERRAFORM_DOWNLOAD_ERROR"; do
+    printf '%s\n' "$mixed_error" >"$TEST_ROOT/mixed-reset.log"
+    if run_lib rtc_deployment_retry_reason "$TEST_ROOT/mixed-reset.log" >/dev/null; then
+        fail "plain provider output must not hide an independent error"
+    fi
+    : >"$CALL_LOG"
+    if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$mixed_error" run_postgres >/dev/null 2>&1; then
+        fail "mixed plain provider errors must fail PostgreSQL"
+    fi
+    assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "mixed plain provider attempts"
+done
+
+for pure_reset in \
+    "$(jq -cn --arg message "$TERRAFORM_DOWNLOAD_ERROR" \
+        '{code:"DeploymentFailed",details:[{code:"RecipeDeploymentFailed",message:$message},{code:"RecipeDeploymentFailed",message:$message}]}')" \
+    "$(jq -cn --arg message "$TERRAFORM_DOWNLOAD_ERROR"$'\n\n'"${TERRAFORM_DOWNLOAD_ERROR#*exit status 1}" \
+        '{code:"RecipeDeploymentFailed",message:$message}')" \
+    "$TRANSIENT_DEPLOY_ERROR"$'\n'"$WRAPPED_TERRAFORM_ERROR" \
+    "$(jq -cn --argjson reset "${TRANSIENT_DEPLOY_ERROR#Error: }" \
+        '{code:"DeploymentFailed",details:[$reset,$reset]}')" \
+    "$(jq -cn --arg message "${TRANSIENT_DEPLOY_ERROR#Error: }" \
+        '{code:"RecipeDeploymentFailed",message:$message}')" \
+    $'{"status":"Succeeded","message":"Resource deployment complete"}\n'"$WRAPPED_TERRAFORM_ERROR"; do
+    : >"$CALL_LOG"
+    DEPLOY_FAILURES=1 DEPLOY_ERROR="Deploying resources..."$'\n'"$pure_reset"$'\n''Deployment failed.' \
+        run_postgres >/dev/null || fail "pure reset diagnostics with progress must still retry"
+    assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "pure reset diagnostic attempts"
+    assert_eq 1 "$(grep '^rad deploy ' "$CALL_LOG" | sort -u | wc -l | tr -d ' ')" \
+        "pure resets must preserve the deployment arguments"
+done
+
+: >"$CALL_LOG"
+DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres >/dev/null ||
+    fail "PostgreSQL deploy-time capacity loss must recover"
+assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "PostgreSQL recovery attempts"
+grep -q -- '--parameters postgresSize=S' "$CALL_LOG" || fail "first deployment must use S"
+grep -q -- '--parameters postgresSize=M' "$CALL_LOG" || fail "recovery must use M"
+assert_eq 2 "$(grep '^rad deploy ' "$CALL_LOG" | sed -E 's/.*applicationName=([^ ]+).*/\1/' | sort -u | wc -l | tr -d ' ')" \
+    "recovery application names must be distinct"
+awk '/^rad app delete / { cleaned++ } /^az resource list / { snapshots++ }
+    /^rad deploy / { attempts++; if (attempts == 2 && (cleaned != 1 || snapshots < 3)) exit 1 }' "$CALL_LOG" ||
+    fail "recovery must follow Radius cleanup and Azure deletion verification"
+
+(
+    export GITHUB_ACTIONS=true RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$(( $(date +%s) + 2700 ))"
+    export RTC_TEST_DIAGNOSTICS_DIR="$TEST_ROOT/capacity-diagnostics"
+    : >"$CALL_LOG"
+    DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres >/dev/null 2>&1 ||
+        fail "CI capacity recovery with a step deadline must succeed"
+    assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "CI recovery attempts"
+    assert_eq 2 "$(grep -c '^timeout --kill-after=5s 12m rad app delete ' "$CALL_LOG")" "CI recovery must preserve twelve-minute cleanup"
+    if grep -q -- '--wait=false' "$CALL_LOG"; then fail "CI recovery must wait for Kubernetes cleanup"; fi
+    [[ -n "$(find "$RTC_TEST_DIAGNOSTICS_DIR" -name azure.json -print -quit)" ]] ||
+        fail "failed capacity attempt must retain diagnostics after recovery"
+    for failure in APP_DELETE_EXIT_CODE KUBECTL_EXIT_CODE AZ_RESOURCE_LIST_FAIL; do
+        : >"$CALL_LOG"
+        if (
+            export "$failure=1"
+            DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres
+        ) >/dev/null 2>&1; then fail "CI $failure must block recovery"; fi
+        [[ "$(grep -c '^rad deploy ' "$CALL_LOG")" -le 1 ]] || fail "CI cleanup uncertainty must block recovery"
+    done
+)
+
+RADIUS_POSTGRES_CAPACITY_ERROR='Error: {"code":"RecipeDeploymentFailed","message":"Recipe deployment failed","details":[{"code":"DeploymentFailed","details":[{"code":"ResourceDeploymentFailure","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg","message":"{\"code\":\"SkuNotAvailable\",\"message\":\"capacity unavailable\"}"}]}]}'
+: >"$CALL_LOG"
+DEPLOY_FAILURES=1 DEPLOY_ERROR="$RADIUS_POSTGRES_CAPACITY_ERROR" run_postgres >/dev/null ||
+    fail "Radius RecipeDeploymentFailed wrapper must permit capacity recovery"
+assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "Radius wrapper recovery attempts"
+
+for capacity_error in "$POSTGRES_CAPACITY_ERROR" "$RADIUS_POSTGRES_CAPACITY_ERROR"; do
+    printf '%s\n' "$capacity_error" >"$TEST_ROOT/capacity-error.log"
+    if run_lib rtc_deployment_retry_reason "$TEST_ROOT/capacity-error.log" >/dev/null; then
+        fail "capacity errors must not qualify as transport or provider download retries"
+    fi
+done
+printf '%s\n' "$WRAPPED_TERRAFORM_ERROR" >"$TEST_ROOT/provider-error.log"
+if run_lib rtc_has_postgresql_capacity_failure "$TEST_ROOT/provider-error.log"; then
+    fail "Terraform provider download resets must not qualify as PostgreSQL capacity errors"
+fi
+
+: >"$CALL_LOG"
+DEPLOY_FAILURES=1 DEPLOY_ERROR="$WRAPPED_TERRAFORM_ERROR" run_postgres >"$TEST_ROOT/postgres-provider-output" ||
+    fail "PostgreSQL tests must preserve the Terraform provider download retry"
+assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "PostgreSQL provider download retry attempts"
+assert_eq 1 "$(grep '^rad deploy ' "$CALL_LOG" | sort -u | wc -l | tr -d ' ')" \
+    "provider download retries must preserve the app name and size"
+assert_eq 1 "$(grep -c '^rad app delete ' "$CALL_LOG")" "provider retries must share one cleanup"
+grep -q 'Terraform provider download connection reset; retrying' "$TEST_ROOT/postgres-provider-output" ||
+    fail "PostgreSQL provider retries must log their reason"
+
+: >"$CALL_LOG"
+if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$WRAPPED_TERRAFORM_ERROR" run_postgres >/dev/null 2>&1; then
+    fail "exhausted Terraform provider retries must fail PostgreSQL"
+fi
+assert_eq 3 "$(grep -c '^rad deploy ' "$CALL_LOG")" "PostgreSQL provider retry limit"
+if grep -q 'postgresSize=M' "$CALL_LOG"; then
+    fail "provider download exhaustion must not trigger capacity size recovery"
+fi
+
+: >"$CALL_LOG"
+DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" RTC_POSTGRES_TEST_SIZE=M run_postgres >/dev/null ||
+    fail "an M selection must recover with untried S"
+grep '^rad deploy ' "$CALL_LOG" | tail -1 | grep -q 'postgresSize=S' ||
+    fail "M recovery must use S, not L (the same SKU)"
+
+: >"$CALL_LOG"
+if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres >/dev/null 2>&1; then
+    fail "capacity recovery exhaustion must fail"
+fi
+assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "capacity recovery is limited to two attempts"
+
+: >"$CALL_LOG"
+DEPLOY_FAILURES=1 DEPLOY_ERROR="${POSTGRES_CAPACITY_ERROR//SkuNotAvailable/ServerIsBusy}" run_postgres >/dev/null ||
+    fail "PostgreSQL ServerIsBusy must permit recovery"
+assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "ServerIsBusy recovery attempts"
+
+for failure in \
+    'SkuNotAvailable' \
+    '{"code":"SkuNotAvailable","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm"}' \
+    '{"code":"AuthorizationFailed","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg"}' \
+    '{"code":"DeploymentFailed","details":[{"code":"ServerIsBusy","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg"},{"code":"AuthorizationFailed"}]}' \
+    '{"code":"DeploymentFailed","details":[{"code":"ServerIsBusy","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg"},{"code":"ResourceDeploymentFailure","details":[]}]}' \
+    '{"code":"UnknownError","message":"SkuNotAvailable"}'; do
+    : >"$CALL_LOG"
+    if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$failure" run_postgres >/dev/null 2>&1; then
+        fail "non-capacity or mixed errors must fail"
+    fi
+    assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "non-capacity errors must not retry"
+done
+
+for failure in \
+    "$POSTGRES_CAPACITY_ERROR"$'\n''Error: AuthorizationFailed: access denied' \
+    "${POSTGRES_CAPACITY_ERROR} AuthorizationFailed: access denied" \
+    'Error: {"code":"DeploymentFailed","details":[{"code":"ResourceDeploymentFailure","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg","message":"{\"code\":\"SkuNotAvailable\",\"message\":\"capacity unavailable\"}"},{"target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg","message":"uncoded deployment failure"}]}' \
+    '{"code":"DeploymentFailed","status":"Failed","details":[{"code":"ResourceDeploymentFailure","target":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg","message":"{\"code\":\"SkuNotAvailable\",\"message\":\"capacity unavailable\"}"},{"status":"Failed","message":"uncoded failure detail"}]}'; do
+    : >"$CALL_LOG"
+    if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$failure" run_postgres >/dev/null 2>&1; then
+        fail "capacity plus unclassified failure output must not retry"
+    fi
+    assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "mixed unclassified failure attempt count"
+done
+
+for prefix in error eRrOr fatal FaTaL failure fAiLuRe failed fAiLeD; do
+    : >"$CALL_LOG"
+    if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR"$'\n'"$prefix: AuthorizationFailed: access denied" \
+        run_postgres >/dev/null 2>&1; then
+        fail "$prefix must block capacity recovery"
+    fi
+    assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "$prefix must not trigger a retry"
+
+    : >"$CALL_LOG"
+    DEPLOY_FAILURES=1 DEPLOY_ERROR="${POSTGRES_CAPACITY_ERROR/Error:/$prefix:}" run_postgres >/dev/null ||
+        fail "$prefix must preserve structured capacity recovery"
+    assert_eq 2 "$(grep -c '^rad deploy ' "$CALL_LOG")" "$prefix structured recovery attempt count"
+done
+
+for failure in APP_DELETE_EXIT_CODE KUBECTL_EXIT_CODE AZ_RESOURCE_LIST_FAIL; do
+    : >"$CALL_LOG"
+    if (
+        export "$failure=1"
+        DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres
+    ) >/dev/null 2>&1; then fail "$failure must block recovery"; fi
+    [[ "$(grep -c '^rad deploy ' "$CALL_LOG")" -le 1 ]] || fail "cleanup uncertainty must block recovery"
+done
+: >"$CALL_LOG"
+if DEPLOY_EXIT_CODE=42 DEPLOY_ERROR='Unknown CLI failure' run_postgres >/dev/null 2>&1; then
+    fail "a raw CLI exit code must not grant capacity recovery"
+fi
+assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "raw exit 42 is not evidence of capacity"
+: >"$CALL_LOG"
+if DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" \
+    AZ_RESOURCES_AFTER='[{"id":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/leftover"}]' \
+    run_postgres >/dev/null 2>&1; then fail "leftover Azure resources must block recovery"; fi
+assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "leftover resource must block new allocation"
+
+: >"$CALL_LOG"
+if POSTGRES_JSON='{"properties":{}}' run_postgres >/dev/null 2>&1; then fail "assertion failure must fail"; fi
+assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "assertion failure must not change size"
+: >"$CALL_LOG"
+if RTC_POSTGRES_TEST_DEADLINE_EPOCH=1 run_postgres >/dev/null 2>&1; then fail "expired deadline must fail"; fi
+[[ ! -s "$CALL_LOG" ]] || fail "deadline must stop allocation"
+
+: >"$CALL_LOG"
+if POSTGRES_DEPLOY_TIMEOUT=1 run_postgres >/dev/null 2>&1; then fail "deploy timeout must fail"; fi
+assert_eq 1 "$(grep -c '^timeout .* bash -c ' "$CALL_LOG")" "timeout must not change size"
+assert_eq 1 "$(grep -c '^rad app delete ' "$CALL_LOG")" "timeout must still clean up"
+: >"$CALL_LOG"
+RTC_POSTGRES_TEST_DEADLINE_EPOCH="$(( $(date +%s) + 45 ))" run_postgres >/dev/null ||
+    fail "a remaining deadline must permit a bounded deployment"
+limit="$(sed -nE 's/^timeout --kill-after=5s ([0-9]+)s bash .*/\1/p' "$CALL_LOG")"
+[[ "$limit" =~ ^[0-9]+$ && "$limit" -gt 0 && "$limit" -le 45 ]] ||
+    fail "deployment must respect remaining selection time"
+
+: >"$CALL_LOG"
+if RTC_POSTGRES_TEST_DEADLINE_EPOCH="$(( $(date +%s) + 1 ))" AZ_RESOURCE_LIST_DELAY_SECONDS=2 \
+    run_postgres >/dev/null 2>&1; then
+    fail "an expired deadline after inventory snapshots must prevent deployment"
+fi
+if grep -q '^rad deploy ' "$CALL_LOG"; then
+    fail "deployment must not begin after snapshots consume the deadline"
+fi
+
+# Exercise the actual single-entry caller with the same mock cloud commands.
+run_postgres_entry() {
+    (
+        cd "$REPO_ROOT"
+        # shellcheck disable=SC2031 # This fixture sets PATH in its own subshell.
+        PATH="$MOCK_BIN:$PATH" CALL_LOG="$CALL_LOG" \
+            bash .github/scripts/test-recipe-pack-entry.sh Data/postgreSqlDatabases myws myenv
+    )
+}
+: >"$CALL_LOG"
+RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg RTC_POSTGRES_TEST_SIZE=M \
+    run_postgres_entry >/dev/null || fail "single-entry Azure runner must pass selected M"
+grep -q -- '--parameters postgresSize=M' "$CALL_LOG" || fail "single-entry runner must pass M to Bicep"
+: >"$CALL_LOG"
+RTC_TEST_PLATFORM=kubernetes RTC_POSTGRES_TEST_SIZE=M run_postgres_entry >/dev/null ||
+    fail "Kubernetes entry must retain the default template size"
+if grep -q 'postgresSize=' "$CALL_LOG"; then fail "Kubernetes must not get an Azure size override"; fi
+grep -q "^param postgresSize string = 'S'$" "$REPO_ROOT/Data/postgreSqlDatabases/test/app.bicep" ||
+    fail "test template default must remain S"
+
+FIXED_POSTGRES_TEST_APP="$REPO_ROOT/.github/scripts/tests/fixtures/postgresql-test-app-fixed-s.bicep"
+POSTGRES_TEST_HARNESS="$TEST_ROOT/postgresql-test-harness.bicep"
+bash "$REPO_ROOT/.github/scripts/prepare-postgres-test-harness.sh" \
+    "$FIXED_POSTGRES_TEST_APP" "$POSTGRES_TEST_HARNESS" ||
+    fail "fixed-S pinned test app must produce a parameterized harness"
+grep -q "^param postgresSize string = 'S'$" "$POSTGRES_TEST_HARNESS" ||
+    fail "generated harness must default to S"
+grep -q "^@allowed(\['S', 'M'\])$" "$POSTGRES_TEST_HARNESS" ||
+    fail "generated harness must allow only selected S and M sizes"
+grep -qE '^[[:space:]]*size: postgresSize$' "$POSTGRES_TEST_HARNESS" ||
+    fail "generated harness must pass postgresSize to the PostgreSQL resource"
+if grep -q 'postgresSize' "$FIXED_POSTGRES_TEST_APP"; then
+    fail "pinned fixed-S fixture must remain unchanged"
+fi
+
+for selected_size in S M; do
+    : >"$CALL_LOG"
+    RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg RTC_POSTGRES_TEST_SIZE="$selected_size" \
+        RTC_POSTGRES_TEST_HARNESS="$POSTGRES_TEST_HARNESS" run_postgres_entry >/dev/null ||
+        fail "pinned fixed-S harness must deploy selected size $selected_size"
+    grep -q -- "--parameters postgresSize=$selected_size" "$CALL_LOG" ||
+        fail "deployment must pass selected size $selected_size to Bicep"
+    if grep '^rad deploy ' "$CALL_LOG" | grep -Fq "$FIXED_POSTGRES_TEST_APP"; then
+        fail "deployment must use a temporary parameterized harness, not the pinned test app"
+    fi
+done
+
+sed "s/size: 'S'/size: 'L'/" "$FIXED_POSTGRES_TEST_APP" >"$TEST_ROOT/unsupported-postgres-size.bicep"
+if bash "$REPO_ROOT/.github/scripts/prepare-postgres-test-harness.sh" \
+    "$TEST_ROOT/unsupported-postgres-size.bicep" "$TEST_ROOT/unsupported-harness.bicep" >/dev/null 2>&1; then
+    fail "unsupported fixed PostgreSQL sizes must fail closed"
 fi
 
 echo "Recipe test library test passed"

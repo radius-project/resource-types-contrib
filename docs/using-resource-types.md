@@ -39,7 +39,7 @@ Recipe Packs live at the repository root under [`recipe-packs/`](../recipe-packs
 - `azure-aks/` — Azure services, with application containers on AKS.
 - `azure-aci/` — application containers on Azure Container Instances, plus Azure Files volumes and Key Vault secrets. Data, messaging, storage, and AI types are not included. `azure-aks` and `kubernetes` also provide recipes for containers, persistent volumes, and secrets, so they cannot be associated alongside `azure-aci`; use a pack that covers only the additional types you need.
 - `kubernetes/` — recipes for all types provisioned in-cluster on Kubernetes (the zero-config default).
-- `aws-eks/` (planned) — application containers on AWS EKS. An `aws-ecs/` pack for ECS is also planned.
+- `aws-eks/` — AWS services, with application containers on Amazon EKS. Today it provides Amazon RDS for MySQL plus the Kubernetes recipes for containers, images, volumes, routes, and secrets. An `aws-ecs/` pack for ECS is planned.
 
 Each Recipe Pack bundles the Recipes for the Resource Types it covers into a reusable `Radius.Core/recipePacks` resource. Recipe Pack files do not create or modify Environments. A platform engineer creates and configures an Environment separately, deploys the pack, and then associates the pack with the Environment instead of registering Recipes one type at a time.
 
@@ -66,7 +66,7 @@ rad env update default \
   --recipe-packs azure-aks
 ```
 
-For the zero-config Kubernetes default, create the Environment with `rad env create`, deploy `recipe-packs/kubernetes/default.bicep`, and associate the `default` pack in the same way. After association, every Resource Type the pack covers can be used in an application deployed to that Environment.
+For the Kubernetes default, create the Environment with `rad env create`, deploy `recipe-packs/kubernetes/default.bicep`, and associate the `default` pack in the same way. PostgreSQL generates a self-signed development certificate by default; use an operator-managed TLS Secret and client CA trust for verified identity, as described in [PostgreSQL Kubernetes TLS](../Data/postgreSqlDatabases/README.md#kubernetes-tls). The Resource Types the pack covers can then be used in an application deployed to that Environment.
 
 ## Using a Resource Type in a Radius application
 

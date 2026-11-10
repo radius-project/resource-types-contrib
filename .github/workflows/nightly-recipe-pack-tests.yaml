@@ -32,6 +32,8 @@ jobs:
       contents: read
     env:
       RAD_ENVIRONMENT_NAME: default
+      RTC_TEST_DIAGNOSTICS_DIR: test-diagnostics
+      RTC_TEST_PLATFORM: kubernetes
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -44,7 +46,7 @@ jobs:
           node-version-file: .node-version
 
       - name: Set up ORAS
-        uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
+        uses: oras-project/setup-oras@5e2f2482b30b0cb3e14e67f89a80c88c659a7c63 # v2.0.3
         with:
           version: "1.2.0"
 
@@ -115,6 +117,21 @@ jobs:
         continue-on-error: true
         run: make test-recipe-pack-entries PLATFORM_GROUP=kubernetes WORKSPACE=default ENVIRONMENT="$RAD_ENVIRONMENT_NAME"
 
+      - name: Collect workflow failure diagnostics
+        if: ${{ !cancelled() && (failure() || steps.kubernetes_bicep.outcome == 'failure' || steps.kubernetes_terraform.outcome == 'failure' || steps.kubernetes_pack_deploy.outcome == 'failure' || steps.kubernetes_pack_entries.outcome == 'failure') }}
+        continue-on-error: true
+        run: |
+          source .github/scripts/lib-recipe-test.sh
+          rtc_collect_test_diagnostics workflow workflow-failure "$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
+
+      - name: Upload failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-diagnostics-nightly-kubernetes
+          path: test-diagnostics
+          if-no-files-found: ignore
+
       - name: Report Kubernetes test failures
         if: ${{ !cancelled() }}
         env:
@@ -175,20 +192,129 @@ jobs:
           path: radius-pod-logs
           if-no-files-found: warn
 
+  nightly-azure-context:
+    name: Prepare Nightly Azure Context
+    runs-on: ubuntu-24.04
+    outputs:
+      resource_group: ${{ steps.context.outputs.resource_group }}
+      probe_resource_group: ${{ steps.context.outputs.probe_resource_group }}
+      owner_token: ${{ steps.context.outputs.owner_token }}
+      regions: ${{ steps.context.outputs.regions }}
+      sizes: ${{ steps.context.outputs.sizes }}
+    steps:
+      - name: Generate owned group names
+        id: context
+        env:
+          REGION_OVERRIDE: ${{ vars.RTC_AZURE_TEST_REGIONS }}
+          PRIMARY_REGION: ${{ vars.AZURE_LOCATION }}
+          FALLBACK_REGION: ${{ vars.AZURE_FALLBACK_LOCATION }}
+          SIZE_OVERRIDE: ${{ vars.RTC_POSTGRES_TEST_SIZES }}
+        run: |
+          set -euo pipefail
+          base="rrttest-nightly-${{ github.run_id }}-${{ github.run_attempt }}"
+          owner_token="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+          regions="${REGION_OVERRIDE:-${PRIMARY_REGION:-westus3},${FALLBACK_REGION:-eastus2},centralus}"
+          sizes="${SIZE_OVERRIDE:-S,M}"
+          [[ "$owner_token" =~ ^[a-f0-9]{32}$ ]] || exit 1
+          [[ "$regions" =~ ^[a-z0-9]+(,[a-z0-9]+)*$ ]] || exit 1
+          [[ "$sizes" =~ ^[SM](,[SM])*$ ]] || exit 1
+          {
+            echo "resource_group=${base}-${owner_token}"
+            echo "probe_resource_group=${base}-probe-${owner_token}"
+            echo "owner_token=$owner_token"
+            echo "regions=$regions"
+            echo "sizes=$sizes"
+          } >> "$GITHUB_OUTPUT"
+
+  nightly-azure-postgres-preflight:
+    name: Nightly Azure PostgreSQL Preflight
+    needs: nightly-azure-context
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/azure-postgres-preflight.yaml
+    with:
+      probe_resource_group: ${{ needs.nightly-azure-context.outputs.probe_resource_group }}
+      owner_token: ${{ needs.nightly-azure-context.outputs.owner_token }}
+      regions: ${{ needs.nightly-azure-context.outputs.regions }}
+      sizes: ${{ needs.nightly-azure-context.outputs.sizes }}
+      artifact_name: postgres-preflight-nightly-azure
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
   nightly-azure-recipe-pack-tests:
     name: Nightly Recipe and Pack Tests (Azure)
+    needs:
+      - nightly-azure-context
+      - nightly-azure-postgres-preflight
+    if: ${{ needs.nightly-azure-postgres-preflight.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 330
     permissions:
       id-token: write
       contents: read
-    outputs:
-      resource_group: ${{ steps.set-context.outputs.resource_group }}
+    env:
+      RTC_TEST_DIAGNOSTICS_DIR: azure-test-diagnostics
+      RTC_TEST_PLATFORM: azure
+      AZURE_RESOURCE_GROUP: ${{ needs.nightly-azure-context.outputs.resource_group }}
+      AZURE_GROUP_OWNER_TOKEN: ${{ needs.nightly-azure-context.outputs.owner_token }}
+      AZURE_PROBE_RESOURCE_GROUP: ${{ needs.nightly-azure-context.outputs.probe_resource_group }}
+      AZURE_LOCATION: ${{ needs.nightly-azure-postgres-preflight.outputs.location }}
+      AZURE_WORKSPACE_NAME: default
+      AZURE_ENVIRONMENT_NAME: default
+      RTC_AZURE_SELECTION_FILE: ${{ github.workspace }}/azure-test-diagnostics/postgres-selection.json
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Record PostgreSQL preflight result
+        env:
+          SELECTION_STATUS: ${{ needs.nightly-azure-postgres-preflight.outputs.status }}
+          SELECTED_SIZE: ${{ needs.nightly-azure-postgres-preflight.outputs.size }}
+          SELECTED_SKU: ${{ needs.nightly-azure-postgres-preflight.outputs.sku }}
+          SELECTED_TIER: ${{ needs.nightly-azure-postgres-preflight.outputs.tier }}
+          ATTEMPTS: ${{ needs.nightly-azure-postgres-preflight.outputs.attempts }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$RTC_AZURE_SELECTION_FILE")"
+          deadline=$(( $(date +%s) + 2700 ))
+          jq -n --arg status "$SELECTION_STATUS" --arg location "$AZURE_LOCATION" \
+            --arg size "$SELECTED_SIZE" --arg skuName "$SELECTED_SKU" \
+            --arg tier "$SELECTED_TIER" --argjson attempts "$ATTEMPTS" \
+            --argjson deadlineEpochSeconds "$deadline" '
+            {version:1,status:$status,location:$location,attempts:$attempts,
+             deadlineEpochSeconds:$deadlineEpochSeconds}
+            + (if $status == "selected" then
+                {postgres:{size:$size,skuName:$skuName,tier:$tier}}
+              else {} end)
+          ' > "$RTC_AZURE_SELECTION_FILE"
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@5e2f2482b30b0cb3e14e67f89a80c88c659a7c63 # v2.0.3
+        with:
+          version: "1.2.0"
+
+      - name: Install Radius CLI
+        run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
+
+      - name: Create Radius Cluster
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          TEST_AZURE_OIDC_JSON: ${{ secrets.TEST_AZURE_OIDC_JSON }}
+        run: make create-radius-cluster
+
+      - name: Build Azure Recipes
+        run: make build-azure-recipes
 
       - name: Azure Login
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -204,75 +330,14 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: bash .github/scripts/azure-cli-with-refresh.sh --install
 
-      - name: Set Azure Test Context
-        id: set-context
-        run: |
-          set -euo pipefail
-          LOCATION="${AZURE_LOCATION:-$DEFAULT_AZURE_LOCATION}"
-          if [ -z "$LOCATION" ]; then
-            LOCATION="westus3"
-          fi
-          RG="rrttest-nightly-${{ github.run_id }}-${{ github.run_attempt }}"
-          # Recipes use the resource group's region. Fall back when the
-          # preferred region has no Burstable PostgreSQL capacity.
-          FALLBACK="${AZURE_FALLBACK_LOCATION:-eastus2}"
-          CANDIDATES=("$LOCATION")
-          if [[ -n "$FALLBACK" && "$FALLBACK" != "$LOCATION" ]]; then
-            CANDIDATES+=("$FALLBACK")
-          fi
-          LOCATION="$(.github/scripts/select-azure-test-location.sh "${RG}-probe" "${CANDIDATES[@]}")"
-          {
-            echo "AZURE_LOCATION=$LOCATION"
-            echo "AZURE_RESOURCE_GROUP=$RG"
-            echo "AZURE_WORKSPACE_NAME=default"
-            echo "AZURE_ENVIRONMENT_NAME=default"
-          } >> "$GITHUB_ENV"
-          echo "resource_group=$RG" >> "$GITHUB_OUTPUT"
-        env:
-          DEFAULT_AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
-          AZURE_FALLBACK_LOCATION: ${{ vars.AZURE_FALLBACK_LOCATION }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
       - name: Create Azure Resource Group
+        timeout-minutes: 5
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
           set -euo pipefail
-          RG="$AZURE_RESOURCE_GROUP"
-          LOCATION="$AZURE_LOCATION"
-          current_time=$(date +%s)
-          az group create \
-            --only-show-errors \
-            --output none \
-            --location "$LOCATION" \
-            --name "$RG" \
-            --subscription "$AZURE_SUBSCRIPTION_ID" \
-            --tags "creationTime=$current_time" > /dev/null
-          while [[ "$(az group exists --name "$RG" --subscription "$AZURE_SUBSCRIPTION_ID")" != "true" ]]; do
-            echo "Waiting for resource group '$RG' to be available..."
-            sleep 5
-          done
-          echo "Resource group '$RG' is ready"
-
-      - name: Setup Node
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .node-version
-
-      - name: Set up ORAS
-        uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
-        with:
-          version: "1.2.0"
-
-      - name: Install Radius CLI
-        run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
-
-      - name: Create Radius Cluster
-        env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          TEST_AZURE_OIDC_JSON: ${{ secrets.TEST_AZURE_OIDC_JSON }}
-        run: make create-radius-cluster
+          bash .github/scripts/azure-postgres-workflow.sh create-main nightly \
+            "$AZURE_RESOURCE_GROUP" "$AZURE_LOCATION" "$AZURE_GROUP_OWNER_TOKEN"
 
       - name: Configure Azure Provider
         env:
@@ -281,19 +346,50 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: make configure-azure-provider
 
-      - name: Build Azure Recipes
-        run: make build-azure-recipes
+      - name: Deploy checked-in Azure Recipe Packs
+        id: azure_pack_deploy
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          RECIPE_PACK_USE_LOCAL_RECIPES: "true"
+        run: .github/scripts/deploy-all-checked-in-recipe-packs.sh azure "$AZURE_ENVIRONMENT_NAME"
+
+      - name: Test PostgreSQL Recipe Pack entry
+        id: azure_postgres_entry
+        if: ${{ needs.nightly-azure-postgres-preflight.outputs.status == 'selected' }}
+        continue-on-error: true
+        timeout-minutes: 45
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
+          RTC_AZURE_PACK_ENTRY_PHASE: postgres
+        run: |
+          export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 45 * 60 ))
+          make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+
+      - name: Test unrelated Recipe Pack entries
+        id: azure_pack_entries
+        continue-on-error: true
+        timeout-minutes: 60
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
+          RTC_AZURE_PACK_ENTRY_PHASE: unrelated
+        run: |
+          export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 60 * 60 ))
+          make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
 
       - name: Test Azure Bicep recipes
         id: azure_bicep
         continue-on-error: true
-        timeout-minutes: 75
+        timeout-minutes: 55
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
         run: |
           set -euo pipefail
           pack_name="nightlyazurebiceprecipepack"
+          export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 55 * 60 ))
           pack_file="recipe-pack-nightly-azure-bicep.bicep"
           RECIPE_PLATFORM_FILTER=azure make generate-recipe-pack \
             PACK_NAME="$pack_name" \
@@ -313,13 +409,14 @@ jobs:
       - name: Test Azure Terraform recipes
         id: azure_terraform
         continue-on-error: true
-        timeout-minutes: 75
+        timeout-minutes: 55
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
         run: |
           set -euo pipefail
           pack_name="nightlyazureterraformrecipepack"
+          export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 55 * 60 ))
           pack_file="recipe-pack-nightly-azure-terraform.bicep"
           RECIPE_PLATFORM_FILTER=azure make generate-recipe-pack \
             PACK_NAME="$pack_name" \
@@ -336,23 +433,12 @@ jobs:
             ENVIRONMENT="$AZURE_ENVIRONMENT_NAME" \
             RECIPE_TYPE=terraform
 
-      - name: Deploy checked-in Azure Recipe Packs
-        id: azure_pack_deploy
+      - name: Collect workflow failure diagnostics
+        if: ${{ !cancelled() && (failure() || steps.azure_postgres_entry.outcome == 'failure' || steps.azure_bicep.outcome == 'failure' || steps.azure_terraform.outcome == 'failure' || steps.azure_pack_deploy.outcome == 'failure' || steps.azure_pack_entries.outcome == 'failure') }}
         continue-on-error: true
-        timeout-minutes: 15
-        env:
-          RECIPE_PACK_USE_LOCAL_RECIPES: "true"
-        run: .github/scripts/deploy-all-checked-in-recipe-packs.sh azure "$AZURE_ENVIRONMENT_NAME"
-
-      - name: Test all runnable Recipe Pack entries
-        id: azure_pack_entries
-        continue-on-error: true
-        # Allows extra time for PostgreSQL capacity probes and retries.
-        timeout-minutes: 150
-        env:
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
-        run: make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+        run: |
+          source .github/scripts/lib-recipe-test.sh
+          rtc_collect_test_diagnostics workflow workflow-failure "$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
 
       - name: Upload pre-cleanup Azure diagnostics
         if: always()
@@ -365,25 +451,18 @@ jobs:
       - name: Report Azure test failures
         if: ${{ !cancelled() }}
         env:
+          POSTGRES_OUTCOME: ${{ steps.azure_postgres_entry.outcome }}
           BICEP_OUTCOME: ${{ steps.azure_bicep.outcome }}
           TERRAFORM_OUTCOME: ${{ steps.azure_terraform.outcome }}
           PACK_DEPLOY_OUTCOME: ${{ steps.azure_pack_deploy.outcome }}
           PACK_ENTRIES_OUTCOME: ${{ steps.azure_pack_entries.outcome }}
         run: |
-          failures=0
-          for result in \
+          bash .github/scripts/report-azure-test-failures.sh \
+            "PostgreSQL entry:$POSTGRES_OUTCOME" \
             "Bicep recipes:$BICEP_OUTCOME" \
             "Terraform recipes:$TERRAFORM_OUTCOME" \
             "checked-in pack deployment:$PACK_DEPLOY_OUTCOME" \
-            "checked-in pack entries:$PACK_ENTRIES_OUTCOME"; do
-            name="${result%%:*}"
-            outcome="${result#*:}"
-            if [[ "$outcome" != "success" ]]; then
-              echo "::error::$name finished with outcome '$outcome'"
-              failures=1
-            fi
-          done
-          exit "$failures"
+            "unrelated pack entries:$PACK_ENTRIES_OUTCOME"
 
       - name: Collect Radius pod logs
         if: always()
@@ -424,7 +503,10 @@ jobs:
 
   cleanup-azure-resources:
     name: Cleanup Azure Resources
-    needs: nightly-azure-recipe-pack-tests
+    needs:
+      - nightly-azure-context
+      - nightly-azure-postgres-preflight
+      - nightly-azure-recipe-pack-tests
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -444,8 +526,21 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Cleanup Azure Resources
+      - name: Cleanup resource groups owned by this run
+        if: always()
+        timeout-minutes: 26
         env:
-          AZURE_RESOURCE_GROUP: ${{ needs.nightly-azure-recipe-pack-tests.outputs.resource_group }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-        run: make cleanup-azure-resources
+          EXPECTED_PROBE_RESOURCE_GROUP: ${{ needs.nightly-azure-context.outputs.probe_resource_group }}
+          PREFLIGHT_RESULT: ${{ needs.nightly-azure-postgres-preflight.result }}
+        run: |
+          set -u
+          cleanup_status=0
+          if [[ "$PREFLIGHT_RESULT" != success ]]; then
+            sleep 180
+          fi
+          bash .github/scripts/azure-postgres-workflow.sh cleanup-probe \
+            "$EXPECTED_PROBE_RESOURCE_GROUP" || cleanup_status=1
+          bash .github/scripts/azure-postgres-workflow.sh cleanup-run-groups nightly ||
+            cleanup_status=1
+          exit "$cleanup_status"

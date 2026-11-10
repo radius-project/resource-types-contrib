@@ -1,5 +1,4 @@
 #!/bin/bash
-
 # ------------------------------------------------------------
 # Copyright 2026 The Radius Authors.
 #
@@ -16,114 +15,259 @@
 # limitations under the License.
 # ------------------------------------------------------------
 
-# =============================================================================
-# Checks that Azure can create the PostgreSQL flexible server SKU used by the
-# azure-aks Recipe Pack test (size 'S' maps to Standard_B1ms, Burstable).
-#
-# Azure has no API for live regional capacity: the SKU list and quota APIs can
-# report a SKU as available while a create still fails with SkuNotAvailable or
-# ServerIsBusy. This script creates a probe server and retries only those
-# capacity errors. Other errors fail immediately. After a successful create,
-# it waits for the delete so that the probe does not hold the capacity that
-# the real deployment needs.
-#
-# Exit codes: 0 capacity available, 1 other error, 2 no capacity after all
-# attempts.
-#
-# Required environment: AZURE_RESOURCE_GROUP, AZURE_LOCATION
-# Optional environment: AZURE_SUBSCRIPTION_ID (default: Azure CLI default),
-#                       RTC_POSTGRES_PROBE_ATTEMPTS (default 3),
-#                       RTC_POSTGRES_PROBE_WAIT_SECONDS (default 600),
-#                       RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS (default 900)
-# =============================================================================
+# Probe the azure-aks PostgreSQL test tuple; this does not reserve capacity.
+# Required: AZURE_RESOURCE_GROUP, AZURE_LOCATION.
+# RTC_POSTGRES_TEST_SIZE defaults to S (S or M only).
+# Standalone retries: RTC_POSTGRES_PROBE_ATTEMPTS=3 (max 3),
+# RTC_POSTGRES_PROBE_WAIT_SECONDS=600 (0..600). Selection uses one attempt.
+# Create/delete limits: RTC_POSTGRES_PROBE_{CREATE,DELETE}_TIMEOUT_SECONDS=900
+# (1..900 each). Cleanup has its own time reserve.
+# RTC_POSTGRES_PROBE_GROUP_LIFECYCLE=true leaves server cleanup to the owned
+# resource group. Use it only for workflow preflight.
+# Optional RTC_POSTGRES_PROBE_RESULT_FILE receives a credential-free JSON record.
+# Exit: 0 available, 1 operational error, 2 capacity exhausted, 3 create timeout,
+# 4 unsupported tuple, 5 region or offer restriction.
 
 set -euo pipefail
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=.github/scripts/lib-azure-postgres-test.sh
+source "$script_dir/lib-azure-postgres-test.sh"
 
 resource_group="${AZURE_RESOURCE_GROUP:-}"
 location="${AZURE_LOCATION:-}"
-attempts="${RTC_POSTGRES_PROBE_ATTEMPTS:-3}"
-wait_seconds="${RTC_POSTGRES_PROBE_WAIT_SECONDS:-600}"
-delete_timeout="${RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS:-900}"
-sku_name="Standard_B1ms"
-tier="Burstable"
+attempts="${RTC_POSTGRES_PROBE_ATTEMPTS-3}"
+wait_seconds="${RTC_POSTGRES_PROBE_WAIT_SECONDS-600}"
+create_timeout="${RTC_POSTGRES_PROBE_CREATE_TIMEOUT_SECONDS-900}"
+delete_timeout="${RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS-900}"
+group_lifecycle="${RTC_POSTGRES_PROBE_GROUP_LIFECYCLE-false}"
+rtc_postgres_test_tuple "${RTC_POSTGRES_TEST_SIZE-S}" || exit 1
+if [[ -z "$resource_group" || ! "$location" =~ ^[a-z0-9]+$ ]] ||
+    ! rtc_postgres_positive_limit "$attempts" 3 ||
+    ! rtc_postgres_positive_limit "$create_timeout" 900 ||
+    ! rtc_postgres_positive_limit "$delete_timeout" 900 ||
+    [[ ! "$wait_seconds" =~ ^(0|[1-9][0-9]{0,2})$ ]] || ((10#$wait_seconds > 600)) ||
+    [[ "$group_lifecycle" != true && "$group_lifecycle" != false ]]; then
+    echo "Error: invalid probe environment or time/attempt limit." >&2
+    exit 1
+fi
+
 subscription_args=()
 if [[ -n "${AZURE_SUBSCRIPTION_ID:-}" ]]; then
     subscription_args=(--subscription "$AZURE_SUBSCRIPTION_ID")
 fi
+work_dir="$(mktemp -d "${TMPDIR:-/tmp}/rtc-postgres-probe-XXXXXX")"
+server_name=""
+probe_owner=""
+outcome="probe_error"
+error_code="UnknownError"
 
-if [[ -z "$resource_group" || -z "$location" ]]; then
-    echo "Error: AZURE_RESOURCE_GROUP and AZURE_LOCATION must be set." >&2
-    exit 1
-fi
-if [[ ! "$attempts" =~ ^[1-9][0-9]*$ || ! "$wait_seconds" =~ ^[0-9]+$ || ! "$delete_timeout" =~ ^[1-9][0-9]*$ ]]; then
-    echo "Error: probe attempts and delete timeout must be positive integers and wait seconds a nonnegative integer." >&2
-    exit 1
-fi
-
-error_file="$(mktemp "${TMPDIR:-/tmp}/rtc-postgres-probe-XXXXXX")"
-trap 'rm -f -- "$error_file"' EXIT
-
-for ((attempt = 1; attempt <= attempts; attempt++)); do
-    server_name="pgprobe-${GITHUB_RUN_ID:-local}-${attempt}-${RANDOM}"
-    server_name="${server_name:0:63}"
-    password="Pp1-$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')"
-
-    echo "==> PostgreSQL capacity probe $attempt/$attempts: $sku_name ($tier) in $location"
+delete_server() {
+    local status=0 remaining cleanup_deadline codes
+    cleanup_deadline=$((SECONDS + delete_timeout))
+    timeout --signal=KILL "$delete_timeout" az postgres flexible-server show \
+        "${subscription_args[@]}" --resource-group "$resource_group" --name "$server_name" \
+        --only-show-errors --output json >"$work_dir/server" 2>"$work_dir/show-error" || status=$?
+    if ((status != 0)); then
+        codes="$(rtc_postgres_error_codes "$work_dir/show-error")"
+        ((status != 124 && status != 137)) && [[ "$codes" == "ResourceNotFound" ]]
+        return
+    fi
+    if ! jq -e --arg owner "$probe_owner" '.tags["rtc-probe-owner"] == $owner' \
+        "$work_dir/server" >/dev/null 2>&1; then
+        echo "Error: ownership of probe server '$server_name' was not confirmed; refusing deletion." >&2
+        return 1
+    fi
+    remaining=$((cleanup_deadline - SECONDS))
+    ((remaining > 0)) || return 1
+    timeout --signal=KILL "$remaining" az postgres flexible-server delete \
+        "${subscription_args[@]}" --resource-group "$resource_group" --name "$server_name" \
+        --yes --only-show-errors --output none > /dev/null 2>"$work_dir/delete-error" || status=$?
+    if ((status != 0)); then
+        codes="$(rtc_postgres_error_codes "$work_dir/delete-error")"
+        [[ "$codes" == "ResourceNotFound" ]] || return 1
+    fi
+    remaining=$((cleanup_deadline - SECONDS))
+    ((remaining > 0)) || return 1
     status=0
-    az postgres flexible-server create \
-        "${subscription_args[@]}" \
-        --resource-group "$resource_group" \
-        --name "$server_name" \
-        --location "$location" \
-        --tier "$tier" \
-        --sku-name "$sku_name" \
-        --storage-size 32 \
-        --version 16 \
-        --public-access None \
-        --admin-user probeadmin \
-        --admin-password "$password" \
-        --yes \
-        --only-show-errors \
-        --output none 2>"$error_file" || status=$?
+    timeout --signal=KILL "$remaining" az postgres flexible-server show \
+        "${subscription_args[@]}" --resource-group "$resource_group" --name "$server_name" \
+        --only-show-errors --output none > /dev/null 2>"$work_dir/show-error" || status=$?
+    codes="$(rtc_postgres_error_codes "$work_dir/show-error")"
+    ((status != 0 && status != 124 && status != 137)) && [[ "$codes" == "ResourceNotFound" ]]
+}
 
-    # Release a successful probe's allocation before the real deployment
-    # uses it: wait for the delete, with a time limit, and fail if it fails.
-    if [[ "$status" -eq 0 ]]; then
-        if ! timeout "$delete_timeout" az postgres flexible-server delete \
-            "${subscription_args[@]}" \
-            --resource-group "$resource_group" \
-            --name "$server_name" \
-            --yes --only-show-errors --output none 2>"$error_file"; then
-            echo "Error: the PostgreSQL capacity probe server '$server_name' was not deleted within ${delete_timeout}s:" >&2
-            cat "$error_file" >&2
-            exit 1
-        fi
-        echo "==> PostgreSQL capacity is available in $location"
-        exit 0
+# Invoked by the EXIT trap, including after an interrupt.
+# shellcheck disable=SC2329
+finish() {
+    local status=$?
+    trap - EXIT INT TERM
+    if [[ "$group_lifecycle" == false && -n "$server_name" ]] && ! delete_server; then
+        echo "Error: probe server '$server_name' deletion was not confirmed." >&2
+        outcome="probe_error"; error_code="CleanupFailed"; status=1
     fi
-
-    # A failed create can leave a server in the Failed state. The resource
-    # group cleanup removes anything this best-effort delete does not.
-    if ! az postgres flexible-server delete \
-        "${subscription_args[@]}" \
-        --resource-group "$resource_group" \
-        --name "$server_name" \
-        --yes --no-wait --only-show-errors --output none 2>/dev/null; then
-        echo "==> Probe server '$server_name' was not deleted; resource group cleanup will remove it."
+    if [[ -n "${RTC_POSTGRES_PROBE_RESULT_FILE:-}" ]]; then
+        jq -n --arg outcome "$outcome" --arg errorCode "$error_code" \
+            '{outcome: $outcome, errorCode: $errorCode}' >"$RTC_POSTGRES_PROBE_RESULT_FILE" || status=1
     fi
+    rm -rf -- "$work_dir"
+    exit "$status"
+}
+trap finish EXIT
+trap 'exit 1' INT TERM
 
-    if ! grep -qE 'SkuNotAvailable|ServerIsBusy' "$error_file"; then
-        echo "Error: the PostgreSQL capacity probe failed for a reason other than capacity:" >&2
-        cat "$error_file" >&2
+# Azure CLI renamed these switches. Read local help, not a cloud capability list.
+# Charge the full remaining create/selection budget to this check.
+help_started=$SECONDS
+help_timeout="$create_timeout"
+help_status=0
+timeout --signal=KILL "$help_timeout" az postgres flexible-server create --help \
+    >"$work_dir/create-help" 2>/dev/null || help_status=$?
+help_elapsed=$((SECONDS - help_started))
+if ((help_status == 124 || help_status == 137)) && ((help_elapsed >= help_timeout)); then
+    outcome="timeout"; error_code="CreateTimeout"
+    echo "Error: PostgreSQL probe timed out while reading CLI options." >&2
+    exit 3
+fi
+if ((help_status != 0)); then
+    error_code="AzureCliHelpFailed"
+    echo "Error: could not read Azure CLI PostgreSQL create options." >&2
+    exit 1
+fi
+if grep -q -- '--zonal-resiliency' "$work_dir/create-help"; then
+    ha_option="--zonal-resiliency"
+elif grep -q -- '--high-availability' "$work_dir/create-help"; then
+    ha_option="--high-availability"
+else
+    error_code="UnsupportedAzureCli"
+    echo "Error: Azure CLI has no supported PostgreSQL HA option." >&2
+    exit 1
+fi
+if grep -q -- '--microsoft-entra-auth' "$work_dir/create-help"; then
+    auth_option="--microsoft-entra-auth"
+elif grep -q -- '--active-directory-auth' "$work_dir/create-help"; then
+    auth_option="--active-directory-auth"
+else
+    error_code="UnsupportedAzureCli"
+    echo "Error: Azure CLI has no supported PostgreSQL Entra authentication option." >&2
+    exit 1
+fi
+first_create_timeout=$((create_timeout - (SECONDS - help_started)))
+if ((first_create_timeout <= 0)); then
+    outcome="timeout"; error_code="CreateTimeout"
+    echo "Error: PostgreSQL probe used its create budget while reading CLI options." >&2
+    exit 3
+fi
+catalog_status=0
+timeout --signal=KILL "$first_create_timeout" az postgres flexible-server list-skus \
+    "${subscription_args[@]}" --location "$location" --only-show-errors --output json \
+    >"$work_dir/catalog" 2>"$work_dir/catalog-error" || catalog_status=$?
+if ((catalog_status == 124 || catalog_status == 137)); then
+    outcome="timeout"; error_code="CreateTimeout"
+    echo "Error: PostgreSQL capability discovery exceeded the create budget." >&2
+    exit 3
+elif ((catalog_status != 0)) || [[ -s "$work_dir/catalog-error" ]]; then
+    error_code="CatalogReadFailed"
+    echo "Error: PostgreSQL capability discovery failed; refusing allocation." >&2
+    exit 1
+fi
+error_code="$(rtc_postgres_catalog_result "$work_dir/catalog" "$postgres_tier" "$postgres_sku")"
+if [[ -n "$error_code" ]]; then
+    echo "Error: PostgreSQL capability check failed: $error_code." >&2
+    case "$error_code" in
+        UnsupportedVersion|UnsupportedTier|UnsupportedSku|UnsupportedStorage)
+            outcome="unsupported"
+            exit 4
+            ;;
+        RegionRestricted)
+            outcome="restricted"
+            exit 5
+            ;;
+        *) exit 1 ;;
+    esac
+fi
+error_code="UnknownError"
+for ((attempt = 1; attempt <= attempts; attempt++)); do
+    create_deadline=$((SECONDS + create_timeout))
+    if ((attempt == 1)); then create_deadline=$((help_started + create_timeout)); fi
+    probe_owner="$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
+    candidate_name="pgprobe-$probe_owner"
+    limit=$((create_deadline - SECONDS))
+    if ((limit <= 0)); then
+        outcome="timeout"; error_code="CreateTimeout"
+        echo "Error: PostgreSQL probe used its create budget before the absence check." >&2
+        exit 3
+    fi
+    status=0
+    timeout --signal=KILL "$limit" az postgres flexible-server show \
+        "${subscription_args[@]}" --resource-group "$resource_group" --name "$candidate_name" \
+        --only-show-errors --output json >/dev/null 2>"$work_dir/precreate-error" || status=$?
+    codes="$(rtc_postgres_error_codes "$work_dir/precreate-error")"
+    if ((status == 0)); then
+        error_code="ServerAlreadyExists"
+        echo "Error: probe server name '$candidate_name' already exists; refusing creation." >&2
+        exit 1
+    elif ((status == 124 || status == 137)); then
+        outcome="timeout"; error_code="CreateTimeout"
+        echo "Error: PostgreSQL probe server absence check timed out." >&2
+        exit 3
+    elif [[ "$codes" != "ResourceNotFound" ]]; then
+        error_code="ServerAbsenceUnknown"
+        echo "Error: probe server absence was not confirmed; refusing creation." >&2
         exit 1
     fi
-
-    echo "==> No $sku_name capacity in $location: $(grep -oE 'SkuNotAvailable|ServerIsBusy' "$error_file" | head -n 1)"
-    if ((attempt < attempts)); then
-        echo "==> Waiting ${wait_seconds}s before the next probe"
-        sleep "$wait_seconds"
+    limit=$((create_deadline - SECONDS))
+    if ((limit <= 0)); then
+        outcome="timeout"; error_code="CreateTimeout"
+        echo "Error: PostgreSQL probe used its create budget during the absence check." >&2
+        exit 3
     fi
+    server_name="$candidate_name"
+    password="P$(openssl rand -hex 16)a1!"
+    echo "==> PostgreSQL probe $attempt/$attempts: $postgres_sku ($postgres_tier) in $location" >&2
+    status=0
+    # None enables public networking without a firewall rule. It does not disable
+    # TLS. Leave zone unset for automatic placement, as in the pack.
+    timeout --signal=KILL "$limit" az postgres flexible-server create \
+        "${subscription_args[@]}" --resource-group "$resource_group" --name "$server_name" \
+        --location "$location" --tier "$postgres_tier" --sku-name "$postgres_sku" \
+        --storage-size 32 --version 16 "$ha_option" Disabled \
+        --geo-redundant-backup Disabled "$auth_option" Enabled --password-auth Enabled \
+        --public-access None --admin-user probeadmin --admin-password "$password" \
+        --tags "rtc-probe-owner=$probe_owner" \
+        --yes --only-show-errors --output none > /dev/null 2>"$work_dir/create-error" || status=$?
+    unset password
+    if ((status == 124 || status == 137)); then
+        echo "Error: create request timed out for probe server '$server_name' in resource group '$resource_group' (ownership tag rtc-probe-owner=$probe_owner)." >&2
+        echo "A current ResourceNotFound response does not rule out later creation. Check this target again and verify its ownership tag before deletion." >&2
+    fi
+    codes="$(rtc_postgres_error_codes "$work_dir/create-error")"
+    if [[ "$group_lifecycle" == false ]] && ! delete_server; then
+        echo "Error: probe server '$server_name' deletion was not confirmed." >&2
+        # Do not allocate again after failed cleanup. The caller owns group recovery.
+        if [[ "$group_lifecycle" == false ]]; then server_name=""; fi
+        outcome="probe_error"; error_code="CleanupFailed"
+        exit 1
+    fi
+    server_name=""
+    if ((status == 0)); then
+        outcome="available"; error_code=""
+        echo "==> PostgreSQL capacity is available in $location" >&2
+        exit 0
+    fi
+    if ((status == 124 || status == 137)); then
+        outcome="timeout"; error_code="CreateTimeout"
+        echo "Error: PostgreSQL create exceeded ${create_timeout}s." >&2
+        exit 3
+    fi
+    error_code="${codes:-UnknownError}"
+    if [[ -z "$codes" ]] || grep -qvE '^(SkuNotAvailable|ServerIsBusy)$' <<<"$codes"; then
+        outcome="probe_error"
+        echo "Error: PostgreSQL probe failed: $error_code." >&2
+        exit 1
+    fi
+    outcome="capacity_exhausted"
+    echo "==> No $postgres_sku capacity in $location: $error_code" >&2
+    if ((attempt < attempts)); then sleep "$wait_seconds"; fi
 done
-
-echo "::error::Azure has no $sku_name ($tier) PostgreSQL capacity in $location after $attempts probes. This is an Azure capacity limit, not a recipe failure." >&2
+echo "::error::Azure has no $postgres_sku ($postgres_tier) PostgreSQL capacity in $location after $attempts probes. This is an Azure capacity limit, not a recipe failure." >&2
 exit 2
