@@ -1,0 +1,272 @@
+# yaml-language-server: $schema=https://www.schemastore.org/github-workflow.json
+---
+name: Test Azure ACI
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        default: edge
+      checkout_ref:
+        type: string
+        default: ""
+      test_checked_in_pack:
+        type: boolean
+        default: false
+      release_candidate:
+        type: boolean
+        default: false
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+      TEST_AZURE_OIDC_JSON:
+        required: true
+
+permissions: {}
+
+jobs:
+  select-slot:
+    name: Select ACI capacity slot
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      slot: ${{ steps.slot.outputs.slot }}
+    steps:
+      - name: Select one of four shared slots
+        id: slot
+        run: echo "slot=$((GITHUB_RUN_ID % 4))" >> "$GITHUB_OUTPUT"
+
+  test-aci:
+    name: Test ACI Recipes
+    needs: select-slot
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    concurrency:
+      group: azure-aci-test-capacity-${{ needs.select-slot.outputs.slot }}
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      RTC_TEST_DIAGNOSTICS_DIR: azure-test-diagnostics
+      RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
+      RTC_TEST_PLATFORM: azure
+      AZURE_RESOURCE_GROUP: rrttest-${{ github.run_id }}-${{ github.run_attempt }}-aci
+      AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'westus3' }}
+      AZURE_WORKSPACE_NAME: default
+      AZURE_ENVIRONMENT_NAME: default
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    steps:
+      # The CI caller must pass its trust and exact-head approval gates first.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true
+
+      - name: Use sources released with Radius
+        if: inputs.release_candidate
+        id: rc
+        env:
+          RADIUS_VERSION: ${{ inputs.version }}
+        run: bash .github/scripts/release/prepare-release-candidate-sources.sh
+
+      - name: Verify published ACI Recipe sources resolve
+        if: inputs.release_candidate
+        env:
+          RECIPE_PACK: azure-aci
+        run: bash .github/scripts/release/verify-recipe-pack-sources.sh
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@5e2f2482b30b0cb3e14e67f89a80c88c659a7c63 # v2.0.3
+        with:
+          version: "1.2.0"
+
+      - name: Install Radius CLI
+        env:
+          RAD_VERSION: ${{ steps.rc.outputs.radius_version || inputs.version }}
+        run: make install-radius-cli RAD_VERSION="$RAD_VERSION"
+
+      - name: Create Radius Cluster
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          TEST_AZURE_OIDC_JSON: ${{ secrets.TEST_AZURE_OIDC_JSON }}
+        run: make create-radius-cluster
+
+      - name: Build Azure Recipes
+        run: make build-azure-recipes
+
+      - name: Azure Login
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Enable Azure CLI token renewal
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: bash .github/scripts/azure-cli-with-refresh.sh --install
+
+      - name: Create Azure Resource Group
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          az group create --name "$AZURE_RESOURCE_GROUP" --location "$AZURE_LOCATION" \
+            --subscription "$AZURE_SUBSCRIPTION_ID" --output none \
+            --tags "creationTime=$(date +%s)"
+
+      - name: Configure Azure Provider
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: make configure-azure-provider
+
+      - name: Deploy checked-in ACI Recipe Pack
+        id: pack_deploy
+        if: inputs.test_checked_in_pack
+        env:
+          RTC_ACI_TEST_SCOPE: only
+          RECIPE_PACK_USE_LOCAL_RECIPES: ${{ !inputs.release_candidate && 'true' || 'false' }}
+        run: bash .github/scripts/deploy-all-checked-in-recipe-packs.sh azure "$AZURE_ENVIRONMENT_NAME"
+
+      - name: Test checked-in ACI Recipe Pack entry
+        id: pack_test
+        if: inputs.test_checked_in_pack && steps.pack_deploy.outcome == 'success'
+        timeout-minutes: 25
+        env:
+          RTC_ACI_TEST_SCOPE: only
+        run: |
+          export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 25 * 60 ))
+          make test-recipe-pack-entries PLATFORM_GROUP=azure \
+            WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+
+      - name: Test generated ACI Bicep recipe
+        id: basic_test
+        timeout-minutes: 25
+        env:
+          RELEASE_CANDIDATE: ${{ inputs.release_candidate }}
+        run: |
+          set -euo pipefail
+          export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 25 * 60 ))
+          if [[ "$RELEASE_CANDIDATE" != true ]]; then
+            export RTC_ACI_TEST_DESIRED_COUNT=1
+          fi
+          # Include the volume and secret recipes needed by the container test.
+          RECIPE_PLATFORM_FILTER=azure make generate-recipe-pack \
+            PACK_NAME=acibiceprecipepack OUTPUT_FILE=recipe-pack-aci.bicep
+          make deploy-recipe-pack BICEP_FILE=recipe-pack-aci.bicep RESOURCE_GROUP=default
+          make update-env-recipe-pack RECIPE_PACK_NAME=acibiceprecipepack \
+            ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+          RTC_ACI_TEST_SCOPE=only RECIPE_PLATFORM_FILTER=azure make test \
+            ENVIRONMENT="$AZURE_ENVIRONMENT_NAME" RECIPE_TYPE=bicep
+
+      - name: Collect workflow failure diagnostics
+        if: ${{ !cancelled() && (failure() || steps.pack_deploy.outcome == 'failure' || steps.pack_test.outcome == 'failure' || steps.basic_test.outcome == 'failure') }}
+        continue-on-error: true
+        run: |
+          source .github/scripts/lib-recipe-test.sh
+          rtc_collect_test_diagnostics workflow workflow-failure "$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
+
+      - name: Upload pre-cleanup Azure diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: azure-test-diagnostics-aci
+          path: azure-test-diagnostics
+          if-no-files-found: ignore
+
+      - name: Report ACI test failures
+        if: ${{ !cancelled() }}
+        env:
+          TEST_CHECKED_IN_PACK: ${{ inputs.test_checked_in_pack }}
+          PACK_DEPLOY_OUTCOME: ${{ steps.pack_deploy.outcome }}
+          PACK_TEST_OUTCOME: ${{ steps.pack_test.outcome }}
+          BASIC_TEST_OUTCOME: ${{ steps.basic_test.outcome }}
+        run: |
+          set -euo pipefail
+          outcomes=("generated ACI recipe:$BASIC_TEST_OUTCOME")
+          if [[ "$TEST_CHECKED_IN_PACK" == true ]]; then
+            outcomes+=("checked-in ACI pack deployment:$PACK_DEPLOY_OUTCOME"
+              "checked-in ACI pack entry:$PACK_TEST_OUTCOME")
+          fi
+          bash .github/scripts/report-azure-test-failures.sh "${outcomes[@]}"
+
+      - name: Collect Radius pod logs
+        if: always()
+        run: |
+          mkdir -p radius-pod-logs
+          for component in applications-rp deployment-engine ucp dynamic-rp; do
+            pattern="^${component}-"
+            if [[ "$component" == deployment-engine ]]; then
+              pattern='^(deployment-engine|bicep-de)-'
+            fi
+            if ! pods=$(kubectl get pods -n radius-system -o json); then
+              echo "::warning::Cannot list Radius pods for $component logs."
+              continue
+            fi
+            pod=$(jq -r --arg pattern "$pattern" \
+              '[.items[] | select(.metadata.name | test($pattern)) | .metadata.name][0] // empty' <<< "$pods")
+            if [[ -z "$pod" ]]; then
+              echo "::warning::No $component pod found."
+            elif ! kubectl logs "$pod" -n radius-system --all-containers > "radius-pod-logs/$component.log"; then
+              echo "::warning::Cannot collect $component logs."
+            fi
+          done
+
+      - name: Upload Radius pod logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: radius-pod-logs-aci
+          path: radius-pod-logs
+          if-no-files-found: warn
+
+      - name: Release ACI capacity before leaving the slot
+        if: always()
+        timeout-minutes: 15
+        run: make cleanup-azure-resources
+
+  cleanup-aci-resources:
+    name: Fallback ACI resource cleanup
+    needs: test-aci
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AZURE_RESOURCE_GROUP: rrttest-${{ github.run_id }}-${{ github.run_attempt }}-aci
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    steps:
+      # Never run unapproved PR code in this fallback job.
+      - name: Checkout trusted cleanup script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Azure Login
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Confirm resource-group deletion
+        timeout-minutes: 15
+        run: bash .github/scripts/cleanup-azure-resources.sh

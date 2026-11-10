@@ -122,6 +122,74 @@ parameters, so Radius can reuse resources from earlier work. It does not delete
 partially deployed resources between attempts. These rules apply to both
 per-recipe and Recipe Pack entry tests.
 
+#### Azure Container Instance quota recovery
+
+`validate-azure-aci-recipes.yaml` runs the ACI CI tests.
+`nightly-azure-aci-tests.yaml` runs once a day and also tests the checked-in
+ACI Recipe Pack. The general Azure workflows exclude ACI deployments and
+do not wait for ACI capacity. Release-candidate ACI coverage runs as a separate
+job, without waiting for PostgreSQL preflight.
+
+All three call `test-azure-aci.yaml`. It assigns each run to one of four shared
+job concurrency groups, `azure-aci-test-capacity-0` through
+`azure-aci-test-capacity-3`, using the workflow run ID modulo four. Each group
+allows one running job, so at most four ACI test jobs can run at once across
+CI, nightly, and release-candidate workflows. Runs assigned to the same slot
+wait in that slot even if another slot is free. This is a fixed assignment,
+not a quota-aware scheduler. The four-job limit does not reserve Azure cores
+or guarantee that concurrent tests fit the regional quota.
+
+Each slot uses `queue: max`, which allows up to 100 pending jobs per slot.
+The limit of four applies to **running ACI test jobs**, not waiting jobs.
+GitHub Actions does not support a pending queue size of four. Jobs retain their
+slot through confirmed resource-group deletion. A separate cleanup job remains
+as a fallback. Manual cancellation or a lost runner can still interrupt cleanup;
+a failed cleanup releases the job slot but does not prove that quota is available.
+
+`RTC_ACI_TEST_SCOPE=only` selects the Azure Bicep containers recipe and the
+containers entry in the checked-in `azure-aci` pack. `exclude` omits those tests
+but keeps the other Azure tests, including non-container entries in that pack
+and Kubernetes-backed containers in the `azure-aks` pack. Unset or `all` keeps
+the full test set. Other values fail. The generated ACI pack still includes the
+volume and secret recipes needed by its container test.
+An ACI-only test run fails if no ACI recipe is found.
+
+To run the daily ACI tests manually:
+
+```bash
+gh workflow run nightly-azure-aci-tests.yaml -f version=edge
+```
+
+The basic Azure Bicep CI tests set `RTC_ACI_TEST_DESIRED_COUNT=1` when generating
+their Recipe Pack. This sets the ACI Recipe's `desiredCount` to one per container
+resource. It does not change CPU requests or production defaults. The nightly
+checked-in `azure-aci` Recipe Pack tests and release-candidate tests retain the
+default of three instances per resource. These test multi-instance deployment,
+not an autoscaling operation. Without the variable, the generator keeps Recipe
+defaults; a value other than `1` fails generation.
+
+In GitHub Actions, both Azure container per-recipe tests and Recipe Pack entry
+tests allow one clean redeployment for the exact structured
+`AzureContainerInstance/ContainerGroupQuotaReached` error on an ACI NGroups
+resource. All failure details must qualify. The runner collects diagnostics,
+deletes the failed application, and confirms that the Azure resource-group
+inventory has no new resource IDs before it waits 60 seconds and retries with a
+new application name. Failed cleanup, failed inventory, mixed errors, registry
+errors, and regional-capacity errors do not qualify.
+
+The full ACI test has a 20-minute limit, shortened by any enclosing test-step
+deadline. It reserves six minutes for diagnostics and cleanup and starts a
+retry only if enough time remains. Existing transport retries still use the
+same application within each deployment attempt. A second quota rejection
+fails with `deployment was not validated`; quota rejection never counts as a
+passing test.
+
+Run the offline regression tests with:
+
+```bash
+bash .github/scripts/tests/test-aci-quota-recovery.sh
+```
+
 ### 6. Test All Recipes
 
 Run tests for all recipes in the repository:

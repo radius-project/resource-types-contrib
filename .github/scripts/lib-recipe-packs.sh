@@ -114,6 +114,10 @@ rtc_list_platform_groups() {
 # line, sorted.
 rtc_recipe_packs_for_platform_group() {
     local target="$1" pack group packs groups
+    case "${RTC_ACI_TEST_SCOPE:-all}" in
+        all | only | exclude) ;;
+        *) echo "Error: RTC_ACI_TEST_SCOPE must be all, only, or exclude." >&2; return 1 ;;
+    esac
     groups="$(rtc_list_platform_groups)" || return 1
     if ! grep -Fxq "$target" <<<"$groups"; then
         echo "Error: no checked-in packs for platform group '$target'." >&2
@@ -122,6 +126,9 @@ rtc_recipe_packs_for_platform_group() {
     packs="$(rtc_list_recipe_packs)" || return 1
     while IFS= read -r pack; do
         [[ -z "$pack" ]] && continue
+        if [[ "${RTC_ACI_TEST_SCOPE:-all}" == only && "$pack" != azure-aci ]]; then
+            continue
+        fi
         if ! group="$(rtc_recipe_pack_platform_group "$pack")"; then
             return 1
         fi

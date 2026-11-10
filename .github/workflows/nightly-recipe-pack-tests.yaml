@@ -258,6 +258,7 @@ jobs:
     env:
       RTC_TEST_DIAGNOSTICS_DIR: azure-test-diagnostics
       RTC_TEST_PLATFORM: azure
+      RTC_ACI_TEST_SCOPE: exclude
       AZURE_RESOURCE_GROUP: ${{ needs.nightly-azure-context.outputs.resource_group }}
       AZURE_GROUP_OWNER_TOKEN: ${{ needs.nightly-azure-context.outputs.owner_token }}
       AZURE_PROBE_RESOURCE_GROUP: ${{ needs.nightly-azure-context.outputs.probe_resource_group }}
@@ -500,6 +501,13 @@ jobs:
           name: radius-pod-logs-nightly-azure
           path: radius-pod-logs
           if-no-files-found: warn
+
+      - name: Cleanup Azure resource groups
+        if: always()
+        timeout-minutes: 26
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: bash .github/scripts/azure-postgres-workflow.sh cleanup-run-groups nightly
 
   cleanup-azure-resources:
     name: Cleanup Azure Resources

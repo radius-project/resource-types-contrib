@@ -105,6 +105,17 @@ Kubernetes recipes they reference. Missing or ambiguous recipe sources and
 build failures stop the test; there is no fallback to a published artifact.
 The checked-in files are not changed.
 
+ACI deployments run separately from the other Azure tests.
+[`validate-azure-aci-recipes.yaml`](../.github/workflows/validate-azure-aci-recipes.yaml)
+tests ACI changes in CI, and
+[`nightly-azure-aci-tests.yaml`](../.github/workflows/nightly-azure-aci-tests.yaml)
+tests the ACI Recipe Pack once a day. Release-candidate ACI tests use the same
+worker. Four shared slot groups allow up to four ACI jobs at once. General
+Azure jobs do not use those slots. The checked-in ACI pack retains the Recipe
+default of three instances per container resource. See
+[ACI quota recovery](../docs/contributing/testing-resource-types-recipes.md#azure-container-instance-quota-recovery)
+for test selection, queue limits, and cleanup rules.
+
 Local preparation requires each entry's `source` to be a nonempty,
 single-quoted literal on its own line, indented two spaces below the entry key.
 Variables, interpolation, missing or duplicate sources, and inline entries fail
@@ -160,7 +171,8 @@ which:
   `publish-bicep-recipes.yaml` publishes it.
 
 The workflow checks that every pack source can be pulled, installs that Radius
-version, and runs the nightly steps unchanged. It supports only releases whose
+version, and runs the nightly tests with ACI deployments in a separate job.
+It supports only releases whose
 pinned packs all have a platform mapping in `lib-recipe-packs.sh`; older
 releases that pin a pack without one are not supported.
 
