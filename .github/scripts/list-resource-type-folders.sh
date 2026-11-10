@@ -91,20 +91,27 @@ is_resource_type_yaml() {
 
 collect_resource_type_dirs() {
     declare -A seen_dirs=()
-    local path
+    local path scan_pid
 
     # Traverse the repository, skipping hidden and docs directories, while checking
     # each YAML file encountered. Matching directories are recorded in an
     # associative array to avoid duplicate output when multiple files qualify.
+    exec 3< <(find "$ROOT_DIR" \
+        \( -type d -name '.*' -o -type d -name 'docs' \) -prune -o \
+        -type f -name '*.yaml' -print0)
+    scan_pid=$!
     while IFS= read -r -d '' path; do
         if is_resource_type_yaml "$path"; then
             local dir
             dir="$(dirname "$path")"
             seen_dirs["$dir"]=1
         fi
-    done < <(find "$ROOT_DIR" \
-        \( -type d -name '.*' -o -type d -name 'docs' \) -prune -o \
-        -type f -name '*.yaml' -print0)
+    done <&3
+    exec 3<&-
+    if ! wait "$scan_pid"; then
+        echo "Error: Failed to scan resource types in '$ROOT_DIR'" >&2
+        return 1
+    fi
 
     # Output sorted full paths so results are stable regardless of discovery order.
     printf '%s\n' "${!seen_dirs[@]}" | sort
