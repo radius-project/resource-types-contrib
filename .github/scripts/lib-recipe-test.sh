@@ -71,7 +71,7 @@ rtc_resolve_environment_path() {
 rtc_cleanup_kubernetes_resources() {
     local kubernetes_namespace="$1" app_name="$2" kind status=0
     local -a limit=()
-    if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
+    if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 || "${RTC_ACI_QUOTA_RECOVERY:-0}" == 1 ]]; then
         limit=(timeout --kill-after=5s 30s)
     fi
     if [[ -z "$kubernetes_namespace" ]]; then
@@ -229,7 +229,8 @@ rtc_test_azure_postgresql_app() (
     local remaining status attempt test_harness script_dir
     case "$size" in S|M) ;; *) echo "Error: PostgreSQL test size must be S or M." >&2; return 1 ;; esac
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
-    test_harness=$(mktemp "${TMPDIR:-/tmp}/rtc-postgres-test-XXXXXX.bicep") || return 1
+    # Keep Bicep configuration and relative file paths tied to the source.
+    test_harness=$(mktemp "$(dirname "$test_file")/rtc-postgres-test-XXXXXX.bicep") || return 1
     trap 'rm -f -- "$test_harness"' EXIT
     if ! bash "$script_dir/prepare-postgres-test-harness.sh" "$test_file" "$test_harness"; then
         return 1
@@ -853,6 +854,9 @@ rtc_deploy_and_assert_test_app_once() {
     if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
         # Preserve the twelve-minute deletion budget plus diagnostics and verification.
         step_reserve=1080
+    elif [[ "${RTC_ACI_QUOTA_RECOVERY:-0}" == 1 ]]; then
+        # Parallel network deletes can need several 60-second dependency retries.
+        step_reserve=660
     fi
 
     if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ||
@@ -889,7 +893,7 @@ rtc_deploy_and_assert_test_app_once() {
         if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
             cleanup_timeout=(timeout --kill-after=5s 12m)
         else
-            cleanup_timeout=(timeout --kill-after=5s 3m)
+            cleanup_timeout=(timeout --kill-after=5s 6m)
         fi
     elif [[ "${GITHUB_ACTIONS:-}" == true && "${RTC_TEST_PLATFORM:-}" == azure &&
           "$resource_type" == Radius.Compute/containers ]]; then
@@ -1009,7 +1013,7 @@ rtc_deploy_and_assert_test_app_once() {
     fi
 
     if [[ "$deploy_status" -ne 0 ]]; then
-        if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" != 1 &&
+        if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" != 1 && "${RTC_ACI_QUOTA_RECOVERY:-0}" != 1 &&
               ( -n "$step_remaining" || -n "${deploy_timeout[*]:-}" ) ]]; then
             cleanup_timeout=(timeout --kill-after=5s 3m)
         fi
@@ -1022,7 +1026,13 @@ rtc_deploy_and_assert_test_app_once() {
         if ! inventory_locks=$(rtc_snapshot_application_azure_lock_inventory "$app_name" "$workspace_name"); then
             echo "Error: Continuing with bounded Radius application deletion without lock ownership data." >&2
             inventory_locks=""
-            if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 || "${RTC_ACI_QUOTA_RECOVERY:-0}" == 1 ]]; then deploy_status=1; fi
+            deploy_status=1
+            cleanup_timeout=(timeout --kill-after=5s 3m)
+            if [[ "$diagnostics_collected" == 0 ]]; then
+                rtc_collect_test_diagnostics "$resource_type" "$app_name" "$started" ||
+                    echo "Error: Diagnostic collection failed after lock inventory failure; continuing cleanup." >&2
+                diagnostics_collected=1
+            fi
         fi
         if ! rtc_delete_owned_new_azure_management_locks "$locks_before" "$inventory_locks" "$app_name"; then
             echo "Error: Skipping Radius application deletion because Azure lock cleanup or Radius lock inventory validation failed." >&2
@@ -1081,7 +1091,7 @@ rtc_test_azure_aci_app() (
         rtc_deploy_and_assert_test_app_once "${test_args[@]}" || status=$?
         if ((status == 0)); then return 0; fi
         if ((status != 43)); then return 1; fi
-        if ((attempt == 2 || deadline - $(date +%s) <= 420)); then
+        if ((attempt == 2 || deadline - $(date +%s) <= 720)); then
             echo "Error: ACI quota recovery exhausted; deployment was not validated." >&2
             return 1
         fi
@@ -1106,7 +1116,7 @@ rtc_deploy_and_assert_test_app() {
         if ((inherited < deadline)); then deadline="$inherited"; fi
     fi
     local remaining=$((deadline - $(date +%s))) status
-    if ((remaining <= 360)); then
+    if ((remaining <= 660)); then
         echo "Error: Insufficient Azure test budget for ACI deployment and cleanup." >&2
         return 1
     fi
