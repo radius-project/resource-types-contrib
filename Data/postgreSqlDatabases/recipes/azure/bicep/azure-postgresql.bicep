@@ -2,8 +2,8 @@
 @secure()
 param context object
 
-@description('Stable Azure server name. The Recipe Pack supplies its existing hash-based name; standalone Recipes hash the subscription, resource group, and Radius resource ID.')
-param postgreSqlServerName string = 'pgsql-${uniqueString(subscription().id, resourceGroup().id, context.resource.id)}'
+@description('Stable Azure server name. Uses the Radius Azure resource name hash, or hashes the subscription, resource group, and Radius resource ID when the runtime hash is absent or empty.')
+param postgreSqlServerName string = 'pgsql-${!empty(context.?azure.?resourceNameHash) ? context.?azure.?resourceNameHash : uniqueString(subscription().id, resourceGroup().id, context.resource.id)}'
 
 @description('Operator server settings in AVM name, source, value form. See the Azure Recipe README for merge and override rules.')
 param postgreSqlServerConfigurations array = []

@@ -147,7 +147,6 @@ resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
         kind: 'bicep'
         source: 'ghcr.io/radius-project/azure-aks-recipes/postgresqldatabases:latest'
         parameters: {
-          postgreSqlServerName: 'pgsql-{{context.azure.resourceNameHash}}'
           postgreSqlServerConfigurations: postgreSqlServerConfigurations
         }
       }

@@ -47,6 +47,15 @@ if [[ -z "${RTC_POSTGRES_POLICY_PACK_FILE:-}" ]]; then
         if rtc_validate_postgres_test_pack "$pack" "$test_pack.missing" >/dev/null 2>&1; then
             fail "missing wrapper was not detected"
         fi
+        sed 's/context\.?azure\.?resourceNameHash/context.?azure.?unusedHash/g' "$source_file" >"$test_pack"
+        if rtc_validate_postgres_test_pack "$pack" "$test_pack" >/dev/null 2>&1; then
+            fail "missing runtime name hash was not detected"
+        fi
+        sed "/postgreSqlServerConfigurations: postgreSqlServerConfigurations/i\\
+          postgreSqlServerName: 'pgsql-{{context.azure.resourceNameHash}}'" "$pack" >"$test_pack"
+        if rtc_validate_postgres_test_pack "$test_pack" "$source_file" >/dev/null 2>&1; then
+            fail "unresolved pack name override was not detected"
+        fi
     fi
 fi
 echo "Azure PostgreSQL test policy matches the pack"

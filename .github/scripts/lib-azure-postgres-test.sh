@@ -38,8 +38,16 @@ rtc_validate_postgres_test_pack() {
     # Keep direct-module checks for historical packs; current settings live in the wrapper.
     if grep -Fq "source: 'ghcr.io/radius-project/azure-aks-recipes/postgresqldatabases:" <<<"$entry"; then
         wrapper="${2:-$(dirname "$pack")/../../Data/postgreSqlDatabases/recipes/azure/bicep/azure-postgresql.bicep}"
-        if [[ ! -f "$wrapper" ]] || ! grep -Fq "postgreSqlServerName: 'pgsql-{{context.azure.resourceNameHash}}'" <<<"$entry"; then
-            echo "Error: PostgreSQL wrapper or stable server name is missing: $pack" >&2
+        if [[ ! -f "$wrapper" ]]; then
+            echo "Error: PostgreSQL wrapper is missing: $wrapper" >&2
+            return 1
+        fi
+        if grep -Eq '^[[:space:]]*postgreSqlServerName:' <<<"$entry" || grep -Fq '{{context.' <<<"$entry"; then
+            echo "Error: PostgreSQL pack must use the wrapper's runtime-derived server name: $pack" >&2
+            return 1
+        fi
+        if ! grep -F 'param postgreSqlServerName string =' "$wrapper" | grep -Fq 'context.?azure.?resourceNameHash'; then
+            echo "Error: PostgreSQL wrapper must read the Azure resource name hash from context: $wrapper" >&2
             return 1
         fi
         entry="$(cat "$wrapper")" || return 1

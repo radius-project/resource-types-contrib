@@ -14,6 +14,12 @@ Some Azure services require names that are unique across Azure, so their Recipes
 
 This Recipe Pack requires a Radius runtime that supports the `context.azure.resourceNameHash` direct-module expression. Earlier revisions used `context.resource.name` directly, and adopting this revision changes those Azure resource names, which may cause existing edge deployments to provision replacement resources.
 
+The authored PostgreSQL Recipe reads `context.azure.resourceNameHash` inside
+the Recipe and adds the `pgsql-` prefix. The pack does not pass a
+`{{context.*}}` name override because Radius does not resolve these expressions
+for Recipes that accept `context`. See the [PostgreSQL naming defaults](../../Data/postgreSqlDatabases/recipes/azure/README.md)
+for the fallback when the runtime hash is absent.
+
 ## Database ports
 
 The direct AVM modules for MySQL flexible server and Azure SQL Database expose `fqdn` / `fullyQualifiedDomainName` but no port output, so this pack maps only `host` for `Radius.Data/mySqlDatabases` and `Radius.Data/sqlServerDatabases`. The authored PostgreSQL Recipe returns `host`, `port: 5432`, and `database` through its `result`.

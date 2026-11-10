@@ -11,10 +11,16 @@ and network defaults.
 The inputs are the Radius `context`, an optional stable Azure
 `postgreSqlServerName`, and an optional operator
 `postgreSqlServerConfigurations` array in AVM `{ name, source, value }`
-form. The pack supplies its existing hash-based server name. A standalone
-Recipe derives a name from the Azure subscription, resource group, and
-Radius resource ID. Repeated deployments in the same scope keep the name;
-different Azure scopes get different names.
+form. By default, the Recipe reads `context.azure.resourceNameHash` and adds
+the `pgsql-` prefix, keeping the pack's existing hash-based name. The pack
+does not pass a `{{context.*}}` expression: Radius passes such strings
+unchanged to authored Recipes that accept `context`.
+
+When the runtime hash is absent or empty, the Recipe derives a name from
+the Azure subscription, resource group, and Radius resource ID. Repeated
+deployments with the same inputs keep the name; different fallback scopes
+get different names. An explicit `postgreSqlServerName` overrides either
+default.
 
 ## Settings and operator overrides
 

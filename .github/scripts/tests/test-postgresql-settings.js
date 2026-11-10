@@ -40,6 +40,7 @@ param context = {
   application: { name: 'fixture' }
   environment: { name: 'fixture' }
   runtime: { kubernetes: { namespace: 'fixture' } }
+  ${scope.resourceNameHash === undefined ? '' : `azure: { resourceNameHash: '${scope.resourceNameHash}' }`}
   resource: {
     id: '/planes/radius/local/resourceGroups/fixture/providers/Radius.Data/postgreSqlDatabases/pgsql-fixture'
     name: 'pgsql-fixture'
@@ -158,6 +159,20 @@ serverSettings: { log_min_duration_statement: '1000' }`, `[
       'The same Radius resource ID in another Azure resource group needs a distinct name');
     assert.notEqual(defaultName({ subscriptionId: '11111111-1111-1111-1111-111111111111' }), first,
       'The same Radius resource ID in another subscription needs a distinct name');
+    assert.equal(defaultName({ resourceNameHash: '' }), first,
+      'An empty runtime hash must use the scoped fallback');
+    const resourceNameHash = '0123456789abcdef';
+    assert.equal(defaultName({ resourceNameHash }), `pgsql-${resourceNameHash}`,
+      'Read the runtime hash inside the authored Recipe, not from an unresolved pack expression');
+    assert.equal(defaultName({ resourceNameHash, resourceGroup: 'radius-deployment-group' }), `pgsql-${resourceNameHash}`,
+      'The configured runtime hash must take precedence over the ARM deployment scope');
+    const pack = fs.readFileSync(path.join(root, 'recipe-packs/azure-aks/azure-aks.bicep'), 'utf8');
+    const postgreSqlEntry = pack.split("'Radius.Data/postgreSqlDatabases': {")[1]
+      .split("'Radius.Data/sqlServerDatabases': {")[0];
+    assert.ok(!postgreSqlEntry.includes('postgreSqlServerName:'),
+      'The pack must use the authored Recipe default, not a direct-module name override');
+    assert.ok(!postgreSqlEntry.includes('{{context.'),
+      'Authored Recipe parameters must not contain unresolved direct-module expressions');
   });
 });
 
