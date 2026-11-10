@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://www.schemastore.org/github-workflow.json
+---
+name: Nightly Azure ACI Tests
+
+on:
+  schedule:
+    - cron: "0 9 * * *" # 09:00 UTC daily
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Radius version number to use."
+        required: false
+        default: edge
+        type: string
+
+permissions: {}
+
+jobs:
+  nightly-aci:
+    name: Nightly ACI Tests
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/test-azure-aci.yaml
+    with:
+      version: ${{ inputs.version || 'edge' }}
+      test_checked_in_pack: true
+    secrets: inherit

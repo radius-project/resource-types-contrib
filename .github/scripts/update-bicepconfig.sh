@@ -16,15 +16,19 @@
 # limitations under the License.
 # ------------------------------------------------------------
 
-set -e
+set -euo pipefail
 
-# This script creates a fresh bicepconfig.json with all published .tgz files
+# Merge local extension packages without changing registry references.
 
 echo "Creating bicepconfig.json with published extensions..."
 
-# Create base bicepconfig.json with required experimental features if it does not exist
-if [[ ! -f bicepconfig.json ]]; then
-  cat > bicepconfig.json << 'EOF'
+config_tmp="$(mktemp ./bicepconfig.tmp.XXXXXX)"
+trap 'rm -f "$config_tmp"' EXIT
+
+if [[ -f bicepconfig.json ]]; then
+  base_config="$(cat bicepconfig.json)"
+else
+  base_config="$(cat << 'EOF'
 {
   "extensions": {
     "radius": "br:biceptypes.azurecr.io/radius:latest",
@@ -32,8 +36,7 @@ if [[ ! -f bicepconfig.json ]]; then
   }
 }
 EOF
-else
-  echo "bicepconfig.json already exists; leaving base config untouched"
+)"
 fi
 
 # Find all published .tgz files and add them to bicepconfig.json (safe handling)
@@ -46,23 +49,51 @@ if [[ ${#tgz_files[@]} -gt 0 ]]; then
   echo "Found extension files to add to bicepconfig.json:"
   printf '%s\n' "${tgz_files[@]}"
 
-  for tgz_file in "${tgz_files[@]}"; do
-    # Extract resource name from filename (e.g., "./containers-extension.tgz" -> "containers")
-    filename=$(basename "$tgz_file")
-    resource_name=${filename%-extension.tgz}
-
-    echo "Adding extension '$resource_name' with file '$tgz_file' to bicepconfig.json..."
-
-    # Update bicepconfig.json using jq
-    jq --arg name "$resource_name" --arg path "$tgz_file" \
-      '.extensions[$name] = $path' bicepconfig.json > bicepconfig.tmp && \
-      mv bicepconfig.tmp bicepconfig.json
-  done
-
-  echo "✅ Successfully created bicepconfig.json with extensions"
+  paths="$(printf '%s\0' "${tgz_files[@]}" | jq -Rs 'split("\u0000") | map(select(length > 0))')"
 else
+  paths='[]'
   echo "No extension .tgz files found to add to bicepconfig.json"
 fi
 
+# New packages use the full schema path. Old basename-only packages remain
+# usable, but a rebuilt schema takes precedence over its old package.
+jq --argjson paths "$paths" '
+  ($paths | map({
+    path: .,
+    scoped: test("\\.ya?ml-extension\\.tgz$"),
+    short: (split("/")[-1] | sub("(\\.yaml|\\.yml)?-extension\\.tgz$"; "")),
+    alias: (ltrimstr("./") | sub("-extension\\.tgz$"; "") | gsub("[^A-Za-z0-9_]"; "_"))
+  })) as $all |
+  ($all | map(select(.scoped or
+    (.short as $name | any($all[]; .scoped and .short == $name) | not)))) as $packages |
+  ([$packages[] | select(.scoped) | {name: .alias, path: .path}] +
+   [$packages | group_by(.short)[] | select(length == 1) | .[0] |
+    {name: .short, path: .path}]) as $entries |
+  ($entries | group_by(.name) |
+    map(select((map(.path) | unique | length) > 1) | .[0].name)) as $conflicts |
+  if ($conflicts | length) > 0 then
+    error("Conflicting extension alias: " + ($conflicts | join(", ")))
+  elif any($packages | group_by(.short)[]; length > 1 and any(.[]; .scoped | not)) then
+    error("Duplicate legacy extension basenames; rebuild the schemas to use path-based aliases")
+  elif any($entries[]; .name == "radius" or .name == "aws") then
+    error("Local extension alias conflicts with radius or aws")
+  else
+    # Remove only stale local short aliases when the basename becomes ambiguous.
+    reduce ($packages | group_by(.short)[] | select(length > 1) | .[0].short) as $name (.;
+      if (.extensions[$name] | type) == "string" then
+        (.extensions[$name] | split("/")[-1]) as $file |
+        if ([$name + "-extension.tgz", $name + ".yaml-extension.tgz",
+             $name + ".yml-extension.tgz"] | index($file)) != null
+           and (.extensions[$name] | startswith("./")) then
+          del(.extensions[$name])
+        else . end
+      else . end) |
+    reduce $entries[] as $entry (.;
+      .extensions[$entry.name] = $entry.path)
+  end
+' <<<"$base_config" >"$config_tmp"
+mv "$config_tmp" bicepconfig.json
+
+echo "Successfully updated bicepconfig.json with extensions"
 echo "Final bicepconfig.json content:"
 cat bicepconfig.json

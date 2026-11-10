@@ -160,6 +160,20 @@ preflight() {
 
 for pack_id in "${packs[@]}"; do
     resource_types="$(rtc_list_recipe_pack_types "$pack_id")"
+    scoped_types=""
+    while IFS= read -r resource_type_dir; do
+        [[ -n "$resource_type_dir" ]] || continue
+        is_aci=false
+        if [[ "$pack_id" == azure-aci && "$resource_type_dir" == Compute/containers ]]; then
+            is_aci=true
+        fi
+        if [[ "${RTC_ACI_TEST_SCOPE:-all}" == only && "$is_aci" != true ||
+              "${RTC_ACI_TEST_SCOPE:-all}" == exclude && "$is_aci" == true ]]; then
+            continue
+        fi
+        scoped_types+="$resource_type_dir"$'\n'
+    done <<<"$resource_types"
+    resource_types="${scoped_types%$'\n'}"
     if [[ "$platform_group" == azure && -n "${RTC_AZURE_SELECTION_FILE+x}" ]]; then
         case "$entry_phase" in
             all)

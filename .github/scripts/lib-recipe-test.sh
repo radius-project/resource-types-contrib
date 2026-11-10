@@ -210,7 +210,7 @@ rtc_snapshot_azure_resource_ids() {
     local -a subscription_args=()
     [[ -z "${AZURE_SUBSCRIPTION_ID:-}" ]] || subscription_args=(--subscription "$AZURE_SUBSCRIPTION_ID")
     [[ -n "${AZURE_RESOURCE_GROUP:-}" ]] || {
-        echo "Error: PostgreSQL cleanup requires AZURE_RESOURCE_GROUP." >&2
+        echo "Error: Azure cleanup verification requires AZURE_RESOURCE_GROUP." >&2
         return 1
     }
     inventory=$(timeout --kill-after=5s 30s az resource list --resource-group "$AZURE_RESOURCE_GROUP" \
@@ -454,6 +454,65 @@ rtc_assert_postgresql_result() {
     echo "==> PostgreSQL result properties validated"
 }
 
+# Dapr test apps run clients that become ready only after they use the
+# component through the Dapr sidecar. The configuration API is read-only, so
+# this function first writes the expected value to the Recipe-owned Redis.
+# For secret stores, it creates the least-privilege access that the
+# Radius.Dapr/secretStores README requires: `get` on the allowed test secret
+# only, bound to the default ServiceAccount of the test containers.
+rtc_assert_dapr_result() {
+    local resource_type="$1" app_name="$2" kubernetes_namespace="$3" redis_deployment status=0
+    local secret_reader="dapr-secret-reader-$app_name"
+    if [[ -z "$kubernetes_namespace" ]]; then
+        echo "Error: Dapr runtime assertion requires the environment Kubernetes namespace." >&2
+        return 1
+    fi
+    if [[ "$resource_type" == Radius.Dapr/secretStores ]]; then
+        if ! kubectl create role "$secret_reader" -n "$kubernetes_namespace" \
+                --verb=get --resource=secrets --resource-name=dapr-allowed-secret ||
+           ! kubectl create rolebinding "$secret_reader" -n "$kubernetes_namespace" \
+                --role="$secret_reader" --serviceaccount="$kubernetes_namespace:default"; then
+            echo "Error: Could not give the Dapr test client read access to the allowed secret." >&2
+            rtc_delete_dapr_secret_reader "$kubernetes_namespace" "$secret_reader"
+            return 1
+        fi
+    fi
+    if [[ "$resource_type" == Radius.Dapr/configurationStores ]]; then
+        local redis_selector="radapp.io/application=$app_name,radapp.io/resource-type=Radius.Dapr-configurationStores"
+        if ! kubectl wait deployment -n "$kubernetes_namespace" -l "$redis_selector" \
+                --for=condition=Available --timeout=180s; then
+            echo "Error: Dapr configuration store Redis is not available." >&2
+            return 1
+        fi
+        redis_deployment="$(kubectl get deployment -n "$kubernetes_namespace" -l "$redis_selector" \
+            -o jsonpath='{.items[0].metadata.name}')" || return 1
+        if [[ -z "$redis_deployment" ]] ||
+           ! kubectl exec -n "$kubernetes_namespace" "deployment/$redis_deployment" -- \
+                redis-cli SET radius-test-key 'dapr-config-ok||1'; then
+            echo "Error: Could not write the Dapr configuration test value." >&2
+            return 1
+        fi
+    fi
+    if ! kubectl wait deployment -n "$kubernetes_namespace" -l "radapp.io/application=$app_name" \
+            --for=condition=Available --timeout=300s; then
+        echo "Error: Dapr runtime assertion failed for $resource_type." >&2
+        kubectl logs -n "$kubernetes_namespace" -l "radapp.io/application=$app_name" \
+            --all-containers --tail=50 --prefix >&2 || true
+        status=1
+    fi
+    if [[ "$resource_type" == Radius.Dapr/secretStores ]]; then
+        rtc_delete_dapr_secret_reader "$kubernetes_namespace" "$secret_reader"
+    fi
+    [[ "$status" -eq 0 ]] && echo "==> Dapr runtime checks passed for $resource_type"
+    return "$status"
+}
+
+rtc_delete_dapr_secret_reader() {
+    local kubernetes_namespace="$1" secret_reader="$2"
+    kubectl delete rolebinding,role "$secret_reader" -n "$kubernetes_namespace" --ignore-not-found ||
+        echo "Warning: Could not delete Role and RoleBinding $secret_reader." >&2
+}
+
 # Resource-Type-specific post-deploy assertion dispatcher. A no-op (success)
 # for every Resource Type without a dedicated assertion above -- for those,
 # `rad deploy` succeeding (the test app's own readiness probes/waits included)
@@ -476,6 +535,9 @@ rtc_assert_recipe_result() {
                 return 1
             fi
             ;;
+        Radius.Dapr/*)
+            rtc_assert_dapr_result "$resource_type" "$app_name" "${4:-}"
+            ;;
         Radius.Compute/containers)
             rtc_assert_containers_result "$app_name" "$workspace_name"
             ;;
@@ -490,7 +552,7 @@ rtc_assert_recipe_result() {
 
 # CLI progress text can surround JSON errors; inspect each decoded object separately.
 rtc_deployment_retry_reason() {
-    python3 - "$1" <<'PY'
+    python3 - "$1" "${2:-transient}" <<'PY'
 import json
 import re
 import sys
@@ -498,6 +560,11 @@ import sys
 with open(sys.argv[1], encoding="utf-8", errors="replace") as log:
     transcript = log.read()
 decoder = json.JSONDecoder()
+quota_only = sys.argv[2] == "aci-quota"
+aci_group = re.compile(
+    r"/subscriptions/[^/]+/resourceGroups/[^/]+/providers/"
+    r"Microsoft\.ContainerInstance/ngroups/[^/]+", re.I
+)
 provider_reset = re.compile(
     r'Failed to install provider\s+'
     r'Error while installing [\w./-]+ v[\w.+-]+:\s+'
@@ -514,6 +581,7 @@ harmless_progress = re.compile(
     r"\s*(?:Location:\s*[a-z][a-z0-9-]*|Status:\s*(?:Running|Accepted|Succeeded)"
     r"|WARNING: Radius type compatibility is not verified\.)\s*"
 )
+harmless_quota_metadata = re.compile(r"TraceId: [0-9a-fA-F]{32}")
 wrappers = {"DeploymentFailed", "RecipeDeploymentFailed", "ResourceDeploymentFailure", "ResourceOperationFailure"}
 reasons = []
 invalid = False
@@ -560,7 +628,12 @@ def visit(value, failure_context=False, resource_target=""):
             isinstance(status, str) and status.lower() in {"failed", "failure", "error"}
         )
         if code:
-            if code == "AzureContainerInstance/ContainerGroupTransitioning":
+            if quota_only and code == "AzureContainerInstance/ContainerGroupQuotaReached":
+                if aci_group.fullmatch(resource_target) and status not in {"Succeeded", "Running", "Accepted"}:
+                    reasons.append("Azure Container Instance regional core quota reached")
+                else:
+                    invalid = True
+            elif not quota_only and code == "AzureContainerInstance/ContainerGroupTransitioning":
                 if (
                     re.fullmatch(
                         r"/subscriptions/[^/]+/resourceGroups/[^/]+/providers/"
@@ -577,17 +650,27 @@ def visit(value, failure_context=False, resource_target=""):
                     invalid = True
             elif code not in wrappers:
                 invalid = True
-            elif code == "RecipeDeploymentFailed" and isinstance(message, str) and is_provider_reset(message):
+            elif not quota_only and code == "RecipeDeploymentFailed" and isinstance(message, str) and is_provider_reset(message):
                 reasons.append("Terraform provider download connection reset")
             elif (
                 code == "ResourceDeploymentFailure"
+                and not quota_only
                 and isinstance(message, str) and "Connection reset by peer" in message
                 and isinstance(target, str)
                 and re.match(r'/subscriptions/[^"]*/providers/Microsoft\.', target)
             ):
                 reasons.append("Azure deployment connection reset")
         elif (
-            value.get("ErrorCode") == "AzureContainerInstance/ContainerGroupTransitioning"
+            quota_only
+            and value.get("ErrorCode") == "AzureContainerInstance/ContainerGroupQuotaReached"
+            and aci_group.fullmatch(resource_target)
+            and isinstance(value.get("SampleErrorMessage"), str)
+            and status not in {"Succeeded", "Running", "Accepted"}
+        ):
+            reasons.append("Azure Container Instance regional core quota reached")
+        elif (
+            not quota_only
+            and value.get("ErrorCode") == "AzureContainerInstance/ContainerGroupTransitioning"
             and re.fullmatch(
                 r"/subscriptions/[^/]+/resourceGroups/[^/]+/providers/"
                 r"Microsoft\.ContainerInstance/ngroups/[^/]+",
@@ -619,7 +702,7 @@ def visit(value, failure_context=False, resource_target=""):
 
 records = list(objects(transcript))
 if not records:
-    if is_provider_reset(transcript):
+    if not quota_only and is_provider_reset(transcript):
         reasons.append("Terraform provider download connection reset")
 else:
     residual = list(transcript)
@@ -627,7 +710,10 @@ else:
         visit(root)
         residual[start:end] = ["\n" if char == "\n" else " " for char in transcript[start:end]]
     for line in "".join(residual).splitlines():
-        if (bare_failure.search(line) and not harmless_progress.fullmatch(line)) or (
+        if (bare_failure.search(line) and not (
+            harmless_progress.fullmatch(line)
+            or (quota_only and harmless_quota_metadata.fullmatch(line))
+        )) or (
             failure_prefix.search(line) and failure_prefix.sub("", line).strip()
         ):
             invalid = True
@@ -637,6 +723,30 @@ if reasons and not invalid:
     sys.exit(0)
 sys.exit(1)
 PY
+}
+
+rtc_save_deployment_error() {
+    local transcript="$1" directory script_dir
+    local diagnostics_root="${RTC_TEST_DIAGNOSTICS_DIR-${RTC_AZURE_DIAGNOSTICS_DIR:-}}"
+    if [[ "${RTC_TEST_PLATFORM:-}" != azure || -z "$diagnostics_root" ]]; then
+        return 0
+    fi
+    if ! command -v node >/dev/null 2>&1 || ! command -v timeout >/dev/null 2>&1; then
+        echo "Error: Deployment error capture requires Node.js and GNU timeout." >&2
+        return 1
+    fi
+    if ! mkdir -p "$diagnostics_root" ||
+       ! directory=$(mktemp -d "$diagnostics_root/deployment-error-XXXXXXXX"); then
+        echo "Error: Could not create deployment error diagnostic directory." >&2
+        return 1
+    fi
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if ! timeout --kill-after=5s 5s node "$script_dir/collect-azure-test-diagnostics.js" \
+        --deployment-error "$transcript" "$directory" "${AZURE_SUBSCRIPTION_ID:-}" "${AZURE_RESOURCE_GROUP:-}" \
+        "${RTC_TEST_DIAGNOSTIC_APP:-}" "${RTC_TEST_DIAGNOSTIC_STARTED:-}"; then
+        echo "Error: Deployment error capture incomplete; deployment status and cleanup are unchanged." >&2
+        return 1
+    fi
 }
 
 # Retry confirmed download or Azure transport failures without deleting partially
@@ -655,8 +765,16 @@ rtc_deploy_with_retry() (
             pipeline_status=("${PIPESTATUS[@]}")
         fi
 
+        rtc_save_deployment_error "$deploy_log" ||
+            echo "Error: Could not save filtered deployment error evidence; continuing failure handling." >&2
         if [[ "${pipeline_status[1]}" -ne 0 ]]; then
             return 1
+        fi
+        # Only the classifier can return the quota recovery sentinel.
+        if [[ "${RTC_ACI_QUOTA_RECOVERY:-0}" == 1 &&
+              "${pipeline_status[0]}" != 124 && "${pipeline_status[0]}" != 137 ]] &&
+            rtc_deployment_retry_reason "$deploy_log" aci-quota >/dev/null; then
+            return 43
         fi
         if [[ "$attempt" -ge "$max_attempts" ]] ||
             ! retry_reason=$(rtc_deployment_retry_reason "$deploy_log"); then
@@ -665,6 +783,7 @@ rtc_deploy_with_retry() (
                 if rtc_has_postgresql_capacity_failure "$deploy_log"; then return 42; fi
                 return 1
             fi
+            if [[ "${RTC_ACI_QUOTA_RECOVERY:-0}" == 1 ]]; then return 1; fi
             return "${pipeline_status[0]}"
         fi
 
@@ -715,10 +834,10 @@ rtc_collect_test_diagnostics() {
 # specific to how the recipe got onto the environment (e.g. unregistering a
 # single recipe) since that varies by caller.
 #
-# Usage: rtc_deploy_and_assert_test_app <test-file> <resource-type> \
+# Usage: rtc_deploy_and_assert_test_app_once <test-file> <resource-type> \
 #            <app-name-prefix> <environment-path> <workspace-name> \
 #            <kubernetes-namespace> [additional rad deploy arguments...]
-rtc_deploy_and_assert_test_app() {
+rtc_deploy_and_assert_test_app_once() {
     local test_file="$1" resource_type="$2" app_name_prefix="$3" environment_path="$4" workspace_name="$5" kubernetes_namespace="$6"
     local app_name started locks_before="" inventory_locks="" deploy_status=0 azure_before="" azure_after=""
     local step_remaining="" step_deadline="${RTC_AZURE_TEST_STEP_DEADLINE_EPOCH:-}" step_reserve=360
@@ -759,13 +878,17 @@ rtc_deploy_and_assert_test_app() {
         fi
     fi
 
-    if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
+    if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 || "${RTC_ACI_QUOTA_RECOVERY:-0}" == 1 ]]; then
         app_name+="-$RANDOM"
         if ! azure_before=$(rtc_snapshot_azure_resource_ids); then
-            echo "Error: Could not snapshot Azure resources before PostgreSQL deployment." >&2
+            echo "Error: Could not snapshot Azure resources before capacity recovery deployment." >&2
             return 1
         fi
-        cleanup_timeout=(timeout --kill-after=5s 12m)
+        if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
+            cleanup_timeout=(timeout --kill-after=5s 12m)
+        else
+            cleanup_timeout=(timeout --kill-after=5s 3m)
+        fi
     elif [[ "${GITHUB_ACTIONS:-}" == true && "${RTC_TEST_PLATFORM:-}" == azure &&
           "$resource_type" == Radius.Compute/containers ]]; then
         deploy_timeout=(timeout --kill-after=5s 15m)
@@ -841,7 +964,8 @@ rtc_deploy_and_assert_test_app() {
             'source "$1"; shift; rtc_deploy_with_retry "$@"' \
             bash "${BASH_SOURCE[0]}")
     fi
-    if "${deploy_command[@]}" "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
+    if RTC_TEST_DIAGNOSTIC_APP="$app_name" RTC_TEST_DIAGNOSTIC_STARTED="$started" \
+        "${deploy_command[@]}" "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
         echo "==> Test deployment successful"
 
         local assertion_remaining="" assertion_status=0
@@ -879,7 +1003,7 @@ rtc_deploy_and_assert_test_app() {
                 echo "Error: Azure container test deployment exceeded its 15-minute limit." >&2
             fi
         fi
-        if [[ "$deploy_status" != 42 ]]; then deploy_status=1; fi
+        if [[ "$deploy_status" != 42 && "$deploy_status" != 43 ]]; then deploy_status=1; fi
     fi
 
     if [[ "$deploy_status" -ne 0 ]]; then
@@ -896,7 +1020,7 @@ rtc_deploy_and_assert_test_app() {
         if ! inventory_locks=$(rtc_snapshot_application_azure_lock_inventory "$app_name" "$workspace_name"); then
             echo "Error: Continuing with bounded Radius application deletion without lock ownership data." >&2
             inventory_locks=""
-            if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then deploy_status=1; fi
+            if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 || "${RTC_ACI_QUOTA_RECOVERY:-0}" == 1 ]]; then deploy_status=1; fi
         fi
         if ! rtc_delete_owned_new_azure_management_locks "$locks_before" "$inventory_locks" "$app_name"; then
             echo "Error: Skipping Radius application deletion because Azure lock cleanup or Radius lock inventory validation failed." >&2
@@ -932,11 +1056,11 @@ rtc_deploy_and_assert_test_app() {
         fi
         return 1
     fi
-    if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
+    if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 || "${RTC_ACI_QUOTA_RECOVERY:-0}" == 1 ]]; then
         if ! azure_after=$(rtc_snapshot_azure_resource_ids) ||
             [[ -n "$(comm -13 <(printf '%s\n' "$azure_before" | sed '/^$/d') \
                 <(printf '%s\n' "$azure_after" | sed '/^$/d'))" ]]; then
-            echo "Error: PostgreSQL Azure resource deletion was not confirmed; recovery is blocked." >&2
+            echo "Error: Azure resource deletion was not confirmed; capacity recovery is blocked." >&2
             return 1
         fi
     fi
@@ -944,4 +1068,56 @@ rtc_deploy_and_assert_test_app() {
         return "$deploy_status"
     fi
     return "$cleanup_status"
+}
+
+rtc_test_azure_aci_app() (
+    local deadline="$RTC_AZURE_TEST_STEP_DEADLINE_EPOCH" status attempt
+    local -a test_args=("$@")
+    for attempt in 1 2; do
+        test_args[2]="$3-quota-$attempt"
+        status=0
+        rtc_deploy_and_assert_test_app_once "${test_args[@]}" || status=$?
+        if ((status == 0)); then return 0; fi
+        if ((status != 43)); then return 1; fi
+        if ((attempt == 2 || deadline - $(date +%s) <= 420)); then
+            echo "Error: ACI quota recovery exhausted; deployment was not validated." >&2
+            return 1
+        fi
+        echo "==> ACI quota reached; resource deletion confirmed. Waiting 60 seconds before attempt 2/2."
+        sleep 60 || return 1
+    done
+)
+
+rtc_deploy_and_assert_test_app() {
+    if [[ "${GITHUB_ACTIONS:-}" != true || "${RTC_TEST_PLATFORM:-}" != azure ||
+          "$2" != Radius.Compute/containers ]]; then
+        rtc_deploy_and_assert_test_app_once "$@"
+        return $?
+    fi
+
+    local deadline=$(( $(date +%s) + 1200 )) inherited="${RTC_AZURE_TEST_STEP_DEADLINE_EPOCH:-}"
+    if [[ -n "$inherited" ]]; then
+        if [[ ! "$inherited" =~ ^[1-9][0-9]{0,10}$ ]]; then
+            echo "Error: Invalid Azure test step deadline." >&2
+            return 1
+        fi
+        if ((inherited < deadline)); then deadline="$inherited"; fi
+    fi
+    local remaining=$((deadline - $(date +%s))) status
+    if ((remaining <= 360)); then
+        echo "Error: Insufficient Azure test budget for ACI deployment and cleanup." >&2
+        return 1
+    fi
+    # shellcheck disable=SC2016 # Expanded by the child shell.
+    if RTC_ACI_QUOTA_RECOVERY=1 RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$deadline" \
+        timeout --kill-after=5s "${remaining}s" bash -c \
+        'source "$1"; shift; rtc_test_azure_aci_app "$@"' bash "${BASH_SOURCE[0]}" "$@"; then
+        return 0
+    else
+        status=$?
+        if [[ "$status" == 124 || "$status" == 137 ]]; then
+            echo "Error: ACI test deadline expired; deployment and cleanup were not validated." >&2
+        fi
+        return 1
+    fi
 }
