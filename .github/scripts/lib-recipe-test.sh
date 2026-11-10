@@ -895,8 +895,8 @@ rtc_deploy_and_assert_test_app_once() {
         else
             cleanup_timeout=(timeout --kill-after=5s 6m)
         fi
-    elif [[ "${GITHUB_ACTIONS:-}" == true && "${RTC_TEST_PLATFORM:-}" == azure &&
-          "$resource_type" == Radius.Compute/containers ]]; then
+    elif [[ "${GITHUB_ACTIONS:-}" == true && "${RTC_TEST_PLATFORM:-}" == azure ]] &&
+        rtc_is_aci_test_target "$resource_type"; then
         deploy_timeout=(timeout --kill-after=5s 15m)
         # shellcheck disable=SC2016 # Expanded by the child shell.
         deploy_command=("${deploy_timeout[@]}" bash -c \
@@ -958,7 +958,7 @@ rtc_deploy_and_assert_test_app_once() {
             bash "${BASH_SOURCE[0]}")
     fi
     if [[ -n "$step_remaining" ]]; then
-        if [[ "$resource_type" == Radius.Compute/containers ]] && ((step_remaining > 900)); then
+        if rtc_is_aci_test_target "$resource_type" && ((step_remaining > 900)); then
             step_remaining=900
         fi
         if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]] && ((step_remaining > remaining)); then
@@ -1006,7 +1006,7 @@ rtc_deploy_and_assert_test_app_once() {
             elif [[ -n "$step_remaining" ]]; then
                 echo "Error: Azure test deployment exceeded its time limit; collecting diagnostics before the step deadline." >&2
             else
-                echo "Error: Azure container test deployment exceeded its 15-minute limit." >&2
+                echo "Error: Azure ACI-dependent test deployment exceeded its 15-minute limit." >&2
             fi
         fi
         if [[ "$deploy_status" != 42 && "$deploy_status" != 43 ]]; then deploy_status=1; fi
@@ -1047,6 +1047,12 @@ rtc_deploy_and_assert_test_app_once() {
 
     echo "==> Cleaning up test application"
     local cleanup_status=0
+    if [[ "${RTC_ACI_QUOTA_RECOVERY:-0}" == 1 && -n "$step_deadline" ]]; then
+        local cleanup_remaining=$((step_deadline - $(date +%s)))
+        if ((cleanup_remaining > 720)); then cleanup_remaining=720; fi
+        if ((cleanup_remaining <= 0)); then cleanup_remaining=1; fi
+        cleanup_timeout=(timeout --kill-after=5s "${cleanup_remaining}s")
+    fi
     if ! ${cleanup_timeout[@]+"${cleanup_timeout[@]}"} rad app delete "$app_name" --workspace "$workspace_name" --yes; then
         cleanup_status=1
         if [[ "$deploy_status" == 0 ]]; then
@@ -1082,6 +1088,10 @@ rtc_deploy_and_assert_test_app_once() {
     return "$cleanup_status"
 }
 
+rtc_is_aci_test_target() {
+    [[ "$1" == Radius.Compute/containers || "$1" == Radius.AI/models ]]
+}
+
 rtc_test_azure_aci_app() (
     local deadline="$RTC_AZURE_TEST_STEP_DEADLINE_EPOCH" status attempt
     local -a test_args=("$@")
@@ -1101,8 +1111,8 @@ rtc_test_azure_aci_app() (
 )
 
 rtc_deploy_and_assert_test_app() {
-    if [[ "${GITHUB_ACTIONS:-}" != true || "${RTC_TEST_PLATFORM:-}" != azure ||
-          "$2" != Radius.Compute/containers ]]; then
+    if [[ "${GITHUB_ACTIONS:-}" != true || "${RTC_TEST_PLATFORM:-}" != azure ]] ||
+        ! rtc_is_aci_test_target "$2"; then
         rtc_deploy_and_assert_test_app_once "$@"
         return $?
     fi

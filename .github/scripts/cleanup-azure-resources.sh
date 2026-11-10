@@ -59,7 +59,7 @@ if ! exists="$(timeout --kill-after=5s 30s az group exists --name "$AZURE_RESOUR
     echo "Error: Could not verify Azure resource group deletion; capacity release is not confirmed." >&2
     exit 1
 fi
-if [[ "$delete_status" != 0 ]]; then
+if [[ "$delete_status" != 0 && ( "$delete_status" != 1 || "$exists" != false ) ]]; then
     echo "Error: Azure resource group deletion failed or timed out; capacity release is not confirmed." >&2
     exit 1
 fi
