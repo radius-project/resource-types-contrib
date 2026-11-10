@@ -76,6 +76,9 @@ jobs:
       - name: Validate checked-in Recipe Packs
         run: make validate-recipe-packs
 
+      - name: Test empty Recipe Pack generation
+        run: make test-generate-recipe-pack-empty
+
       - name: Validate direct-module Recipe Pack mappings
         run: make validate-direct-module-mappings
 

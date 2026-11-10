@@ -60,6 +60,11 @@ done <<<"$recipe_folders"
 
 if [[ ${#RECIPE_DIRS[@]} -eq 0 ]]; then
     echo "==> No $RECIPE_TYPE recipes found"
+    # Callers use output-file existence to decide whether to deploy a pack.
+    if ! rm -f -- "$OUTPUT_FILE"; then
+        echo "Error: Could not remove stale recipe pack output '$OUTPUT_FILE'" >&2
+        exit 1
+    fi
     exit 0
 fi
 
