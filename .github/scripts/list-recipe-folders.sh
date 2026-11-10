@@ -36,6 +36,12 @@ RECIPE_TYPE_FILTER="$(echo "$RECIPE_TYPE_FILTER" | tr '[:upper:]' '[:lower:]')"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=.github/scripts/lib-recipe-platform-filter.sh
 source "$SCRIPT_DIR/lib-recipe-platform-filter.sh"
+ACI_TEST_SCOPE="${RTC_ACI_TEST_SCOPE:-all}"
+
+case "$ACI_TEST_SCOPE" in
+    all | only | exclude) ;;
+    *) echo "Error: RTC_ACI_TEST_SCOPE must be all, only, or exclude." >&2; exit 1 ;;
+esac
 
 if [[ ! -d "$ROOT_DIR" ]]; then
     echo "Error: Root directory '$ROOT_DIR' does not exist" >&2
@@ -87,6 +93,13 @@ add_recipe_dir() {
         platform="${BASH_REMATCH[1]}"
     fi
     if ! rtc_matches_recipe_platform "$platform"; then
+        return
+    fi
+
+    local is_aci=false
+    [[ "$dir" != */Compute/containers/recipes/azure/bicep ]] || is_aci=true
+    if [[ "$ACI_TEST_SCOPE" == only && "$is_aci" != true ||
+          "$ACI_TEST_SCOPE" == exclude && "$is_aci" == true ]]; then
         return
     fi
 

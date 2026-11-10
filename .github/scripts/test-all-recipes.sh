@@ -35,7 +35,9 @@ echo "==> Finding all recipes in $REPO_ROOT"
 
 # Use while read loop for better compatibility (mapfile requires bash 4+)
 RECIPE_DIRS=()
+recipe_folders=$("$SCRIPT_DIR/list-recipe-folders.sh" "$REPO_ROOT" "$RECIPE_TYPE")
 while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
     # Filter by recipe type if specified
     if [[ "$RECIPE_TYPE" == "all" ]]; then
         RECIPE_DIRS+=("$line")
@@ -44,9 +46,13 @@ while IFS= read -r line; do
     elif [[ "$RECIPE_TYPE" == "terraform" ]] && [[ "$line" == *"/terraform" ]] && [[ -f "$line/main.tf" ]]; then
         RECIPE_DIRS+=("$line")
     fi
-done < <("$SCRIPT_DIR"/list-recipe-folders.sh "$REPO_ROOT" "$RECIPE_TYPE")
+done <<<"$recipe_folders"
 
 if [[ ${#RECIPE_DIRS[@]} -eq 0 ]]; then
+    if [[ "${RTC_ACI_TEST_SCOPE:-all}" == only ]]; then
+        echo "Error: no ACI recipes found to test." >&2
+        exit 1
+    fi
     echo "==> No $RECIPE_TYPE recipes found"
     exit 0
 fi

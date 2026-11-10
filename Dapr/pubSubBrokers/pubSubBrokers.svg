@@ -1,0 +1,14 @@
+<svg width="500" height="500" viewBox="0 0 500 500" fill="none" xmlns="http://www.w3.org/2000/svg">
+<mask id="pubSubBrokers-icon" maskUnits="userSpaceOnUse" x="0" y="0" width="500" height="500">
+<circle cx="78.125" cy="250" r="39.0625" fill="black" stroke="white" stroke-width="18"/>
+<path d="M117.188 250H195.312" stroke="white" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="250" cy="250" r="54.6875" fill="black" stroke="white" stroke-width="18"/>
+<path d="M298.828 222.656L382.812 125" stroke="white" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M304.688 250H382.812" stroke="white" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M298.828 277.344L382.812 375" stroke="white" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="421.875" cy="101.562" r="31.25" fill="black" stroke="white" stroke-width="18"/>
+<circle cx="421.875" cy="250" r="31.25" fill="black" stroke="white" stroke-width="18"/>
+<circle cx="421.875" cy="398.438" r="31.25" fill="black" stroke="white" stroke-width="18"/>
+</mask>
+<rect x="0" y="0" width="500" height="500" fill="currentColor" mask="url(#pubSubBrokers-icon)"/>
+</svg>

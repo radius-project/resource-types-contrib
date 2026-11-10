@@ -1,8 +1,13 @@
+acibiceprecipepack
 appdb
 binfmt
 buildkitd
 centralus
 Dapr
+daprconfigurationstores
+daprpubsubbrokers
+daprsecretstores
+daprstatestores
 Docsy
 eastus
 gibibyte

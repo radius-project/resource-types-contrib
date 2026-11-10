@@ -35,7 +35,7 @@ Defaults are applied when a resource is written, not when a Resource Type is reg
 | `Radius.Data/sqlServerDatabases` | Bicep | Azure Verified Module — `mcr.microsoft.com/bicep/avm/res/sql/server:0.21.4` |
 | `Radius.Data/postgreSqlDatabases` | Bicep | Azure Verified Module — `avm/res/db-for-postgre-sql/flexible-server` |
 | `Radius.AI/search` | Bicep | Azure Verified Module — `avm/res/search/search-service` |
-| `Radius.AI/models` | Bicep | Azure Verified Module — `avm/res/cognitive-services/account` |
+| `Radius.AI/models` | Bicep | `ghcr.io/radius-project/azure-recipes/models` |
 | `Radius.Messaging/rabbitMQ` | Bicep | `ghcr.io/radius-project/kube-recipes/rabbitmq` |
 | `Radius.Messaging/kafka` | Bicep | Azure Verified Module — `avm/res/event-hub/namespace` |
 | `Radius.Data/mongoDatabases` | Bicep | Azure Verified Module — `avm/res/document-db/database-account` |
@@ -47,6 +47,15 @@ Defaults are applied when a resource is written, not when a Resource Type is reg
 | `Radius.Security/secrets` | Bicep | `ghcr.io/radius-project/kube-recipes/secrets` |
 | `Radius.Compute/routes` | Bicep | `ghcr.io/radius-project/kube-recipes/routes` |
 | `Radius.Compute/containerImages` | Bicep | `ghcr.io/radius-project/kube-recipes/containerimages` |
+
+### OpenAI account keys
+
+The `Radius.AI/models` Recipe completes the AVM account module and its key
+outputs before it starts the `chat` model deployment. This prevents concurrent
+account key reads and model provisioning, without a test retry or an AVM version
+change. The Recipe uses the same account name and model settings as the previous
+direct-module entry. It returns the endpoint and API key through the standard
+Recipe result, with the key in `result.secrets.apiKey`.
 
 ### MySQL versions
 
