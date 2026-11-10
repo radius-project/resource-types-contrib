@@ -64,6 +64,9 @@ jobs:
       - name: Run workspace bootstrap tests
         run: make test-workspace-bootstrap
 
+      - name: Run resource type extension tests
+        run: make test-resource-type-extensions
+
       - name: Run recipe namespace tests
         run: make test-recipe-namespace
 
@@ -72,6 +75,9 @@ jobs:
 
       - name: Validate checked-in Recipe Packs
         run: make validate-recipe-packs
+
+      - name: Test empty Recipe Pack generation
+        run: make test-generate-recipe-pack-empty
 
       - name: Validate direct-module Recipe Pack mappings
         run: make validate-direct-module-mappings
