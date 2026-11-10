@@ -1,0 +1,11 @@
+<svg width="500" height="500" viewBox="0 0 500 500" fill="none" xmlns="http://www.w3.org/2000/svg">
+<mask id="configurationStores-icon" maskUnits="userSpaceOnUse" x="0" y="0" width="500" height="500">
+<path d="M125 78.125V421.875" stroke="white" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M250 78.125V421.875" stroke="white" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M375 78.125V421.875" stroke="white" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="125" cy="312.5" r="39.0625" fill="black" stroke="white" stroke-width="18"/>
+<circle cx="250" cy="171.875" r="39.0625" fill="black" stroke="white" stroke-width="18"/>
+<circle cx="375" cy="265.625" r="39.0625" fill="black" stroke="white" stroke-width="18"/>
+</mask>
+<rect x="0" y="0" width="500" height="500" fill="currentColor" mask="url(#configurationStores-icon)"/>
+</svg>
