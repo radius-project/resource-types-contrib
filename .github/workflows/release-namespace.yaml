@@ -55,6 +55,7 @@ on:
         options:
           - Radius.AI
           - Radius.Compute
+          - Radius.Dapr
           - Radius.Data
           - Radius.Messaging
           - Radius.Security
