@@ -1,8 +1,8 @@
 @description('The Radius resource context.')
 param context object
 
-@description('Azure OpenAI account name. The Azure AKS pack supplies its existing resource-name hash.')
-param openAIAccountName string = 'oai-${uniqueString(resourceGroup().id, context.resource.id)}'
+@description('Azure OpenAI account name. Defaults to the stable Azure resource-name hash from the Radius context.')
+param openAIAccountName string = 'oai-${context.azure.resourceNameHash}'
 
 @description('Azure region for the account. Defaults to the resource group location.')
 param location string = resourceGroup().location

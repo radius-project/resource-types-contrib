@@ -33,7 +33,9 @@ set -euo pipefail
 ROOT_DIR="${1:-$(pwd)}"
 RECIPE_TYPE_FILTER="${2:-all}"
 RECIPE_TYPE_FILTER="$(echo "$RECIPE_TYPE_FILTER" | tr '[:upper:]' '[:lower:]')"
-PLATFORM_FILTER_RAW="${RECIPE_PLATFORM_FILTER:-}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=.github/scripts/lib-recipe-platform-filter.sh
+source "$SCRIPT_DIR/lib-recipe-platform-filter.sh"
 ACI_TEST_SCOPE="${RTC_ACI_TEST_SCOPE:-all}"
 
 case "$ACI_TEST_SCOPE" in
@@ -59,33 +61,7 @@ case "$RECIPE_TYPE_FILTER" in
         ;;
 esac
 
-# Parse optional platform filter (comma or space separated values)
-PLATFORM_FILTERS=()
-if [[ -n "$PLATFORM_FILTER_RAW" ]]; then
-    IFS=',' read -ra _raw_filters <<< "$PLATFORM_FILTER_RAW"
-    for _entry in "${_raw_filters[@]}"; do
-        _trimmed="$(printf '%s' "$_entry" | xargs)"
-        if [[ -n "$_trimmed" ]]; then
-            PLATFORM_FILTERS+=("$(echo "$_trimmed" | tr '[:upper:]' '[:lower:]')")
-        fi
-    done
-fi
-
-matches_platform() {
-    local platform_lower="$1"
-    if [[ ${#PLATFORM_FILTERS[@]} -eq 0 ]]; then
-        return 0
-    fi
-
-    for filter in "${PLATFORM_FILTERS[@]}"; do
-        # Support prefix matching: "azure" matches "azure", "azure-aci", "azure-aks"
-        if [[ "$platform_lower" == "$filter"* ]]; then
-            return 0
-        fi
-    done
-
-    return 1
-}
+rtc_parse_recipe_platform_filter
 
 should_include_type() {
     local recipe_type="$1"
@@ -116,10 +92,7 @@ add_recipe_dir() {
     if [[ "$dir" =~ /recipes/([^/]+)/ ]]; then
         platform="${BASH_REMATCH[1]}"
     fi
-    local platform_lower
-    platform_lower="$(echo "$platform" | tr '[:upper:]' '[:lower:]')"
-
-    if ! matches_platform "$platform_lower"; then
+    if ! rtc_matches_recipe_platform "$platform"; then
         return
     fi
 

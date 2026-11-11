@@ -232,42 +232,102 @@ done
 
 FIXTURE="$TEST_ROOT/repo"
 for recipe in Compute/containers/azure/bicep Compute/containers/azure/terraform \
-    Compute/containers/kubernetes/bicep Security/secrets/azure/bicep; do
+    Compute/containers/kubernetes/bicep Security/secrets/azure/bicep \
+    Security/secrets/kubernetes/bicep Security/secrets/azure/terraform \
+    Security/secrets/kubernetes/terraform; do
     type="${recipe%/*/*}" platform="${recipe#*/*/}"
     mkdir -p "$FIXTURE/$type/recipes/$platform"
     if [[ "$platform" == */terraform ]]; then touch "$FIXTURE/$type/recipes/$platform/main.tf"
     else touch "$FIXTURE/$type/recipes/$platform/main.bicep"; fi
 done
+mkdir -p "$FIXTURE/.github/scripts"
+cp "$REPO_ROOT/.github/scripts/"{generate-recipe-pack,list-recipe-folders,lib-recipe-platform-filter}.sh \
+    "$FIXTURE/.github/scripts/"
+GENERATOR="$FIXTURE/.github/scripts/generate-recipe-pack.sh"
 PACK="$TEST_ROOT/pack.bicep"
 RECIPE_PLATFORM_FILTER=azure RTC_ACI_TEST_DESIRED_COUNT=1 \
-    bash "$REPO_ROOT/.github/scripts/generate-recipe-pack.sh" "$FIXTURE" basic "$PACK" >/dev/null
+    bash "$GENERATOR" "$FIXTURE" basic "$PACK" >/dev/null
 [[ "$(grep -c 'desiredCount: 1' "$PACK")" == 1 ]] || fail "basic Azure pack needs one ACI count override"
 grep -A6 "'Radius.Compute/containers':" "$PACK" | grep -q 'desiredCount: 1' || fail "override on wrong type"
 RECIPE_PLATFORM_FILTER=kubernetes RTC_ACI_TEST_DESIRED_COUNT=1 \
-    bash "$REPO_ROOT/.github/scripts/generate-recipe-pack.sh" "$FIXTURE" basic "$PACK" >/dev/null
+    bash "$GENERATOR" "$FIXTURE" basic "$PACK" >/dev/null
 if grep -q desiredCount "$PACK"; then fail "Kubernetes must not receive ACI parameters"; fi
 RECIPE_PLATFORM_FILTER=azure RTC_ACI_TEST_DESIRED_COUNT=1 \
-    bash "$REPO_ROOT/.github/scripts/generate-recipe-pack.sh" "$FIXTURE" terraform "$PACK" >/dev/null
+    bash "$GENERATOR" "$FIXTURE" terraform "$PACK" >/dev/null
 if grep -q desiredCount "$PACK"; then fail "Terraform must not receive ACI parameters"; fi
-RECIPE_PLATFORM_FILTER=azure bash "$REPO_ROOT/.github/scripts/generate-recipe-pack.sh" "$FIXTURE" default "$PACK" >/dev/null
+RTC_ACI_TEST_SCOPE=exclude RECIPE_PLATFORM_FILTER=azure \
+    bash "$GENERATOR" "$FIXTURE" terraform "$PACK" >/dev/null
+[[ "$(grep -c "'Radius.Security/secrets':" "$PACK")" == 1 ]] ||
+    fail "Terraform pack must retain one secrets entry"
+grep -A4 "'Radius.Security/secrets':" "$PACK" | grep -q '/secrets-azure.zip' ||
+    fail "ACI exclusion must not change the Terraform secrets backend"
+RECIPE_PLATFORM_FILTER=azure bash "$GENERATOR" "$FIXTURE" default "$PACK" >/dev/null
 if grep -q desiredCount "$PACK"; then fail "default pack must preserve production count"; fi
+grep -A4 "'Radius.Security/secrets':" "$PACK" | grep -q '/secrets/azure/bicep/main:latest' ||
+    fail "default Azure selection must retain Key Vault"
 for value in '' 0 2 invalid; do
-    if RTC_ACI_TEST_DESIRED_COUNT="$value" bash "$REPO_ROOT/.github/scripts/generate-recipe-pack.sh" "$FIXTURE" basic "$PACK" \
+    if RTC_ACI_TEST_DESIRED_COUNT="$value" bash "$GENERATOR" "$FIXTURE" basic "$PACK" \
         >/dev/null 2>&1; then fail "invalid CI count must fail"; fi
 done
 
 for scope in only exclude; do
     RTC_ACI_TEST_SCOPE="$scope" RECIPE_PLATFORM_FILTER=azure \
-        bash "$REPO_ROOT/.github/scripts/generate-recipe-pack.sh" "$FIXTURE" basic "$PACK" >/dev/null
+        bash "$GENERATOR" "$FIXTURE" basic "$PACK" >/dev/null
     if [[ "$scope" == only ]]; then
         grep -q "'Radius.Compute/containers':" "$PACK" || fail "ACI-only pack lost containers"
         ! grep -q "'Radius.Security/secrets':" "$PACK" || fail "ACI-only scope included independent recipes"
     else
-        ! grep -q "'Radius.Compute/containers':" "$PACK" || fail "general Azure pack included ACI"
-        grep -q "'Radius.Security/secrets':" "$PACK" || fail "general Azure pack lost secrets"
+        [[ "$(grep -c "'Radius.Compute/containers':" "$PACK")" == 1 ]] ||
+            fail "general Azure pack needs one container dependency"
+        grep -A4 "'Radius.Compute/containers':" "$PACK" |
+            grep -q '/containers/kubernetes/bicep/main:latest' ||
+            fail "general Azure pack must use Kubernetes containers, not ACI"
+        [[ "$(grep -c "'Radius.Security/secrets':" "$PACK")" == 1 ]] ||
+            fail "general Azure pack needs one secrets dependency"
+        grep -A4 "'Radius.Security/secrets':" "$PACK" |
+            grep -q '/secrets/kubernetes/bicep/main:latest' ||
+            fail "model client API keys must use Kubernetes secrets, not Key Vault"
     fi
 done
-if RTC_ACI_TEST_SCOPE=invalid bash "$REPO_ROOT/.github/scripts/generate-recipe-pack.sh" \
+(
+    cd "$FIXTURE"
+    RTC_ACI_TEST_SCOPE=exclude RECIPE_PLATFORM_FILTER=azure,kubernetes \
+        bash "$GENERATOR" . basic "$PACK" >/dev/null
+)
+[[ "$(grep -c "'Radius.Compute/containers':" "$PACK")" == 1 ]] ||
+    fail "Kubernetes pack must not duplicate its container recipe"
+[[ "$(grep -c "'Radius.Security/secrets':" "$PACK")" == 1 ]] ||
+    fail "mixed-platform pack must not duplicate its secrets recipe"
+grep -A4 "'Radius.Security/secrets':" "$PACK" |
+    grep -q '/secrets/kubernetes/bicep/main:latest' ||
+    fail "mixed-platform pack must select Kubernetes secrets"
+mv "$FIXTURE/Compute/containers/recipes/kubernetes/bicep" "$TEST_ROOT/container-dependency"
+if RTC_ACI_TEST_SCOPE=exclude RECIPE_PLATFORM_FILTER=azure \
+    bash "$GENERATOR" "$FIXTURE" basic "$PACK" \
+    >"$TEST_ROOT/missing-dependency-output" 2>&1; then
+    fail "missing Kubernetes container dependency must fail generation"
+fi
+grep -q 'Error: Kubernetes Compute/containers dependency not found' "$TEST_ROOT/missing-dependency-output" ||
+    fail "missing dependency needs an explicit error"
+mv "$TEST_ROOT/container-dependency" "$FIXTURE/Compute/containers/recipes/kubernetes/bicep"
+mv "$FIXTURE/Security/secrets/recipes/kubernetes/bicep" "$TEST_ROOT/secret-dependency"
+if RTC_ACI_TEST_SCOPE=exclude RECIPE_PLATFORM_FILTER=azure \
+    bash "$GENERATOR" "$FIXTURE" basic "$PACK" \
+    >"$TEST_ROOT/missing-dependency-output" 2>&1; then
+    fail "missing Kubernetes secrets dependency must fail generation"
+fi
+grep -q 'Error: Kubernetes Security/secrets dependency not found' "$TEST_ROOT/missing-dependency-output" ||
+    fail "missing secrets dependency needs an explicit error"
+mv "$TEST_ROOT/secret-dependency" "$FIXTURE/Security/secrets/recipes/kubernetes/bicep"
+RTC_ACI_TEST_SCOPE=all RECIPE_PLATFORM_FILTER=azure \
+    bash "$GENERATOR" \
+        "$FIXTURE/Security/secrets" azuresecretsrecipepack "$PACK" >/dev/null
+[[ "$(grep -c "'Radius.Security/secrets':" "$PACK")" == 1 ]] ||
+    fail "separate Azure secrets pack needs exactly one secrets recipe"
+grep -A4 "'Radius.Security/secrets':" "$PACK" | grep -q '/secrets/azure/bicep/main:latest' ||
+    fail "separate Azure secrets phase must retain Key Vault coverage"
+! grep -q "'Radius.Compute/containers':" "$PACK" || fail "separate secrets pack must stay scoped"
+if RTC_ACI_TEST_SCOPE=invalid bash "$GENERATOR" \
     "$FIXTURE" basic "$PACK" >/dev/null 2>&1; then fail "invalid scope must fail generation"; fi
 
 mkdir -p "$FIXTURE/.github/scripts"
@@ -308,6 +368,32 @@ if grep -q desiredCount "$REPO_ROOT/recipe-packs/azure-aci/azure-aci.bicep"; the
     fail "checked-in multi-instance pack must retain recipe defaults"
 fi
 
+mkdir -p "$FIXTURE/AI/models/recipes/azure/bicep" "$FIXTURE/Data/unrelated/recipes/azure/bicep"
+touch "$FIXTURE/AI/models/recipes/azure/bicep/model.bicep" \
+    "$FIXTURE/Data/unrelated/recipes/azure/bicep/unrelated.bicep"
+for discovery_root in "$FIXTURE/AI/models" ./AI/models; do
+    (
+        if [[ "$discovery_root" == ./* ]]; then
+            cd "$FIXTURE"
+        else
+            cd "$TEST_ROOT"
+        fi
+        RTC_ACI_TEST_SCOPE=exclude RECIPE_PLATFORM_FILTER=azure \
+            bash "$GENERATOR" "$discovery_root" basic "$PACK" >/dev/null
+    ) || fail "scoped model pack must resolve dependencies from the checkout root"
+    [[ "$(grep -c "^      'Radius\\." "$PACK")" == 3 ]] ||
+        fail "scoped model pack must contain only the model and its two dependencies"
+    for entry in "AI/models|models/azure/bicep/model" \
+        "Compute/containers|containers/kubernetes/bicep/main" \
+        "Security/secrets|secrets/kubernetes/bicep/main"; do
+        resource_type="${entry%%|*}" recipe_source="${entry#*|}"
+        [[ "$(grep -Fc "'Radius.$resource_type':" "$PACK")" == 1 ]] ||
+            fail "scoped model pack needs one $resource_type entry"
+        grep -A4 "'Radius.$resource_type':" "$PACK" | grep -Fq "/$recipe_source:latest" ||
+            fail "scoped model pack selected the wrong source for $resource_type"
+    done
+done
+
 python3 - "$REPO_ROOT" <<'PY'
 import pathlib
 import re
@@ -319,6 +405,36 @@ import textwrap
 
 root = pathlib.Path(sys.argv[1])
 workflow_dir = root / ".github/workflows"
+
+validation = (workflow_dir / "validate-azure-recipes.yaml").read_text()
+secret_phase = validation.split("- name: Test Azure Bicep secrets Recipe\n", 1)[1].split("- name:", 1)[0]
+assert "if: matrix.recipe == 'bicep'" in secret_phase
+assert "RTC_ACI_TEST_SCOPE: all" in secret_phase
+assert "RECIPE_PLATFORM_FILTER: azure" in secret_phase
+assert validation.index("- name: Test Azure Bicep secrets Recipe") < validation.index("- name: Generate Azure Recipe Pack")
+secret_command = textwrap.dedent(secret_phase.split("        run: |\n", 1)[1])
+with tempfile.TemporaryDirectory(prefix="rtc-azure-secret-phase-") as directory:
+    directory = pathlib.Path(directory)
+    binary = directory / "make"
+    binary.write_text(
+        '#!/bin/bash\n'
+        'printf "%s|%s|" "$RTC_ACI_TEST_SCOPE" "$RECIPE_PLATFORM_FILTER" >>"$CALL_LOG"\n'
+        'printf "<%s>" "$@" >>"$CALL_LOG"\n'
+        'printf "\\n" >>"$CALL_LOG"\n')
+    binary.chmod(0o755)
+    log = directory / "calls"
+    subprocess.run(["bash", "-eu", "-c", secret_command], check=True, cwd=directory,
+                   env={**os.environ, "PATH": f"{directory}:{os.environ['PATH']}",
+                        "RTC_ACI_TEST_SCOPE": "all", "RECIPE_PLATFORM_FILTER": "azure",
+                        "AZURE_ENVIRONMENT_NAME": "test-azure", "CALL_LOG": str(log)})
+    assert log.read_text().splitlines() == [
+        f"all|azure|<generate-recipe-pack><RESOURCE_TYPE_ROOT={directory}/Security/secrets>"
+        "<PACK_NAME=azuresecretsrecipepack><OUTPUT_FILE=recipe-pack-azure-secrets.bicep>",
+        "all|azure|<deploy-recipe-pack><BICEP_FILE=recipe-pack-azure-secrets.bicep><RESOURCE_GROUP=default>",
+        "all|azure|<update-env-recipe-pack><RECIPE_PACK_NAME=azuresecretsrecipepack><ENVIRONMENT=test-azure>",
+        f"all|azure|<test><RESOURCE_TYPE_ROOT={directory}/Security/secrets>"
+        "<ENVIRONMENT=test-azure><RECIPE_TYPE=bicep>",
+    ]
 
 for workflow, job, kind in (
     ("validate-azure-recipes", "validate-azure-recipes", None),

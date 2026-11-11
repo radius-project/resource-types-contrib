@@ -216,6 +216,21 @@ the full test set. Other values fail. The generated ACI pack still includes the
 volume and secret recipes needed by its container test.
 An ACI-only test run fails if no ACI recipe is found.
 
+With `RTC_ACI_TEST_SCOPE=exclude`, Azure Bicep builds also publish the
+Kubernetes containers and secrets Recipes from the checkout. Generated Azure
+Bicep packs select those Recipes so tests such as `AI/models/test/app.bicep`
+can deploy their client containers and API key secrets without ACI. Each type
+has one pack entry; the Kubernetes secrets entry replaces the Azure entry.
+Before this phase, Azure validation generates a separate Azure secrets pack
+and runs the secrets test against Key Vault. The main test loop also tests
+secrets against the Kubernetes backend. These dependencies do not add
+independent Kubernetes recipe tests. Generation fails if either source is
+missing. Dependencies come from the checkout that contains the generator,
+not the discovery scope. For example, `RESOURCE_TYPE_ROOT="$PWD/AI/models"`
+limits discovery to models but still uses the checkout's shared containers
+and secrets Recipes. Terraform packs and the dedicated ACI tests keep their
+existing recipe selection.
+
 To run the daily ACI tests manually:
 
 ```bash
@@ -306,6 +321,25 @@ Build all resource types and recipes at once:
 ```bash
 make build
 ```
+
+`make build`, `make list-recipes`, and `make generate-recipe-pack` use the same
+`RECIPE_PLATFORM_FILTER` rule. Each comma-separated value matches the start of a
+platform folder name, without regard to case. For example, `azure` selects
+`azure`, `azure-aci`, and `azure-aks`; `AZURE, aws` also selects AWS recipes.
+Spaces around values and empty values are ignored. An unset, empty, or
+blank-only filter selects all platforms. The filter does not restrict Resource
+Type builds. Recipe Pack generation can still produce duplicate resource type
+keys if the selected platforms provide recipes for the same type.
+
+Run the filter regression tests from the repository root with Bash, `make`,
+and standard Unix tools. These tests use temporary fixtures and a stub build
+command. They do not publish recipes or need a cluster:
+
+```bash
+make test-recipe-platform-filter
+```
+
+The expected final output is `Recipe platform filter tests passed`.
 
 ## Utility Commands
 
@@ -461,6 +495,19 @@ the real deployment returns only a structured capacity error, cleanup succeeds,
 and Azure inventory confirms that no new resources remain, the entry runner can
 retry once with the other approved size in the same region. It does not retry
 other failures and never changes region after the main group exists.
+
+Nightly Azure pack-entry tests then run in two separate 60-minute steps.
+The `data-ai` phase runs `Data/` and `AI/` entries except PostgreSQL. The
+`remaining` phase runs every other category, including storage, messaging,
+compute, and secrets. Each step sets its own deadline and retains six minutes
+for diagnostics and cleanup. Slow database tests cannot consume the next
+step's deployment budget. Entries from different packs remain separate tests,
+even when they have the same resource type. A failed or skipped phase fails the
+final job report; the next phase still runs after an entry failure. The
+330-minute job limit, PostgreSQL budget, generated-recipe budgets, and separate
+ACI coverage do not change. The two steps can use up to 120 minutes combined,
+instead of sharing one 60-minute limit; the job limit can still stop later
+work if several phases reach their limits.
 
 The sanitized preflight record is uploaded as a workflow artifact and rendered
 as a job-summary table. It contains no credentials or raw provider messages.
@@ -706,11 +753,28 @@ Each request has a 10-second limit and a 2 MiB response
 limit. Each collection has a shared 90-second budget and at most 24 Azure and Kubernetes requests.
 The shell stops the collector after 100 seconds, with a further 5-second kill
 limit. Only the first page and at most 20 items per list are kept; pagination
-URLs are never followed. Partial results are saved after each request.
+URLs are never followed. For Activity Log, the collector selects from all events
+in that bounded response, not just its first 20 events. The query covers the test
+resource group from deployment start through snapshot start. It requests only the
+fields used for diagnostics, without the unsupported `$top` query parameter.
+It gives priority to records with structured error codes or Failed/Canceled
+status. It keeps the newest record for each distinct resource, operation, status,
+substatus, and error-code set before it fills the remaining slots with repeats.
+The selected records are saved in timestamp order, newest first. An older failure
+in the returned page can thus survive newer cleanup progress and repeated retries.
+Events on later pages remain unavailable.
+Partial results are saved after each request.
 `errors`, `truncations`, and `collector-status.txt` report failed API calls,
 invalid responses, and bounds. Missing permissions and unsupported APIs produce
 a failed-call entry with the CLI exit code. Raw provider errors are withheld
 to prevent secret exposure, so the artifact cannot distinguish those two causes.
+`collections` records the number of returned and retained events. Activity Log
+truncation remains explicit when a next page exists or the response exceeds
+20 events. The collector still returns exit code 1 for any truncation: it does
+not claim complete evidence. If reads succeeded and only truncation remains, its
+message says `Failure diagnostics truncated`. Failed reads or invalid responses
+retain the `Failure diagnostics incomplete` message and exit code 1, even when
+the report also has truncations. A complete bounded response returns exit code 0.
 
 For local tests, set `RTC_TEST_DIAGNOSTICS_DIR` to an output directory.
 For Azure provider data, also set `AZURE_RESOURCE_GROUP` to the dedicated test group. Set

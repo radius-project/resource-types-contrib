@@ -30,6 +30,10 @@ REPO_ROOT="${1:-$(pwd)}"
 PACK_NAME="${2:-biceprecipepack}"
 OUTPUT_FILE="${3:-recipe-pack.bicep}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CHECKOUT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+# shellcheck source=.github/scripts/lib-recipe-platform-filter.sh
+source "$SCRIPT_DIR/lib-recipe-platform-filter.sh"
+rtc_parse_recipe_platform_filter
 
 if [[ -n "${RTC_ACI_TEST_DESIRED_COUNT+x}" && "${RTC_ACI_TEST_DESIRED_COUNT}" != 1 ]]; then
     echo "Error: RTC_ACI_TEST_DESIRED_COUNT must be 1 when set." >&2
@@ -61,6 +65,29 @@ while IFS= read -r line; do
         RECIPE_DIRS+=("$line")
     fi
 done <<< "$RECIPE_LIST"
+
+# Kubernetes clients need Kubernetes secrets, including model-generated API keys.
+container_dependency="$CHECKOUT_ROOT/Compute/containers/recipes/kubernetes/bicep"
+if [[ "$RECIPE_TYPE" == bicep && ${#RECIPE_DIRS[@]} -gt 0 ]] &&
+    rtc_is_azure_test_dependency "$container_dependency"; then
+    selected_recipes=()
+    for recipe_dir in "${RECIPE_DIRS[@]}"; do
+        # Keep one backend per type. Azure secrets have a separate CI test phase.
+        if [[ "$recipe_dir" != */Security/secrets/recipes/*/bicep &&
+              "$recipe_dir" != */Compute/containers/recipes/*/bicep ]]; then
+            selected_recipes+=("$recipe_dir")
+        fi
+    done
+    for dependency in Compute/containers Security/secrets; do
+        dependency_dir="$CHECKOUT_ROOT/$dependency/recipes/kubernetes/bicep"
+        if ! ls "$dependency_dir"/*.bicep &>/dev/null; then
+            echo "Error: Kubernetes $dependency dependency not found in '$dependency_dir'." >&2
+            exit 1
+        fi
+        selected_recipes+=("$(cd "$dependency_dir" && pwd)")
+    done
+    RECIPE_DIRS=("${selected_recipes[@]}")
+fi
 
 if [[ ${#RECIPE_DIRS[@]} -eq 0 ]]; then
     echo "==> No $RECIPE_TYPE recipes found"
@@ -102,7 +129,8 @@ for recipe_dir in "${RECIPE_DIRS[@]}"; do
     
     if [[ "$RECIPE_TYPE" == "bicep" ]]; then
         # Find the .bicep file in the recipe directory
-        BICEP_FILE=$(ls "$recipe_dir"/*.bicep 2>/dev/null | head -n 1)
+        BICEP_FILES=("$recipe_dir"/*.bicep)
+        BICEP_FILE="${BICEP_FILES[0]}"
         RECIPE_FILENAME=$(basename "$BICEP_FILE" .bicep)
         # OCI registry path for bicep recipes
         TEMPLATE_PATH="reciperegistry:5000/radius-recipes/${CATEGORY_LOWER}/${RESOURCE_LOWER}/${RECIPES_SUBPATH}/${RECIPE_FILENAME}:latest"
