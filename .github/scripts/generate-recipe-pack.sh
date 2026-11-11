@@ -30,6 +30,7 @@ REPO_ROOT="${1:-$(pwd)}"
 PACK_NAME="${2:-biceprecipepack}"
 OUTPUT_FILE="${3:-recipe-pack.bicep}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CHECKOUT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=.github/scripts/lib-recipe-platform-filter.sh
 source "$SCRIPT_DIR/lib-recipe-platform-filter.sh"
 rtc_parse_recipe_platform_filter
@@ -66,7 +67,7 @@ while IFS= read -r line; do
 done <<< "$RECIPE_LIST"
 
 # Kubernetes clients need Kubernetes secrets, including model-generated API keys.
-container_dependency="$REPO_ROOT/Compute/containers/recipes/kubernetes/bicep"
+container_dependency="$CHECKOUT_ROOT/Compute/containers/recipes/kubernetes/bicep"
 if [[ "$RECIPE_TYPE" == bicep && ${#RECIPE_DIRS[@]} -gt 0 ]] &&
     rtc_is_azure_test_dependency "$container_dependency"; then
     selected_recipes=()
@@ -78,7 +79,7 @@ if [[ "$RECIPE_TYPE" == bicep && ${#RECIPE_DIRS[@]} -gt 0 ]] &&
         fi
     done
     for dependency in Compute/containers Security/secrets; do
-        dependency_dir="$REPO_ROOT/$dependency/recipes/kubernetes/bicep"
+        dependency_dir="$CHECKOUT_ROOT/$dependency/recipes/kubernetes/bicep"
         if ! ls "$dependency_dir"/*.bicep &>/dev/null; then
             echo "Error: Kubernetes $dependency dependency not found in '$dependency_dir'." >&2
             exit 1

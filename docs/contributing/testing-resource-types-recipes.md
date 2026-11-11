@@ -225,8 +225,11 @@ Before this phase, Azure validation generates a separate Azure secrets pack
 and runs the secrets test against Key Vault. The main test loop also tests
 secrets against the Kubernetes backend. These dependencies do not add
 independent Kubernetes recipe tests. Generation fails if either source is
-missing. Terraform packs and the dedicated ACI tests keep their existing
-recipe selection.
+missing. Dependencies come from the checkout that contains the generator,
+not the discovery scope. For example, `RESOURCE_TYPE_ROOT="$PWD/AI/models"`
+limits discovery to models but still uses the checkout's shared containers
+and secrets Recipes. Terraform packs and the dedicated ACI tests keep their
+existing recipe selection.
 
 To run the daily ACI tests manually:
 
