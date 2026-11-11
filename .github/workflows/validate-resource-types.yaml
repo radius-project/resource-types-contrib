@@ -70,6 +70,9 @@ jobs:
       - name: Run recipe namespace tests
         run: make test-recipe-namespace
 
+      - name: Run recipe platform filter tests
+        run: make test-recipe-platform-filter
+
       - name: Validate resource type icons
         run: make validate-icons
 
@@ -81,6 +84,9 @@ jobs:
 
       - name: Validate direct-module Recipe Pack mappings
         run: make validate-direct-module-mappings
+
+      - name: Run recipe discovery tests
+        run: make test-recipe-discovery
 
       - name: Test Recipe Pack entry test scripts
         run: make test-recipe-pack-entries-unit

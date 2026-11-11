@@ -122,6 +122,10 @@ test-recipe-pack-entries-unit: ## Run fixture-based unit tests for all Recipe Pa
 	@bash ./.github/scripts/tests/test-azure-postgres-test-policy.sh
 	@bash ./.github/scripts/tests/test-azure-postgres-workflow.sh
 
+.PHONY: test-recipe-platform-filter
+test-recipe-platform-filter: ## Compare build and discovery platform filters using offline fixtures
+	@bash ./.github/scripts/tests/test-recipe-platform-filter.sh
+
 .PHONY: test-azure-secret-inputs
 test-azure-secret-inputs: ## Run Azure secret input tests in a temporary directory (requires Terraform 1.7+)
 	@set -eu; \
@@ -156,6 +160,10 @@ test-azure-recipes: ## Run recipe tests for Azure platform only (requires Azure 
 .PHONY: list-resource-types
 list-resource-types: ## List resource type folders under the specified root
 	@./.github/scripts/list-resource-type-folders.sh "$(RESOURCE_TYPE_ROOT)"
+
+.PHONY: test-recipe-discovery
+test-recipe-discovery: ## Run offline tests for recipe discovery and scan errors
+	@bash ./.github/scripts/tests/test-recipe-discovery.sh
 
 .PHONY: list-recipes
 list-recipes: ## List all recipe folders (Bicep and Terraform) under the specified root

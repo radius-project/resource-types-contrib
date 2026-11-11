@@ -33,7 +33,9 @@ set -euo pipefail
 ROOT_DIR="${1:-$(pwd)}"
 RECIPE_TYPE_FILTER="${2:-all}"
 RECIPE_TYPE_FILTER="$(echo "$RECIPE_TYPE_FILTER" | tr '[:upper:]' '[:lower:]')"
-PLATFORM_FILTER_RAW="${RECIPE_PLATFORM_FILTER:-}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=.github/scripts/lib-recipe-platform-filter.sh
+source "$SCRIPT_DIR/lib-recipe-platform-filter.sh"
 ACI_TEST_SCOPE="${RTC_ACI_TEST_SCOPE:-all}"
 
 case "$ACI_TEST_SCOPE" in
@@ -59,33 +61,7 @@ case "$RECIPE_TYPE_FILTER" in
         ;;
 esac
 
-# Parse optional platform filter (comma or space separated values)
-PLATFORM_FILTERS=()
-if [[ -n "$PLATFORM_FILTER_RAW" ]]; then
-    IFS=',' read -ra _raw_filters <<< "$PLATFORM_FILTER_RAW"
-    for _entry in "${_raw_filters[@]}"; do
-        _trimmed="$(printf '%s' "$_entry" | xargs)"
-        if [[ -n "$_trimmed" ]]; then
-            PLATFORM_FILTERS+=("$(echo "$_trimmed" | tr '[:upper:]' '[:lower:]')")
-        fi
-    done
-fi
-
-matches_platform() {
-    local platform_lower="$1"
-    if [[ ${#PLATFORM_FILTERS[@]} -eq 0 ]]; then
-        return 0
-    fi
-
-    for filter in "${PLATFORM_FILTERS[@]}"; do
-        # Support prefix matching: "azure" matches "azure", "azure-aci", "azure-aks"
-        if [[ "$platform_lower" == "$filter"* ]]; then
-            return 0
-        fi
-    done
-
-    return 1
-}
+rtc_parse_recipe_platform_filter
 
 should_include_type() {
     local recipe_type="$1"
@@ -116,10 +92,7 @@ add_recipe_dir() {
     if [[ "$dir" =~ /recipes/([^/]+)/ ]]; then
         platform="${BASH_REMATCH[1]}"
     fi
-    local platform_lower
-    platform_lower="$(echo "$platform" | tr '[:upper:]' '[:lower:]')"
-
-    if ! matches_platform "$platform_lower"; then
+    if ! rtc_matches_recipe_platform "$platform"; then
         return
     fi
 
@@ -138,16 +111,31 @@ RECIPE_DIRS=()
 
 # Find Bicep recipe directories (directories containing .bicep files under recipes/)
 if [[ "$RECIPE_TYPE_FILTER" == "all" || "$RECIPE_TYPE_FILTER" == "bicep" ]]; then
+    # Keep the producer PID so EOF does not hide a failed scan.
+    exec 3< <(find "$ROOT_DIR" -type f -path "*/recipes/*/*.bicep" -print0)
+    scan_pid=$!
     while IFS= read -r -d '' matched_path; do
         add_recipe_dir "$(dirname "$matched_path")" "bicep"
-    done < <(find "$ROOT_DIR" -type f -path "*/recipes/*/*.bicep" -print0 2>/dev/null)
+    done <&3
+    exec 3<&-
+    if ! wait "$scan_pid"; then
+        echo "Error: Failed to scan Bicep recipes in '$ROOT_DIR'" >&2
+        exit 1
+    fi
 fi
 
 # Find Terraform recipe directories (directories containing main.tf under recipes/terraform)
 if [[ "$RECIPE_TYPE_FILTER" == "all" || "$RECIPE_TYPE_FILTER" == "terraform" ]]; then
+    exec 3< <(find "$ROOT_DIR" -type f -path "*/recipes/*/terraform/main.tf" -print0)
+    scan_pid=$!
     while IFS= read -r -d '' matched_path; do
         add_recipe_dir "$(dirname "$matched_path")" "terraform"
-    done < <(find "$ROOT_DIR" -type f -path "*/recipes/*/terraform/main.tf" -print0 2>/dev/null)
+    done <&3
+    exec 3<&-
+    if ! wait "$scan_pid"; then
+        echo "Error: Failed to scan Terraform recipes in '$ROOT_DIR'" >&2
+        exit 1
+    fi
 fi
 
 if [[ ${#RECIPE_DIRS[@]} -eq 0 ]]; then

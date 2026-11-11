@@ -15,6 +15,19 @@ Before testing, ensure you have:
 
 ## Quick Start
 
+### Offline Discovery Tests
+
+Run `make test-recipe-discovery` from the repository root with Bash 4+ and
+standard Unix tools. This suite does not need Radius, a cluster, or cloud access.
+It uses temporary files and stub build/test commands to check invalid roots,
+invalid recipe kinds, discovery command failures, failed Bicep and Terraform
+scans, paths with spaces, and empty readable directories.
+
+Discovery and scan errors must return a nonzero exit status. A readable directory
+with no matching recipes remains a successful no-op. A nested build scan can
+fail after some builds have run; the script reports failure but does not undo
+those builds.
+
 ### 1. Set Up Your Environment
 
 Create a local Kubernetes cluster with Radius (and Dapr) installed:
@@ -293,6 +306,25 @@ Build all resource types and recipes at once:
 ```bash
 make build
 ```
+
+`make build`, `make list-recipes`, and `make generate-recipe-pack` use the same
+`RECIPE_PLATFORM_FILTER` rule. Each comma-separated value matches the start of a
+platform folder name, without regard to case. For example, `azure` selects
+`azure`, `azure-aci`, and `azure-aks`; `AZURE, aws` also selects AWS recipes.
+Spaces around values and empty values are ignored. An unset, empty, or
+blank-only filter selects all platforms. The filter does not restrict Resource
+Type builds. Recipe Pack generation can still produce duplicate resource type
+keys if the selected platforms provide recipes for the same type.
+
+Run the filter regression tests from the repository root with Bash, `make`,
+and standard Unix tools. These tests use temporary fixtures and a stub build
+command. They do not publish recipes or need a cluster:
+
+```bash
+make test-recipe-platform-filter
+```
+
+The expected final output is `Recipe platform filter tests passed`.
 
 ## Utility Commands
 
