@@ -216,6 +216,21 @@ the full test set. Other values fail. The generated ACI pack still includes the
 volume and secret recipes needed by its container test.
 An ACI-only test run fails if no ACI recipe is found.
 
+With `RTC_ACI_TEST_SCOPE=exclude`, Azure Bicep builds also publish the
+Kubernetes containers and secrets Recipes from the checkout. Generated Azure
+Bicep packs select those Recipes so tests such as `AI/models/test/app.bicep`
+can deploy their client containers and API key secrets without ACI. Each type
+has one pack entry; the Kubernetes secrets entry replaces the Azure entry.
+Before this phase, Azure validation generates a separate Azure secrets pack
+and runs the secrets test against Key Vault. The main test loop also tests
+secrets against the Kubernetes backend. These dependencies do not add
+independent Kubernetes recipe tests. Generation fails if either source is
+missing. Dependencies come from the checkout that contains the generator,
+not the discovery scope. For example, `RESOURCE_TYPE_ROOT="$PWD/AI/models"`
+limits discovery to models but still uses the checkout's shared containers
+and secrets Recipes. Terraform packs and the dedicated ACI tests keep their
+existing recipe selection.
+
 To run the daily ACI tests manually:
 
 ```bash

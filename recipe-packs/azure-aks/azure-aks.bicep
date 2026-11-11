@@ -55,9 +55,6 @@ resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
       'Radius.AI/models': {
         kind: 'bicep'
         source: 'ghcr.io/radius-project/azure-recipes/models:latest'
-        parameters: {
-          openAIAccountName: 'oai-{{context.azure.resourceNameHash}}'
-        }
       }
       'Radius.AI/search': {
         kind: 'bicep'

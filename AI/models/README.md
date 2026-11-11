@@ -31,7 +31,10 @@ deployment has an explicit dependency on that module. This prevents account
 The Recipe returns the stored key through `result.secrets.apiKey`; it does not
 read the account keys again during model provisioning.
 
-The Azure AKS pack passes the same account name as before. The account kind,
+The Recipe reads `context.azure.resourceNameHash` to keep the Azure AKS pack's
+`oai-<hash>` account name. The pack must not pass a `{{context...}}` expression
+as `openAIAccountName`: parameters for this context-aware Recipe are literal
+values. An operator can still pass a concrete account name. The account kind,
 model version, deployment name, SKU, capacity, and network settings are unchanged.
 The Recipe reports both Azure resource IDs for cleanup.
 

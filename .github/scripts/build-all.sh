@@ -73,7 +73,7 @@ while IFS= read -r type_dir; do
         scan_pid=$!
         while IFS= read -r -d '' recipe_file; do
             recipe_rel_path="${recipe_file#"$type_dir"/}"
-            if should_include_platform "$recipe_rel_path"; then
+            if should_include_platform "$recipe_rel_path" || rtc_is_azure_test_dependency "$recipe_file"; then
                 echo "Building Bicep recipe: $recipe_file"
                 make -s build-bicep-recipe RECIPE_PATH="$recipe_file"
             else

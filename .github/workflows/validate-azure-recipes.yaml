@@ -321,6 +321,19 @@ jobs:
         if: matrix.recipe == 'bicep'
         run: .github/scripts/deploy-all-checked-in-recipe-packs.sh azure
 
+      - name: Test Azure Bicep secrets Recipe
+        if: matrix.recipe == 'bicep'
+        env:
+          RTC_ACI_TEST_SCOPE: all
+          RECIPE_PLATFORM_FILTER: azure
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
+        run: |
+          make generate-recipe-pack RESOURCE_TYPE_ROOT="$PWD/Security/secrets" PACK_NAME=azuresecretsrecipepack OUTPUT_FILE=recipe-pack-azure-secrets.bicep
+          make deploy-recipe-pack BICEP_FILE=recipe-pack-azure-secrets.bicep RESOURCE_GROUP=default
+          make update-env-recipe-pack RECIPE_PACK_NAME=azuresecretsrecipepack ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+          make test RESOURCE_TYPE_ROOT="$PWD/Security/secrets" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME" RECIPE_TYPE=bicep
+
       - name: Generate Azure Recipe Pack
         id: generate
         run: |
