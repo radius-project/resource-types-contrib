@@ -22,7 +22,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
-const { collect, runAz, resource, activity, logRecords, operationState, deploymentErrors, LIMITS } = require("../collect-azure-test-diagnostics.js");
+const { collect, runAz, resource, activity, logRecords, operationState, deploymentErrors, collectionOutcome, LIMITS } = require("../collect-azure-test-diagnostics.js");
 
 const subscription = "11111111-1111-1111-1111-111111111111";
 const group = "rrttest-123-1-bicep";
@@ -111,8 +111,11 @@ test("collects preview ACI, images, network state and operation IDs using scoped
     const url = new URL(args[4]);
     assert.equal(url.origin, "https://management.azure.com");
     if (url.pathname.endsWith("/management/values")) {
-      assert.equal(url.searchParams.get("$filter"), `eventTimestamp ge '${started}' and resourceGroupName eq '${group}'`);
-      assert.equal(url.searchParams.get("$top"), "20");
+      assert.equal(url.searchParams.get("$filter"),
+        `eventTimestamp ge '${started}' and eventTimestamp le '${report.collectedAt}' and resourceGroupName eq '${group}'`);
+      assert.equal(url.searchParams.has("$top"), false);
+      assert.equal(url.searchParams.get("$select"),
+        "resourceId,eventTimestamp,correlationId,operationId,eventDataId,operationName,status,subStatus,properties");
     } else {
       assert.ok(url.pathname === `${scope}/resources` || url.pathname.startsWith(`${scope}/providers/`));
     }
@@ -505,6 +508,122 @@ test("Activity Log saves structured error codes but discards provider messages",
   }, scope);
   assert.deepEqual(safe.errorCodes, ["DeploymentFailed", "RequestConflict"]);
   assert.ok(!JSON.stringify(safe).includes(secret));
+});
+
+function activityEvent(index, status = "Started", code = null, resourceId = containerId) {
+  return {
+    resourceId, eventTimestamp: new Date(Date.parse(started) + index * 1000).toISOString(),
+    eventDataId: `00000000-0000-0000-0000-${String(index).padStart(12, "0")}`,
+    correlationId: subscription, operationId: subscription,
+    operationName: { value: "Microsoft.ContainerInstance/containerGroups/delete", localizedValue: secret },
+    status: { value: status }, caller: secret, claims: { secret },
+    properties: {
+      serviceRequestId: subscription,
+      statusMessage: JSON.stringify({ error: { code, message: secret } }),
+    },
+  };
+}
+
+test("Activity Log retains distinct failures and recent context beyond the item limit", async () => {
+  const events = [
+    ...Array.from({ length: LIMITS.items + 5 }, (_, i) => activityEvent(100 - i)),
+    activityEvent(4, "Failed", "PublicIPAddressCannotBeDeleted"),
+    activityEvent(3, "Failed", "PublicIPAddressCannotBeDeleted"),
+    activityEvent(2, "Canceled"),
+    activityEvent(1, "Succeeded"),
+    activityEvent(0, "Failed", "AnotherConflict"),
+    activityEvent(200, "Failed", "ForeignFailure", containerId.replace(group, "other")),
+  ];
+  const { report, calls, snapshots } = await withMock(async (args) => ({
+    value: { value: args[4].includes("/management/values?") ? events : [] },
+  }));
+  assert.equal(calls.length, 12, "retention must not add requests");
+  assert.deepEqual(report.activity, [
+    ...events.slice(0, 15), ...events.slice(25, 30),
+  ].map((event) => activity(event, scope)));
+  assert.deepEqual(report.collections.at(-1), { operation: "activity-log", returned: 31, kept: 20 });
+  assert.deepEqual(report.errors, []);
+  assert.deepEqual(report.truncations, ["activity-log"]);
+  assert.deepEqual(collectionOutcome(report, "azure.json"), {
+    exitCode: 1,
+    message: "Failure diagnostics truncated; reads succeeded but evidence is incomplete. See azure.json truncations.",
+  });
+  assert.ok(snapshots.every((snapshot) => !snapshot.includes(secret)));
+  assert.ok(!JSON.stringify(report).includes("ForeignFailure"));
+});
+
+test("Activity Log keeps distinct failures before excess failures or routine progress", async () => {
+  const events = [
+    ...Array.from({ length: LIMITS.items + 5 }, (_, i) => activityEvent(100 - i, "Failed", "RepeatedConflict")),
+    activityEvent(3, "Failed", "DistinctConflict"),
+    activityEvent(2, "Cancelled"),
+    activityEvent(1, "Succeeded"),
+  ];
+  const { report } = await withMock(async (args) => ({
+    value: { value: args[4].includes("/management/values?") ? events : [] },
+  }));
+  assert.deepEqual(report.activity, [
+    ...events.slice(0, 17), ...events.slice(25),
+  ].map((event) => activity(event, scope)));
+  assert.deepEqual(report.truncations, ["activity-log"]);
+});
+
+test("more than 20 distinct failures keep the newest failures, not routine progress", async () => {
+  const failures = Array.from({ length: LIMITS.items + 5 }, (_, i) =>
+    activityEvent(i, "Failed", `Conflict${i}`));
+  const { report } = await withMock(async (args) => ({
+    value: { value: args[4].includes("/management/values?")
+      ? [activityEvent(100), ...failures] : [] },
+  }));
+  assert.deepEqual(report.activity, failures.slice(5).reverse().map((event) => activity(event, scope)));
+  assert.deepEqual(report.collections.at(-1), { operation: "activity-log", returned: 26, kept: 20 });
+  assert.deepEqual(report.errors, []);
+  assert.deepEqual(report.truncations, ["activity-log"]);
+  assert.equal(collectionOutcome(report, "azure.json").exitCode, 1);
+});
+
+test("Activity Log next pages remain explicit, unfollowed truncation even below the item limit", async () => {
+  const { report, calls, snapshots } = await withMock(async (args) => ({
+    value: args[4].includes("/management/values?")
+      ? { value: [activityEvent(1)], nextLink: `https://evil.invalid/${secret}` }
+      : { value: [] },
+  }));
+  assert.equal(calls.length, 12);
+  assert.deepEqual(report.activity, [activity(activityEvent(1), scope)]);
+  assert.deepEqual(report.collections.at(-1), { operation: "activity-log", returned: 1, kept: 1 });
+  assert.deepEqual(report.errors, []);
+  assert.deepEqual(report.truncations, ["activity-log"]);
+  assert.equal(collectionOutcome(report, "azure.json").exitCode, 1);
+  assert.ok(snapshots.every((snapshot) => !snapshot.includes(secret)));
+});
+
+test("exact item limit is not truncation; failed reads still take precedence over truncation", async () => {
+  const events = Array.from({ length: LIMITS.items }, (_, i) => activityEvent(LIMITS.items - i));
+  const success = await withMock(async (args) => ({
+    value: { value: args[4].includes("/management/values?") ? events : [] },
+  }));
+  assert.deepEqual(success.report.activity, events.map((event) => activity(event, scope)));
+  assert.deepEqual(success.report.truncations, []);
+  assert.deepEqual(collectionOutcome(success.report, "azure.json"), { exitCode: 0, message: null });
+  for (const result of [{ error: "azure-cli-failed", exitCode: 3 }, { error: "request-timeout" },
+    { error: "response-size-limit" }, { value: { value: {} } }]) {
+    const { report } = await withMock(async (args) =>
+      args[4].includes("/management/values?") ? result : { value: { value: [] } });
+    assert.deepEqual(report.activity, []);
+    assert.deepEqual(report.truncations, []);
+    assert.equal(report.errors.length, 1);
+    assert.equal(report.errors[0].operation, "activity-log");
+    if (result.error) {
+      assert.equal(report.errors[0].reason, result.error);
+      assert.equal(report.errors[0].exitCode, result.exitCode ?? null);
+    } else {
+      assert.equal(report.errors[0].reason, "invalid-list-shape");
+    }
+    report.truncations.push("resource-inventory");
+    assert.deepEqual(collectionOutcome(report, "azure.json"), {
+      exitCode: 1, message: "Failure diagnostics incomplete; see azure.json errors and truncations.",
+    });
+  }
 });
 
 const registryCode = "AzureContainerInstance/RegistryErrorResponse";
