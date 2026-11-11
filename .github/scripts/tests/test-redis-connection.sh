@@ -76,6 +76,12 @@ reject PING_RESULT='NOAUTH Authentication required.'
 reject PING_RESULT=
 reject REDIS_PLATFORM=unknown
 
+for invalid_format in REDIS_URL=rediss://wrong REDIS_CONNECTION_STRING=wrong; do
+    reject "$invalid_format"
+    grep -Fq 'does not match the redis-enterprise:0.5.1 output contract; the AVM output format may have changed' \
+        "$TEST_ROOT/output" || fail "format mismatches must identify the pinned AVM contract"
+done
+
 # shellcheck source=.github/scripts/lib-recipe-packs.sh
 source "$REPO_ROOT/.github/scripts/lib-recipe-packs.sh"
 entry="$(rtc_recipe_pack_entry_body \

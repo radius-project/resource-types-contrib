@@ -30,10 +30,11 @@ case "$REDIS_PLATFORM" in
         test -n "$REDIS_ACCESS_KEY" || fail "access key is missing"
         REDIS_CONNECTION_STRING=$(printenv REDIS_CONNECTION_STRING) ||
             fail "StackExchange.Redis connection string is missing"
+        # Exact formats below match the redis-enterprise:0.5.1 AVM output contract.
         test "$REDIS_URL" = "rediss://:$REDIS_ACCESS_KEY@$REDIS_HOST:$REDIS_PORT" ||
-            fail "URL must contain the access key and use TLS"
+            fail "URL does not match the redis-enterprise:0.5.1 output contract; the AVM output format may have changed"
         test "$REDIS_CONNECTION_STRING" = "$REDIS_HOST:$REDIS_PORT,password=$REDIS_ACCESS_KEY,ssl=True,abortConnect=False" ||
-            fail "StackExchange.Redis connection string is invalid"
+            fail "StackExchange.Redis connection string does not match the redis-enterprise:0.5.1 output contract; the AVM output format may have changed"
         pong=$(REDISCLI_AUTH="$REDIS_ACCESS_KEY" timeout 4 redis-cli --no-auth-warning \
             --tls -h "$REDIS_HOST" -p "$REDIS_PORT" PING 2>/dev/null) ||
             fail "access-key connection failed"
