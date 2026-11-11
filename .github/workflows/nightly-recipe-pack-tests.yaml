@@ -368,14 +368,26 @@ jobs:
           export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 45 * 60 ))
           make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
 
-      - name: Test unrelated Recipe Pack entries
-        id: azure_pack_entries
+      - name: Test data and AI Recipe Pack entries
+        id: azure_data_ai_entries
         continue-on-error: true
         timeout-minutes: 60
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
-          RTC_AZURE_PACK_ENTRY_PHASE: unrelated
+          RTC_AZURE_PACK_ENTRY_PHASE: data-ai
+        run: |
+          export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 60 * 60 ))
+          make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+
+      - name: Test remaining Recipe Pack entries
+        id: azure_remaining_entries
+        continue-on-error: true
+        timeout-minutes: 60
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
+          RTC_AZURE_PACK_ENTRY_PHASE: remaining
         run: |
           export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 60 * 60 ))
           make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
@@ -435,7 +447,7 @@ jobs:
             RECIPE_TYPE=terraform
 
       - name: Collect workflow failure diagnostics
-        if: ${{ !cancelled() && (failure() || steps.azure_postgres_entry.outcome == 'failure' || steps.azure_bicep.outcome == 'failure' || steps.azure_terraform.outcome == 'failure' || steps.azure_pack_deploy.outcome == 'failure' || steps.azure_pack_entries.outcome == 'failure') }}
+        if: ${{ !cancelled() && (failure() || steps.azure_postgres_entry.outcome == 'failure' || steps.azure_bicep.outcome == 'failure' || steps.azure_terraform.outcome == 'failure' || steps.azure_pack_deploy.outcome == 'failure' || steps.azure_data_ai_entries.outcome == 'failure' || steps.azure_remaining_entries.outcome == 'failure') }}
         continue-on-error: true
         run: |
           source .github/scripts/lib-recipe-test.sh
@@ -456,14 +468,16 @@ jobs:
           BICEP_OUTCOME: ${{ steps.azure_bicep.outcome }}
           TERRAFORM_OUTCOME: ${{ steps.azure_terraform.outcome }}
           PACK_DEPLOY_OUTCOME: ${{ steps.azure_pack_deploy.outcome }}
-          PACK_ENTRIES_OUTCOME: ${{ steps.azure_pack_entries.outcome }}
+          DATA_AI_ENTRIES_OUTCOME: ${{ steps.azure_data_ai_entries.outcome }}
+          REMAINING_ENTRIES_OUTCOME: ${{ steps.azure_remaining_entries.outcome }}
         run: |
           bash .github/scripts/report-azure-test-failures.sh \
             "PostgreSQL entry:$POSTGRES_OUTCOME" \
             "Bicep recipes:$BICEP_OUTCOME" \
             "Terraform recipes:$TERRAFORM_OUTCOME" \
             "checked-in pack deployment:$PACK_DEPLOY_OUTCOME" \
-            "unrelated pack entries:$PACK_ENTRIES_OUTCOME"
+            "data and AI pack entries:$DATA_AI_ENTRIES_OUTCOME" \
+            "remaining pack entries:$REMAINING_ENTRIES_OUTCOME"
 
       - name: Collect Radius pod logs
         if: always()

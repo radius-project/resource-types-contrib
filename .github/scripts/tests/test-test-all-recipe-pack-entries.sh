@@ -386,6 +386,115 @@ bash "$REPO_ROOT/.github/scripts/report-azure-test-failures.sh" \
     "PostgreSQL entry:success" "Unrelated entries:success" >/dev/null ||
     fail "successful phases must pass the overall job"
 
+# Compare the full selection, including repeated types from different packs.
+cp "$aks_pack" "$TEST_ROOT/budget-aks.bicep"
+cp "$aci_pack" "$TEST_ROOT/budget-aci.bicep"
+mkdir -p "$FIXTURE_ROOT/AI/models/test" "$FIXTURE_ROOT/Storage/objectStorage/test"
+echo "param applicationName string" >"$FIXTURE_ROOT/AI/models/test/app.bicep"
+echo "param applicationName string" >"$FIXTURE_ROOT/Storage/objectStorage/test/app.bicep"
+sed "/    recipes: {/a\\
+      'Radius.AI/models': {\\
+        kind: 'bicep'\\
+        source: 'ghcr.io/radius-project/azure-recipes/models:latest'\\
+      }\\
+      'Radius.Storage/objectStorage': {\\
+        kind: 'bicep'\\
+        source: 'mcr.microsoft.com/bicep/avm/res/storage/storage-account:0.31.0'\\
+      }" "$TEST_ROOT/budget-aks.bicep" >"$aks_pack"
+sed "/    recipes: {/a\\
+      'Radius.Compute/persistentVolumes': {\\
+        kind: 'bicep'\\
+        source: 'ghcr.io/radius-project/azure-aci-recipes/persistentvolumes:latest'\\
+      }" "$TEST_ROOT/budget-aci.bicep" >"$aci_pack"
+: >"$CALL_LOG"
+RTC_ACI_TEST_SCOPE=exclude RTC_AZURE_SELECTION_FILE="$selection" RTC_AZURE_PACK_ENTRY_PHASE=unrelated \
+    run_driver azure azure-ws azure-env >/dev/null || fail "baseline unrelated selection must pass"
+grep '^test-recipe-pack-entry.sh ' "$CALL_LOG" | sort >"$TEST_ROOT/expected-budget-entries"
+: >"$CALL_LOG"
+if RTC_ACI_TEST_SCOPE=exclude RTC_AZURE_SELECTION_FILE="$selection" RTC_AZURE_PACK_ENTRY_PHASE=data-ai \
+    FAIL_TYPE=Data/redisCaches run_driver azure azure-ws azure-env >/dev/null 2>&1; then
+    fail "data/AI phase must retain deployment failures"
+fi
+grep -q '^test-recipe-pack-entry.sh AI/models ' "$CALL_LOG" ||
+    fail "data/AI phase must retain model coverage after a database failure"
+! grep -Eq '^test-recipe-pack-entry.sh (Compute|Messaging|Storage)/' "$CALL_LOG" ||
+    fail "data/AI phase must not consume the remaining phase"
+RTC_ACI_TEST_SCOPE=exclude RTC_AZURE_SELECTION_FILE="$selection" RTC_AZURE_PACK_ENTRY_PHASE=remaining \
+    run_driver azure azure-ws azure-env >/dev/null ||
+    fail "remaining entries must run after the data/AI phase fails"
+grep -q '^test-recipe-pack-entry.sh Storage/objectStorage ' "$CALL_LOG" ||
+    fail "remaining phase must exercise storage"
+[[ "$(grep -c '^test-recipe-pack-entry.sh Compute/persistentVolumes ' "$CALL_LOG")" == 2 ]] ||
+    fail "remaining phase must retain the volume entry from each pack"
+grep '^test-recipe-pack-entry.sh ' "$CALL_LOG" | sort >"$TEST_ROOT/actual-budget-entries"
+diff -u "$TEST_ROOT/expected-budget-entries" "$TEST_ROOT/actual-budget-entries" ||
+    fail "split phases must run every unrelated entry exactly once with the same arguments"
+for phase in data-ai remaining invalid; do
+    if RTC_AZURE_PACK_ENTRY_PHASE="$phase" run_driver azure azure-ws azure-env >/dev/null 2>&1; then
+        fail "$phase phase must require the Azure selection context"
+    fi
+done
+if RTC_AZURE_SELECTION_FILE="$selection" RTC_AZURE_PACK_ENTRY_PHASE=invalid \
+    run_driver azure azure-ws azure-env >/dev/null 2>&1; then
+    fail "invalid phase must not omit all entries silently"
+fi
+cp "$TEST_ROOT/budget-aks.bicep" "$aks_pack"
+cp "$TEST_ROOT/budget-aci.bicep" "$aci_pack"
+
+python3 - "$REPO_ROOT" <<'PY'
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import textwrap
+
+source = (Path(sys.argv[1]) / ".github/workflows/nightly-recipe-pack-tests.yaml").read_text()
+job = source.split("  nightly-azure-recipe-pack-tests:", 1)[1].split("\n  cleanup-azure-resources:", 1)[0]
+steps = re.split(r"^      - name: ", job, flags=re.M)
+step_by_id = {}
+for step in steps[1:]:
+    match = re.search(r"^        id: (\w+)$", step, re.M)
+    if match:
+        step_by_id[match[1]] = step
+ids = ("azure_data_ai_entries", "azure_remaining_entries")
+assert re.search(r"^    timeout-minutes: 330$", job, re.M)
+for step_id, phase in zip(ids, ("data-ai", "remaining")):
+    step = step_by_id[step_id]
+    assert "continue-on-error: true" in step
+    assert "timeout-minutes: 60" in step
+    assert "        if:" not in step
+    assert f"RTC_AZURE_PACK_ENTRY_PHASE: {phase}" in step
+    command = textwrap.dedent(step.split("        run: |\n", 1)[1])
+    for now in (1000, 9000):
+        # Execute each real workflow command with an independent step start.
+        mock = f"""
+date() {{ echo {now}; }}
+make() {{
+    [[ "$RTC_AZURE_TEST_STEP_DEADLINE_EPOCH" == {now + 3600} ]] || return 92
+    [[ "$*" == 'test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE=ws ENVIRONMENT=env' ]] || return 93
+    return 17
+}}
+"""
+        result = subprocess.run(["bash", "-c", mock + command],
+                                env={**os.environ, "AZURE_WORKSPACE_NAME": "ws",
+                                     "AZURE_ENVIRONMENT_NAME": "env"})
+        assert result.returncode == 17, (step_id, result.returncode)
+    assert f"steps.{step_id}.outcome == 'failure'" in job
+report = next(step for step in steps if step.startswith("Report Azure test failures\n"))
+command = textwrap.dedent(report.split("        run: |\n", 1)[1])
+for outcomes in (("success", "success"), ("failure", "success"), ("success", "failure"), ("skipped", "success")):
+    env = {**os.environ, "POSTGRES_OUTCOME": "success", "BICEP_OUTCOME": "success",
+           "TERRAFORM_OUTCOME": "success", "PACK_DEPLOY_OUTCOME": "success"}
+    for step_id, variable, outcome in zip(ids, ("DATA_AI_ENTRIES_OUTCOME", "REMAINING_ENTRIES_OUTCOME"), outcomes):
+        assert f"{variable}: ${{{{ steps.{step_id}.outcome }}}}" in report
+        env[variable] = outcome
+    result = subprocess.run(["bash", "-c", command], env=env, capture_output=True, text=True,
+                            cwd=sys.argv[1])
+    assert (result.returncode == 0) == (outcomes == ("success", "success")), outcomes
+print("Nightly independent entry budgets and failure reporting passed")
+PY
+
 for state in missing malformed capacity_exhausted probe_error deadline_exceeded invalid_size invalid_tuple wrong_region expired invalid_deadline; do
     case "$state" in
         missing) rm -f "$selection" ;;
