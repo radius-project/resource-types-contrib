@@ -725,11 +725,28 @@ Each request has a 10-second limit and a 2 MiB response
 limit. Each collection has a shared 90-second budget and at most 24 Azure and Kubernetes requests.
 The shell stops the collector after 100 seconds, with a further 5-second kill
 limit. Only the first page and at most 20 items per list are kept; pagination
-URLs are never followed. Partial results are saved after each request.
+URLs are never followed. For Activity Log, the collector selects from all events
+in that bounded response, not just its first 20 events. The query covers the test
+resource group from deployment start through snapshot start. It requests only the
+fields used for diagnostics, without the unsupported `$top` query parameter.
+It gives priority to records with structured error codes or Failed/Canceled
+status. It keeps the newest record for each distinct resource, operation, status,
+substatus, and error-code set before it fills the remaining slots with repeats.
+The selected records are saved in timestamp order, newest first. An older failure
+in the returned page can thus survive newer cleanup progress and repeated retries.
+Events on later pages remain unavailable.
+Partial results are saved after each request.
 `errors`, `truncations`, and `collector-status.txt` report failed API calls,
 invalid responses, and bounds. Missing permissions and unsupported APIs produce
 a failed-call entry with the CLI exit code. Raw provider errors are withheld
 to prevent secret exposure, so the artifact cannot distinguish those two causes.
+`collections` records the number of returned and retained events. Activity Log
+truncation remains explicit when a next page exists or the response exceeds
+20 events. The collector still returns exit code 1 for any truncation: it does
+not claim complete evidence. If reads succeeded and only truncation remains, its
+message says `Failure diagnostics truncated`. Failed reads or invalid responses
+retain the `Failure diagnostics incomplete` message and exit code 1, even when
+the report also has truncations. A complete bounded response returns exit code 0.
 
 For local tests, set `RTC_TEST_DIAGNOSTICS_DIR` to an output directory.
 For Azure provider data, also set `AZURE_RESOURCE_GROUP` to the dedicated test group. Set
