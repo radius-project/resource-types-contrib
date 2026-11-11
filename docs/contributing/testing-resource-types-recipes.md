@@ -481,6 +481,19 @@ and Azure inventory confirms that no new resources remain, the entry runner can
 retry once with the other approved size in the same region. It does not retry
 other failures and never changes region after the main group exists.
 
+Nightly Azure pack-entry tests then run in two separate 60-minute steps.
+The `data-ai` phase runs `Data/` and `AI/` entries except PostgreSQL. The
+`remaining` phase runs every other category, including storage, messaging,
+compute, and secrets. Each step sets its own deadline and retains six minutes
+for diagnostics and cleanup. Slow database tests cannot consume the next
+step's deployment budget. Entries from different packs remain separate tests,
+even when they have the same resource type. A failed or skipped phase fails the
+final job report; the next phase still runs after an entry failure. The
+330-minute job limit, PostgreSQL budget, generated-recipe budgets, and separate
+ACI coverage do not change. The two steps can use up to 120 minutes combined,
+instead of sharing one 60-minute limit; the job limit can still stop later
+work if several phases reach their limits.
+
 The sanitized preflight record is uploaded as a workflow artifact and rendered
 as a job-summary table. It contains no credentials or raw provider messages.
 More candidates can improve reliability, but a successful probe does not

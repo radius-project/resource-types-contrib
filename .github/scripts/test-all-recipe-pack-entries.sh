@@ -47,7 +47,7 @@ entry_phase="${RTC_AZURE_PACK_ENTRY_PHASE:-all}"
 
 if [[ "$platform_group" == azure && -n "${RTC_AZURE_SELECTION_FILE+x}" ]]; then
     case "$entry_phase" in
-        all | postgres | unrelated) ;;
+        all | postgres | unrelated | data-ai | remaining) ;;
         *) echo "Error: invalid Azure Recipe Pack entry phase '$entry_phase'." >&2; exit 1 ;;
     esac
 elif [[ "$entry_phase" != all ]]; then
@@ -185,6 +185,12 @@ for pack_id in "${packs[@]}"; do
                 ;;
             unrelated)
                 resource_types="$(awk '$0 != "Data/postgreSqlDatabases" {print}' <<<"$resource_types")"
+                ;;
+            data-ai)
+                resource_types="$(awk '$0 != "Data/postgreSqlDatabases" && /^(Data|AI)\//' <<<"$resource_types")"
+                ;;
+            remaining)
+                resource_types="$(awk '!/^(Data|AI)\//' <<<"$resource_types")"
                 ;;
         esac
     fi
