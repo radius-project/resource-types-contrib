@@ -61,8 +61,9 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 Add a `redisCaches` resource to your application and connect a container to it. With Radius control-plane support from `radius-project/radius#12709` and Kubernetes Container Recipe support from `resource-types-contrib#300` or later, one connection named `redis` injects ordinary `CONNECTION_REDIS_HOST` and `CONNECTION_REDIS_PORT` values plus a secret-backed variable for each key the selected Recipe returns in `result.secrets`: `CONNECTION_REDIS_URL`, and `CONNECTION_REDIS_ACCESSKEY` when the Recipe provides `accessKey`. For custom, older, or mixed-version Kubernetes deployments, bind the desired key explicitly with `secretKeyRef` using `redis.properties.secrets.name`; [`test/app.bicep`](test/app.bicep) retains this portable explicit wiring.
 
-The Azure Recipe also injects `CONNECTION_REDIS_CONNECTIONSTRING` for
-StackExchange.Redis clients. The test app checks the URL with `redis-cli`.
+The Azure Recipe returns the `connectionString` secret. With the connection
+support described above, Radius creates `CONNECTION_REDIS_CONNECTIONSTRING`
+for StackExchange.Redis clients. The test app checks the URL with `redis-cli`.
 Azure Recipe Pack tests also check the URL format, the StackExchange.Redis
 format, and a TLS connection with the separate access key.
 The URL probe checks `redis-cli`; it does not prove that other clients can

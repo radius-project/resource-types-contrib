@@ -91,6 +91,7 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
               loadTextContent('verify-connection.sh')
             ]
           }
+          // Keep the 30 x 5s probe window below the runner's 180s kubectl wait timeout.
           periodSeconds: 5
           timeoutSeconds: 10
           failureThreshold: 30

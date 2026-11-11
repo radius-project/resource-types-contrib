@@ -523,8 +523,11 @@ rtc_assert_recipe_result() {
     case "$resource_type" in
         Radius.Data/mySqlDatabases|Radius.Data/redisCaches)
             local kubernetes_namespace="${4:-}"
-            local client_resource=mysqlclient
-            [[ "$resource_type" != Radius.Data/redisCaches ]] || client_resource=democontainer
+            local client_resource
+            case "$resource_type" in
+                Radius.Data/mySqlDatabases) client_resource=mysqlclient ;;
+                Radius.Data/redisCaches) client_resource=democontainer ;;
+            esac
             if [[ -z "$kubernetes_namespace" ]]; then
                 echo "Error: $resource_type readiness assertion requires the environment Kubernetes namespace." >&2
                 return 1
