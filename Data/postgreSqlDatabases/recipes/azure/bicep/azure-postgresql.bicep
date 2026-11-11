@@ -93,7 +93,7 @@ resource initialize 'Microsoft.Resources/deploymentScripts@2023-08-01' = if (has
     timeout: 'PT15M'
     cleanupPreference: 'Always'
     retentionInterval: 'P1D'
-    forceUpdateTag: uniqueString(initSql, database)
+    forceUpdateTag: uniqueString(properties.password, initSql, database)
     environmentVariables: [
       {
         name: 'PGHOST'

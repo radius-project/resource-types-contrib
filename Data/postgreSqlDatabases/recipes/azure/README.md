@@ -76,6 +76,11 @@ It ignores local `psql` startup files and stops on the first SQL error.
 Results and database errors are suppressed because they can contain SQL
 or credentials. Failures report a fixed error and fail the Recipe.
 
+The runner uses `sslmode=require` to encrypt the connection. It does not
+enforce server certificate and hostname verification. Client support and
+system CA trust for `verify-full` need verification in
+[#472](https://github.com/radius-project/resource-types-contrib/issues/472).
+
 The Azure CLI 2.77.0 deployment-script image uses Azure Linux. The runner
 installs the PostgreSQL client only if it is absent. It loads only the
 official base package repository to reduce memory use and keeps package
@@ -99,8 +104,10 @@ The runner must resolve and reach that endpoint and download client
 packages. This implementation does not add private-network runner support.
 If you change network policy, provide a compatible runner path separately.
 
-SQL changes update the runner's execution tag. A later deployment can also
-run the script again after retention expires. There is no exactly-once
+The execution tag is derived from the administrator password, SQL, and
+database name, so SQL guesses alone cannot reproduce it. Changes to SQL or the
+password update the tag and can run the script again. A later deployment
+can also run it again after retention expires. There is no exactly-once
 guarantee, automatic undo, or implicit whole-script transaction. See
 [database initialization](../../README.md#database-initialization) for an
 example that is safe to repeat.

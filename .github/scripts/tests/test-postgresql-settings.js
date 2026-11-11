@@ -37,7 +37,7 @@ function fixture(platform, callback) {
     }
     run(bicep, ['build', path.join(dir, 'recipe.bicep'), '--outfile', path.join(dir, 'recipe.json')]);
     const template = JSON.parse(fs.readFileSync(path.join(dir, 'recipe.json'), 'utf8'));
-    const snapshot = (properties = '', configurations = '[]', name = 'pgsql-fixture', scope = {}) => {
+    const snapshot = (properties = '', configurations = '[]', name = 'pgsql-fixture', scope = {}, password = 'fixture-only') => {
       fs.writeFileSync(path.join(dir, 'test.bicepparam'), `using './recipe.bicep'
 param context = {
   application: { name: 'fixture' }
@@ -50,7 +50,7 @@ param context = {
     type: 'Radius.Data/postgreSqlDatabases'
     properties: {
       username: 'fixture'
-      password: 'fixture-only'
+      password: '${password}'
       ${properties}
     }
   }
@@ -205,7 +205,8 @@ test('Azure initSql runs after provisioning with secure inputs and cleanup track
     assert.equal(initialize.properties.timeout, 'PT15M');
     assert.equal(initialize.properties.cleanupPreference, 'Always');
     assert.equal(initialize.properties.retentionInterval, 'P1D');
-    assert.equal(initialize.properties.forceUpdateTag, "[uniqueString(variables('initSql'), variables('database'))]");
+    assert.equal(initialize.properties.forceUpdateTag,
+      "[uniqueString(variables('properties').password, variables('initSql'), variables('database'))]");
     const scriptVariable = /^\[variables\('([^']+)'\)\]$/.exec(initialize.properties.scriptContent);
     assert.ok(scriptVariable, 'The runner must embed the checked-in initialization script');
     assert.equal(template.variables[scriptVariable[1]],
@@ -236,6 +237,11 @@ test('Azure initSql runs after provisioning with secure inputs and cleanup track
       assert.equal(variables.PGSSLMODE.value, 'require', 'The runner still requires TLS when application TLS is optional');
       tag = script.properties.forceUpdateTag;
     }
+    const tagForPassword = password => snapshot(`database: 'appdb'\ninitSql: '${sql}'`, '[]',
+      'pgsql-fixture', {}, password).find(resource => resource.type === 'Microsoft.Resources/deploymentScripts')
+      .properties.forceUpdateTag;
+    assert.equal(tagForPassword('fixture-only'), tag, 'Unchanged execution inputs must keep the tag');
+    assert.notEqual(tagForPassword('fixture-rotated'), tag, 'Password changes must update the execution tag');
     for (const scope of [{}, { resourceNameHash: '' }, { resourceNameHash: '0123456789abcdef' }]) {
       const resources = snapshot(`initSql: '${sql}'`, '[]', null, scope);
       const server = resources.find(resource => resource.type === 'Microsoft.DBforPostgreSQL/flexibleServers');
