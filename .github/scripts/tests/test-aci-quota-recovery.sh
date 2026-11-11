@@ -271,8 +271,11 @@ for scope in only exclude; do
         grep -q "'Radius.Security/secrets':" "$PACK" || fail "general Azure pack lost secrets"
     fi
 done
-RTC_ACI_TEST_SCOPE=exclude RECIPE_PLATFORM_FILTER=azure,kubernetes \
-    bash "$REPO_ROOT/.github/scripts/generate-recipe-pack.sh" "$FIXTURE" basic "$PACK" >/dev/null
+(
+    cd "$FIXTURE"
+    RTC_ACI_TEST_SCOPE=exclude RECIPE_PLATFORM_FILTER=azure,kubernetes \
+        bash "$REPO_ROOT/.github/scripts/generate-recipe-pack.sh" . basic "$PACK" >/dev/null
+)
 [[ "$(grep -c "'Radius.Compute/containers':" "$PACK")" == 1 ]] ||
     fail "Kubernetes pack must not duplicate its container recipe"
 mv "$FIXTURE/Compute/containers/recipes/kubernetes/bicep" "$TEST_ROOT/container-dependency"

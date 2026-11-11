@@ -73,6 +73,7 @@ if [[ "$RECIPE_TYPE" == bicep && ${#RECIPE_DIRS[@]} -gt 0 ]] &&
         echo "Error: Kubernetes container dependency not found in '$container_dependency'." >&2
         exit 1
     fi
+    container_dependency="$(cd "$container_dependency" && pwd)"
     dependency_selected=false
     for recipe_dir in "${RECIPE_DIRS[@]}"; do
         if [[ "$recipe_dir" == "$container_dependency" ]]; then
