@@ -209,10 +209,10 @@ absent group passes, so fallback cleanup can run after normal cleanup. Failed
 reads, invalid responses, and failed deletes still fail cleanup.
 
 `RTC_ACI_TEST_SCOPE=only` selects the Azure Bicep containers recipe and the
-containers entry in the checked-in `azure-aci` pack. `exclude` omits these tests
-but keeps the other Azure tests, including non-container entries in that pack and
-Kubernetes-backed containers in the `azure-aks` pack. Unset or `all` keeps the
-full test set. Other values fail. The generated ACI pack still includes the
+containers entry in the checked-in `azure-aci` pack. `exclude` omits those tests
+but keeps the other Azure tests, including non-container entries in that pack
+and Kubernetes-backed containers in the `azure-aks` pack. Unset or `all` keeps
+the full test set. Other values fail. The generated ACI pack still includes the
 volume and secret recipes needed by its container test.
 An ACI-only test run fails if no ACI recipe is found.
 
