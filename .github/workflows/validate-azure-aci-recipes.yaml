@@ -9,7 +9,6 @@ on:
       - "Compute/containers/**"
       - "Compute/persistentVolumes/**"
       - "Security/secrets/**"
-      - "AI/models/**"
       - "recipe-packs/azure-aci/**"
       - ".github/workflows/validate-azure-aci-recipes.yaml"
       - ".github/workflows/test-azure-aci.yaml"
@@ -56,7 +55,6 @@ jobs:
             Compute/containers/**
             Compute/persistentVolumes/**
             Security/secrets/**
-            AI/models/**
             recipe-packs/azure-aci/**
             .github/workflows/validate-azure-aci-recipes.yaml
             .github/workflows/test-azure-aci.yaml

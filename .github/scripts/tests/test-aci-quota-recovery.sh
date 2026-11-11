@@ -111,9 +111,8 @@ export DEPLOY_ERROR="$QUOTA"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 attempts() { [[ "$(grep -c '^rad deploy ' "$CALL_LOG")" == "$1" ]] || fail "expected $1 deployments"; }
 run_test() {
-    local resource_type="${1:-Radius.Compute/containers}"
     : >"$CALL_LOG"
-    rtc_deploy_and_assert_test_app "$APP" "$resource_type" aci-test /envs/test default ns \
+    rtc_deploy_and_assert_test_app "$APP" Radius.Compute/containers aci-test /envs/test default ns \
         >"$TEST_ROOT/output" 2>&1
 }
 
@@ -141,13 +140,6 @@ grep -Eq '^timeout --kill-after=5s (53[0-9]|540)s bash -c .*rtc_deploy_with_retr
     fail "successful deployment Kubernetes cleanup must be bounded"
 [[ "$(grep -c '^kubectl delete .*--request-timeout=10s --wait=false$' "$CALL_LOG")" == 3 ]] ||
     fail "failed deployment Kubernetes cleanup must be bounded"
-
-FAILURES=0 run_test Radius.AI/models || fail "ACI-dependent model test"
-attempts 1
-grep -q '^timeout --kill-after=5s 720s rad app delete ' "$CALL_LOG" ||
-    fail "ACI-dependent model cleanup must use the bounded step budget"
-[[ "$(grep -c '^az resource list ' "$CALL_LOG")" == 2 ]] ||
-    fail "ACI-dependent model tests must verify Azure resource cleanup"
 
 RTC_TEST_DIAGNOSTICS_DIR="$TEST_ROOT/diagnostics" run_test || fail "quota recovery with diagnostics"
 [[ -n "$(find "$TEST_ROOT/diagnostics" -name azure.json -print -quit)" ]] || fail "quota diagnostics not saved"
@@ -275,11 +267,11 @@ for scope in only exclude; do
         bash "$REPO_ROOT/.github/scripts/generate-recipe-pack.sh" "$FIXTURE" basic "$PACK" >/dev/null
     if [[ "$scope" == only ]]; then
         grep -q "'Radius.Compute/containers':" "$PACK" || fail "ACI-only pack lost containers"
-        grep -q "'Radius.AI/models':" "$PACK" || fail "ACI-only pack lost its ACI-dependent model recipe"
+        ! grep -q "'Radius.AI/models':" "$PACK" || fail "ACI-only pack included an unrelated model recipe"
         ! grep -q "'Radius.Security/secrets':" "$PACK" || fail "ACI-only scope included independent recipes"
     else
         ! grep -q "'Radius.Compute/containers':" "$PACK" || fail "general Azure pack included ACI"
-        ! grep -q "'Radius.AI/models':" "$PACK" || fail "general Azure pack included an ACI-dependent model recipe"
+        grep -q "'Radius.AI/models':" "$PACK" || fail "general Azure pack omitted models"
         grep -q "'Radius.Security/secrets':" "$PACK" || fail "general Azure pack lost secrets"
     fi
 done
@@ -298,14 +290,11 @@ for scope in only exclude; do
         bash "$REPO_ROOT/.github/scripts/test-all-recipes.sh" "$FIXTURE" default bicep >/dev/null) ||
         fail "scoped per-recipe runner"
     if [[ "$scope" == only ]]; then
-        [[ "$(wc -l <"$CALL_LOG")" == 2 ]] || fail "ACI scope must select its recipe and its dependent model recipe"
-    else
-        [[ "$(wc -l <"$CALL_LOG")" == 1 ]] || fail "general Azure scope must select only the independent fixture recipe"
-    fi
-    if [[ "$scope" == only ]]; then
+        [[ "$(wc -l <"$CALL_LOG")" == 1 ]] || fail "$scope scope selected an unexpected number of recipes"
         grep -q '/Compute/containers/recipes/azure/bicep$' "$CALL_LOG" || fail "ACI runner selected wrong recipe"
-        grep -q '/AI/models/recipes/azure/bicep$' "$CALL_LOG" || fail "ACI runner omitted the dependent model recipe"
     else
+        [[ "$(wc -l <"$CALL_LOG")" == 2 ]] || fail "$scope scope selected an unexpected number of recipes"
+        grep -q '/AI/models/recipes/azure/bicep$' "$CALL_LOG" || fail "general Azure scope omitted models"
         grep -q '/Security/secrets/recipes/azure/bicep$' "$CALL_LOG" || fail "general Azure runner selected ACI"
     fi
 done
@@ -399,7 +388,7 @@ assert "prepare-release-candidate-sources.sh" in worker
 assert "verify-recipe-pack-sources.sh" in worker
 ci = (workflow_dir / "validate-azure-aci-recipes.yaml").read_text()
 assert "pull_request_target:" in ci and "merge_group:" in ci
-assert "AI/models/**" in ci
+assert "AI/models/**" not in ci
 assert "environment: azure" in ci
 assert "needs.check-trust.result == 'success'" in ci
 assert "needs.approval-gate.result == 'success'" in ci

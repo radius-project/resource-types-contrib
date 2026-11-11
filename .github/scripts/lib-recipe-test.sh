@@ -1089,7 +1089,7 @@ rtc_deploy_and_assert_test_app_once() {
 }
 
 rtc_is_aci_test_target() {
-    [[ "$1" == Radius.Compute/containers || "$1" == Radius.AI/models ]]
+    [[ "$1" == Radius.Compute/containers ]]
 }
 
 rtc_test_azure_aci_app() (
