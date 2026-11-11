@@ -52,7 +52,7 @@ while IFS= read -r line; do
 done <<< "$RECIPE_LIST"
 
 if [[ "${RTC_ACI_TEST_SCOPE:-all}" == only ]] &&
-    ! grep -q '/Compute/containers/recipes/azure/bicep$' <<<"$recipe_folders"; then
+    ! grep -q '/Compute/containers/recipes/azure/bicep$' <<<"$RECIPE_LIST"; then
     echo "Error: no ACI recipes found to test." >&2
     exit 1
 fi
