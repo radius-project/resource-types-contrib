@@ -10,6 +10,8 @@ param postgreSqlServerConfigurations array = []
 
 var properties = context.resource.properties
 var database = properties.?database ?? 'postgres_db'
+var initSql = properties.?initSql ?? ''
+var hasInitSql = !empty(trim(initSql))
 var extensions = properties.?extensions ?? []
 var serverSettings = properties.?serverSettings ?? {}
 var operatorConfigurations = [
@@ -82,8 +84,59 @@ module server 'br/public:avm/res/db-for-postgre-sql/flexible-server:0.15.2' = {
   }
 }
 
+resource initialize 'Microsoft.Resources/deploymentScripts@2023-08-01' = if (hasInitSql) {
+  name: '${postgreSqlServerName}-init'
+  location: resourceGroup().location
+  kind: 'AzureCLI'
+  properties: {
+    azCliVersion: '2.77.0'
+    timeout: 'PT15M'
+    cleanupPreference: 'Always'
+    retentionInterval: 'P1D'
+    forceUpdateTag: uniqueString(initSql, database)
+    environmentVariables: [
+      {
+        name: 'PGHOST'
+        value: server.outputs.fqdn
+      }
+      {
+        name: 'PGPORT'
+        value: '5432'
+      }
+      {
+        name: 'PGDATABASE'
+        value: database
+      }
+      {
+        name: 'PGUSER'
+        value: properties.username
+      }
+      {
+        name: 'PGPASSWORD'
+        secureValue: properties.password
+      }
+      {
+        name: 'INIT_SQL'
+        secureValue: initSql
+      }
+      {
+        name: 'PGSSLMODE'
+        value: 'require'
+      }
+      {
+        name: 'PGCONNECT_TIMEOUT'
+        value: '15'
+      }
+    ]
+    scriptContent: loadTextContent('initialize-database.sh')
+  }
+}
+
 output result object = {
-  resources: [server.outputs.resourceId]
+  resources: concat(
+    [server.outputs.resourceId],
+    hasInitSql ? [initialize!.id] : []
+  )
   values: {
     host: server.outputs.fqdn
     port: 5432
