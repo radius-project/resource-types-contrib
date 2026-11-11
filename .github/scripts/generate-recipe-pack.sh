@@ -65,25 +65,27 @@ while IFS= read -r line; do
     fi
 done <<< "$RECIPE_LIST"
 
-# Azure test apps still need a container recipe when ACI tests run separately.
+# Kubernetes clients need Kubernetes secrets, including model-generated API keys.
 container_dependency="$REPO_ROOT/Compute/containers/recipes/kubernetes/bicep"
 if [[ "$RECIPE_TYPE" == bicep && ${#RECIPE_DIRS[@]} -gt 0 ]] &&
-    rtc_is_azure_test_container_dependency "$container_dependency"; then
-    if ! ls "$container_dependency"/*.bicep &>/dev/null; then
-        echo "Error: Kubernetes container dependency not found in '$container_dependency'." >&2
-        exit 1
-    fi
-    container_dependency="$(cd "$container_dependency" && pwd)"
-    dependency_selected=false
+    rtc_is_azure_test_dependency "$container_dependency"; then
+    selected_recipes=()
     for recipe_dir in "${RECIPE_DIRS[@]}"; do
-        if [[ "$recipe_dir" == "$container_dependency" ]]; then
-            dependency_selected=true
-            break
+        # Keep one backend per type. Azure secrets have a separate CI test phase.
+        if [[ "$recipe_dir" != */Security/secrets/recipes/*/bicep &&
+              "$recipe_dir" != */Compute/containers/recipes/*/bicep ]]; then
+            selected_recipes+=("$recipe_dir")
         fi
     done
-    if [[ "$dependency_selected" == false ]]; then
-        RECIPE_DIRS+=("$container_dependency")
-    fi
+    for dependency in Compute/containers Security/secrets; do
+        dependency_dir="$REPO_ROOT/$dependency/recipes/kubernetes/bicep"
+        if ! ls "$dependency_dir"/*.bicep &>/dev/null; then
+            echo "Error: Kubernetes $dependency dependency not found in '$dependency_dir'." >&2
+            exit 1
+        fi
+        selected_recipes+=("$(cd "$dependency_dir" && pwd)")
+    done
+    RECIPE_DIRS=("${selected_recipes[@]}")
 fi
 
 if [[ ${#RECIPE_DIRS[@]} -eq 0 ]]; then

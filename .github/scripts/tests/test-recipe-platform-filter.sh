@@ -143,10 +143,17 @@ check_filter "azure*"
 check_filter "azure aws"
 
 CONTAINER_DIR="$FIXTURE_ROOT/Compute/containers"
-mkdir -p "$CONTAINER_DIR/recipes/kubernetes/bicep" "$CONTAINER_DIR/recipes/kubernetes/terraform"
+SECRET_DIR="$FIXTURE_ROOT/Security/secrets"
+mkdir -p "$CONTAINER_DIR/recipes/kubernetes/bicep" "$CONTAINER_DIR/recipes/kubernetes/terraform" \
+    "$SECRET_DIR/recipes/kubernetes/bicep" "$SECRET_DIR/recipes/kubernetes/terraform" \
+    "$SECRET_DIR/recipes/azure/bicep"
 printf 'namespace: Radius.Compute\ntypes:\n' >"$CONTAINER_DIR/containers.yaml"
+printf 'namespace: Radius.Security\ntypes:\n' >"$SECRET_DIR/secrets.yaml"
 touch "$CONTAINER_DIR/recipes/kubernetes/bicep/main.bicep" \
-    "$CONTAINER_DIR/recipes/kubernetes/terraform/main.tf"
+    "$CONTAINER_DIR/recipes/kubernetes/terraform/main.tf" \
+    "$SECRET_DIR/recipes/kubernetes/bicep/main.bicep" \
+    "$SECRET_DIR/recipes/kubernetes/terraform/main.tf" \
+    "$SECRET_DIR/recipes/azure/bicep/main.bicep"
 : >"$CALL_LOG"
 (
     cd "$FIXTURE_ROOT"
@@ -155,15 +162,25 @@ touch "$CONTAINER_DIR/recipes/kubernetes/bicep/main.bicep" \
 ) >"$TEST_ROOT/build-output"
 grep -Fxq "build-bicep-recipe|$CONTAINER_DIR/recipes/kubernetes/bicep/main.bicep" "$CALL_LOG" ||
     { echo "FAIL: Azure builds must publish the Kubernetes container dependency" >&2; exit 1; }
-if grep -Fq "build-terraform-recipe|$CONTAINER_DIR/recipes/kubernetes/terraform" "$CALL_LOG"; then
-    echo "FAIL: Azure container dependency must not add Kubernetes Terraform recipes" >&2
-    exit 1
-fi
+for secret_recipe in kubernetes azure; do
+    grep -Fxq "build-bicep-recipe|$SECRET_DIR/recipes/$secret_recipe/bicep/main.bicep" "$CALL_LOG" ||
+        { echo "FAIL: Azure builds must publish both secret backends" >&2; exit 1; }
+done
+for dependency in "$CONTAINER_DIR" "$SECRET_DIR"; do
+    if grep -Fq "build-terraform-recipe|$dependency/recipes/kubernetes/terraform" "$CALL_LOG"; then
+        echo "FAIL: Azure dependencies must not add Kubernetes Terraform recipes" >&2
+        exit 1
+    fi
+done
 RTC_ACI_TEST_SCOPE=exclude RECIPE_PLATFORM_FILTER=azure \
     bash "$REPO_ROOT/.github/scripts/list-recipe-folders.sh" "$FIXTURE_ROOT" bicep >"$TEST_ROOT/actual-discovery"
-if grep -Fq "$CONTAINER_DIR" "$TEST_ROOT/actual-discovery"; then
-    echo "FAIL: a pack dependency must not become an independent Azure recipe test" >&2
-    exit 1
-fi
+for dependency in "$CONTAINER_DIR" "$SECRET_DIR"; do
+    if grep -Fq "$dependency/recipes/kubernetes" "$TEST_ROOT/actual-discovery"; then
+        echo "FAIL: a pack dependency must not become an independent Azure recipe test" >&2
+        exit 1
+    fi
+done
+grep -Fxq "$SECRET_DIR/recipes/azure/bicep" "$TEST_ROOT/actual-discovery" ||
+    { echo "FAIL: Azure secrets must retain independent recipe coverage" >&2; exit 1; }
 
 echo "Recipe platform filter tests passed"
