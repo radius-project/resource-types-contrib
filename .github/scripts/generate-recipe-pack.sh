@@ -30,6 +30,9 @@ REPO_ROOT="${1:-$(pwd)}"
 PACK_NAME="${2:-biceprecipepack}"
 OUTPUT_FILE="${3:-recipe-pack.bicep}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=.github/scripts/lib-recipe-platform-filter.sh
+source "$SCRIPT_DIR/lib-recipe-platform-filter.sh"
+rtc_parse_recipe_platform_filter
 
 if [[ -n "${RTC_ACI_TEST_DESIRED_COUNT+x}" && "${RTC_ACI_TEST_DESIRED_COUNT}" != 1 ]]; then
     echo "Error: RTC_ACI_TEST_DESIRED_COUNT must be 1 when set." >&2
@@ -61,6 +64,26 @@ while IFS= read -r line; do
         RECIPE_DIRS+=("$line")
     fi
 done <<< "$RECIPE_LIST"
+
+# Azure test apps still need a container recipe when ACI tests run separately.
+container_dependency="$REPO_ROOT/Compute/containers/recipes/kubernetes/bicep"
+if [[ "$RECIPE_TYPE" == bicep && ${#RECIPE_DIRS[@]} -gt 0 ]] &&
+    rtc_is_azure_test_container_dependency "$container_dependency"; then
+    if ! ls "$container_dependency"/*.bicep &>/dev/null; then
+        echo "Error: Kubernetes container dependency not found in '$container_dependency'." >&2
+        exit 1
+    fi
+    dependency_selected=false
+    for recipe_dir in "${RECIPE_DIRS[@]}"; do
+        if [[ "$recipe_dir" == "$container_dependency" ]]; then
+            dependency_selected=true
+            break
+        fi
+    done
+    if [[ "$dependency_selected" == false ]]; then
+        RECIPE_DIRS+=("$container_dependency")
+    fi
+fi
 
 if [[ ${#RECIPE_DIRS[@]} -eq 0 ]]; then
     echo "==> No $RECIPE_TYPE recipes found"
@@ -102,7 +125,8 @@ for recipe_dir in "${RECIPE_DIRS[@]}"; do
     
     if [[ "$RECIPE_TYPE" == "bicep" ]]; then
         # Find the .bicep file in the recipe directory
-        BICEP_FILE=$(ls "$recipe_dir"/*.bicep 2>/dev/null | head -n 1)
+        BICEP_FILES=("$recipe_dir"/*.bicep)
+        BICEP_FILE="${BICEP_FILES[0]}"
         RECIPE_FILENAME=$(basename "$BICEP_FILE" .bicep)
         # OCI registry path for bicep recipes
         TEMPLATE_PATH="reciperegistry:5000/radius-recipes/${CATEGORY_LOWER}/${RESOURCE_LOWER}/${RECIPES_SUBPATH}/${RECIPE_FILENAME}:latest"

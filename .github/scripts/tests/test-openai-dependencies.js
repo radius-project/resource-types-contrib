@@ -85,12 +85,17 @@ test("the result keeps the endpoint, secure API key, and both cleanup resource I
   assert.match(result.value.resources[1], /parameters\('openAIAccountName'\)/);
 });
 
-test("the Azure pack preserves the account name and uses the published recipe result", () => {
+test("the recipe reads the account hash from context instead of a literal pack parameter", () => {
+  assert.equal(template.parameters.openAIAccountName.defaultValue,
+    "[format('oai-{0}', parameters('context').azure.resourceNameHash)]");
+  assert.doesNotMatch(JSON.stringify(template), /\{\{context\./);
+
   const pack = readFileSync(path.join(root, "recipe-packs/azure-aks/azure-aks.bicep"), "utf8");
   const entry = pack.match(/'Radius\.AI\/models': \{([\s\S]*?)\n      \}/)?.[1];
   assert.ok(entry, "the Azure AKS pack must contain Radius.AI/models");
   assert.match(entry, /source: 'ghcr\.io\/radius-project\/azure-recipes\/models:latest'/);
-  assert.match(entry, /openAIAccountName: 'oai-\{\{context\.azure\.resourceNameHash\}\}'/);
+  assert.doesNotMatch(entry, /parameters:/,
+    "context-aware recipes receive pack parameters literally, without direct-module interpolation");
   assert.doesNotMatch(entry, /outputs:/, "a direct-module output mapping would bypass result.secrets");
 
   const publisher = readFileSync(path.join(root, ".github/workflows/publish-bicep-recipes.yaml"), "utf8");

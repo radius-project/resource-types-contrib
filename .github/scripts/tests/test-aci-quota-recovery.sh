@@ -263,10 +263,27 @@ for scope in only exclude; do
         grep -q "'Radius.Compute/containers':" "$PACK" || fail "ACI-only pack lost containers"
         ! grep -q "'Radius.Security/secrets':" "$PACK" || fail "ACI-only scope included independent recipes"
     else
-        ! grep -q "'Radius.Compute/containers':" "$PACK" || fail "general Azure pack included ACI"
+        [[ "$(grep -c "'Radius.Compute/containers':" "$PACK")" == 1 ]] ||
+            fail "general Azure pack needs one container dependency"
+        grep -A4 "'Radius.Compute/containers':" "$PACK" |
+            grep -q '/containers/kubernetes/bicep/main:latest' ||
+            fail "general Azure pack must use Kubernetes containers, not ACI"
         grep -q "'Radius.Security/secrets':" "$PACK" || fail "general Azure pack lost secrets"
     fi
 done
+RTC_ACI_TEST_SCOPE=exclude RECIPE_PLATFORM_FILTER=azure,kubernetes \
+    bash "$REPO_ROOT/.github/scripts/generate-recipe-pack.sh" "$FIXTURE" basic "$PACK" >/dev/null
+[[ "$(grep -c "'Radius.Compute/containers':" "$PACK")" == 1 ]] ||
+    fail "Kubernetes pack must not duplicate its container recipe"
+mv "$FIXTURE/Compute/containers/recipes/kubernetes/bicep" "$TEST_ROOT/container-dependency"
+if RTC_ACI_TEST_SCOPE=exclude RECIPE_PLATFORM_FILTER=azure \
+    bash "$REPO_ROOT/.github/scripts/generate-recipe-pack.sh" "$FIXTURE" basic "$PACK" \
+    >"$TEST_ROOT/missing-dependency-output" 2>&1; then
+    fail "missing Kubernetes container dependency must fail generation"
+fi
+grep -q 'Error: Kubernetes container dependency not found' "$TEST_ROOT/missing-dependency-output" ||
+    fail "missing dependency needs an explicit error"
+mv "$TEST_ROOT/container-dependency" "$FIXTURE/Compute/containers/recipes/kubernetes/bicep"
 if RTC_ACI_TEST_SCOPE=invalid bash "$REPO_ROOT/.github/scripts/generate-recipe-pack.sh" \
     "$FIXTURE" basic "$PACK" >/dev/null 2>&1; then fail "invalid scope must fail generation"; fi
 

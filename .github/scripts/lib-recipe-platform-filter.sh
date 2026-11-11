@@ -48,3 +48,13 @@ rtc_matches_recipe_platform() {
     done
     return 1
 }
+
+rtc_is_azure_test_container_dependency() {
+    [[ "${RTC_ACI_TEST_SCOPE:-}" == exclude ]] || return 1
+    case "/${1#./}" in
+        */Compute/containers/recipes/kubernetes/bicep|*/Compute/containers/recipes/kubernetes/bicep/*.bicep)
+            rtc_matches_recipe_platform azure
+            ;;
+        *) return 1 ;;
+    esac
+}

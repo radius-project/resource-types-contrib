@@ -142,4 +142,28 @@ check_filter "unknown"
 check_filter "azure*"
 check_filter "azure aws"
 
+CONTAINER_DIR="$FIXTURE_ROOT/Compute/containers"
+mkdir -p "$CONTAINER_DIR/recipes/kubernetes/bicep" "$CONTAINER_DIR/recipes/kubernetes/terraform"
+printf 'namespace: Radius.Compute\ntypes:\n' >"$CONTAINER_DIR/containers.yaml"
+touch "$CONTAINER_DIR/recipes/kubernetes/bicep/main.bicep" \
+    "$CONTAINER_DIR/recipes/kubernetes/terraform/main.tf"
+: >"$CALL_LOG"
+(
+    cd "$FIXTURE_ROOT"
+    RTC_ACI_TEST_SCOPE=exclude RECIPE_PLATFORM_FILTER=azure \
+        bash "$REPO_ROOT/.github/scripts/build-all.sh" "$FIXTURE_ROOT"
+) >"$TEST_ROOT/build-output"
+grep -Fxq "build-bicep-recipe|$CONTAINER_DIR/recipes/kubernetes/bicep/main.bicep" "$CALL_LOG" ||
+    { echo "FAIL: Azure builds must publish the Kubernetes container dependency" >&2; exit 1; }
+if grep -Fq "build-terraform-recipe|$CONTAINER_DIR/recipes/kubernetes/terraform" "$CALL_LOG"; then
+    echo "FAIL: Azure container dependency must not add Kubernetes Terraform recipes" >&2
+    exit 1
+fi
+RTC_ACI_TEST_SCOPE=exclude RECIPE_PLATFORM_FILTER=azure \
+    bash "$REPO_ROOT/.github/scripts/list-recipe-folders.sh" "$FIXTURE_ROOT" bicep >"$TEST_ROOT/actual-discovery"
+if grep -Fq "$CONTAINER_DIR" "$TEST_ROOT/actual-discovery"; then
+    echo "FAIL: a pack dependency must not become an independent Azure recipe test" >&2
+    exit 1
+fi
+
 echo "Recipe platform filter tests passed"
