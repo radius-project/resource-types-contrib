@@ -78,6 +78,51 @@ rtc_postgres_positive_limit() {
     [[ "$value" =~ ^[1-9][0-9]{0,5}$ ]] && ((10#$value <= maximum))
 }
 
+# Sets the size and deadline only after the record matches the deployed recipe.
+rtc_read_postgres_test_selection() {
+    local location="$1" fallback_deadline="$2" selection_status
+    if [[ ! -f "$RTC_AZURE_SELECTION_FILE" ]] || ! jq -e '
+        type == "object" and .version == 1 and
+        (.status == "selected" or .status == "capacity_exhausted" or
+         .status == "unsupported" or .status == "restricted" or
+         .status == "catalog_unavailable" or .status == "probe_error" or
+         .status == "deadline_exceeded") and
+        (if has("deadlineEpochSeconds") then
+            (.deadlineEpochSeconds | type == "number" and floor == . and . > 0 and . < 100000000000)
+         else true end) and
+        (if .status == "selected" then
+            (.postgres.size == "S" or .postgres.size == "M") and
+            (.location | type == "string")
+         else true end)
+    ' "$RTC_AZURE_SELECTION_FILE" >/dev/null 2>&1; then
+        echo "Error: PostgreSQL selection file is missing or malformed." >&2
+        return 1
+    fi
+    selection_status=$(jq -r '.status' "$RTC_AZURE_SELECTION_FILE") || return 1
+    if [[ "$selection_status" != selected ]]; then
+        echo "Error: PostgreSQL capacity selection failed: $selection_status." >&2
+        return 1
+    fi
+    if [[ "$(jq -r '.location' "$RTC_AZURE_SELECTION_FILE")" != "$location" ||
+        ( -n "${AZURE_LOCATION:-}" && "$AZURE_LOCATION" != "$location" ) ]]; then
+        echo "Error: PostgreSQL selection region differs from the existing resource group." >&2
+        return 1
+    fi
+    postgres_test_size=$(jq -r '.postgres.size' "$RTC_AZURE_SELECTION_FILE") || return 1
+    rtc_postgres_test_tuple "$postgres_test_size" || return 1
+    if ! jq -e --arg sku "$postgres_sku" --arg tier "$postgres_tier" \
+        '.postgres.skuName == $sku and .postgres.tier == $tier' "$RTC_AZURE_SELECTION_FILE" >/dev/null; then
+        echo "Error: PostgreSQL selection size does not match the approved SKU and tier." >&2
+        return 1
+    fi
+    postgres_deadline=$(jq -r --argjson fallback "$fallback_deadline" \
+        '.deadlineEpochSeconds // $fallback' "$RTC_AZURE_SELECTION_FILE") || return 1
+    if ((postgres_deadline <= $(date +%s))); then
+        echo "Error: PostgreSQL selection deadline has expired." >&2
+        return 1
+    fi
+}
+
 rtc_postgres_catalog_result() {
     python3 - "$1" "$2" "$3" <<'PY'
 import json

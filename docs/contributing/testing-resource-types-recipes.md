@@ -412,9 +412,9 @@ Delete your test cluster when done:
 make delete-radius-cluster
 ```
 
-## Azure PostgreSQL pack-test capacity
+## Azure PostgreSQL test capacity
 
-The nightly and release-candidate Azure pack tests select a PostgreSQL region
+Azure Bicep CI and the nightly and release-candidate Azure pack tests select a PostgreSQL region
 before they create the main resource group or configure the Azure provider.
 The release-candidate workflow keeps the released source and pack pins. A pack
 mapping that does not match the test tuple fails the PostgreSQL check.
@@ -463,7 +463,34 @@ automatic zone placement, password and Entra authentication, and public
 networking without a firewall rule. They do not disable TLS. The pack's public
 size contract and production defaults do not change.
 
+The probe reads `az postgres flexible-server list-skus --location <region>`
+before allocation. Azure's capability catalog lists SKU names, vCores, memory,
+and restrictions. It can support a CPU/memory ranking, but it does not report
+the lowest price or reserve live capacity. Tests use only the existing `S` and
+`M` recipe mappings. Selecting an arbitrary catalog SKU would require a
+separate change to the recipe's inputs or size mapping.
+
 ### Workflow, recovery, and cleanup
+
+Azure Bicep CI calls the same selector script within its approved validation
+job. It uses the same region and size variables, 45-minute search budget,
+15-minute probe-group cleanup budget, and ownership checks. The main group and
+Azure provider use the selected region. The per-recipe runner checks the
+selection's size, SKU, tier, and region before passing `postgresSize` to the
+temporary test harness. A missing, invalid, or unsuccessful selection fails
+the PostgreSQL test; it cannot pass by skipping deployment. A fresh 30-minute
+deadline bounds deployment and the existing one-size recovery attempt.
+CI opts in with `RTC_POSTGRES_RECIPE_SELECTION_FILE`. Other per-recipe runs
+keep their existing behavior and do not consume the pack-entry phase's selection
+deadline. Other recipe failures keep their failure status.
+
+CI keeps the sanitized selection record in `azure-test-diagnostics` and adds
+the attempt table to the job summary. The job limit is 150 minutes to include
+the search, normal tests, and owned-group cleanup. Each matrix job uses a
+separate `ci-bicep` or `ci-terraform` group prefix. An independent cleanup job
+uses the same contributor approval gate and reviewed source SHA. It retries
+owned-group cleanup even after a validation timeout. The Terraform matrix
+does not run PostgreSQL selection because it has no Azure PostgreSQL recipe.
 
 The nightly and release-candidate callers first create deterministic main and
 probe group names plus one 128-bit owner token. They then call
