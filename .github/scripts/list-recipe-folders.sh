@@ -37,6 +37,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=.github/scripts/lib-recipe-platform-filter.sh
 source "$SCRIPT_DIR/lib-recipe-platform-filter.sh"
 ACI_TEST_SCOPE="${RTC_ACI_TEST_SCOPE:-all}"
+rtc_validate_openai_test_scope
 
 case "$ACI_TEST_SCOPE" in
     all | only | exclude) ;;
@@ -93,6 +94,13 @@ add_recipe_dir() {
         platform="${BASH_REMATCH[1]}"
     fi
     if ! rtc_matches_recipe_platform "$platform"; then
+        return
+    fi
+
+    local type_path="${dir%/recipes/*}"
+    local resource_type
+    resource_type="$(basename "$(dirname "$type_path")")/$(basename "$type_path")"
+    if ! rtc_matches_openai_test_scope "$resource_type" "$platform"; then
         return
     fi
 

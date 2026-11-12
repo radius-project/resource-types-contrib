@@ -126,6 +126,10 @@ cat >"$MOCK_BIN/az" <<'EOF'
 #!/bin/bash
 echo "az $*" >>"$CALL_LOG"
 case "$1 $2" in
+    "group show")
+        printf '%s\n' "${AZ_GROUP_LOCATION:-centralus}"
+        exit "${AZ_GROUP_SHOW_EXIT_CODE:-0}"
+        ;;
     "resource list")
         if [[ "${AZ_RESOURCE_LIST_FAIL:-0}" == 1 ]]; then exit 1; fi
         if [[ -n "${AZ_RESOURCE_LIST_DELAY_SECONDS:-}" ]]; then sleep "$AZ_RESOURCE_LIST_DELAY_SECONDS"; fi
@@ -1098,6 +1102,63 @@ RTC_TEST_PLATFORM=kubernetes RTC_POSTGRES_TEST_SIZE=M run_postgres_entry >/dev/n
 if grep -q 'postgresSize=' "$CALL_LOG"; then fail "Kubernetes must not get an Azure size override"; fi
 grep -q "^param postgresSize string = 'S'$" "$REPO_ROOT/Data/postgreSqlDatabases/test/app.bicep" ||
     fail "test template default must remain S"
+
+# Exercise the generated-pack recipe caller, not just the checked-in pack entry.
+run_postgres_recipe() {
+    (
+        cd "$REPO_ROOT"
+        # shellcheck disable=SC2031 # This fixture sets PATH in its own subshell.
+        PATH="$MOCK_BIN:$PATH" CALL_LOG="$CALL_LOG" \
+            bash .github/scripts/test-recipe.sh Data/postgreSqlDatabases/recipes/azure/bicep myenv
+    )
+}
+selection_file="$TEST_ROOT/ci-postgres-selection.json"
+jq -n '{version:1,status:"selected",location:"centralus",
+    postgres:{size:"M",skuName:"Standard_D2ds_v5",tier:"GeneralPurpose"}}' >"$selection_file"
+: >"$CALL_LOG"
+RTC_POSTGRES_RECIPE_SELECTION_FILE="$selection_file" AZURE_LOCATION=centralus AZURE_RESOURCE_GROUP=rg \
+    RTC_POSTGRES_TEST_SIZE=S run_postgres_recipe >/dev/null ||
+    fail "generated-pack recipe must deploy the selection record, not its default S"
+grep -q -- '--parameters postgresSize=M' "$CALL_LOG" ||
+    fail "selected M must reach the generated-pack rad deployment"
+deployed_harness="$(sed -n 's/^rad deploy \([^ ]*\) .*/\1/p' "$CALL_LOG")"
+[[ -n "$deployed_harness" && ! -e "$REPO_ROOT/$deployed_harness" ]] ||
+    fail "per-recipe runner must remove its temporary harness"
+: >"$CALL_LOG"
+RTC_POSTGRES_RECIPE_SELECTION_FILE="$selection_file" AZURE_LOCATION=centralus AZURE_RESOURCE_GROUP=rg \
+    DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres_recipe >/dev/null ||
+    fail "per-recipe runner must use bounded same-region capacity recovery"
+[[ "$(grep -c '^rad deploy ' "$CALL_LOG")" == 2 ]] ||
+    fail "per-recipe capacity recovery must try at most two deployments"
+grep -q -- '--parameters postgresSize=S' "$CALL_LOG" || fail "capacity recovery must try untried S"
+
+for invalid in missing malformed no-selection region sku tier expired configured-region group-read; do
+    candidate="$TEST_ROOT/ci-postgres-$invalid.json"
+    case "$invalid" in
+        missing) ;;
+        malformed) echo '{}' >"$candidate" ;;
+        no-selection) jq '.status="capacity_exhausted" | del(.postgres)' "$selection_file" >"$candidate" ;;
+        region) jq '.location="eastus2"' "$selection_file" >"$candidate" ;;
+        sku) jq '.postgres.skuName="Standard_B1ms"' "$selection_file" >"$candidate" ;;
+        tier) jq '.postgres.tier="Burstable"' "$selection_file" >"$candidate" ;;
+        expired) jq '.deadlineEpochSeconds=1' "$selection_file" >"$candidate" ;;
+        *) cp "$selection_file" "$candidate" ;;
+    esac
+    location=centralus
+    group_status=0
+    [[ "$invalid" != configured-region ]] || location=eastus2
+    [[ "$invalid" != group-read ]] || group_status=1
+    : >"$CALL_LOG"
+    if RTC_POSTGRES_RECIPE_SELECTION_FILE="$candidate" AZURE_LOCATION="$location" AZURE_RESOURCE_GROUP=rg \
+        AZ_GROUP_SHOW_EXIT_CODE="$group_status" run_postgres_recipe >/dev/null 2>&1; then
+        fail "per-recipe runner must reject $invalid selection"
+    fi
+    ! grep -q '^rad deploy ' "$CALL_LOG" || fail "$invalid selection must fail before deployment"
+done
+: >"$CALL_LOG"
+RTC_AZURE_SELECTION_FILE="$selection_file" run_postgres_recipe >/dev/null ||
+    fail "pack-entry selection records must not change other per-recipe runs"
+! grep -q 'postgresSize=' "$CALL_LOG" || fail "per-recipe selection requires its explicit CI opt-in"
 
 FIXED_POSTGRES_TEST_APP="$REPO_ROOT/.github/scripts/tests/fixtures/postgresql-test-app-fixed-s.bicep"
 POSTGRES_TEST_HARNESS="$TEST_ROOT/postgresql-test-harness.bicep"

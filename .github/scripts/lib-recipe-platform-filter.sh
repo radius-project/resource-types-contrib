@@ -59,3 +59,19 @@ rtc_is_azure_test_dependency() {
         *) return 1 ;;
     esac
 }
+
+rtc_validate_openai_test_scope() {
+    case "${RTC_OPENAI_TEST_SCOPE:-all}" in
+        all | only | exclude) ;;
+        *) echo "Error: RTC_OPENAI_TEST_SCOPE must be all, only, or exclude." >&2; return 1 ;;
+    esac
+}
+
+rtc_matches_openai_test_scope() {
+    local resource_type="$1" platform="$2" is_openai=false
+    if [[ "$resource_type" == AI/models && ( "$platform" == azure || "$platform" == azure-* ) ]]; then
+        is_openai=true
+    fi
+    [[ ! ( "${RTC_OPENAI_TEST_SCOPE:-all}" == only && "$is_openai" != true ||
+           "${RTC_OPENAI_TEST_SCOPE:-all}" == exclude && "$is_openai" == true ) ]]
+}

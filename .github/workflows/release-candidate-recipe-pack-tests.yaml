@@ -284,6 +284,7 @@ jobs:
       RTC_TEST_DIAGNOSTICS_DIR: azure-test-diagnostics
       RTC_TEST_PLATFORM: azure
       RTC_ACI_TEST_SCOPE: exclude
+      RTC_OPENAI_TEST_SCOPE: exclude
       AZURE_RESOURCE_GROUP: ${{ needs.rc-azure-context.outputs.resource_group }}
       AZURE_GROUP_OWNER_TOKEN: ${{ needs.rc-azure-context.outputs.owner_token }}
       AZURE_PROBE_RESOURCE_GROUP: ${{ needs.rc-azure-context.outputs.probe_resource_group }}
@@ -556,6 +557,18 @@ jobs:
       id-token: write
       contents: read
     uses: ./.github/workflows/test-azure-aci.yaml
+    with:
+      version: ${{ inputs.version }}
+      test_checked_in_pack: true
+      release_candidate: true
+    secrets: inherit
+
+  rc-azure-openai-tests:
+    name: Release Candidate OpenAI Tests
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/test-azure-openai.yaml
     with:
       version: ${{ inputs.version }}
       test_checked_in_pack: true

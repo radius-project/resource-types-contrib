@@ -56,6 +56,10 @@ if [[ ${#RECIPE_DIRS[@]} -eq 0 ]]; then
         echo "Error: no ACI recipes found to test." >&2
         exit 1
     fi
+    if [[ "${RTC_OPENAI_TEST_SCOPE:-all}" == only ]]; then
+        echo "Error: no OpenAI recipes found to test." >&2
+        exit 1
+    fi
     echo "==> No $RECIPE_TYPE recipes found"
     exit 0
 fi

@@ -181,6 +181,57 @@ parameters, so Radius can reuse resources from earlier work. It does not delete
 partially deployed resources between attempts. These rules apply to both
 per-recipe and Recipe Pack entry tests.
 
+#### Azure OpenAI test isolation
+
+The general Azure CI, nightly, and release-candidate jobs exclude OpenAI
+deployments. OpenAI account or model quota failures no longer fail those jobs.
+`validate-azure-openai-recipes.yaml` runs the model tests as a separate check
+when model sources, their Kubernetes dependencies, Azure AKS packs, or shared
+test code change. External pull requests require approval for the exact head
+SHA before the job receives Azure credentials.
+
+`nightly-azure-openai-tests.yaml` runs daily at 10:00 UTC and also tests the
+checked-in model pack entry. Release candidates have a separate OpenAI job
+with the same pack coverage. All three use `test-azure-openai.yaml` and the
+single shared job concurrency group `azure-openai-test-capacity`. One OpenAI
+test job runs at a time; up to 100 can wait. Other Azure tests do not wait for
+this slot. Cleanup runs before the job releases the slot, with a separate
+fallback cleanup job. A failed cleanup, cancellation, or lost runner can
+leave Azure resources behind.
+
+`RTC_OPENAI_TEST_SCOPE=only` selects Azure `AI/models` recipes and model
+entries in checked-in Azure packs. `exclude` omits those tests but retains
+other entries in the same packs. Unset or `all` keeps the full test set;
+other values fail. An OpenAI-only test run fails if no model recipe or pack
+entry is found. Kubernetes-backed client containers and secrets remain in
+the generated OpenAI pack. The model connection and secret assertions do
+not change.
+
+This separation limits concurrent tests; it does not increase Azure quota
+or guarantee model capacity. Quota errors still fail the OpenAI check.
+No automatic quota retry or alternate model is used.
+
+Run the offline selection and workflow checks with `make test-openai-isolation`.
+These checks do not prove that the live approval gate, Azure OIDC trust, or
+shared concurrency group works. A maintainer must verify these after the new
+workflow is on the default branch. Live tests create billable Azure resources.
+
+Use an external pull request with a model change to check that no OpenAI
+credential job starts before approval. Review its exact head SHA, approve
+the Azure gate, then confirm that the worker checks out that SHA and Azure
+login succeeds without placing the credential job on the protected Environment.
+Start a second OpenAI caller while the first worker runs. Confirm that it
+waits in the shared group until the first worker finishes resource-group
+deletion. Check that the normal cleanup and fallback cleanup both succeed,
+and verify that the run's resource group is absent. If cleanup fails, the
+slot can still be released; do not treat that as proof that quota is free.
+
+To run the daily tests manually:
+
+```bash
+gh workflow run nightly-azure-openai-tests.yaml -f version=edge
+```
+
 #### Azure Container Instance quota recovery
 
 `validate-azure-aci-recipes.yaml` runs the ACI CI tests.
@@ -412,9 +463,9 @@ Delete your test cluster when done:
 make delete-radius-cluster
 ```
 
-## Azure PostgreSQL pack-test capacity
+## Azure PostgreSQL test capacity
 
-The nightly and release-candidate Azure pack tests select a PostgreSQL region
+Azure Bicep CI and the nightly and release-candidate Azure pack tests select a PostgreSQL region
 before they create the main resource group or configure the Azure provider.
 The release-candidate workflow keeps the released source and pack pins. A pack
 mapping that does not match the test tuple fails the PostgreSQL check.
@@ -463,7 +514,34 @@ automatic zone placement, password and Entra authentication, and public
 networking without a firewall rule. They do not disable TLS. The pack's public
 size contract and production defaults do not change.
 
+The probe reads `az postgres flexible-server list-skus --location <region>`
+before allocation. Azure's capability catalog lists SKU names, vCores, memory,
+and restrictions. It can support a CPU/memory ranking, but it does not report
+the lowest price or reserve live capacity. Tests use only the existing `S` and
+`M` recipe mappings. Selecting an arbitrary catalog SKU would require a
+separate change to the recipe's inputs or size mapping.
+
 ### Workflow, recovery, and cleanup
+
+Azure Bicep CI calls the same selector script within its approved validation
+job. It uses the same region and size variables, 45-minute search budget,
+15-minute probe-group cleanup budget, and ownership checks. The main group and
+Azure provider use the selected region. The per-recipe runner checks the
+selection's size, SKU, tier, and region before passing `postgresSize` to the
+temporary test harness. A missing, invalid, or unsuccessful selection fails
+the PostgreSQL test; it cannot pass by skipping deployment. A fresh 30-minute
+deadline bounds deployment and the existing one-size recovery attempt.
+CI opts in with `RTC_POSTGRES_RECIPE_SELECTION_FILE`. Other per-recipe runs
+keep their existing behavior and do not consume the pack-entry phase's selection
+deadline. Other recipe failures keep their failure status.
+
+CI keeps the sanitized selection record in `azure-test-diagnostics` and adds
+the attempt table to the job summary. The job limit is 150 minutes to include
+the search, normal tests, and owned-group cleanup. Each matrix job uses a
+separate `ci-bicep` or `ci-terraform` group prefix. An independent cleanup job
+uses the same contributor approval gate and reviewed source SHA. It retries
+owned-group cleanup even after a validation timeout. The Terraform matrix
+does not run PostgreSQL selection because it has no Azure PostgreSQL recipe.
 
 The nightly and release-candidate callers first create deterministic main and
 probe group names plus one 128-bit owner token. They then call
