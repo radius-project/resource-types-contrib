@@ -136,6 +136,20 @@ test-azure-secret-inputs: ## Run Azure secret input tests in a temporary directo
 	terraform -chdir="$$test_dir" init -backend=false -input=false; \
 	terraform -chdir="$$test_dir" test -no-color
 
+.PHONY: test-postgresql-settings
+test-postgresql-settings: ## Check PostgreSQL settings, Azure snapshots, and SQL initialization (requires Radius Bicep and Node)
+	@node --test ./.github/scripts/tests/test-postgresql-settings.js
+	@bash ./.github/scripts/tests/test-postgresql-init.sh
+
+.PHONY: test-postgresql-inputs
+test-postgresql-inputs: ## Test PostgreSQL Kubernetes settings with a mock provider (requires Terraform 1.7+)
+	@set -eu; \
+	test_dir=$$(mktemp -d "$${TMPDIR:-/tmp}/rtc-postgresql-inputs-XXXXXX"); \
+	trap 'rm -rf "$$test_dir"' EXIT; \
+	cp -R Data/postgreSqlDatabases/recipes/kubernetes/terraform/. "$$test_dir/"; \
+	terraform -chdir="$$test_dir" init -backend=false -input=false; \
+	terraform -chdir="$$test_dir" test -no-color
+
 .PHONY: update-env-recipe-pack
 update-env-recipe-pack: ## Update environment with recipe pack ID (requires RECIPE_PACK_NAME and optionally RESOURCE_GROUP and ENVIRONMENT)
 ifndef RECIPE_PACK_NAME

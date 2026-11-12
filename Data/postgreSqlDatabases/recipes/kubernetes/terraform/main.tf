@@ -32,18 +32,24 @@ variable "memory" {
 }
 
 locals {
-  resource_name    = var.context.resource.name
-  application_name = var.context.application != null ? var.context.application.name : ""
-  environment_name = var.context.environment != null ? var.context.environment.name : ""
-  resource_group   = element(split("/", var.context.resource.id), 5)
-  namespace        = var.context.runtime.kubernetes.namespace
-  port             = 5432
-  tag              = "16-alpine"
-  username         = var.context.resource.properties.username
-  password         = var.context.resource.properties.password
-  database         = try(var.context.resource.properties.database, "postgres_db")
-  size_value       = try(var.context.resource.properties.size, "S")
-  tls              = coalesce(try(var.context.resource.properties.tls, null), "required")
+  resource_name      = var.context.resource.name
+  application_name   = var.context.application != null ? var.context.application.name : ""
+  environment_name   = var.context.environment != null ? var.context.environment.name : ""
+  resource_group     = element(split("/", var.context.resource.id), 5)
+  namespace          = var.context.runtime.kubernetes.namespace
+  port               = 5432
+  tag                = "16-alpine"
+  username           = var.context.resource.properties.username
+  password           = var.context.resource.properties.password
+  database           = try(var.context.resource.properties.database, "postgres_db")
+  size_value         = try(var.context.resource.properties.size, "S")
+  tls                = coalesce(try(var.context.resource.properties.tls, null), "required")
+  extensions         = coalesce(try(var.context.resource.properties.extensions, null), [])
+  server_settings    = coalesce(try(var.context.resource.properties.serverSettings, null), {})
+  protected_settings = ["port", "ssl", "ssl_cert_file", "ssl_key_file", "hba_file"]
+  # Escape dollars before kubelet expands Pod arguments; the shell receives the original text.
+  server_args   = flatten([for name, value in local.server_settings : ["-c", replace("${name}=${value}", "$", "$$")] if !contains(local.protected_settings, lower(name))])
+  extension_sql = join("\n", [for name in local.extensions : "CREATE EXTENSION IF NOT EXISTS \"${replace(name, "\"", "\"\"")}\";"])
 
   labels = {
     "radapp.io/resource"       = local.resource_name
@@ -51,6 +57,20 @@ locals {
     "radapp.io/environment"    = local.environment_name
     "radapp.io/resource-type"  = replace(var.context.resource.type, "/", "-")
     "radapp.io/resource-group" = local.resource_group
+  }
+}
+
+resource "kubernetes_config_map" "extensions" {
+  count = length(local.extensions) > 0 ? 1 : 0
+
+  metadata {
+    name      = "${local.resource_name}-extensions"
+    namespace = local.namespace
+    labels    = local.labels
+  }
+
+  data = {
+    "00-extensions.sql" = local.extension_sql
   }
 }
 
@@ -178,9 +198,20 @@ resource "kubernetes_deployment" "postgresql" {
             printf 'local all all trust\nhostnossl all all 0.0.0.0/0 %s\nhostnossl all all ::/0 %s\nhostssl all all 0.0.0.0/0 scram-sha-256\nhostssl all all ::/0 scram-sha-256\n' "$plaintext_auth" "$plaintext_auth" > /tls-runtime/pg_hba.conf
             chown postgres:postgres /tls-runtime/server.crt /tls-runtime/server.key /tls-runtime/pg_hba.conf
             chmod 0600 /tls-runtime/server.key
-            exec docker-entrypoint.sh postgres -c ssl=on -c ssl_cert_file=/tls-runtime/server.crt -c ssl_key_file=/tls-runtime/server.key -c hba_file=/tls-runtime/pg_hba.conf
+            exec docker-entrypoint.sh postgres "$@" -c port=5432 -c ssl=on -c ssl_cert_file=/tls-runtime/server.crt -c ssl_key_file=/tls-runtime/server.key -c hba_file=/tls-runtime/pg_hba.conf
           EOT
           ]
+          # The first argument is the sh -ec $0 placeholder; "$@" contains only setting arguments.
+          args = concat(["postgres"], local.server_args)
+
+          dynamic "volume_mount" {
+            for_each = kubernetes_config_map.extensions
+            content {
+              name       = "extensions"
+              mount_path = "/docker-entrypoint-initdb.d"
+              read_only  = true
+            }
+          }
 
           readiness_probe {
             exec {
@@ -236,6 +267,16 @@ resource "kubernetes_deployment" "postgresql" {
           }
         }
 
+        dynamic "volume" {
+          for_each = kubernetes_config_map.extensions
+          content {
+            name = "extensions"
+            config_map {
+              name = volume.value.metadata[0].name
+            }
+          }
+        }
+
         volume {
           name = "tls-source"
           secret {
@@ -283,11 +324,11 @@ resource "kubernetes_service" "postgres" {
 # `result.secrets`.
 output "result" {
   value = {
-    resources = [
+    resources = concat([
       "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Secret/${kubernetes_secret.postgres.metadata[0].name}",
       "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Service/${local.resource_name}",
       "/planes/kubernetes/local/namespaces/${local.namespace}/providers/apps/Deployment/${local.resource_name}"
-    ]
+    ], [for config in kubernetes_config_map.extensions : "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/ConfigMap/${config.metadata[0].name}"])
     values = {
       host     = "${kubernetes_service.postgres.metadata[0].name}.${kubernetes_service.postgres.metadata[0].namespace}.svc.cluster.local"
       port     = local.port
