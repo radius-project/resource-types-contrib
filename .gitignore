@@ -1,5 +1,6 @@
 **/*.tgz
 **/bicepconfig.json
+!Data/postgreSqlDatabases/recipes/azure/bicep/bicepconfig.json
 
 # Local release bundle output (see .github/build/release.mk)
 /dist/

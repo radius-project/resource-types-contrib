@@ -12,14 +12,8 @@ param containerImagesRegistry string
 @description('Name of the Kubernetes Secret holding registry credentials for Radius.Compute/containerImages. Leave empty for an unauthenticated registry.')
 param containerImagesRegistrySecretName string = ''
 
-@description('Server parameters forwarded to the AVM PostgreSQL flexible server configurations array for Radius.Data/postgreSqlDatabases, using the AVM item shape with name, source, and value fields. Commonly used to allow-list extensions via the azure.extensions parameter (for example to enable pgvector). Setting require_secure_transport here overrides the transport policy the resource requests through its tls property. See recipe-packs/azure-aks/README.md for an example and a link to the supported extensions. Defaults to an empty array (no extra server configuration).')
+@description('Operator PostgreSQL settings in AVM name, source, value form. Defaults to no operator settings. See Data/postgreSqlDatabases/recipes/azure/README.md for merge and override rules.')
 param postgreSqlServerConfigurations array = []
-
-// An operator-set require_secure_transport value takes precedence over the resource's tls.
-// Names are compared exactly: Require_Secure_Transport is not recognized as an override,
-// so the derived entry is still added. Use canonical lowercase Azure parameter names.
-// Safe navigation does not validate entries; they are forwarded for downstream validation.
-var postgreSqlOperatorSetsSecureTransport = !empty(filter(postgreSqlServerConfigurations, config => config.?name == 'require_secure_transport'))
 
 resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
   name: 'azure-aks'
@@ -151,50 +145,9 @@ resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
       }
       'Radius.Data/postgreSqlDatabases': {
         kind: 'bicep'
-        source: 'mcr.microsoft.com/bicep/avm/res/db-for-postgre-sql/flexible-server:0.15.2'
+        source: 'ghcr.io/radius-project/azure-aks-recipes/postgresqldatabases:latest'
         parameters: {
-          name: 'pgsql-{{context.azure.resourceNameHash}}'
-          administratorLogin: '{{context.resource.properties.username}}'
-          administratorLoginPassword: '{{context.resource.properties.password}}'
-          authConfig: {
-            activeDirectoryAuth: 'Enabled'
-            passwordAuth: 'Enabled'
-          }
-          skuName: '{{context.resource.properties.size == "S" ? "Standard_B1ms" : "Standard_D2ds_v5"}}'
-          tier: '{{context.resource.properties.size == "S" ? "Burstable" : "GeneralPurpose"}}'
-          databases: [
-            {
-              name: '{{context.resource.properties.database}}'
-            }
-          ]
-          version: '16'
-          availabilityZone: -1
-          highAvailability: 'Disabled'
-          geoRedundantBackup: 'Disabled'
-          storageSizeGB: 32
-          publicNetworkAccess: 'Enabled'
-          firewallRules: [
-            {
-              name: 'allow-all'
-              startIpAddress: '0.0.0.0'
-              endIpAddress: '255.255.255.255'
-            }
-          ]
-          enableAdvancedThreatProtection: false
-          enableTelemetry: false
-          lock: {
-            kind: 'None'
-          }
-          configurations: concat(postgreSqlServerConfigurations, postgreSqlOperatorSetsSecureTransport ? [] : [
-            {
-              name: 'require_secure_transport'
-              source: 'user-override'
-              value: '{{context.resource.properties.tls == "optional" ? "OFF" : "ON"}}'
-            }
-          ])
-        }
-        outputs: {
-          host: 'fqdn'
+          postgreSqlServerConfigurations: postgreSqlServerConfigurations
         }
       }
       'Radius.Data/sqlServerDatabases': {
