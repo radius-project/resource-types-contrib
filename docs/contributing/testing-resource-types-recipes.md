@@ -212,6 +212,20 @@ or guarantee model capacity. Quota errors still fail the OpenAI check.
 No automatic quota retry or alternate model is used.
 
 Run the offline selection and workflow checks with `make test-openai-isolation`.
+These checks do not prove that the live approval gate, Azure OIDC trust, or
+shared concurrency group works. A maintainer must verify these after the new
+workflow is on the default branch. Live tests create billable Azure resources.
+
+Use an external pull request with a model change to check that no OpenAI
+credential job starts before approval. Review its exact head SHA, approve
+the Azure gate, then confirm that the worker checks out that SHA and Azure
+login succeeds without placing the credential job on the protected Environment.
+Start a second OpenAI caller while the first worker runs. Confirm that it
+waits in the shared group until the first worker finishes resource-group
+deletion. Check that the normal cleanup and fallback cleanup both succeed,
+and verify that the run's resource group is absent. If cleanup fails, the
+slot can still be released; do not treat that as proof that quota is free.
+
 To run the daily tests manually:
 
 ```bash

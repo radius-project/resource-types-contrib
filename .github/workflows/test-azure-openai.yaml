@@ -149,9 +149,9 @@ jobs:
           set -euo pipefail
           export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 25 * 60 ))
           RECIPE_PLATFORM_FILTER=azure make generate-recipe-pack \
-            PACK_NAME=openaibiceprecipepack OUTPUT_FILE=recipe-pack-openai.bicep
+            PACK_NAME=openaiBicepRecipePack OUTPUT_FILE=recipe-pack-openai.bicep
           make deploy-recipe-pack BICEP_FILE=recipe-pack-openai.bicep RESOURCE_GROUP=default
-          make update-env-recipe-pack RECIPE_PACK_NAME=openaibiceprecipepack \
+          make update-env-recipe-pack RECIPE_PACK_NAME=openaiBicepRecipePack \
             ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
           RECIPE_PLATFORM_FILTER=azure make test \
             ENVIRONMENT="$AZURE_ENVIRONMENT_NAME" RECIPE_TYPE=bicep
