@@ -34,6 +34,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib-recipe-packs.sh"
 # shellcheck source=.github/scripts/lib-azure-postgres-test.sh
 source "$SCRIPT_DIR/lib-azure-postgres-test.sh"
+# shellcheck source=.github/scripts/lib-recipe-platform-filter.sh
+source "$SCRIPT_DIR/lib-recipe-platform-filter.sh"
+rtc_validate_openai_test_scope
 
 if [[ $# -lt 1 ]]; then
     echo "Usage: $0 <platform-group> [workspace] [environment]" >&2
@@ -163,6 +166,9 @@ for pack_id in "${packs[@]}"; do
     scoped_types=""
     while IFS= read -r resource_type_dir; do
         [[ -n "$resource_type_dir" ]] || continue
+        if ! rtc_matches_openai_test_scope "$resource_type_dir" "$platform_group"; then
+            continue
+        fi
         is_aci=false
         if [[ "$pack_id" == azure-aci && "$resource_type_dir" == Compute/containers ]]; then
             is_aci=true

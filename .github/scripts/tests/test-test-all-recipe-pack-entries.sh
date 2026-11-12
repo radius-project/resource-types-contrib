@@ -276,6 +276,41 @@ RTC_ACI_TEST_SCOPE=exclude run_driver azure azure-ws azure-env >/dev/null ||
     fail "only the Kubernetes-backed container entry must run outside ACI"
 cp "$TEST_ROOT/aks-pack.bicep" "$aks_pack"
 
+# OpenAI selection must not remove other entries from the same Azure pack.
+mkdir -p "$FIXTURE_ROOT/AI/models/test"
+echo "param applicationName string" >"$FIXTURE_ROOT/AI/models/test/app.bicep"
+sed "/    recipes: {/a\\
+      'Radius.AI/models': {\\
+        kind: 'bicep'\\
+        source: 'ghcr.io/radius-project/azure-recipes/models:latest'\\
+      }" "$TEST_ROOT/aks-pack.bicep" >"$aks_pack"
+: >"$CALL_LOG"
+RTC_OPENAI_TEST_SCOPE=only RTC_ACI_TEST_SCOPE=exclude run_driver azure azure-ws azure-env >/dev/null ||
+    fail "OpenAI-only pack entries must pass without PostgreSQL preflight"
+expected="rad env update azure-env --workspace azure-ws --recipe-packs azure-aks
+test-recipe-pack-entry.sh AI/models azure-ws azure-env"
+diff -u <(echo "$expected") "$CALL_LOG" || fail "OpenAI-only must test only the model entry"
+: >"$CALL_LOG"
+RTC_OPENAI_TEST_SCOPE=exclude run_driver azure azure-ws azure-env >/dev/null ||
+    fail "general Azure pack entries must pass without OpenAI"
+! grep -q 'test-recipe-pack-entry.sh AI/models' "$CALL_LOG" ||
+    fail "general pack runner must not deploy OpenAI"
+grep -q 'test-recipe-pack-entry.sh Data/redisCaches' "$CALL_LOG" ||
+    fail "OpenAI exclusion lost other entries in its pack"
+: >"$CALL_LOG"
+run_driver azure azure-ws azure-env >/dev/null || fail "default scope must retain OpenAI"
+grep -q 'test-recipe-pack-entry.sh AI/models' "$CALL_LOG" || fail "default pack scope lost OpenAI"
+if RTC_OPENAI_TEST_SCOPE=invalid run_driver azure azure-ws azure-env >/dev/null 2>&1; then
+    fail "invalid OpenAI scope must fail pack tests"
+fi
+if RTC_OPENAI_TEST_SCOPE=only FAIL_TYPE=AI/models run_driver azure azure-ws azure-env >/dev/null 2>&1; then
+    fail "OpenAI pack test failures must propagate"
+fi
+cp "$TEST_ROOT/aks-pack.bicep" "$aks_pack"
+if RTC_OPENAI_TEST_SCOPE=only run_driver azure azure-ws azure-env >/dev/null 2>&1; then
+    fail "an empty OpenAI pack scope must fail"
+fi
+
 rm "$FIXTURE_ROOT/Messaging/rabbitMQ/test/app.bicep"
 : >"$CALL_LOG"
 if output=$(FAIL_TYPE="" run_driver azure azure-ws azure-env 2>&1); then
