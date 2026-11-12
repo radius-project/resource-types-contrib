@@ -62,7 +62,18 @@ types:
       }
       ```
 
-      The hostname is determined by the Recipe. 
+      The hostname is determined by the Recipe.
+
+      `destinationContainer.resourceId` is a typed reference to a
+      `Radius.Compute/containers` resource. The `x-radius-resource-reference`
+      schema annotation labels this existing relationship; it does not enable
+      delegated provisioning or change infrastructure ownership by itself.
+      With a delegation-capable Radius runtime, a delegated Routes recipe
+      registration and an accepting Containers recipe registration allow the
+      referenced Container's recipe to provision the route configuration and
+      return this Route's read-only `listener`. Only that target receives this
+      Route as a delegating input. Ordinary, nondelegated Route recipes continue
+      to provision routes separately.
 
       Multiple rules can be included in Routes.
       ```bicep
@@ -172,6 +183,7 @@ types:
                     properties:
                       resourceId:
                         type: string
+                        x-radius-resource-reference: Radius.Compute/containers
                         description: (Required) The Radius Container resource ID.
                       containerName:
                         type: string
