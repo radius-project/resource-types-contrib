@@ -196,6 +196,7 @@ jobs:
       RTC_TEST_DIAGNOSTICS_DIR: azure-test-diagnostics
       RTC_TEST_PLATFORM: azure
       RTC_ACI_TEST_SCOPE: exclude
+      RTC_OPENAI_TEST_SCOPE: exclude
       RTC_AZURE_SELECTION_FILE: ${{ github.workspace }}/azure-test-diagnostics/postgres-selection.json
     strategy:
       fail-fast: false
