@@ -69,7 +69,7 @@ RESOURCE_NAME=$(basename "$RESOURCE_TYPE_PATH")
 RESOURCE_TYPE="Radius.$CATEGORY/$RESOURCE_NAME"
 
 # Derive platform from recipe path (first segment after recipes/)
-RECIPES_RELATIVE="${RECIPE_PATH#${RESOURCE_TYPE_PATH}/recipes/}"
+RECIPES_RELATIVE="${RECIPE_PATH#"${RESOURCE_TYPE_PATH}"/recipes/}"
 PLATFORM="${RECIPES_RELATIVE%%/*}"
 
 # Determine workspace and environment names based on platform (with overrides)
@@ -140,6 +140,29 @@ fi
 TEST_FILE="$RESOURCE_TYPE_PATH/test/app.bicep"
 if [[ ! -f "$TEST_FILE" ]]; then
     echo "==> No test file found at $TEST_FILE, skipping deployment test"
+    exit 0
+fi
+
+if [[ "$RESOURCE_TYPE" == "Radius.Data/postgreSqlDatabases" && "$PLATFORM" == azure &&
+    -v RTC_POSTGRES_RECIPE_SELECTION_FILE ]]; then
+    # shellcheck source=.github/scripts/lib-azure-postgres-test.sh
+    source "$SCRIPT_DIR/lib-azure-postgres-test.sh"
+    rtc_validate_postgres_test_pack "$SCRIPT_DIR/../../recipe-packs/azure-aks/azure-aks.bicep" || exit 1
+    RTC_AZURE_SELECTION_FILE="$RTC_POSTGRES_RECIPE_SELECTION_FILE"
+    subscription_args=()
+    [[ -z "${AZURE_SUBSCRIPTION_ID:-}" ]] || subscription_args=(--subscription "$AZURE_SUBSCRIPTION_ID")
+    if [[ -z "${AZURE_RESOURCE_GROUP:-}" ]] ||
+        ! location=$(timeout --kill-after=5s 30s az group show --name "$AZURE_RESOURCE_GROUP" \
+            "${subscription_args[@]}" --query location --output tsv) ||
+        [[ ! "$location" =~ ^[a-z0-9]+$ ]]; then
+        echo "Error: PostgreSQL selection requires the existing resource group's region." >&2
+        exit 1
+    fi
+    rtc_read_postgres_test_selection "$location" "$(( $(date +%s) + 1800 ))" || exit 1
+    export RTC_POSTGRES_TEST_SIZE="$postgres_test_size"
+    export RTC_POSTGRES_TEST_DEADLINE_EPOCH="$postgres_deadline"
+    rtc_test_azure_postgresql_app "$TEST_FILE" "$ENVIRONMENT_PATH" "$WORKSPACE_NAME" "$KUBERNETES_NAMESPACE" || exit 1
+    echo "==> Test completed successfully"
     exit 0
 fi
 

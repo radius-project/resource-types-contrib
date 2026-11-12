@@ -96,7 +96,7 @@ preflight() {
     case "$platform_group:$1" in
         azure:Data/postgreSqlDatabases)
             rtc_validate_postgres_test_pack "$template" || return 1
-            local location selection_status
+            local location
             local -a subscription_args=()
             [[ -z "${AZURE_SUBSCRIPTION_ID:-}" ]] || subscription_args=(--subscription "$AZURE_SUBSCRIPTION_ID")
             if [[ -z "${AZURE_RESOURCE_GROUP:-}" ]] ||
@@ -108,45 +108,7 @@ preflight() {
             fi
             postgres_deadline=$(( $(date +%s) + 1800 ))
             if [[ -n "${RTC_AZURE_SELECTION_FILE+x}" ]]; then
-                if [[ ! -f "$RTC_AZURE_SELECTION_FILE" ]] || ! jq -e '
-                    type == "object" and .version == 1 and
-                    (.status == "selected" or .status == "capacity_exhausted" or
-                     .status == "unsupported" or .status == "restricted" or
-                     .status == "catalog_unavailable" or .status == "probe_error" or
-                     .status == "deadline_exceeded") and
-                    (if has("deadlineEpochSeconds") then
-                        (.deadlineEpochSeconds | type == "number" and floor == . and . > 0 and . < 100000000000)
-                     else true end) and
-                    (if .status == "selected" then
-                        (.postgres.size == "S" or .postgres.size == "M") and
-                        (.location | type == "string")
-                     else true end)
-                ' "$RTC_AZURE_SELECTION_FILE" >/dev/null 2>&1; then
-                    echo "Error: PostgreSQL selection file is missing or malformed." >&2
-                    return 1
-                fi
-                selection_status=$(jq -r '.status' "$RTC_AZURE_SELECTION_FILE")
-                if [[ "$selection_status" != selected ]]; then
-                    echo "Error: PostgreSQL capacity selection failed: $selection_status." >&2
-                    return 1
-                fi
-                if [[ "$(jq -r '.location' "$RTC_AZURE_SELECTION_FILE")" != "$location" ]]; then
-                    echo "Error: PostgreSQL selection region differs from the existing resource group." >&2
-                    return 1
-                fi
-                postgres_test_size=$(jq -r '.postgres.size' "$RTC_AZURE_SELECTION_FILE")
-                rtc_postgres_test_tuple "$postgres_test_size" || return 1
-                if ! jq -e --arg sku "$postgres_sku" --arg tier "$postgres_tier" \
-                    '.postgres.skuName == $sku and .postgres.tier == $tier' "$RTC_AZURE_SELECTION_FILE" >/dev/null; then
-                    echo "Error: PostgreSQL selection size does not match the approved SKU and tier." >&2
-                    return 1
-                fi
-                postgres_deadline=$(jq -r --argjson fallback "$postgres_deadline" \
-                    '.deadlineEpochSeconds // $fallback' "$RTC_AZURE_SELECTION_FILE")
-                if ((postgres_deadline <= $(date +%s))); then
-                    echo "Error: PostgreSQL selection deadline has expired." >&2
-                    return 1
-                fi
+                rtc_read_postgres_test_selection "$location" "$postgres_deadline" || return 1
             else
                 # Never relocate an existing group or repeat the full region search.
                 AZURE_LOCATION="$location" RTC_POSTGRES_TEST_SIZE=S \

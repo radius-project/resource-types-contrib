@@ -34,7 +34,7 @@ if RTC_AZURE_TEST_REGIONS="$(printf 'eastus2,%.0s' {1..32})eastus2" \
     bash "$script" regions >/dev/null 2>&1; then fail "raw list bound"; fi
 
 export RTC_AZURE_SELECTION_FILE="$temp/selection.json" GITHUB_STEP_SUMMARY="$temp/summary.md"
-for status in selected capacity_exhausted probe_error deadline_exceeded; do
+for status in selected capacity_exhausted probe_error deadline_exceeded unsupported restricted catalog_unavailable; do
     jq -n --arg status "$status" '{version:1,status:$status,deadlineEpochSeconds:123456,
         secret:"DO_NOT_PRINT",attempts:[{region:"centralus",size:"M",skuName:"Standard_D2ds_v5",
         tier:"GeneralPurpose",outcome:"capacity_exhausted",errorCode:"SkuNotAvailable",durationSeconds:12}]}' \
@@ -113,7 +113,7 @@ chmod +x "$temp/bin/az"
 export PATH="$temp/bin:$PATH" GITHUB_RUN_ID=123 GITHUB_RUN_ATTEMPT=3 AZURE_SUBSCRIPTION_ID=test
 token_a=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 token_b=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-for kind in nightly rc; do
+for kind in nightly rc ci-bicep; do
     group="rrttest-$kind-123-2-probe-$token_a"
     printf '%s|rtcPostgresSelectorOwner|%s\n' "$group" "$token_a" >"$GROUP_STATE"
     : >"$CALL_LOG"
@@ -153,7 +153,7 @@ if GITHUB_RUN_ATTEMPT=invalid bash "$script" cleanup-probe "rrttest-nightly-123-
 fi
 
 # Cleanup discovers groups by run ID and attempt, then requires each group's owner tag.
-for kind in nightly rc; do
+for kind in nightly rc ci-bicep ci-terraform; do
     main2="rrttest-$kind-123-2-$token_a"
     probe2="rrttest-$kind-123-2-probe-$token_b"
     main4="rrttest-$kind-123-4-$token_a"
@@ -186,7 +186,7 @@ EOF
 done
 
 # Current outputs do not hide earlier groups, and only matching owner tags permit deletion.
-for kind in nightly rc; do
+for kind in nightly rc ci-bicep ci-terraform; do
     main1="rrttest-$kind-123-1-$token_a"
     probe1="rrttest-$kind-123-1-probe-$token_b"
     main2="rrttest-$kind-123-2-$token_a"
@@ -216,7 +216,7 @@ EOF
 done
 
 # Exact legacy names and forged/mismatched owner tags are never deleted.
-for kind in nightly rc; do
+for kind in nightly rc ci-bicep ci-terraform; do
     cat >"$GROUP_STATE" <<EOF
 rrttest-$kind-123-2||
 rrttest-$kind-123-2-probe||
@@ -231,7 +231,7 @@ done
 : >"$GROUP_STATE"
 LIST_FAILS=true bash "$script" cleanup-run-groups nightly 2>/dev/null &&
     fail "resource group discovery failure"
-for kind in nightly rc; do
+for kind in nightly rc ci-bicep ci-terraform; do
     printf 'rrttest-%s-123-2-%s|rtcAzureTestGroupOwner|%s\n' "$kind" "$token_a" "$token_a" >"$GROUP_STATE"
     DELETE_FAILS=true GITHUB_RUN_ATTEMPT=3 bash "$script" cleanup-run-groups "$kind" \
         2>/dev/null && fail "resource group delete failure"
@@ -240,7 +240,7 @@ for kind in nightly rc; do
 done
 
 # Main-group creation refuses an existing exact name and marks only its new target as owned.
-for kind in nightly rc; do
+for kind in nightly rc ci-bicep ci-terraform; do
     : >"$GROUP_STATE"
     group="rrttest-$kind-123-3-$token_a"
     bash "$script" create-main "$kind" "$group" westus3 "$token_a" >/dev/null
@@ -258,4 +258,94 @@ for kind in nightly rc; do
     ! grep -q '^group create' "$CALL_LOG" || fail "must not update existing main group"
     grep -Fq "$group||" "$GROUP_STATE" || fail "existing main group preserved"
 done
+
+# Execute the real CI shell steps with a stub selector and owned-group Azure mock.
+fixture="$temp/repo"
+mkdir -p "$fixture/.github/scripts" "$fixture/recipe-packs/azure-aks" \
+    "$fixture/Data/postgreSqlDatabases/recipes/azure/bicep"
+cp "$root/.github/scripts/lib-azure-postgres-test.sh" "$fixture/.github/scripts/"
+cp "$script" "$fixture/.github/scripts/"
+cp "$root/recipe-packs/azure-aks/azure-aks.bicep" "$fixture/recipe-packs/azure-aks/"
+cp "$root/Data/postgreSqlDatabases/recipes/azure/bicep/azure-postgresql.bicep" \
+    "$fixture/Data/postgreSqlDatabases/recipes/azure/bicep/"
+cat >"$fixture/.github/scripts/select-azure-test-location.sh" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+echo "selector $1 $RTC_AZURE_TEST_REGIONS $RTC_POSTGRES_TEST_SIZES $RTC_POSTGRES_PROBE_OWNER_TOKEN" >>"$CALL_LOG"
+[[ "${SELECTOR_FAILS:-false}" != true ]] || exit 1
+jq -n '{version:1,status:"selected",location:"eastus2",attempts:[],
+    postgres:{size:"M",skuName:"Standard_D2ds_v5",tier:"GeneralPurpose"}}' >"$RTC_AZURE_SELECTION_FILE"
+EOF
+python3 - "$root/.github/workflows/validate-azure-recipes.yaml" "$temp" <<'PY'
+import pathlib
+import re
+import sys
+import textwrap
+
+workflow = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+for name, filename in [
+    ("Set Azure Test Context", "context.sh"),
+    ("Select Azure PostgreSQL capacity", "select.sh"),
+    ("Create Azure Resource Group", "create.sh"),
+]:
+    step = re.search(
+        r"(?m)^      - name: " + re.escape(name) + r"\n([\s\S]*?)(?=^      - name: |\Z)",
+        workflow,
+    )
+    assert step, name
+    if filename == "select.sh":
+        assert "if: matrix.recipe == 'bicep'" in step[1]
+        assert 'RTC_POSTGRES_PREFLIGHT_TIMEOUT_SECONDS: "2700"' in step[1]
+        assert 'RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS: "900"' in step[1]
+    script = re.search(r"(?m)^        run: \|\n((?:          .*\n|\n)+)", step[1])
+    assert script, name
+    text = textwrap.dedent(script[1])
+    for expression, value in [
+        ("github.run_id", "123"), ("github.run_attempt", "3"), ("matrix.recipe", "bicep")
+    ]:
+        text = text.replace("${{ " + expression + " }}", value)
+    assert "${{" not in text, name
+    pathlib.Path(sys.argv[2], filename).write_text(text, encoding="utf-8")
+cleanup = workflow.split("\n  cleanup-azure-resources:\n", 1)[1]
+assert "always() &&" in cleanup
+assert "needs.approval-gate.result == 'success'" in cleanup
+assert "needs.check-trust.outputs.is-external == 'false'" in cleanup
+assert "ref: ${{ github.event.pull_request.head.sha || github.sha }}" in cleanup
+assert "persist-credentials: false" in cleanup
+assert "if: needs.validate-azure-recipes.result != 'success'" in cleanup
+assert "run: sleep 180" in cleanup
+test_step = workflow.split("      - name: Test Azure ${{ matrix.recipe }} Recipes\n", 1)[1]
+test_step = test_step.split("\n      - name:", 1)[0]
+assert "RTC_POSTGRES_RECIPE_SELECTION_FILE: ${{ env.RTC_AZURE_SELECTION_FILE }}" in test_step
+PY
+(
+    cd "$fixture"
+    export GITHUB_ENV="$temp/github-env" GITHUB_OUTPUT="$temp/github-output"
+    export DEFAULT_AZURE_LOCATION=westus3
+    export RTC_AZURE_SELECTION_FILE="$temp/ci-diagnostics/postgres-selection.json"
+    unset AZURE_LOCATION RTC_AZURE_TEST_REGIONS
+    bash "$temp/context.sh"
+    set -a
+    # shellcheck source=/dev/null
+    source "$GITHUB_ENV"
+    set +a
+    export REGION_OVERRIDE=centralus,eastus2 AZURE_FALLBACK_LOCATION=westus2 SIZE_OVERRIDE=M,S
+    export RTC_POSTGRES_PREFLIGHT_TIMEOUT_SECONDS=2700 RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS=900
+    : >"$CALL_LOG"
+    bash "$temp/select.sh"
+    set -a
+    # shellcheck source=/dev/null
+    source "$GITHUB_ENV"
+    set +a
+    [[ "$AZURE_LOCATION" == eastus2 ]] || fail "CI must carry selected region to later steps"
+    grep -Fq "selector $AZURE_PROBE_RESOURCE_GROUP centralus,eastus2 M,S $AZURE_GROUP_OWNER_TOKEN" \
+        "$CALL_LOG" || fail "CI must pass approved regions, sizes, and ownership to the shared selector"
+    : >"$GROUP_STATE"
+    bash "$temp/create.sh" >/dev/null
+    grep -Fq -- "--location eastus2 --name $AZURE_RESOURCE_GROUP" "$CALL_LOG" ||
+        fail "main CI group must use the selected region, not westus3"
+    SELECTOR_FAILS=true bash "$temp/select.sh" >/dev/null 2>&1 &&
+        fail "selector errors must fail the CI step"
+    bash "$script" cleanup-run-groups ci-bicep >/dev/null
+)
 echo "Azure PostgreSQL workflow tests passed"

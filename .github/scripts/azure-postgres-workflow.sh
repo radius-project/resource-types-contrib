@@ -33,10 +33,9 @@ run_bounded_azure_command() {
 validate_probe_group() {
     local group="$1" group_attempt
     probe_owner_token=""
-    if [[ "$group" =~ ^rrttest-nightly-${run_id}-([1-9][0-9]{0,8})-probe(-([a-f0-9]{32}))?$ ]] ||
-        [[ "$group" =~ ^rrttest-rc-${run_id}-([1-9][0-9]{0,8})-probe(-([a-f0-9]{32}))?$ ]]; then
-        group_attempt="${BASH_REMATCH[1]}"
-        probe_owner_token="${BASH_REMATCH[3]:-}"
+    if [[ "$group" =~ ^rrttest-(nightly|rc|ci-bicep|ci-terraform)-${run_id}-([1-9][0-9]{0,8})-probe(-([a-f0-9]{32}))?$ ]]; then
+        group_attempt="${BASH_REMATCH[2]}"
+        probe_owner_token="${BASH_REMATCH[4]:-}"
     else
         echo "Error: refusing to delete a probe group not owned by this run." >&2
         return 1
@@ -90,8 +89,8 @@ cleanup_probe_group() {
 
 create_main_group() {
     local kind="$1" group="$2" location="$3" owner_token="$4" expected_group existing deadline
-    [[ "$kind" == nightly || "$kind" == rc ]] || {
-        echo "Error: main resource group kind must be nightly or rc." >&2
+    [[ "$kind" == nightly || "$kind" == rc || "$kind" == ci-bicep || "$kind" == ci-terraform ]] || {
+        echo "Error: invalid main resource group kind." >&2
         return 1
     }
     [[ "$owner_token" =~ ^[a-f0-9]{32}$ ]] || {
@@ -175,13 +174,17 @@ case "${1:-}" in
         jq -er '
             if .version != 1 or (.attempts | type) != "array" or
                 (.status != "selected" and .status != "capacity_exhausted" and
-                 .status != "probe_error" and .status != "deadline_exceeded") then
+                 .status != "probe_error" and .status != "deadline_exceeded" and
+                 .status != "unsupported" and .status != "restricted" and
+                 .status != "catalog_unavailable") then
                 error("invalid selection record")
             else . end |
             def cell: tostring | gsub("[^A-Za-z0-9_., -]"; "?");
             "## PostgreSQL capacity selection\n",
             ("Final selection status: **" + (.status | cell) + "**\n"),
-            ("Shared work deadline (Unix seconds): " + (.deadlineEpochSeconds | cell) + "\n"),
+            (if has("deadlineEpochSeconds") then
+                "Shared work deadline (Unix seconds): " + (.deadlineEpochSeconds | cell) + "\n"
+             else "A successful probe does not reserve deployment capacity.\n" end),
             "| Region | Size | SKU | Tier | Outcome | Error code | Duration (s) |",
             "| --- | --- | --- | --- | --- | --- | --- |",
             (.attempts[] | "| " + ([.region,.size,.skuName,.tier,.outcome,.errorCode,.durationSeconds]
@@ -204,8 +207,8 @@ case "${1:-}" in
         ;;
     cleanup-run-groups)
         kind="${2:-}"
-        [[ "$kind" == nightly || "$kind" == rc ]] ||
-            { echo "Error: cleanup kind must be nightly or rc." >&2; exit 1; }
+        [[ "$kind" == nightly || "$kind" == rc || "$kind" == ci-bicep || "$kind" == ci-terraform ]] ||
+            { echo "Error: invalid cleanup kind." >&2; exit 1; }
         validate_run_context
         : "${AZURE_SUBSCRIPTION_ID:?subscription is required}"
         prefix="rrttest-${kind}-${run_id}-"
@@ -255,5 +258,5 @@ case "${1:-}" in
         done <<<"$groups"
         exit "$cleanup_status"
         ;;
-    *) echo "Usage: $0 regions|summary|cleanup-probe [owned-group]|create-main <nightly|rc> <group> <location> <token>|cleanup-run-groups <nightly|rc>" >&2; exit 1 ;;
+    *) echo "Usage: $0 regions|summary|cleanup-probe [owned-group]|create-main <nightly|rc|ci-bicep|ci-terraform> <group> <location> <token>|cleanup-run-groups <nightly|rc|ci-bicep|ci-terraform>" >&2; exit 1 ;;
 esac

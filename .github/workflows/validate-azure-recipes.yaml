@@ -188,12 +188,15 @@ jobs:
          needs.approval-gate.result == 'skipped')
       )
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # The bounded PostgreSQL search includes up to 45 minutes of probing and
+    # 15 minutes of cleanup before the normal recipe validation phase.
+    timeout-minutes: 150
     name: Validate Azure ${{ matrix.recipe }} Recipes
     env:
       RTC_TEST_DIAGNOSTICS_DIR: azure-test-diagnostics
       RTC_TEST_PLATFORM: azure
       RTC_ACI_TEST_SCOPE: exclude
+      RTC_AZURE_SELECTION_FILE: ${{ github.workspace }}/azure-test-diagnostics/postgres-selection.json
     strategy:
       fail-fast: false
       matrix:
@@ -250,42 +253,63 @@ jobs:
       - name: Set Azure Test Context
         id: set-context
         run: |
+          set -euo pipefail
           LOCATION="${AZURE_LOCATION:-$DEFAULT_AZURE_LOCATION}"
           if [ -z "$LOCATION" ]; then
             LOCATION="westus3"
           fi
-          RG="rrttest-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.recipe }}"
+          owner_token="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+          [[ "$owner_token" =~ ^[a-f0-9]{32}$ ]] || exit 1
+          base="rrttest-ci-${{ matrix.recipe }}-${{ github.run_id }}-${{ github.run_attempt }}"
+          RG="${base}-${owner_token}"
           echo "location=$LOCATION" >> "$GITHUB_OUTPUT"
           {
             echo "AZURE_LOCATION=$LOCATION"
             echo "AZURE_RESOURCE_GROUP=$RG"
+            echo "AZURE_GROUP_OWNER_TOKEN=$owner_token"
+            echo "AZURE_PROBE_RESOURCE_GROUP=${base}-probe-${owner_token}"
             echo "AZURE_WORKSPACE_NAME=default"
             echo "AZURE_ENVIRONMENT_NAME=default"
           } >> "$GITHUB_ENV"
         env:
           DEFAULT_AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
 
+      - name: Select Azure PostgreSQL capacity
+        if: matrix.recipe == 'bicep'
+        timeout-minutes: 62
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          REGION_OVERRIDE: ${{ vars.RTC_AZURE_TEST_REGIONS }}
+          AZURE_FALLBACK_LOCATION: ${{ vars.AZURE_FALLBACK_LOCATION }}
+          SIZE_OVERRIDE: ${{ vars.RTC_POSTGRES_TEST_SIZES }}
+          RTC_POSTGRES_PREFLIGHT_TIMEOUT_SECONDS: "2700"
+          RTC_POSTGRES_PROBE_DELETE_TIMEOUT_SECONDS: "900"
+        run: |
+          set -euo pipefail
+          source .github/scripts/lib-azure-postgres-test.sh
+          rtc_validate_postgres_test_pack recipe-packs/azure-aks/azure-aks.bicep
+          if [[ -n "$REGION_OVERRIDE" ]]; then export RTC_AZURE_TEST_REGIONS="$REGION_OVERRIDE"; fi
+          regions="$(bash .github/scripts/azure-postgres-workflow.sh regions)"
+          export RTC_AZURE_TEST_REGIONS="$regions"
+          export RTC_POSTGRES_TEST_SIZES="${SIZE_OVERRIDE:-S,M}"
+          export RTC_POSTGRES_PROBE_OWNER_TOKEN="$AZURE_GROUP_OWNER_TOKEN"
+          mkdir -p "$(dirname "$RTC_AZURE_SELECTION_FILE")"
+          bash .github/scripts/select-azure-test-location.sh "$AZURE_PROBE_RESOURCE_GROUP"
+          location="$(jq -er '.location | select(test("^[a-z0-9]+$"))' "$RTC_AZURE_SELECTION_FILE")"
+          echo "AZURE_LOCATION=$location" >> "$GITHUB_ENV"
+
+      - name: Summarize PostgreSQL capacity selection
+        if: ${{ always() && matrix.recipe == 'bicep' && steps.set-context.outcome == 'success' }}
+        run: bash .github/scripts/azure-postgres-workflow.sh summary
+
       - name: Create Azure Resource Group
+        timeout-minutes: 5
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
           set -euo pipefail
-          RG="$AZURE_RESOURCE_GROUP"
-          LOCATION="$AZURE_LOCATION"
-          current_time=$(date +%s)
-          az group create \
-            --only-show-errors \
-            --output none \
-            --location "$LOCATION" \
-            --name "$RG" \
-            --subscription "$AZURE_SUBSCRIPTION_ID" \
-            --tags "creationTime=$current_time" > /dev/null
-          # Wait for resource group to be fully available
-          while [[ "$(az group exists --name "$RG" --subscription "$AZURE_SUBSCRIPTION_ID")" != "true" ]]; do
-            echo "Waiting for resource group '$RG' to be available..."
-            sleep 5
-          done
-          echo "Resource group '$RG' is ready"
+          bash .github/scripts/azure-postgres-workflow.sh create-main "ci-${{ matrix.recipe }}" \
+            "$AZURE_RESOURCE_GROUP" "$AZURE_LOCATION" "$AZURE_GROUP_OWNER_TOKEN"
 
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -357,6 +381,7 @@ jobs:
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
+          RTC_POSTGRES_RECIPE_SELECTION_FILE: ${{ env.RTC_AZURE_SELECTION_FILE }}
         run: RECIPE_PLATFORM_FILTER=azure make test ENVIRONMENT="$AZURE_ENVIRONMENT_NAME" RECIPE_TYPE=${{ matrix.recipe }}
 
       - name: Collect workflow failure diagnostics
@@ -413,5 +438,60 @@ jobs:
 
       - name: Cleanup Azure Resources
         if: always()
-        timeout-minutes: 15
-        run: make cleanup-azure-resources
+        timeout-minutes: 26
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: bash .github/scripts/azure-postgres-workflow.sh cleanup-run-groups "ci-${{ matrix.recipe }}"
+
+  cleanup-azure-resources:
+    name: Cleanup Azure CI resource groups
+    needs: [check-paths, check-trust, approval-gate, validate-azure-recipes]
+    # Keep the same trust gate for cleanup credentials, even when validation
+    # fails or reaches its job deadline. Checkout remains bound to the reviewed SHA.
+    if: |
+      always() &&
+      needs.check-paths.outputs.azure-changed == 'true' &&
+      needs.validate-azure-recipes.result != 'skipped' &&
+      (
+        (github.event_name == 'pull_request_target' &&
+         needs.check-trust.result == 'success' &&
+         (needs.approval-gate.result == 'success' ||
+          (needs.approval-gate.result == 'skipped' && needs.check-trust.outputs.is-external == 'false'))) ||
+        (github.event_name != 'pull_request_target' &&
+         needs.check-trust.result == 'skipped' &&
+         needs.approval-gate.result == 'skipped')
+      )
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        recipe: [bicep, terraform]
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout reviewed source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true
+
+      - name: Azure Login
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Allow failed Azure requests to settle
+        if: needs.validate-azure-recipes.result != 'success'
+        timeout-minutes: 4
+        run: sleep 180
+
+      - name: Cleanup resource groups owned by this CI run
+        timeout-minutes: 26
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: bash .github/scripts/azure-postgres-workflow.sh cleanup-run-groups "ci-${{ matrix.recipe }}"
