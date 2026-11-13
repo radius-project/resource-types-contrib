@@ -20,7 +20,7 @@ param appPermissionsBoundaryArn string
 // management to one path and require the boundaries under it.
 var boundaryPolicyName = contains(appPermissionsBoundaryArn, ':policy/')
   ? split(appPermissionsBoundaryArn, ':policy/')[1]
-  : fail('Set appPermissionsBoundaryArn on the aws-eks Recipe Pack to the ARN of an IAM managed policy, such as arn:aws:iam::123456789012:policy/radius/apps/my-env/my-env-boundary. It is "${appPermissionsBoundaryArn}".')
+  : fail('Set appPermissionsBoundaryArn on the aws-eks Recipe Pack to the ARN of an IAM managed policy, such as arn:aws:iam::123456789012:policy/radius/apps/my-repo/my-env/radius-app-boundary-my-repo-my-env. It is "${appPermissionsBoundaryArn}".')
 var rolePath = '/${substring(boundaryPolicyName, 0, lastIndexOf(boundaryPolicyName, '/') + 1)}'
 var name = toLower(context.resource.name)
 var namespace = context.runtime.kubernetes.namespace
@@ -28,14 +28,10 @@ var account = context.aws.account
 var region = context.aws.region
 var serviceAccountName = 'radius-app-${name}'
 
-// IAM role names are unique per account, and Radius resource IDs repeat across
-// installations. The region, cluster, and namespace keep them apart, the same
-// way they keep the service account and its association apart. AWS can't move
-// a role to another path, so a new boundary path gives a new role. uniqueString
-// joins its arguments with `-`, which cluster names and namespaces can contain,
-// so join the rest with `/`, which only the path contains. Keep the radius-app-
-// prefix: the AWS Cloud Control role handler calls GetRole without the path, so
-// Radius Canvas grants its deploy role GetRole only on role/radius-app-*.
+// IAM role names are unique per account and Radius resource IDs repeat across
+// installations, so the hash covers the path, region, cluster, and namespace.
+// Cloud Control reads the role by name without its path, so deploy identities
+// need GetRole on role/radius-app-*.
 var roleName = '${take('radius-app-${name}', 50)}-${uniqueString('${rolePath}${region}/${eksClusterName}/${namespace}', context.resource.id)}'
 
 var tags = [
@@ -71,12 +67,6 @@ var policyDocument = {
   Statement: empty(connectionStatements) ? [{ Effect: 'Deny', Action: '*', Resource: '*' }] : connectionStatements
 }
 
-// IAM allows 10,240 characters of inline policy per role, not counting
-// whitespace. string() returns compact JSON; the rest is left for the name.
-var checkedPolicyDocument = length(string(policyDocument)) > 10000
-  ? fail('The AWS connections of ${context.resource.name} need more than 10,000 characters of IAM policy. Split the container or connect to fewer AWS resources.')
-  : policyDocument
-
 resource role 'AWS.IAM/Role@default' = {
   alias: roleName
   properties: {
@@ -104,7 +94,7 @@ resource role 'AWS.IAM/Role@default' = {
     Policies: [
       {
         PolicyName: 'connections'
-        PolicyDocument: any(checkedPolicyDocument)
+        PolicyDocument: any(policyDocument)
       }
     ]
     Tags: tags
