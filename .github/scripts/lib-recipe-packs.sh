@@ -275,6 +275,9 @@ rtc_recipe_pack_param_value() {
         subnetIds)
             echo "subnet-0123456789abcdef0,subnet-0fedcba9876543210"
             ;;
+        appPermissionsBoundaryArn)
+            echo "arn:aws:iam::123456789012:policy/radius/apps/validation/radius-app-boundary-validation"
+            ;;
         *)
             echo "Error: no CI test value for required recipe pack parameter '$1'. Add one to rtc_recipe_pack_param_value() in lib-recipe-packs.sh." >&2
             return 1

@@ -59,6 +59,8 @@ Connection names, property names, and secret names are uppercased when generatin
 
 The Azure ACI Recipe is unchanged and does not consume the Kubernetes secret reference metadata described above.
 
+The Kubernetes Bicep Recipe doesn't turn a connected resource's `awsIamPolicy` property into an environment variable. The AWS EKS Recipe uses it for the pods' IAM role; see [AWS credentials for containers](../../recipe-packs/aws-eks/README.md#aws-credentials-for-containers).
+
 Note: The Azure ACI recipe does not support `context.resource.properties.extensions.daprSidecar` and ignores Dapr sidecar configuration provided through `extensions`.
 Note: The Azure ACI recipe does not support `context.resource.properties.replicas` or `context.resource.properties.autoScaling.*`; scaling is controlled by recipe-specific parameters (`desiredCount` and `maintainDesiredCount`).
 Note: The Azure ACI recipe does not support `context.resource.properties.containers.args` or `context.resource.properties.containers.workingDir`; `args` are only used by merging into the ACI `command` array, and `workingDir` is ignored.
