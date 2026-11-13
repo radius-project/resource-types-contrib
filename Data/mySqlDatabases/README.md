@@ -46,8 +46,11 @@ The Azure and AWS Recipes enforce the requested policy on the server. The
 AWS Recipe's server is not publicly accessible; see
 [Transport policy](../../recipe-packs/aws-eks/README.md#transport-policy) for
 the certificate authority clients need to verify it. The Kubernetes
-Recipe does not configure or enforce `tls`; its TLS behavior depends on the
-MySQL image and deployment configuration.
+Recipes enforce `tls` through MySQL's `require_secure_transport` setting.
+An omitted or `required` policy rejects plaintext TCP connections. `optional`
+permits plaintext without disabling TLS. Both Recipes keep the MySQL image's
+entrypoint, which creates server certificates. Encryption does not verify the
+server's identity: clients need a trusted CA and hostname verification for that.
 
 Use `optional` only when the server is not publicly reachable. Non-TLS
 connections can expose administrator credentials and query traffic in transit.
@@ -72,3 +75,57 @@ Secret explicitly with `env.valueFrom.secretKeyRef`, as shown in
 [`test/app.bicep`](test/app.bicep). In either case, pass the same
 developer-owned password to the database resource and the authored Secret; do
 not depend on the MySQL Recipe to copy it into a new managed Secret.
+
+## Kubernetes Recipes
+
+The [Bicep Recipe](recipes/kubernetes/bicep/kubernetes-mysql.bicep) and
+[Terraform Recipe](recipes/kubernetes/terraform/main.tf) create the same
+Secret, Deployment, and ClusterIP Service in
+`context.runtime.kubernetes.namespace`. They support MySQL `5.7`, `8.0`,
+and `8.4` (default), and default the database name to `mysql_db`.
+The server, Service, and reported connection use port `3306`, regardless of
+an authored `port` property.
+
+Both Recipes return three Kubernetes UCP IDs in `result.resources` for cleanup
+and `host`, `port`, and `database` in `result.values`. Neither returns
+`result.secrets`: the administrator credentials remain developer-owned inputs.
+The Pod reads them from a Kubernetes Secret. Protect Terraform state because
+the provider stores the Secret data there.
+
+These are development Recipes. They do not configure persistent storage or
+backups. Pod replacement can lose data. Applying the TLS change rolls the
+Deployment and rejects plaintext clients when `tls` is omitted or `required`.
+Configure clients for TLS before updating an existing deployment. MySQL `5.7`
+is retained for compatibility; prefer a supported MySQL release.
+
+The Bicep publication path remains
+`ghcr.io/radius-project/kube-recipes/mysqldatabases`.
+For Terraform, package `recipes/kubernetes/terraform` as a module archive or
+reference that directory from a Git source pinned to a commit. For local,
+dedicated test clusters, `make build-terraform-recipe` publishes the archive
+`mySqlDatabases-kubernetes.zip` to the test module server. Adding source files
+does not publish the module or change an Environment's Recipe Pack.
+
+### Offline validation
+
+Use the Radius-bundled Bicep CLI, Node.js, and Terraform 1.7+ (mock providers
+require 1.7). From the repository root:
+
+```bash
+node --test Data/mySqlDatabases/test/kubernetes-recipe.test.js
+terraform -chdir=Data/mySqlDatabases/recipes/kubernetes/terraform init -backend=false -input=false
+terraform -chdir=Data/mySqlDatabases/recipes/kubernetes/terraform fmt -check -recursive
+terraform -chdir=Data/mySqlDatabases/recipes/kubernetes/terraform validate
+terraform -chdir=Data/mySqlDatabases/recipes/kubernetes/terraform test
+```
+
+These tests evaluate Bicep snapshots and mocked Terraform plans. They check
+defaults, explicit and null properties, TLS arguments, Secret references,
+namespace selection, selectors, actual ports, and cleanup/output contracts.
+Terraform also checks invalid version and TLS inputs.
+They do not prove live TLS behavior or deploy to a cluster.
+
+For each recipe kind, use the build, Recipe Pack, and `make test-recipe` steps
+in the [testing guide](../../docs/contributing/testing-resource-types-recipes.md)
+on a dedicated cluster. Publish Bicep with `rad bicep publish`, not
+`az bicep build`, so validation uses the Radius-bundled compiler.
