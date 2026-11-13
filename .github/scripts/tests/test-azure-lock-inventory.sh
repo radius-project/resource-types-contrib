@@ -118,7 +118,7 @@ assert_cleanup() {
     [[ "$(grep -c '^rad app delete ' "$CALL_LOG")" == 1 ]] || fail "delete app exactly once"
     grep -Fxq "rad app delete $app_name --workspace workspace --yes" "$CALL_LOG" ||
         fail "cleanup must target the deployed app and workspace"
-    [[ "$(grep -c '^kubectl ' "$CALL_LOG")" == 3 ]] || fail "clean up all three Kubernetes kinds"
+    [[ "$(grep -c '^kubectl delete ' "$CALL_LOG")" == 3 ]] || fail "clean up all three Kubernetes kinds"
     for kind in secrets deployments services; do
         grep -Fxq "kubectl delete $kind -l radapp.io/application=$app_name -n test-ns" "$CALL_LOG" ||
             fail "Kubernetes cleanup must select only the test app in its namespace"

@@ -110,6 +110,7 @@ test-recipe-pack-entries-unit: ## Run fixture-based unit tests for all Recipe Pa
 	@node --test ./.github/scripts/tests/test-azure-test-diagnostics.js
 	@bash ./.github/scripts/tests/test-azure-diagnostics-integration.sh
 	@./.github/scripts/tests/test-mysql-transport.sh
+	@bash ./.github/scripts/tests/test-redis-connection.sh
 	@./.github/scripts/tests/test-postgresql-transport.sh
 	@./.github/scripts/tests/test-recipe-test-lib.sh
 	@bash ./.github/scripts/tests/test-azure-lock-inventory.sh

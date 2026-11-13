@@ -6,6 +6,13 @@ param environment string
 @description('Application name. CI supplies a unique name for deployment and cleanup.')
 param applicationName string = 'redis-azure-test'
 
+@description('Azure tests also check TLS, the separate access key, and the StackExchange.Redis connection string.')
+@allowed([
+  'kubernetes'
+  'azure'
+])
+param cachePlatform string = 'kubernetes'
+
 resource app 'Radius.Core/applications@2025-08-01-preview' = {
   name: applicationName
   properties: {
@@ -29,11 +36,27 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
     application: app.id
     containers: {
       demo: {
-        image: 'ghcr.io/radius-project/samples/demo:latest'
+        image: 'redis:7-alpine'
+        command: [
+          '/bin/sh'
+          '-c'
+        ]
+        args: [
+          'while true; do sleep 3600; done'
+        ]
         // The recipe's secret output(s) are materialized into a managed
         // Radius.Security/secrets resource and consumed here BY REFERENCE via
         // secretKeyRef — the value never lands on redis state.
-        env: {
+        env: union({
+          REDIS_PLATFORM: {
+            value: cachePlatform
+          }
+          REDIS_HOST: {
+            value: redis.properties.host
+          }
+          REDIS_PORT: {
+            value: string(redis.properties.port)
+          }
           REDIS_URL: {
             valueFrom: {
               secretKeyRef: {
@@ -42,17 +65,43 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
               }
             }
           }
-        }
-        ports: {
-          web: {
-            containerPort: 3000
+        }, cachePlatform == 'azure' ? {
+          REDIS_ACCESS_KEY: {
+            valueFrom: {
+              secretKeyRef: {
+                secretName: redis.properties.secrets.name
+                key: 'accessKey'
+              }
+            }
           }
+          REDIS_CONNECTION_STRING: {
+            valueFrom: {
+              secretKeyRef: {
+                secretName: redis.properties.secrets.name
+                key: 'connectionString'
+              }
+            }
+          }
+        } : {})
+        readinessProbe: {
+          exec: {
+            command: [
+              '/bin/sh'
+              '-c'
+              loadTextContent('verify-connection.sh')
+            ]
+          }
+          // Keep the 30 x 5s probe window below the runner's 180s kubectl wait timeout.
+          periodSeconds: 5
+          timeoutSeconds: 10
+          failureThreshold: 30
         }
       }
     }
     connections: {
       redis: {
         source: redis.id
+        disableDefaultEnvVars: true
       }
     }
   }

@@ -203,6 +203,30 @@ if grep -q 'verify-transport.parameters.json' "$CALL_LOG"; then
     fail "MySQL parameters must not be passed to other resource types"
 fi
 
+# --- Azure Redis checks both credential paths and waits for readiness -----
+mkdir -p "$FIXTURE_ROOT/Data/redisCaches/test"
+echo "param applicationName string" >"$FIXTURE_ROOT/Data/redisCaches/test/app.bicep"
+: >"$CALL_LOG"
+RTC_TEST_PLATFORM=azure run_entry_test Data/redisCaches azure azure ||
+    fail "expected Azure Redis deployment to succeed"
+grep -q '^rad deploy .*--parameters cachePlatform=azure' "$CALL_LOG" ||
+    fail "Azure Redis must enable the credential probe"
+grep -q '^kubectl wait deployment .*radapp.io/resource=democontainer --for=condition=Available --timeout=180s' "$CALL_LOG" ||
+    fail "Redis must wait for the client probe"
+
+: >"$CALL_LOG"
+if RTC_TEST_PLATFORM=azure READINESS_EXIT_CODE=1 run_entry_test Data/redisCaches azure azure; then
+    fail "a failed Redis probe must fail the test"
+fi
+grep -q '^rad app delete' "$CALL_LOG" || fail "Redis probe failure must still clean up"
+
+: >"$CALL_LOG"
+RTC_TEST_PLATFORM=kubernetes run_entry_test Data/redisCaches default default ||
+    fail "expected Kubernetes Redis deployment to succeed"
+if grep -q 'cachePlatform=azure' "$CALL_LOG"; then
+    fail "Kubernetes Redis must not require Azure credentials"
+fi
+
 # --- missing test/app.bicep: skipped, exits 0 -------------------------------
 : >"$CALL_LOG"
 run_test Data/noTestFile azure azure ||
