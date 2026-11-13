@@ -63,7 +63,7 @@ Radius stores these parameters without encryption or redaction; a Bicep
 
 Before deploying Bicep, create the named Secret directly in the runtime namespace
 through a trusted platform setup process. Generate its key with a cryptographic
-random generator, keep it stable across redeployments, and do not use the public
+random generator, keep it stable across deployments, and do not use the public
 Azurite key. The `accountKey` value is an 88-character base64 string with no
 trailing newline. When authoring a Secret manifest, Kubernetes `data.accountKey`
 is the base64 encoding of that string (two encoding layers); `stringData.accountKey`
