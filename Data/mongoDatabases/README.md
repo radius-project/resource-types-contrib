@@ -45,19 +45,26 @@ The Bicep recipe requires a secure `mongoPassword` recipe parameter with at leas
 16 characters. Generate a strong password once, store it in your secret store,
 and supply the same value on every deployment. For example, `openssl rand -hex 32`
 generates a suitable value; do not put that value in source control or logs.
-Pass it through a secure application deployment parameter:
+Pass it through a secure Recipe Pack deployment parameter:
 
 ```bicep
 @secure()
 param mongoPassword string
 
-// In the Radius.Data/mongoDatabases resource's properties:
-// recipe: {
+// In the Recipe Pack's properties.recipes entry:
+// 'Radius.Data/mongoDatabases': {
+//   kind: 'bicep'
+//   source: '<published-recipe-source>'
 //   parameters: {
 //     mongoPassword: mongoPassword
 //   }
 // }
 ```
+
+An Environment can also set this value through
+`properties.recipeParameters['Radius.Data/mongoDatabases'].mongoPassword`.
+Restrict access to the Recipe Pack and Environment configuration, which contain
+the configured parameter value.
 
 The required input is intentional. Bicep's `newGuid()` parameter default is
 evaluated again for a new recipe deployment. It does not retain the password
@@ -65,7 +72,7 @@ used to initialize a persistent database.
 
 Terraform accepts the same `mongoPassword` parameter. When it is omitted,
 Terraform generates a 32-character random password and retains it in recipe
-state. Keep that state protected and available for redeployments. Credentials
+state. Keep that state protected and available for future deployments. Credentials
 are stored in a Kubernetes Secret and referenced with `secretKeyRef`, not copied
 into the Pod spec. The Terraform `result` output is sensitive.
 
@@ -103,6 +110,7 @@ node --test Data/mongoDatabases/test/kubernetes-recipes.test.js
 terraform -chdir=Data/mongoDatabases/recipes/kubernetes/terraform init -backend=false
 terraform -chdir=Data/mongoDatabases/recipes/kubernetes/terraform validate
 terraform -chdir=Data/mongoDatabases/recipes/kubernetes/terraform test
+bash Data/mongoDatabases/test/recipe-pack.test.sh
 ```
 
 The Bicep test uses the Radius-bundled compiler at `~/.rad/bin/bicep`; set
@@ -114,8 +122,13 @@ For deployment checks, use a dedicated test cluster and follow the
 [testing guide](../../docs/contributing/testing-resource-types-recipes.md).
 Publish each recipe with these commands, then register it in the test
 Environment or generate and attach its Recipe Pack before deploying
-[`test/app.bicep`](test/app.bicep). Supply a secure `mongoPassword` recipe
-parameter for the Bicep test.
+[`test/kubernetes/app.bicep`](test/kubernetes/app.bicep). This test checks an
+authenticated write/read through the managed connection-string secret. Generated
+Bicep test packs create a password once at **pack deployment**, not at each
+recipe deployment, and pass it to the MongoDB recipe. Reuse that pack parameter
+when deploying a pack again with existing database volumes. Terraform test packs
+use the recipe's state-backed password generation. The existing
+[`test/app.bicep`](test/app.bicep) remains the Azure test.
 
 ```bash
 make build-bicep-recipe RECIPE_PATH=Data/mongoDatabases/recipes/kubernetes/bicep/kubernetes-mongodb.bicep

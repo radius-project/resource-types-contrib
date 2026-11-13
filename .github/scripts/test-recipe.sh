@@ -138,6 +138,9 @@ fi
 
 # Check if test file exists
 TEST_FILE="$RESOURCE_TYPE_PATH/test/app.bicep"
+if [[ -f "$RESOURCE_TYPE_PATH/test/$PLATFORM/app.bicep" ]]; then
+    TEST_FILE="$RESOURCE_TYPE_PATH/test/$PLATFORM/app.bicep"
+fi
 if [[ ! -f "$TEST_FILE" ]]; then
     echo "==> No test file found at $TEST_FILE, skipping deployment test"
     exit 0
