@@ -113,4 +113,3 @@ ${source.replaceAll('/opt/kafka/bin/kafka-topics.sh', 'kafka_cli')}
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
-
