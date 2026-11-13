@@ -128,6 +128,11 @@ fi
 IFS=$'\t' read -r ENVIRONMENT_PATH KUBERNETES_NAMESPACE <<<"$RESOLVED"
 echo "==> Environment path: $ENVIRONMENT_PATH"
 
+if [[ "$RESOURCE_TYPE" == "Radius.Data/mongoDatabases" && "$PLATFORM" == kubernetes &&
+      "$RECIPE_TYPE" == bicep ]]; then
+    exec bash "$RESOURCE_TYPE_PATH/test/test-kubernetes.sh" "$WORKSPACE_NAME" "$ENVIRONMENT_NAME"
+fi
+
 if [[ "$RESOURCE_TYPE" == "Radius.Data/postgreSqlDatabases" && "$PLATFORM" == kubernetes ]]; then
     if [[ -f "$RESOURCE_TYPE_PATH/test/test-kubernetes.sh" ]]; then
         exec "$RESOURCE_TYPE_PATH/test/test-kubernetes.sh" \
@@ -138,6 +143,9 @@ fi
 
 # Check if test file exists
 TEST_FILE="$RESOURCE_TYPE_PATH/test/app.bicep"
+if [[ -f "$RESOURCE_TYPE_PATH/test/$PLATFORM/app.bicep" ]]; then
+    TEST_FILE="$RESOURCE_TYPE_PATH/test/$PLATFORM/app.bicep"
+fi
 if [[ ! -f "$TEST_FILE" ]]; then
     echo "==> No test file found at $TEST_FILE, skipping deployment test"
     exit 0

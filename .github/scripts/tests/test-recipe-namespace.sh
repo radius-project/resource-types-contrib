@@ -63,4 +63,14 @@ if grep -q -- '--all' "$COMMAND_CALLS"; then
     exit 1
 fi
 
+grep -q "Data/widgets/test/app.bicep" "$COMMAND_CALLS"
+mkdir -p "$FIXTURE_ROOT/Data/widgets/test/kubernetes"
+echo "param applicationName string" >"$FIXTURE_ROOT/Data/widgets/test/kubernetes/app.bicep"
+: >"$COMMAND_CALLS"
+(
+    cd "$FIXTURE_ROOT"
+    PATH="$TEST_ROOT/bin:$PATH" "$REPO_ROOT/.github/scripts/test-recipe.sh" "$RECIPE_PATH" >/dev/null
+)
+grep -q "Data/widgets/test/kubernetes/app.bicep" "$COMMAND_CALLS"
+
 echo "Recipe namespace test passed"
