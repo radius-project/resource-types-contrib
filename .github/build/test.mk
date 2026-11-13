@@ -135,6 +135,10 @@ test-azure-secret-inputs: ## Run Azure secret input tests in a temporary directo
 	terraform -chdir="$$test_dir" init -backend=false -input=false; \
 	terraform -chdir="$$test_dir" test -no-color
 
+.PHONY: test-aca-tcp-recipes
+test-aca-tcp-recipes: ## Check experimental ACA native TCP recipes without cloud credentials
+	@node --test ./.github/scripts/tests/test-aca-tcp-recipes.js
+
 .PHONY: test-postgresql-settings
 test-postgresql-settings: ## Check PostgreSQL settings, Azure snapshots, and SQL initialization (requires Radius Bicep and Node)
 	@node --test ./.github/scripts/tests/test-postgresql-settings.js
