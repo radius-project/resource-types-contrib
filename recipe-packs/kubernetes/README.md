@@ -6,7 +6,7 @@ This folder contains the **Kubernetes Recipe Pack** — a collection of Recipes 
 | --- | --- |
 | `default.bicep` | Recipe Pack wiring the Bicep recipes for all Kubernetes-provisioned types. |
 
-The pack declares one `Radius.Core/recipePacks` resource whose `recipes` map contains an entry for every Resource Type. It does not create or modify a `Radius.Core/environments` resource.
+The pack declares one `Radius.Core/recipePacks` resource for the non-AI default types that can run on Kubernetes. It does not create or modify a `Radius.Core/environments` resource. AI services and non-default types are outside this pack.
 
 **PostgreSQL TLS:** Both transport policies enable TLS. An absent or empty `<resource-name>-tls` Secret selects a generated self-signed development certificate. For verified identity, supply an operator certificate and configure clients to trust its CA. Invalid supplied material fails initialization, and the Recipe never deletes the operator Secret. See [Kubernetes TLS](../../Data/postgreSqlDatabases/README.md#kubernetes-tls) for setup, verification, migration, and manual rotation.
 
@@ -21,13 +21,86 @@ Kube-recipes tagged `:edge` are rebuilt on every push to `main`. `:latest` and t
 | `Radius.Compute/routes` | Bicep | `ghcr.io/radius-project/kube-recipes/routes:latest` |
 | `Radius.Security/secrets` | Bicep | `ghcr.io/radius-project/kube-recipes/secrets:latest` |
 | `Radius.Data/mySqlDatabases` | Bicep | `ghcr.io/radius-project/kube-recipes/mysqldatabases:latest` |
+| `Radius.Data/mongoDatabases` | Bicep | `ghcr.io/radius-project/kube-recipes/mongodatabases:latest` |
 | `Radius.Data/postgreSqlDatabases` | Bicep | `ghcr.io/radius-project/kube-recipes/postgresqldatabases:latest` |
 | `Radius.Data/redisCaches` | Bicep | `ghcr.io/radius-project/kube-recipes/rediscaches:latest` |
+| `Radius.Data/sqlServerDatabases` | Bicep | `ghcr.io/radius-project/kube-recipes/sqlserverdatabases:latest` |
+| `Radius.Messaging/kafka` | Bicep | `ghcr.io/radius-project/kube-recipes/kafka:latest` |
 | `Radius.Messaging/rabbitMQ` | Bicep | `ghcr.io/radius-project/kube-recipes/rabbitmq:latest` |
+| `Radius.Storage/objectStorage` | Bicep | `ghcr.io/radius-project/kube-recipes/objectstorage:latest` |
 
-`rad init` and `rad env create` (without `--recipe-packs`) link Radius's built-in default pack, `/planes/radius/local/resourceGroups/default/providers/Radius.Core/recipePacks/default`. Radius does not read this file. The `rad` CLI defines the same recipes and pins each source to the resource-types-contrib commit for that Radius release (`:edge` for edge builds). **Deploying this file to the same pack ID overwrites the built-in pack for every Environment that references it and switches all of its sources to `:latest`.** To get the built-in pack back, see [Restoring Radius's default pack](#restoring-radiuss-default-pack).
+`rad init` and `rad env create` (without `--recipe-packs`) link Radius's built-in default pack, `/planes/radius/local/resourceGroups/default/providers/Radius.Core/recipePacks/default`. Current Radius source builds embed the compiled pack selected by `recipePacks[].ref` in `deploy/manifest/defaults.yaml`; they do not fetch this working copy at runtime. The CLI pins each recipe source to its namespace's resource-types-contrib commit for that Radius release (`:edge` for edge builds). Older CLI releases can contain a smaller pack. **Deploying this file to the same pack ID overwrites the built-in pack for every Environment that references it and switches all of its sources to `:latest`.** To get the built-in pack back, see [Restoring Radius's default pack](#restoring-radiuss-default-pack).
 
 In Radius 0.61 and earlier, `rad init` and `rad env create` target `Radius.Core` only with `--preview`. Add `--preview` to the `rad init` and `rad env create` commands in this README when you use those versions.
+
+## Service prerequisites
+
+These are development services, not managed production services. Check each Recipe's README before use. Kafka uses a single broker with plaintext transport. Object storage uses the Azurite Blob emulator over HTTP, not an S3 endpoint or the full Azure Storage service. Persistent services need a suitable storage provisioner and enough capacity. Deploying the pack registers recipes only; it does not create their workloads, credentials, or volumes.
+
+### Operator-owned credentials
+
+MongoDB and objectStorage Bicep Recipes read existing Kubernetes Secrets. Create them in the namespace used by the resource's Recipe context (`context.runtime.kubernetes.namespace`) before deploying that resource:
+
+| Resource | Recipe parameter | Default Secret name | Required key |
+| --- | --- | --- | --- |
+| MongoDB | `mongoCredentialsSecretName` | `<resource-name>-mongodb-credentials` | `password`: at least 16 characters |
+| objectStorage | `objectStorageCredentialsSecretName` | `<resource-name>-blob-credentials` | `accountKey`: base64 encoding of 64 random bytes |
+
+Use your secret manager or restricted local files. For example, with existing files that contain only the required value and no trailing newline:
+
+```bash
+kubectl create secret generic <resource-name>-mongodb-credentials \
+  --namespace <recipe-namespace> \
+  --from-file=password=<protected-password-file>
+kubectl create secret generic <resource-name>-blob-credentials \
+  --namespace <recipe-namespace> \
+  --from-file=accountKey=<protected-account-key-file>
+```
+
+`--from-file` adds Kubernetes' base64 encoding. The object storage file must itself contain the base64 account key, not raw random bytes. Do not copy secret files into this repository.
+
+Keep the Secrets stable across redeployments. The operator owns backup and rotation; resource cleanup must not delete these supplied Secrets. MongoDB password changes need the database's rotation procedure, not only a Secret update. See [MongoDB](../../Data/mongoDatabases/README.md) and [objectStorage](../../Storage/objectStorage/README.md) for the Recipe contracts and rotation limits.
+
+The pack stores no password or account key. Bicep secret inputs must use `@secure()`, but that annotation does not protect a value copied into a stored `RecipePack.parameters` property. Store only Secret names in Recipe configuration. Do not add a generated password as a pack default.
+
+### SQL Server license consent
+
+Registering this pack does **not** accept Microsoft's SQL Server license. The SQL Server Recipe requires `sqlServerAcceptEula: 'Y'` with no default. Read the [SQL Server Recipe requirements](../../Data/sqlServerDatabases/README.md) first. Only after accepting the terms, add this per-type override to the Environment's existing `properties.recipeParameters`:
+
+```bicep
+recipeParameters: {
+  'Radius.Data/sqlServerDatabases': {
+    sqlServerAcceptEula: 'Y'
+  }
+}
+```
+
+Merge the override with the Environment's existing configuration; do not replace its providers or pack references. Without this explicit setting, SQL Server deployment fails rather than accepting a license for you. Other types do not need this setting. Automated Kubernetes tests skip SQL Server unless the operator sets `RTC_SQLSERVER_ACCEPT_EULA=Y`; pack deployment alone is not consent. To run checked-in pack entry tests with that opt-in, also configure the override on the dedicated test Environment. The runner does not change Environment license settings.
+
+## Terraform alternatives
+
+Each listed type also has a Terraform Recipe at `<Category>/<resourceType>/recipes/kubernetes/terraform`. To use it, replace that type's Bicep entry in a copy of the pack with a Terraform Git source:
+
+```bicep
+'Radius.Data/redisCaches': {
+  kind: 'terraform'
+  source: 'git::https://github.com/radius-project/resource-types-contrib.git//Data/redisCaches/recipes/kubernetes/terraform?ref=<full-commit-sha>'
+}
+```
+
+Select a commit that contains the required module and its fixes, and replace `<full-commit-sha>` with that commit. Use the same path pattern for the other types in the table. The Radius worker needs Git and network access to GitHub and the provider registries. A namespace release archive does not contain these modules. The test module server's cluster-local ZIP URLs are not public Recipe sources.
+
+Keep one entry per Resource Type; do not attach overlapping Bicep and Terraform packs to the same Environment. Terraform-generated credentials are retained in state: protect and back up that state. Switching an existing resource between Bicep and Terraform is not an in-place migration; use a new resource and migrate its data. SQL Server still requires explicit license consent.
+
+## Publication prerequisites
+
+Before deploying or releasing this pack, confirm every referenced Recipe is public and available at `:latest`:
+
+```bash
+RECIPE_PACK=kubernetes bash .github/scripts/release/verify-recipe-pack-sources.sh
+```
+
+The four new Recipe sources are `mongodatabases`, `sqlserverdatabases`, `kafka`, and `objectstorage`. Their source PRs must merge before the publication workflow can build them. A push to `main` publishes commit and `:edge` tags, not `:latest`. Stable publication must follow the [Recipe publication lifecycle](../README.md#release-readiness); a pack release or namespace release alone does not advance `:latest`. Verify that the MongoDB and objectStorage artifacts include the existing-Secret contract, not an earlier raw-credential input.
 
 ## Prerequisite: `bicepconfig.json`
 

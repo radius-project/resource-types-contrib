@@ -100,18 +100,16 @@ chmod +x "$TEST_ROOT/bin/kubectl"
 
 run_test() {
     (
-        PATH="$TEST_ROOT/bin:$PATH"
         cd "$FIXTURE_ROOT"
-        "$REPO_ROOT/.github/scripts/test-direct-module-recipe.sh" "$@"
+        PATH="$TEST_ROOT/bin:$PATH" "$REPO_ROOT/.github/scripts/test-direct-module-recipe.sh" "$@"
     )
 }
 
 run_entry_test() {
     (
         export EXPECT_VERIFY_TRANSPORT="${EXPECT_VERIFY_TRANSPORT:-true}"
-        PATH="$TEST_ROOT/bin:$PATH"
         cd "$FIXTURE_ROOT"
-        "$REPO_ROOT/.github/scripts/test-recipe-pack-entry.sh" "$@"
+        PATH="$TEST_ROOT/bin:$PATH" "$REPO_ROOT/.github/scripts/test-recipe-pack-entry.sh" "$@"
     )
 }
 
@@ -119,6 +117,57 @@ fail() {
     echo "FAIL: $1" >&2
     exit 1
 }
+
+mkdir -p "$FIXTURE_ROOT/Data/sqlServerDatabases/test"
+echo "param applicationName string" >"$FIXTURE_ROOT/Data/sqlServerDatabases/test/app.bicep"
+for consent in "" N invalid; do
+    : >"$CALL_LOG"
+    status=0
+    RTC_TEST_PLATFORM=kubernetes RTC_SQLSERVER_ACCEPT_EULA="$consent" \
+        run_entry_test Data/sqlServerDatabases fixture-ws fixture-env || status=$?
+    if [[ "$consent" == invalid ]]; then
+        [[ "$status" != 0 ]] || fail "invalid SQL consent must fail"
+    else
+        [[ "$status" == 0 ]] || fail "SQL entry must skip without operator consent"
+    fi
+    [[ ! -s "$CALL_LOG" ]] || fail "SQL consent gate must run before cluster access"
+done
+: >"$CALL_LOG"
+RTC_TEST_PLATFORM=kubernetes RTC_SQLSERVER_ACCEPT_EULA=Y \
+    run_entry_test Data/sqlServerDatabases fixture-ws fixture-env ||
+    fail "explicit SQL opt-in must reach the configured Environment"
+grep -q '^rad deploy Data/sqlServerDatabases/test/app.bicep ' "$CALL_LOG" ||
+    fail "explicit opt-in must retain the SQL test"
+if grep -q 'sqlServerAcceptEula' "$CALL_LOG"; then
+    fail "the entry runner must not change Environment license settings"
+fi
+
+for type_dir in Data/mongoDatabases Storage/objectStorage; do
+    mkdir -p "$FIXTURE_ROOT/$type_dir/test"
+    cat >"$FIXTURE_ROOT/$type_dir/test/test-kubernetes.sh" <<'EOF'
+#!/bin/bash
+echo "credential-helper $*" >>"$CALL_LOG"
+exit "${HELPER_EXIT_CODE:-0}"
+EOF
+    : >"$CALL_LOG"
+    RTC_TEST_PLATFORM=kubernetes run_entry_test "$type_dir" fixture-ws fixture-env verify-kubernetes-credentials ||
+        fail "expected $type_dir to use its credential helper"
+    [[ "$(cat "$CALL_LOG")" == "credential-helper fixture-ws fixture-env" ]] ||
+        fail "credential helper must run before generic cluster access, without extra arguments"
+    if RTC_TEST_PLATFORM=kubernetes HELPER_EXIT_CODE=7 \
+        run_entry_test "$type_dir" fixture-ws fixture-env verify-kubernetes-credentials; then
+        fail "credential helper failure must fail the entry test"
+    fi
+    : >"$CALL_LOG"
+    if RTC_TEST_PLATFORM=azure run_entry_test "$type_dir" fixture-ws fixture-env verify-kubernetes-credentials; then
+        fail "credential helper mode must reject non-Kubernetes use"
+    fi
+    [[ ! -s "$CALL_LOG" ]] || fail "rejected credential mode must not access the cluster"
+    rm "$FIXTURE_ROOT/$type_dir/test/test-kubernetes.sh"
+    if RTC_TEST_PLATFORM=kubernetes run_entry_test "$type_dir" fixture-ws fixture-env verify-kubernetes-credentials; then
+        fail "missing credential helper must fail, not skip"
+    fi
+done
 
 # --- successful deploy: resolves environment, deploys, asserts, cleans up ---
 : >"$CALL_LOG"

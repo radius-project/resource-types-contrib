@@ -162,6 +162,17 @@ for pack_id in "${packs[@]}"; do
                 ;;
         esac
     fi
+    if [[ "$platform_group" == kubernetes ]] &&
+        grep -Fxq Data/sqlServerDatabases <<<"$resource_types"; then
+        # shellcheck source=.github/scripts/lib-sqlserver-eula.sh
+        source "$SCRIPT_DIR/lib-sqlserver-eula.sh"
+        sqlserver_eula="$(rtc_read_sqlserver_eula)"
+        if [[ "$sqlserver_eula" != Y ]]; then
+            echo "==> SKIPPED: Data/sqlServerDatabases from pack '$pack_id': no operator EULA consent"
+            skipped=$((skipped + 1))
+            resource_types="$(awk '$0 != "Data/sqlServerDatabases"' <<<"$resource_types")"
+        fi
+    fi
     [[ -n "$resource_types" ]] || continue
     template="$(rtc_recipe_pack_template "$pack_id")"
     pack_name="$(rtc_recipe_pack_name "$template")"
@@ -203,6 +214,12 @@ for pack_id in "${packs[@]}"; do
             else
                 echo "==> Pinned PostgreSQL sources have no transport lifecycle; running the legacy application test."
             fi
+        elif [[ "$platform_group" == kubernetes &&
+                ( "$resource_type_dir" == Data/mongoDatabases || "$resource_type_dir" == Storage/objectStorage ) ]]; then
+            entry_body="$(rtc_recipe_pack_entry_body "$template" "Radius.$resource_type_dir")"
+            if grep -Eq "^[[:space:]]*kind:[[:space:]]*'bicep'" <<<"$entry_body"; then
+                test_args+=("verify-kubernetes-credentials")
+            fi
         fi
 
         echo "=============================================================="
@@ -231,4 +248,4 @@ echo "=============================================================="
 echo "==> Recipe Pack entry tests complete: $tested tested, $skipped skipped, $failures failed"
 echo "=============================================================="
 
-[[ "$tested" -gt 0 && "$failures" -eq 0 && "$empty_packs" -eq 0 ]]
+[[ ( "$tested" -gt 0 || "$skipped" -gt 0 ) && "$failures" -eq 0 && "$empty_packs" -eq 0 ]]

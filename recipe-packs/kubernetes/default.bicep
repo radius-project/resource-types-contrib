@@ -37,6 +37,10 @@ resource kubernetesRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
         kind: 'bicep'
         source: 'ghcr.io/radius-project/kube-recipes/mysqldatabases:latest'
       }
+      'Radius.Data/mongoDatabases': {
+        kind: 'bicep'
+        source: 'ghcr.io/radius-project/kube-recipes/mongodatabases:latest'
+      }
       'Radius.Data/postgreSqlDatabases': {
         kind: 'bicep'
         source: 'ghcr.io/radius-project/kube-recipes/postgresqldatabases:latest'
@@ -45,9 +49,21 @@ resource kubernetesRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
         kind: 'bicep'
         source: 'ghcr.io/radius-project/kube-recipes/rediscaches:latest'
       }
+      'Radius.Data/sqlServerDatabases': {
+        kind: 'bicep'
+        source: 'ghcr.io/radius-project/kube-recipes/sqlserverdatabases:latest'
+      }
+      'Radius.Messaging/kafka': {
+        kind: 'bicep'
+        source: 'ghcr.io/radius-project/kube-recipes/kafka:latest'
+      }
       'Radius.Messaging/rabbitMQ': {
         kind: 'bicep'
         source: 'ghcr.io/radius-project/kube-recipes/rabbitmq:latest'
+      }
+      'Radius.Storage/objectStorage': {
+        kind: 'bicep'
+        source: 'ghcr.io/radius-project/kube-recipes/objectstorage:latest'
       }
     }
   }
