@@ -11,9 +11,9 @@ fi
 
 # postStart runs beside the broker, not before it. Bound the startup wait.
 for ((attempt = 0; attempt < 120; attempt++)); do
-    if /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 \
+    if /opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:19092 \
         --command-config <(printf 'request.timeout.ms=5000\ndefault.api.timeout.ms=5000\n') --list; then
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 \
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:19092 \
             --create --if-not-exists --topic "$RADIUS_KAFKA_TOPIC" \
             --partitions 1 --replication-factor 1
         exit 0

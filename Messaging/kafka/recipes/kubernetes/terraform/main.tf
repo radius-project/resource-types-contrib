@@ -21,15 +21,16 @@ locals {
     "radapp.io/resource-group" = split("/", var.context.resource.id)[5]
   }
   broker_environment = {
-    CLUSTER_ID                                     = "MkU3OEVBNTcwNTJENDM2Qk"
-    KAFKA_NODE_ID                                  = "1"
-    KAFKA_PROCESS_ROLES                            = "broker,controller"
-    KAFKA_LISTENERS                                = "PLAINTEXT://:9092,CONTROLLER://:9093"
-    KAFKA_ADVERTISED_LISTENERS                     = "PLAINTEXT://${local.host}:9092"
-    KAFKA_LISTENER_SECURITY_PROTOCOL_MAP           = "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+    CLUSTER_ID          = "MkU3OEVBNTcwNTJENDM2Qk"
+    KAFKA_NODE_ID       = "1"
+    KAFKA_PROCESS_ROLES = "broker,controller"
+    # postStart must not wait for Kubernetes to publish this Pod's Service endpoint.
+    KAFKA_LISTENERS                                = "PLAINTEXT://:9092,INTERNAL://127.0.0.1:19092,CONTROLLER://:9093"
+    KAFKA_ADVERTISED_LISTENERS                     = "PLAINTEXT://${local.host}:9092,INTERNAL://127.0.0.1:19092"
+    KAFKA_LISTENER_SECURITY_PROTOCOL_MAP           = "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT"
     KAFKA_CONTROLLER_LISTENER_NAMES                = "CONTROLLER"
     KAFKA_CONTROLLER_QUORUM_VOTERS                 = "1@localhost:9093"
-    KAFKA_INTER_BROKER_LISTENER_NAME               = "PLAINTEXT"
+    KAFKA_INTER_BROKER_LISTENER_NAME               = "INTERNAL"
     KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR         = "1"
     KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR = "1"
     KAFKA_TRANSACTION_STATE_LOG_MIN_ISR            = "1"
@@ -63,9 +64,8 @@ resource "kubernetes_service_v1" "kafka" {
     labels    = local.labels
   }
   spec {
-    type                        = "ClusterIP"
-    publish_not_ready_addresses = true
-    selector                    = { "radapp.io/resource" = local.resource_name }
+    type     = "ClusterIP"
+    selector = { "radapp.io/resource" = local.resource_name }
     port {
       name        = "kafka"
       port        = 9092
@@ -123,7 +123,7 @@ resource "kubernetes_deployment_v1" "kafka" {
           }
           readiness_probe {
             exec {
-              command = ["/bin/bash", "-ec", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe --topic \"$RADIUS_KAFKA_TOPIC\""]
+              command = ["/bin/bash", "-ec", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:19092 --describe --topic \"$RADIUS_KAFKA_TOPIC\""]
             }
             timeout_seconds = 15
             period_seconds  = 20

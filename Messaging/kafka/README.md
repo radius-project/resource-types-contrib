@@ -36,10 +36,11 @@ and GID 1000; the storage driver must support `fsGroup: 1000`.
 These recipes are for development only. They use plaintext with no authentication,
 TLS, access control, or high availability. Use a private, trusted cluster and
 restrict network access. Do not use these recipes for sensitive or production data.
-The controller listener is not exposed by the Service.
-The Service publishes not-ready endpoints so the startup hook can follow Kafka's
-advertised broker address before topic readiness succeeds. Clients must retry
-connections during startup and updates.
+The controller listener is not exposed by the Service. Topic creation and
+readiness use a separate listener bound and advertised only on
+`127.0.0.1:19092`. They do not need the Service endpoint before Kubernetes
+publishes the Pod IP. The Service exposes only ready client endpoints on port
+9092. Clients must retry connections during startup and updates.
 
 The broker advertises `<resource-name>.<namespace>.svc.cluster.local:9092`,
 not localhost. Clients must run in the same cluster, with the `cluster.local`

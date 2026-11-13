@@ -21,12 +21,13 @@ var brokerEnvironment = {
   CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
   KAFKA_NODE_ID: '1'
   KAFKA_PROCESS_ROLES: 'broker,controller'
-  KAFKA_LISTENERS: 'PLAINTEXT://:9092,CONTROLLER://:9093'
-  KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://${host}:9092'
-  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT'
+  // postStart must not wait for Kubernetes to publish this Pod's Service endpoint.
+  KAFKA_LISTENERS: 'PLAINTEXT://:9092,INTERNAL://127.0.0.1:19092,CONTROLLER://:9093'
+  KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://${host}:9092,INTERNAL://127.0.0.1:19092'
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT'
   KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
   KAFKA_CONTROLLER_QUORUM_VOTERS: '1@localhost:9093'
-  KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+  KAFKA_INTER_BROKER_LISTENER_NAME: 'INTERNAL'
   KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: '1'
   KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: '1'
   KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: '1'
@@ -61,8 +62,6 @@ resource svc 'core/Service@v1' = {
   }
   spec: {
     type: 'ClusterIP'
-    // Admin clients follow advertised metadata before the topic passes readiness.
-    publishNotReadyAddresses: true
     selector: {
       'radapp.io/resource': resourceName
     }
@@ -131,7 +130,7 @@ resource broker 'apps/Deployment@v1' = {
                 command: [
                   '/bin/bash'
                   '-ec'
-                  '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe --topic "$RADIUS_KAFKA_TOPIC"'
+                  '/opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:19092 --describe --topic "$RADIUS_KAFKA_TOPIC"'
                 ]
               }
               timeoutSeconds: 15

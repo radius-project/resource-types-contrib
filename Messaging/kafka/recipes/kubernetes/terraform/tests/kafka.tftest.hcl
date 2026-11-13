@@ -20,7 +20,7 @@ run "defaults" {
   assert {
     condition = (
       local.broker_environment.RADIUS_KAFKA_TOPIC == "events" &&
-      local.broker_environment.KAFKA_ADVERTISED_LISTENERS == "PLAINTEXT://broker.kafka-test.svc.cluster.local:9092" &&
+      local.broker_environment.KAFKA_ADVERTISED_LISTENERS == "PLAINTEXT://broker.kafka-test.svc.cluster.local:9092,INTERNAL://127.0.0.1:19092" &&
       output.result.values.host == "broker.kafka-test.svc.cluster.local" &&
       output.result.secrets.connectionString == "broker.kafka-test.svc.cluster.local:9092"
     )
@@ -33,9 +33,9 @@ run "defaults" {
       kubernetes_deployment_v1.kafka.spec[0].template[0].spec[0].volume[0].persistent_volume_claim[0].claim_name == "broker-data" &&
       kubernetes_persistent_volume_claim_v1.data.spec[0].resources[0].requests.storage == "1Gi" &&
       !kubernetes_persistent_volume_claim_v1.data.wait_until_bound &&
-      kubernetes_service_v1.kafka.spec[0].publish_not_ready_addresses
+      kubernetes_service_v1.kafka.spec[0].publish_not_ready_addresses != true
     )
-    error_message = "Retain data across single-broker updates and allow storage scheduling and pre-readiness topic creation."
+    error_message = "Retain data across single-broker updates, allow storage scheduling, and expose only ready endpoints."
   }
   assert {
     condition = (
@@ -49,9 +49,15 @@ run "defaults" {
   assert {
     condition = (
       kubernetes_deployment_v1.kafka.spec[0].template[0].spec[0].container[0].lifecycle[0].post_start[0].exec[0].command[2] == file("${path.module}/create-topic.sh") &&
-      strcontains(kubernetes_deployment_v1.kafka.spec[0].template[0].spec[0].container[0].readiness_probe[0].exec[0].command[2], "--describe --topic")
+      strcontains(kubernetes_deployment_v1.kafka.spec[0].template[0].spec[0].container[0].readiness_probe[0].exec[0].command[2], "--bootstrap-server 127.0.0.1:19092 --describe --topic") &&
+      strcontains(local.broker_environment.KAFKA_LISTENERS, "INTERNAL://127.0.0.1:19092") &&
+      local.broker_environment.KAFKA_INTER_BROKER_LISTENER_NAME == "INTERNAL" &&
+      local.broker_environment.KAFKA_LISTENER_SECURITY_PROTOCOL_MAP == "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT" &&
+      strcontains(file("${path.module}/create-topic.sh"), "--bootstrap-server 127.0.0.1:19092") &&
+      length(kubernetes_service_v1.kafka.spec[0].port) == 1 &&
+      kubernetes_service_v1.kafka.spec[0].port[0].port == 9092
     )
-    error_message = "Create the requested topic at startup and check it before marking the Pod ready."
+    error_message = "Startup and readiness must use loopback metadata before the Pod IP is published; expose only the client listener."
   }
 }
 
@@ -71,7 +77,7 @@ run "custom_topic" {
   assert {
     condition = (
       local.broker_environment.RADIUS_KAFKA_TOPIC == "order.events-1" &&
-      local.broker_environment.KAFKA_ADVERTISED_LISTENERS == "PLAINTEXT://custom.other.svc.cluster.local:9092" &&
+      local.broker_environment.KAFKA_ADVERTISED_LISTENERS == "PLAINTEXT://custom.other.svc.cluster.local:9092,INTERNAL://127.0.0.1:19092" &&
       local.labels["radapp.io/application"] == ""
     )
     error_message = "Honor the requested topic and namespace when optional application context is absent."

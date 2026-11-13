@@ -55,16 +55,23 @@ param context = {
       const container = broker.spec.template.spec.containers[0];
       const env = Object.fromEntries(container.env.map(e => [e.name, e.value]));
       assert.equal(env.RADIUS_KAFKA_TOPIC, expected);
-      assert.equal(env.KAFKA_ADVERTISED_LISTENERS, 'PLAINTEXT://broker.kafka-test.svc.cluster.local:9092');
+      assert.equal(env.KAFKA_ADVERTISED_LISTENERS, 'PLAINTEXT://broker.kafka-test.svc.cluster.local:9092,INTERNAL://127.0.0.1:19092');
+      assert.ok(env.KAFKA_LISTENERS.split(',').includes('INTERNAL://127.0.0.1:19092'),
+        'The startup client must get loopback metadata before Kubernetes publishes the Pod IP');
+      assert.equal(env.KAFKA_LISTENER_SECURITY_PROTOCOL_MAP, 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT');
+      assert.equal(env.KAFKA_INTER_BROKER_LISTENER_NAME, 'INTERNAL');
       assert.equal(env.KAFKA_CONTROLLER_QUORUM_VOTERS, '1@localhost:9093');
       assert.equal(broker.spec.strategy.type, 'Recreate');
       assert.equal(broker.spec.replicas, 1);
       assert.equal(broker.spec.template.spec.volumes[0].persistentVolumeClaim.claimName, 'broker-data');
       assert.equal(pvc.spec.resources.requests.storage, '1Gi');
-      assert.equal(service.spec.publishNotReadyAddresses, true, 'Topic creation must reach advertised metadata before readiness');
-      assert.equal(service.spec.ports.length, 1, 'Do not expose the controller listener');
+      assert.equal(service.spec.publishNotReadyAddresses ?? false, false, 'Expose the broker only after topic readiness');
+      assert.deepEqual(service.spec.ports, [{ name: 'kafka', port: 9092, targetPort: 'kafka' }],
+        'Do not expose the loopback or controller listener');
       assert.equal(container.lifecycle.postStart.exec.command[2], fs.readFileSync(path.join(recipes, 'bicep/create-topic.sh'), 'utf8'));
       assert.ok(container.readinessProbe.exec.command[2].includes('--describe --topic "$RADIUS_KAFKA_TOPIC"'));
+      assert.ok(container.readinessProbe.exec.command[2].includes('--bootstrap-server 127.0.0.1:19092'),
+        'Readiness must not depend on its own Service endpoint');
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -78,6 +85,10 @@ test('topic hook retries startup, creates idempotently and propagates errors', (
   try {
     // Stub only the external Kafka CLI and sleep; run the actual hook in Bash.
     fs.writeFileSync(path.join(dir, 'hook.sh'), `kafka_cli() {
+  if [[ "$1" != --bootstrap-server || "$2" != 127.0.0.1:19092 ]]; then
+    echo "Error: startup must not need Service metadata before Kubernetes publishes the Pod IP." >&2
+    return 1
+  fi
   if [[ " $* " == *" --list "* ]]; then
     calls=$((calls + 1))
     [[ "$MODE" != unavailable && "$calls" -gt 1 ]]
@@ -96,7 +107,7 @@ ${source.replaceAll('/opt/kafka/bin/kafka-topics.sh', 'kafka_cli')}
     const created = execute('order.events-1');
     assert.equal(created.status, 0, created.stderr);
     assert.deepEqual(created.stdout.trim().split(/\r?\n/), [
-      '--bootstrap-server', 'localhost:9092', '--create', '--if-not-exists',
+      '--bootstrap-server', '127.0.0.1:19092', '--create', '--if-not-exists',
       '--topic', 'order.events-1', '--partitions', '1', '--replication-factor', '1'
     ]);
     assert.notEqual(execute('events', 'create-failed').status, 0);
