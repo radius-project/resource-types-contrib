@@ -50,6 +50,24 @@ var credentialsSecretName = usesSuppliedPassword ? last(split(passwordSecretId, 
 // rather than relying on a client to declare it first.
 var queue = context.resource.properties.?queue ?? 'jobs'
 
+// Serialize user input as JSON, not shell text. The init container fills only the
+// empty password_hash field with RabbitMQ's base64-encoded password hash.
+var definitions = {
+  users: [
+    {
+      name: username
+      password_hash: ''
+      hashing_algorithm: 'rabbit_password_hashing_sha256'
+      tags: ['administrator']
+    }
+  ]
+  vhosts: [{ name: '/' }]
+  permissions: [{ user: username, vhost: '/', configure: '.*', write: '.*', read: '.*' }]
+  queues: [{ name: queue, vhost: '/', durable: true, auto_delete: false, arguments: {} }]
+  exchanges: []
+  bindings: []
+}
+
 var labels = {
   'radapp.io/resource':       resourceName
   'radapp.io/application':    applicationName
@@ -85,6 +103,7 @@ resource brokerConfig 'core/ConfigMap@v1' = {
     labels: labels
   }
   data: {
+    'definitions.json': string(definitions)
     '20-definitions.conf': join([
       'definitions.import_backend = local_filesystem'
       'definitions.local.path = /etc/rabbitmq/definitions/definitions.json'
@@ -117,11 +136,13 @@ resource rabbitmq 'apps/Deployment@v1' = {
     template: {
       metadata: {
         labels: labels
-        annotations: !usesSuppliedPassword ? {
+        annotations: union({
+          'radapp.io/definitions-hash': uniqueString(string(definitions))
+        }, !usesSuppliedPassword ? {
           // A new generated password changes the Pod template so the broker restarts
           // and reads the updated Secret during deployment.
           'radapp.io/generated-password-hash': uniqueString(generatedPassword)
-        } : {}
+        } : {})
       }
       spec: {
         // Generate the broker definitions file (vhost, user, permissions, and the
@@ -136,13 +157,10 @@ resource rabbitmq 'apps/Deployment@v1' = {
             command: [
               'sh'
               '-c'
-              'set -eu\nHASH=$(rabbitmqctl hash_password "$RABBITMQ_PASSWORD" | tail -n1 | tr -d \'[:space:]\')\nprintf \'{"users":[{"name":"%s","password_hash":"%s","hashing_algorithm":"rabbit_password_hashing_sha256","tags":["administrator"]}],"vhosts":[{"name":"/"}],"permissions":[{"user":"%s","vhost":"/","configure":".*","write":".*","read":".*"}],"queues":[{"name":"%s","vhost":"/","durable":true,"auto_delete":false,"arguments":{}}],"exchanges":[],"bindings":[]}\\n\' "$RABBITMQ_USER" "$HASH" "$RABBITMQ_USER" "$RABBITMQ_QUEUE" > /etc/rabbitmq/definitions/definitions.json'
+              // Escape dollars for kubelet before the shell expands them.
+              replace('set -eu\nHASH=$(rabbitmqctl hash_password "$RABBITMQ_PASSWORD" | tail -n1 | tr -d \'[:space:]\')\ntest -n "$HASH"\nsed "s|\\"password_hash\\":\\"\\"|\\"password_hash\\":\\"$HASH\\"|" /etc/rabbitmq/bootstrap/definitions.json > /etc/rabbitmq/definitions/definitions.json', '$', '$$')
             ]
             env: [
-              {
-                name: 'RABBITMQ_USER'
-                value: username
-              }
               {
                 // Sourced from either the supplied or Recipe-created Kubernetes
                 // Secret — never a literal value in the pod spec.
@@ -154,12 +172,13 @@ resource rabbitmq 'apps/Deployment@v1' = {
                   }
                 }
               }
-              {
-                name: 'RABBITMQ_QUEUE'
-                value: queue
-              }
             ]
             volumeMounts: [
+              {
+                name: 'config'
+                mountPath: '/etc/rabbitmq/bootstrap'
+                readOnly: true
+              }
               {
                 name: 'definitions'
                 mountPath: '/etc/rabbitmq/definitions'
@@ -179,6 +198,13 @@ resource rabbitmq 'apps/Deployment@v1' = {
                 containerPort: port
               }
             ]
+            readinessProbe: {
+              exec: {
+                command: ['rabbitmq-diagnostics', '-q', 'check_running']
+              }
+              initialDelaySeconds: 10
+              periodSeconds: 10
+            }
             volumeMounts: [
               {
                 name: 'definitions'

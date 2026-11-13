@@ -33,3 +33,51 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 Add a `rabbitMQ` resource and connect a container to it. With Radius control-plane support from `radius-project/radius#12709` and Kubernetes Container Recipe support from `resource-types-contrib#300` or later, omitting `password` lets one connection named `rabbitmq` inject ordinary `CONNECTION_RABBITMQ_HOST`, `CONNECTION_RABBITMQ_PORT`, and `CONNECTION_RABBITMQ_USERNAME` values plus the Recipe-generated, secret-backed `CONNECTION_RABBITMQ_PASSWORD`. In that case, `queue.properties.secrets.name` remains available for explicitly authored custom or backward-compatible `secretKeyRef` wiring.
 
 If `password` supplies a user-authored `Radius.Security/secrets` resource, the RabbitMQ Recipe emits no managed secret, so the `rabbitmq` connection has no `CONNECTION_RABBITMQ_PASSWORD`. Connect the container directly to the supplied Secret to inject its keys; the test example uses connection `credentials`, which produces `CONNECTION_CREDENTIALS_PASSWORD` on compatible Kubernetes versions. See [`test/app.bicep`](test/app.bicep).
+
+## Kubernetes recipes
+
+Both [`Bicep`](recipes/kubernetes/bicep/kubernetes-rabbitmq.bicep) and
+[`Terraform`](recipes/kubernetes/terraform/main.tf) run one RabbitMQ 4 Alpine
+broker in the namespace from `context.runtime.kubernetes.namespace`. The recipes
+create a ClusterIP Service on port 5672 and import the user and durable queue
+before the broker becomes ready. Queue and user names are serialized as JSON.
+The password comes from a Secret, not a literal Pod environment value.
+
+These are development recipes. They do not provide TLS, persistent storage, or
+high availability. Queue data is lost when the Pod is replaced. `Recreate`
+prevents old and new brokers from serving the same Service during an update.
+
+`result.values` contains `host`, `port`, and `username`. With no `password` input,
+`result.secrets.password` contains a generated password. Terraform keeps this
+password in its state for repeat deployments. Bicep generates a new password on
+each deployment unless the operator supplies the secure `generatedPassword`
+parameter. A supplied Secret must be in the same namespace and contain a
+`password` key. The recipes do not copy, return, or delete that Secret.
+
+`result.resources` tracks the Deployment, Service, ConfigMap, and, only when
+generated, the credentials Secret through Kubernetes UCP IDs. Terraform marks
+the result sensitive; protect its state because it contains the generated password.
+
+The existing Bicep publication source is
+`ghcr.io/radius-project/kube-recipes/rabbitmq:<tag>`. The Terraform module source
+directory is `Messaging/rabbitMQ/recipes/kubernetes/terraform`; the local build
+script publishes it as `rabbitMQ-kubernetes.zip`. Registration and publication of
+the default Recipe Pack are maintained separately.
+
+### Focused checks
+
+Run these commands from the repository root. They require Node.js, the Radius
+Bicep compiler, Bash, ShellCheck, and Terraform 1.7 or later. Mock tests do not
+contact a cluster.
+
+```shell
+node --test Messaging/rabbitMQ/test/recipes.test.js
+terraform -chdir=Messaging/rabbitMQ/recipes/kubernetes/terraform init -backend=false
+terraform -chdir=Messaging/rabbitMQ/recipes/kubernetes/terraform validate
+terraform -chdir=Messaging/rabbitMQ/recipes/kubernetes/terraform test
+```
+
+For deployment checks, use a dedicated test Environment and namespace. Build
+each recipe with the documented `make build-bicep-recipe` or
+`make build-terraform-recipe` command, then run `make test-recipe` with that
+recipe path. Do not run these deployment commands against a shared cluster.
