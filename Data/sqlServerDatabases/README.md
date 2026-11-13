@@ -96,6 +96,7 @@ if that compiler is not at `~/.rad/bin/bicep` (`bicep.exe` on Windows).
 ```bash
 node --test .github/scripts/tests/test-sqlserver-kubernetes.js
 shellcheck Data/sqlServerDatabases/recipes/kubernetes/terraform/bootstrap.sh
+bash .github/scripts/tests/test-sqlserver-eula.sh
 terraform -chdir=Data/sqlServerDatabases/recipes/kubernetes/terraform init -backend=false
 terraform -chdir=Data/sqlServerDatabases/recipes/kubernetes/terraform validate
 terraform -chdir=Data/sqlServerDatabases/recipes/kubernetes/terraform test
@@ -106,9 +107,27 @@ for local publishing and Recipe Pack registration. In a **dedicated** test
 environment, register the Recipe with explicit license consent, then run:
 
 ```bash
+# Only after the operator has accepted the Microsoft SQL Server license terms:
+export RTC_SQLSERVER_ACCEPT_EULA=Y
 make test-recipe RECIPE_PATH=Data/sqlServerDatabases/recipes/kubernetes/bicep
 make test-recipe RECIPE_PATH=Data/sqlServerDatabases/recipes/kubernetes/terraform
 ```
+
+The generated test packs and the Recipe test runner also require that explicit
+opt-in. With `RTC_SQLSERVER_ACCEPT_EULA` unset, empty, or `N`, pack generation
+omits only the Kubernetes SQL Server entry and the runner prints a skip reason
+before any workspace or cluster command. An invalid value is an error. Azure SQL
+and other resource types are not affected. Ordinary CI has no license opt-in:
+it still builds both Recipes, but skips their live deployment tests.
+
+After acceptance, keep `RTC_SQLSERVER_ACCEPT_EULA=Y` set while generating,
+deploying and testing the test pack. Generation then includes the SQL Server
+entry and maps `sqlServerAcceptEula: 'Y'` for either language. An earlier pack
+generated without opt-in must be generated and deployed again; setting the
+variable only for `make test-recipe` does not change an existing pack.
+Neither script grants consent or changes an Environment by itself. For manually
+authored packs, set the required Recipe parameter yourself. No checked-in default
+pack or workflow supplies consent.
 
 The existing test app uses the non-`sa` login `radadmin` and database `appdb`.
 Its demo container has no SQL Server backend. Deployment readiness checks the SQL

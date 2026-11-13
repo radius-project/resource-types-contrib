@@ -59,6 +59,12 @@ fi
 RECIPE_DIRS=()
 while IFS= read -r line; do
     [[ -z "$line" ]] && continue
+    if [[ "$line" == */Data/sqlServerDatabases/recipes/kubernetes/* ]]; then
+        # shellcheck source=.github/scripts/lib-sqlserver-eula.sh
+        source "$SCRIPT_DIR/lib-sqlserver-eula.sh"
+        SQLSERVER_EULA="$(rtc_read_sqlserver_eula)"
+        [[ "$SQLSERVER_EULA" == Y ]] || continue
+    fi
     if [[ "$RECIPE_TYPE" == "bicep" ]] && [[ "$line" == *"/bicep" ]] && ls "$line"/*.bicep &>/dev/null; then
         RECIPE_DIRS+=("$line")
     elif [[ "$RECIPE_TYPE" == "terraform" ]] && [[ "$line" == *"/terraform" ]] && [[ -f "$line/main.tf" ]]; then
@@ -156,6 +162,13 @@ EOF
         cat >> "$OUTPUT_FILE" <<'EOF'
         parameters: {
           desiredCount: 1
+        }
+EOF
+    fi
+    if [[ "$RESOURCE_TYPE" == Radius.Data/sqlServerDatabases && "$RECIPES_SUBPATH" == kubernetes/* ]]; then
+        cat >> "$OUTPUT_FILE" <<'EOF'
+        parameters: {
+          sqlServerAcceptEula: 'Y'
         }
 EOF
     fi
