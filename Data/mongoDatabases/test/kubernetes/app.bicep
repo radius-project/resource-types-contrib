@@ -6,6 +6,9 @@ param environment string
 @description('Application name. CI supplies a unique name for deployment and cleanup.')
 param applicationName string = 'mongodb-kubernetes-test'
 
+@description('Database resource name. The Bicep test setup creates its matching credential Secret.')
+param mongoResourceName string = 'mongo'
+
 resource app 'Radius.Core/applications@2025-08-01-preview' = {
   name: applicationName
   properties: {
@@ -14,7 +17,7 @@ resource app 'Radius.Core/applications@2025-08-01-preview' = {
 }
 
 resource mongo 'Radius.Data/mongoDatabases@2025-08-01-preview' = {
-  name: 'mongo'
+  name: mongoResourceName
   properties: {
     environment: environment
     application: app.id

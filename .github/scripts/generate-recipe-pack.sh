@@ -105,22 +105,6 @@ echo "==> Found ${#RECIPE_DIRS[@]} $RECIPE_TYPE recipe(s)"
 cat > "$OUTPUT_FILE" << EOF
 extension radius
 
-EOF
-if [[ "$RECIPE_TYPE" == bicep ]]; then
-    for recipe_dir in "${RECIPE_DIRS[@]}"; do
-        if [[ "$recipe_dir" == */Data/mongoDatabases/recipes/kubernetes/bicep ]]; then
-            cat >> "$OUTPUT_FILE" <<'EOF'
-@description('Stable MongoDB password. Reuse this value when deploying this pack again with existing database volumes.')
-@secure()
-@minLength(16)
-param mongoPassword string = newGuid()
-
-EOF
-            break
-        fi
-    done
-fi
-cat >> "$OUTPUT_FILE" << EOF
 resource PACK_NAME_PLACEHOLDER 'Radius.Core/recipePacks@2025-08-01-preview' = {
   name: 'PACK_NAME_PLACEHOLDER'
   location: 'global'
@@ -167,14 +151,6 @@ for recipe_dir in "${RECIPE_DIRS[@]}"; do
         source: '$TEMPLATE_PATH'
         plainHttp: true
 EOF
-    if [[ "$RECIPE_TYPE" == bicep && "$RESOURCE_TYPE" == Radius.Data/mongoDatabases &&
-          "$RECIPES_SUBPATH" == kubernetes/bicep ]]; then
-        cat >> "$OUTPUT_FILE" <<'EOF'
-        parameters: {
-          mongoPassword: mongoPassword
-        }
-EOF
-    fi
     if [[ "${RTC_ACI_TEST_DESIRED_COUNT:-}" == 1 &&
           "$RESOURCE_TYPE" == Radius.Compute/containers && "$RECIPES_SUBPATH" == azure/bicep ]]; then
         cat >> "$OUTPUT_FILE" <<'EOF'

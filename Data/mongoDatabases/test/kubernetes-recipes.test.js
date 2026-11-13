@@ -19,23 +19,22 @@ function run(args) {
 test('Bicep renders authenticated MongoDB with persistent data in the context namespace', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rtc-mongodb-'));
   try {
-    // Use dummy credentials in snapshots; keep the production parameter secure.
     const text = fs.readFileSync(source, 'utf8');
-    fs.writeFileSync(path.join(dir, 'recipe.bicep'), text.replace('@secure()\n', '').replace('@secure()\r\n', ''));
+    fs.writeFileSync(path.join(dir, 'recipe.bicep'), text);
     run(['build', source, '--outfile', path.join(dir, 'production.json')]);
     const template = JSON.parse(fs.readFileSync(path.join(dir, 'production.json'), 'utf8'));
-    assert.equal(template.parameters.mongoPassword.type, 'securestring');
-    assert.equal(template.parameters.mongoPassword.defaultValue, undefined,
-      'A newGuid default would break access to an existing data volume on redeploy');
-    assert.equal(template.parameters.mongoPassword.minLength, 16);
-    assert.equal(template.outputs.result.value.resources.length, 4);
+    assert.equal(template.parameters.mongoPassword, undefined, 'Never accept a password through readable pack parameters');
+    assert.equal(template.parameters.mongoCredentialsSecretName.type, 'string');
+    assert.equal(template.resources.credentials.existing, true, 'Never overwrite an operator Secret');
+    assert.equal(template.outputs.result.value.resources.length, 3);
+    assert.ok(template.outputs.result.value.resources.every(id => !id.includes('/Secret/')));
     assert.deepEqual(Object.keys(template.outputs.result.value.values).sort(), ['database', 'endpoint']);
     assert.deepEqual(Object.keys(template.outputs.result.value.secrets), ['connectionString']);
-    assert.ok(template.outputs.result.value.secrets.connectionString.includes("uriComponent(parameters('mongoPassword'))"));
+    assert.ok(template.outputs.result.value.secrets.connectionString.includes("uriComponent(base64ToString(reference('credentials').data.password))"));
 
     for (const database of [undefined, 'orders-v2', null]) {
       fs.writeFileSync(path.join(dir, 'fixture.bicepparam'), `using './recipe.bicep'
-param mongoPassword = 'fixture @:/?#[]%&+ password'
+${database === 'orders-v2' ? "param mongoCredentialsSecretName = 'operator-mongo-credentials'" : ''}
 param context = {
   ${database === 'orders-v2' ? '' : 'application: null\nenvironment: null'}
   runtime: { kubernetes: { namespace: 'mongo-test' } }
@@ -50,15 +49,13 @@ param context = {
       run(['snapshot', path.join(dir, 'fixture.bicepparam'), '--mode', 'Overwrite']);
       const resources = JSON.parse(fs.readFileSync(path.join(dir, 'fixture.snapshot.json'), 'utf8'))
         .predictedResources.map(resource => ({ ...resource.properties, resourceType: resource.type }));
-      assert.equal(resources.length, 4);
+      assert.equal(resources.length, 3);
       for (const resource of resources) {
         assert.equal(resource.metadata.namespace, 'mongo-test');
       }
       const deployment = resources.find(r => r.resourceType === 'apps/Deployment@v1');
-      const secret = resources.find(r => r.resourceType === 'core/Secret@v1');
       const pvc = resources.find(r => r.resourceType === 'core/PersistentVolumeClaim@v1');
       const service = resources.find(r => r.resourceType === 'core/Service@v1');
-      assert.equal(secret.stringData.password, 'fixture @:/?#[]%&+ password');
       assert.equal(deployment.spec.strategy.type, 'Recreate');
       assert.equal(deployment.spec.replicas, 1);
       const pod = deployment.spec.template.spec;
@@ -66,7 +63,7 @@ param context = {
       assert.equal(pod.automountServiceAccountToken, false);
       assert.equal(container.env.find(e => e.name === 'MONGO_INITDB_DATABASE').value, database ?? 'mongo_db');
       assert.deepEqual(container.env.find(e => e.name === 'MONGO_INITDB_ROOT_PASSWORD').valueFrom,
-        { secretKeyRef: { name: secret.metadata.name, key: 'password' } });
+        { secretKeyRef: { name: database === 'orders-v2' ? 'operator-mongo-credentials' : 'mongo-mongodb-credentials', key: 'password' } });
       assert.equal(pod.volumes[0].persistentVolumeClaim.claimName, pvc.metadata.name);
       assert.equal(container.volumeMounts[0].mountPath, '/data/db');
       assert.equal(pvc.spec.resources.requests.storage, '1Gi');
@@ -93,7 +90,25 @@ param context = {
           assert.equal(exit, authenticated ? 0 : 1);
         }
       }
+
     }
+
+    // Supply synthetic provider data to evaluate the production Secret-read
+    // expression without contacting a cluster or using real credentials.
+    const password = 'fixture @:/?#[]%&+ password';
+    const connectionExpression = text.match(/^\s+connectionString: (.+)$/m)[1];
+    fs.writeFileSync(path.join(dir, 'recipe.bicep'),
+      text.replace("resource credentials 'core/Secret@v1' existing = {",
+        `resource credentials 'core/Secret@v1' = {\n  data: { password: '${Buffer.from(password).toString('base64')}' }`) +
+      `\nresource evaluation 'core/Secret@v1' = {
+  metadata: { name: 'evaluation', namespace: namespace }
+  stringData: { connectionString: ${connectionExpression} }
+}\n`);
+    run(['snapshot', path.join(dir, 'fixture.bicepparam'), '--mode', 'Overwrite']);
+    const evaluated = JSON.parse(fs.readFileSync(path.join(dir, 'fixture.snapshot.json'), 'utf8'))
+      .predictedResources.find(resource => resource.properties.metadata.name === 'evaluation');
+    assert.equal(evaluated.properties.stringData.connectionString,
+      'mongodb://radius:fixture%20%40%3A%2F%3F%23%5B%5D%25%26%2B%20password@mongo-mongodb.mongo-test.svc.cluster.local:27017/mongo_db?authSource=admin');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

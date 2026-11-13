@@ -1,4 +1,12 @@
-mock_provider "kubernetes" {}
+mock_provider "kubernetes" {
+  mock_data "kubernetes_secret_v1" {
+    defaults = {
+      data = {
+        password = "fixture @:/?#[]%&+ password"
+      }
+    }
+  }
+}
 
 variables {
   context = {
@@ -18,7 +26,7 @@ run "generated_credentials" {
   command = apply
 
   assert {
-    condition     = length(random_password.mongo[0].result) == 32 && kubernetes_secret_v1.credentials.data.password == random_password.mongo[0].result
+    condition     = length(random_password.mongo[0].result) == 32 && kubernetes_secret_v1.credentials[0].data.password == random_password.mongo[0].result
     error_message = "Generate a random password and store it in the Kubernetes Secret."
   }
   assert {
@@ -46,7 +54,7 @@ run "generated_credentials" {
     error_message = "Track all four Kubernetes objects for Radius cleanup."
   }
   assert {
-    condition     = kubernetes_deployment_v1.mongo.metadata[0].namespace == "mongo-test" && kubernetes_secret_v1.credentials.metadata[0].namespace == "mongo-test" && kubernetes_persistent_volume_claim_v1.data.metadata[0].namespace == "mongo-test" && kubernetes_service_v1.mongo.metadata[0].namespace == "mongo-test"
+    condition     = kubernetes_deployment_v1.mongo.metadata[0].namespace == "mongo-test" && kubernetes_secret_v1.credentials[0].metadata[0].namespace == "mongo-test" && kubernetes_persistent_volume_claim_v1.data.metadata[0].namespace == "mongo-test" && kubernetes_service_v1.mongo.metadata[0].namespace == "mongo-test"
     error_message = "Use the context namespace for every object."
   }
 }
@@ -60,11 +68,11 @@ run "redeployment" {
   }
 }
 
-run "explicit_password_and_database" {
+run "existing_secret_and_database" {
   command = apply
 
   variables {
-    mongoPassword = "fixture @:/?#[]%&+ password"
+    mongoCredentialsSecretName = "operator-mongo-credentials"
     context = {
       runtime = { kubernetes = { namespace = "other-namespace" } }
       resource = {
@@ -77,8 +85,12 @@ run "explicit_password_and_database" {
   }
 
   assert {
-    condition     = length(random_password.mongo) == 0 && kubernetes_secret_v1.credentials.data.password == var.mongoPassword
-    error_message = "An operator password must replace, not supplement, generated credentials."
+    condition     = length(random_password.mongo) == 0 && length(kubernetes_secret_v1.credentials) == 0 && data.kubernetes_secret_v1.credentials[0].metadata[0].namespace == "other-namespace"
+    error_message = "Read the operator Secret without creating credentials."
+  }
+  assert {
+    condition     = length(output.result.resources) == 3 && !contains(output.result.resources, "/planes/kubernetes/local/namespaces/other-namespace/providers/core/Secret/operator-mongo-credentials") && kubernetes_deployment_v1.mongo.spec[0].template[0].spec[0].container[0].env[1].value_from[0].secret_key_ref[0].name == "operator-mongo-credentials"
+    error_message = "Use the operator Secret but never delete it with the recipe."
   }
   assert {
     condition     = output.result.secrets.connectionString == "mongodb://radius:fixture%20%40%3A%2F%3F%23%5B%5D%25%26%2B%20password@orders-mongodb.other-namespace.svc.cluster.local:27017/orders-v2?authSource=admin"
@@ -86,10 +98,10 @@ run "explicit_password_and_database" {
   }
 }
 
-run "reject_short_password" {
+run "reject_empty_secret_name" {
   command = plan
   variables {
-    mongoPassword = "too-short"
+    mongoCredentialsSecretName = ""
   }
-  expect_failures = [var.mongoPassword]
+  expect_failures = [var.mongoCredentialsSecretName]
 }

@@ -3,15 +3,14 @@ variable "context" {
   type        = any
 }
 
-variable "mongoPassword" {
-  description = "Stable MongoDB administrator password. Omit to generate and retain a random password in Terraform state. Do not change while reusing the data volume."
+variable "mongoCredentialsSecretName" {
+  description = "Name of an existing Kubernetes Secret in the context namespace with a password key for the radius administrator. Omit to generate and retain credentials in Terraform state. Keep credentials stable while retaining the data volume."
   type        = string
-  sensitive   = true
   default     = null
   nullable    = true
 
   validation {
-    condition     = var.mongoPassword == null ? true : length(var.mongoPassword) >= 16
-    error_message = "mongoPassword must contain at least 16 characters."
+    condition     = var.mongoCredentialsSecretName == null ? true : length(trimspace(var.mongoCredentialsSecretName)) > 0
+    error_message = "mongoCredentialsSecretName must not be empty."
   }
 }

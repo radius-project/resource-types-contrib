@@ -41,45 +41,46 @@ operator deployment for production.
 
 ### Credentials and redeployment
 
-The Bicep recipe requires a secure `mongoPassword` recipe parameter with at least
-16 characters. Generate a strong password once, store it in your secret store,
-and supply the same value on every deployment. For example, `openssl rand -hex 32`
-generates a suitable value; do not put that value in source control or logs.
-Pass it through a secure Recipe Pack deployment parameter:
+The Bicep recipe reads an existing Kubernetes Secret in the context namespace.
+Its `mongoCredentialsSecretName` parameter defaults to
+`<resource-name>-mongodb-credentials`. The Secret must have a `password` key
+for the fixed `radius` administrator account. Create it once before deployment,
+then keep it stable while retaining the data volume. The Radius deployment
+identity needs permission to read that Secret.
 
-```bicep
-@secure()
-param mongoPassword string
+For example, this Bash command sends a random password directly to Kubernetes
+over standard input. It requires `openssl`, `jq`, and `kubectl`. Set the
+namespace and resource name to match your deployment:
 
-// In the Recipe Pack's properties.recipes entry:
-// 'Radius.Data/mongoDatabases': {
-//   kind: 'bicep'
-//   source: '<published-recipe-source>'
-//   parameters: {
-//     mongoPassword: mongoPassword
-//   }
-// }
+```bash
+namespace=your-namespace
+resource_name=mongo
+openssl rand -hex 32 | tr -d '\n' |
+  jq -Rs --arg name "$resource_name-mongodb-credentials" --arg namespace "$namespace" \
+    '{apiVersion:"v1",kind:"Secret",metadata:{name:$name,namespace:$namespace},type:"Opaque",stringData:{password:.}}' |
+  kubectl create -f -
 ```
 
-An Environment can also set this value through
-`properties.recipeParameters['Radius.Data/mongoDatabases'].mongoPassword`.
-Restrict access to the Recipe Pack and Environment configuration, which contain
-the configured parameter value.
+Only the Secret **name** can be configured through Recipe Pack parameters or
+Environment `recipeParameters`. Never put a password there: Radius stores and
+returns those parameter values without redaction. An `@secure()` Bicep input
+does not protect a value written into a readable resource property.
 
-The required input is intentional. Bicep's `newGuid()` parameter default is
-evaluated again for a new recipe deployment. It does not retain the password
-used to initialize a persistent database.
+The existing-Secret requirement is intentional. Bicep's `newGuid()` parameter
+default is evaluated again for each recipe deployment. It does not retain the
+password used to initialize a persistent database.
 
-Terraform accepts the same `mongoPassword` parameter. When it is omitted,
-Terraform generates a 32-character random password and retains it in recipe
-state. Keep that state protected and available for future deployments. Credentials
-are stored in a Kubernetes Secret and referenced with `secretKeyRef`, not copied
-into the Pod spec. The Terraform `result` output is sensitive.
+Terraform accepts the same `mongoCredentialsSecretName` parameter to read an
+operator Secret. When it is omitted, Terraform generates a 32-character random
+password, creates its own Kubernetes Secret, and retains the password in recipe
+state. Keep that state protected and available for future deployments. Both
+recipes use `secretKeyRef`, not a password copied into the Pod spec. The Terraform
+`result` output is sensitive.
 
 MongoDB initializes the administrator only when `/data/db` is empty. Changing the
-recipe password does **not** change an existing database password. Reuse the
+Secret password does **not** change an existing database password. Reuse the
 original value. For rotation, first change the database password with an
-authenticated MongoDB client, update the recipe parameter, and restart the
+authenticated MongoDB client, update the Kubernetes Secret, and restart the
 Deployment. Do not remove Terraform state or switch recipe implementations while
 retaining the volume.
 
@@ -92,11 +93,13 @@ Both recipes return the same output shape:
 | `result.values.database` | `properties.database`, or `mongo_db` when omitted |
 | `result.values.endpoint` | `mongodb://<service>.<namespace>.svc.cluster.local:27017` without credentials |
 | `result.secrets.connectionString` | Authenticated URI with an encoded password and database path, and `authSource=admin` |
-| `result.resources` | UCP IDs of the Secret, PVC, Deployment, and Service |
+| `result.resources` | UCP IDs of the PVC, Deployment, and Service; Terraform also includes its generated Secret when it owns one |
 
 The database is created on the first write. Radius places `connectionString` in
 the managed secret described above. No password is returned in `values`.
-Deleting the Radius resource deletes all four recipe objects, including the PVC.
+Deleting the Radius resource deletes the recipe-owned objects, including the PVC.
+An operator-provided credential Secret is never returned in cleanup IDs and is
+not deleted or changed by either recipe.
 Data can be lost; the StorageClass reclaim policy controls deletion of the
 underlying volume. Back up data before deleting the resource.
 
@@ -110,7 +113,7 @@ node --test Data/mongoDatabases/test/kubernetes-recipes.test.js
 terraform -chdir=Data/mongoDatabases/recipes/kubernetes/terraform init -backend=false
 terraform -chdir=Data/mongoDatabases/recipes/kubernetes/terraform validate
 terraform -chdir=Data/mongoDatabases/recipes/kubernetes/terraform test
-bash Data/mongoDatabases/test/recipe-pack.test.sh
+bash Data/mongoDatabases/test/test-kubernetes-setup.sh
 ```
 
 The Bicep test uses the Radius-bundled compiler at `~/.rad/bin/bicep`; set
@@ -123,11 +126,13 @@ For deployment checks, use a dedicated test cluster and follow the
 Publish each recipe with these commands, then register it in the test
 Environment or generate and attach its Recipe Pack before deploying
 [`test/kubernetes/app.bicep`](test/kubernetes/app.bicep). This test checks an
-authenticated write/read through the managed connection-string secret. Generated
-Bicep test packs create a password once at **pack deployment**, not at each
-recipe deployment, and pass it to the MongoDB recipe. Reuse that pack parameter
-when deploying a pack again with existing database volumes. Terraform test packs
-use the recipe's state-backed password generation. The existing
+authenticated write/read through the managed connection-string secret. The Bicep
+test runner calls [`test/test-kubernetes.sh`](test/test-kubernetes.sh), which
+creates a uniquely named test Secret directly in the test namespace and passes
+only the matching `mongoResourceName` to the test app. It deletes that exact
+Secret after the application test, including when deployment fails. It never
+writes the password to a Recipe Pack or Environment. Terraform tests use the
+recipe's state-backed password generation. The existing
 [`test/app.bicep`](test/app.bicep) remains the Azure test.
 
 ```bash

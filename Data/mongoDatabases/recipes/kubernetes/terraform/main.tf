@@ -18,7 +18,8 @@ locals {
   database      = coalesce(try(var.context.resource.properties.database, null), "mongo_db")
   username      = "radius"
   port          = 27017
-  password      = var.mongoPassword != null ? var.mongoPassword : random_password.mongo[0].result
+  password      = var.mongoCredentialsSecretName != null ? data.kubernetes_secret_v1.credentials[0].data.password : random_password.mongo[0].result
+  secret_name   = var.mongoCredentialsSecretName != null ? var.mongoCredentialsSecretName : kubernetes_secret_v1.credentials[0].metadata[0].name
   probe         = "const admin = db.getSiblingDB(\"admin\"); if (!admin.auth(process.env.MONGO_INITDB_ROOT_USERNAME, process.env.MONGO_INITDB_ROOT_PASSWORD).ok) { quit(1); } quit(admin.runCommand({ping: 1}).ok ? 0 : 1);"
   endpoint      = "mongodb://${kubernetes_service_v1.mongo.metadata[0].name}.${local.namespace}.svc.cluster.local:${local.port}"
 
@@ -36,12 +37,14 @@ locals {
 }
 
 resource "random_password" "mongo" {
-  count   = nonsensitive(var.mongoPassword == null) ? 1 : 0
+  count   = var.mongoCredentialsSecretName == null ? 1 : 0
   length  = 32
   special = false
 }
 
 resource "kubernetes_secret_v1" "credentials" {
+  count = var.mongoCredentialsSecretName == null ? 1 : 0
+
   metadata {
     name      = "${local.resource_name}-mongodb-credentials"
     namespace = local.namespace
@@ -50,6 +53,15 @@ resource "kubernetes_secret_v1" "credentials" {
   type = "Opaque"
   data = {
     password = local.password
+  }
+}
+
+data "kubernetes_secret_v1" "credentials" {
+  count = var.mongoCredentialsSecretName != null ? 1 : 0
+
+  metadata {
+    name      = var.mongoCredentialsSecretName
+    namespace = local.namespace
   }
 }
 
@@ -110,7 +122,7 @@ resource "kubernetes_deployment_v1" "mongo" {
             name = "MONGO_INITDB_ROOT_PASSWORD"
             value_from {
               secret_key_ref {
-                name = kubernetes_secret_v1.credentials.metadata[0].name
+                name = local.secret_name
                 key  = "password"
               }
             }
@@ -183,12 +195,14 @@ resource "kubernetes_service_v1" "mongo" {
 
 output "result" {
   value = {
-    resources = [
-      "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Secret/${kubernetes_secret_v1.credentials.metadata[0].name}",
-      "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/PersistentVolumeClaim/${kubernetes_persistent_volume_claim_v1.data.metadata[0].name}",
-      "/planes/kubernetes/local/namespaces/${local.namespace}/providers/apps/Deployment/${kubernetes_deployment_v1.mongo.metadata[0].name}",
-      "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Service/${kubernetes_service_v1.mongo.metadata[0].name}"
-    ]
+    resources = concat(
+      [for secret in kubernetes_secret_v1.credentials : "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Secret/${secret.metadata[0].name}"],
+      [
+        "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/PersistentVolumeClaim/${kubernetes_persistent_volume_claim_v1.data.metadata[0].name}",
+        "/planes/kubernetes/local/namespaces/${local.namespace}/providers/apps/Deployment/${kubernetes_deployment_v1.mongo.metadata[0].name}",
+        "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Service/${kubernetes_service_v1.mongo.metadata[0].name}"
+      ]
+    )
     values = {
       database = local.database
       endpoint = local.endpoint
