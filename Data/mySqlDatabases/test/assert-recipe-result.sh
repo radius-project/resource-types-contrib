@@ -67,9 +67,28 @@ jq -e \
     { echo "AWS MySQL Recipe parameter group name must end with the version without the dot" >&2; exit 1; }
 
 # The aws-eks pack must pass every required Recipe parameter and nothing the
-# Recipe does not declare.
+# Recipe does not declare: a deployment rejects undeclared parameters.
 # shellcheck source=.github/scripts/lib-recipe-packs.sh
 source "$REPO_ROOT/.github/scripts/lib-recipe-packs.sh"
-rtc_check_recipe_pack_params "$AWS_PACK_PATH" "Radius.Data/mySqlDatabases" "$AWS_TEMPLATE"
+PACK_PARAMS=$(
+    rtc_recipe_pack_entry_body "$AWS_PACK_PATH" "Radius.Data/mySqlDatabases" |
+        awk '
+            /^[[:space:]]*parameters:[[:space:]]*\{[[:space:]]*$/ { inside = 1; next }
+            inside && /^[[:space:]]*\}/ { inside = 0; next }
+            inside && match($0, /^[[:space:]]*[A-Za-z0-9_]+:/) {
+                key = substr($0, RSTART, RLENGTH - 1)
+                gsub(/[[:space:]]/, "", key)
+                print key
+            }
+        ' | jq -Rsc 'split("\n") | map(select(length > 0)) | sort'
+)
+jq -e --argjson passed "$PACK_PARAMS" '
+  (.parameters | del(.context)) as $params |
+  ($params | with_entries(select(.value | has("defaultValue") | not)) | keys | sort) as $required |
+  ($passed | length) > 0 and
+  ($required - $passed) == [] and
+  ($passed - ($params | keys)) == []
+' <<<"$AWS_TEMPLATE" >/dev/null ||
+    { echo "aws-eks pack parameters $PACK_PARAMS do not match the AWS MySQL Recipe parameters" >&2; exit 1; }
 
 echo "AWS MySQL Recipe result and pack parameter contract test passed"

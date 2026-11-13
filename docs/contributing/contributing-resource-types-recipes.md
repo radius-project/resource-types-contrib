@@ -381,17 +381,6 @@ So a property that a standard module never emits cannot be filled in from `outpu
 
 Whichever you pick, a Recipe that provisions the resource on something other than the declared default **must** report it as an output. Radius does not detect the mismatch, so the resource would otherwise advertise a value the infrastructure does not use.
 
-### AWS IAM permissions for connected containers
-
-Some AWS services, such as Amazon S3 and Amazon SQS, authorize apps with IAM credentials instead of a password the Recipe returns. A Resource Type for such a service grants access through the `awsIamPolicy` property:
-
-- Declare `awsIamPolicy` as an optional `string` property with `readOnly: true`, and add `awsIamPolicy` to the outputs of every Recipe that creates the AWS resource.
-- Set it to a JSON IAM policy document, for example from `string({ Version: '2012-10-17', Statement: [...] })` in Bicep. The value must be a string, not an object, because the `aws-eks` containers Recipe calls `json()` on it.
-- List only the actions an app needs, on only the resources the Recipe created. Don't use `"Resource": "*"`.
-- The containers Recipe reads only `Statement`. It drops each statement's `Sid`, because IAM rejects duplicate `Sid` values and two connections can return the same one.
-
-When a container connects to the resource, the `aws-eks` containers Recipe adds these statements to the container's IAM role. The role's permissions boundary, set by the platform engineer, caps what they can grant. The Kubernetes container Recipes never turn `awsIamPolicy` into an environment variable. For the role and its limits, see [AWS credentials for containers](../../recipe-packs/aws-eks/README.md#aws-credentials-for-containers).
-
 ## Testing Your Contribution
 
 After creating your Resource Type and Recipes, test them locally using the provided `make` commands.
