@@ -41,18 +41,29 @@ test('Bicep renders named-container initialization, persistent storage, credenti
     fs.writeFileSync(recipe, source);
     run(bicep, ['build', recipe, '--outfile', path.join(dir, 'recipe.json')]);
     const template = JSON.parse(fs.readFileSync(path.join(dir, 'recipe.json'), 'utf8'));
-    assert.equal(template.parameters.objectStorageAccountKey.type.toLowerCase(), 'securestring');
-    assert.equal(template.parameters.objectStorageAccountKey.defaultValue, undefined);
+    assert.equal(template.parameters.objectStorageAccountKey, undefined);
+    assert.equal(template.parameters.objectStorageCredentialsSecretName.type, 'string');
+    assert.equal(template.parameters.objectStorageCredentialsSecretName.defaultValue,
+      "[format('{0}-blob-credentials', parameters('context').resource.name)]");
+    const external = template.resources.credentialSource;
+    assert.equal(external.existing, true);
+    assert.equal(external.type, 'core/Secret@v1');
+    assert.equal(external.properties.metadata.name, "[parameters('objectStorageCredentialsSecretName')]");
+    assert.equal(external.properties.metadata.namespace, "[variables('namespace')]");
+    assert.ok(JSON.stringify(template.resources.credentials).includes("base64ToString(reference('credentialSource').data.accountKey)"));
+    assert.ok(!JSON.stringify(template.outputs.result.value.resources).includes('credentialSource'),
+      'An operator-owned Secret must not be deleted with the recipe');
     assert.deepEqual(Object.keys(template.outputs.result.value.values).sort(), ['accountName', 'endpoint']);
     assert.deepEqual(Object.keys(template.outputs.result.value.secrets).sort(), ['accountKey', 'connectionString']);
     assert.equal(template.outputs.result.value.resources.length, 4);
 
-    // Snapshot only dummy credentials, never a production secure parameter.
-    fs.writeFileSync(recipe, source.replace(/^@secure\(\)\r?\n/m, ''));
+    // Snapshots cannot fetch existing Kubernetes objects. Substitute only that
+    // external read, and still evaluate the recipe's base64 decoding and outputs.
+    fs.writeFileSync(recipe, source.replace('credentialSource.data.accountKey',
+      `'${Buffer.from(key).toString('base64')}'`));
     for (const custom of [false, true]) {
       const params = path.join(dir, 'test.bicepparam');
       fs.writeFileSync(params, `using './recipe.bicep'
-param objectStorageAccountKey = '${key}'
 param context = {
   runtime: { kubernetes: { namespace: 'storage-test' } }
   resource: {

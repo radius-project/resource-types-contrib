@@ -1,7 +1,6 @@
 mock_provider "kubernetes" {}
 
 variables {
-  objectStorageAccountKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
   context = {
     application = null
     environment = null
@@ -16,17 +15,17 @@ variables {
 }
 
 run "defaults" {
-  command = plan
+  command = apply
   assert {
     condition     = output.result.values.endpoint == "http://store-blob.storage-test.svc.cluster.local:10000/radiusstorage" && output.result.values.accountName == "radiusstorage"
     error_message = "Use an in-namespace path-style Blob endpoint and the configured account."
   }
   assert {
-    condition     = output.result.secrets.connectionString == "DefaultEndpointsProtocol=http;AccountName=radiusstorage;AccountKey=${var.objectStorageAccountKey};BlobEndpoint=${output.result.values.endpoint};" && output.result.secrets.accountKey == var.objectStorageAccountKey
+    condition     = output.result.secrets.connectionString == "DefaultEndpointsProtocol=http;AccountName=radiusstorage;AccountKey=${random_bytes.account_key.base64};BlobEndpoint=${output.result.values.endpoint};" && output.result.secrets.accountKey == random_bytes.account_key.base64 && can(regex("^[A-Za-z0-9+/]{86}==$", output.result.secrets.accountKey))
     error_message = "Return consistent credentials in the Radius secrets contract."
   }
   assert {
-    condition     = kubernetes_secret_v1.credentials.data.accounts == "radiusstorage:${var.objectStorageAccountKey}" && kubernetes_deployment_v1.blob.spec[0].template[0].spec[0].container[0].env[0].value_from[0].secret_key_ref[0].key == "accounts"
+    condition     = kubernetes_secret_v1.credentials.data.accounts == "radiusstorage:${random_bytes.account_key.base64}" && kubernetes_deployment_v1.blob.spec[0].template[0].spec[0].container[0].env[0].value_from[0].secret_key_ref[0].key == "accounts"
     error_message = "Azurite must load its custom account from a Secret, not use the public emulator key."
   }
   assert {
@@ -64,10 +63,10 @@ run "custom_container_and_storage" {
   }
 }
 
-run "invalid_key" {
-  command = plan
-  variables {
-    objectStorageAccountKey = "public-or-invalid-key"
+run "reapply_keeps_key" {
+  command = apply
+  assert {
+    condition     = output.result.secrets.accountKey == run.defaults.result.secrets.accountKey && kubernetes_secret_v1.credentials.data.accounts == "radiusstorage:${run.defaults.result.secrets.accountKey}"
+    error_message = "Repeated applies must preserve the state-backed random key and server credentials."
   }
-  expect_failures = [var.objectStorageAccountKey]
 }

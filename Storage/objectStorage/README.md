@@ -51,25 +51,44 @@ Changing `containerName` creates a new container but does not delete the old one
 
 ### Platform parameters
 
-| Parameter | Default | Description |
-| --- | --- | --- |
-| `objectStorageAccountKey` | Required | Base64 encoding of 64 random bytes. Supply it through secure recipe parameters and keep it stable across redeployments. Do not use the public Azurite development key. |
-| `objectStorageStorageSize` | `1Gi` | PVC capacity. The cluster needs a volume provisioner or a matching pre-provisioned volume. |
-| `objectStorageStorageClassName` | Empty | Use the cluster default StorageClass. Set a name to use a specific class. |
+| Parameter | Variant | Default | Description |
+| --- | --- | --- | --- |
+| `objectStorageCredentialsSecretName` | Bicep only | `<resource-name>-blob-credentials` | Name of an existing Secret in the runtime namespace. Its `accountKey` entry holds the base64 encoding of 64 random bytes. |
+| `objectStorageStorageSize` | Both | `1Gi` | PVC capacity. The cluster needs a volume provisioner or a matching pre-provisioned volume. |
+| `objectStorageStorageClassName` | Both | Empty | Use the cluster default StorageClass. Set a name to use a specific class. |
 
-Generate the key in a trusted platform setup process with a cryptographic random
-generator. Store it in the platform's secret store, not in source control or logs.
-Use different keys for stores that need separate access. A pack-wide key grants
-access to every Azurite instance that uses that key.
-The Bicep parameter is secure; the Terraform variable and `result` are sensitive.
-Terraform state still contains secret values and must have encrypted storage and
-restricted access. Bicep returns credentials only in the required `result.secrets`
-contract; do not print or retain raw recipe deployment outputs.
+**Never put an account key in Recipe Pack or developer recipe parameters.**
+Radius stores these parameters without encryption or redaction; a Bicep
+`@secure()` parameter would not protect their stored values.
 
-No random Bicep default is used. Radius does not pass previous resolved parameter
-defaults to each recipe deployment. Thus `newGuid()` would not preserve a key.
-This required key is a **zero-configuration default-pack integration blocker**:
-the pack must supply a secure, stable key before it can register this recipe for use.
+Before deploying Bicep, create the named Secret directly in the runtime namespace
+through a trusted platform setup process. Generate its key with a cryptographic
+random generator, keep it stable across redeployments, and do not use the public
+Azurite key. The `accountKey` value is an 88-character base64 string with no
+trailing newline. When authoring a Secret manifest, Kubernetes `data.accountKey`
+is the base64 encoding of that string (two encoding layers); `stringData.accountKey`
+is the string itself. The deployment identity needs permission to read the Secret.
+Only the Secret name is passed through recipe parameters. Missing Secrets or
+`accountKey` entries fail the deployment; no public-key fallback is used.
+The recipe creates a separate managed `accounts` Secret for the Pod and does not
+delete or overwrite the operator's source Secret.
+
+Terraform has no credential parameter. It generates 64 random bytes with the
+`hashicorp/random` provider and keeps them in the recipe's Terraform state.
+Repeated applies preserve the key. State loss or explicit resource replacement
+generates a different key; keep state storage encrypted and access restricted.
+The Terraform `result` is sensitive, but state still contains the secret values.
+Do not pass a generated key back into a Recipe Pack parameter.
+
+Use different source Secrets for stores that need separate access. Reusing the
+same key grants access to every Azurite instance that uses it. Both variants
+return credentials in the required `result.secrets` contract; do not print or
+retain raw recipe deployment outputs. No random Bicep default is used: Radius
+does not pass previous resolved defaults to each recipe deployment, so
+`newGuid()` would not preserve a key.
+
+The Bicep source Secret is still a **zero-configuration default-pack integration
+requirement**: platform setup must create it before the recipe can run.
 
 ### Output and storage contract
 
@@ -89,16 +108,19 @@ is not encrypted. Restrict access to trusted development workloads.
 
 A single Deployment uses `Recreate` and a `ReadWriteOnce` PVC mounted at `/data`.
 The PVC keeps Blob data and metadata across Pod restarts and recipe updates.
-Key changes restart the Pod and invalidate previous client credentials; refresh
-all consumers. There is no high availability, backup, production durability
+For Bicep key rotation, update the source Secret and redeploy the Radius resource;
+the source Secret is read at deployment time, not watched. The recipe then updates
+the managed Secret and restarts the Pod. Key changes invalidate previous client
+credentials; refresh all consumers. There is no high availability, backup, production durability
 guarantee, Azure identity integration, or production performance support.
 Use Azure Blob Storage for production workloads.
 
-`result.resources` tracks the Secret, PVC, Deployment, and Service for Radius
+`result.resources` tracks the managed Secret, PVC, Deployment, and Service for Radius
 cleanup. Deleting the Radius resource deletes the claim and can delete all data,
 subject to the StorageClass reclaim policy. A `Retain` policy requires manual
 volume cleanup. PVC size decreases and StorageClass changes are not supported;
-create a new resource and migrate data instead.
+create a new resource and migrate data instead. The external Bicep credentials
+Secret is operator-owned and is not included in cleanup IDs.
 
 ### Publication and validation
 
@@ -111,16 +133,25 @@ publisher produces `objectStorage-kubernetes.zip`. These recipes do not themselv
 change the default pack or the central publication workflow.
 
 Run local contract checks from the repository root with Radius Bicep, Node.js,
-and Terraform 1.7 or later (mock-provider tests):
+Python 3, Bash, and Terraform 1.7 or later:
 
 ```bash
 node --test .github/scripts/tests/test-objectstorage.js
+bash .github/scripts/tests/test-objectstorage-secret.sh
 terraform -chdir=Storage/objectStorage/recipes/kubernetes/terraform init -backend=false -input=false
 terraform -chdir=Storage/objectStorage/recipes/kubernetes/terraform validate
 terraform -chdir=Storage/objectStorage/recipes/kubernetes/terraform test
 ```
 
-The Node suite checks Bicep snapshots and probe parity with Terraform. To also
+The Node suite compiles the existing Secret reference and checks Bicep snapshots
+and probe parity with Terraform. Snapshots substitute only the external Secret
+read; they evaluate base64 decoding and resource properties with a fixture key.
+The compiled template checks cover the output contract, but do not prove a live
+Kubernetes Secret GET. The shell
+suite checks direct Secret setup, name-only app parameters, ownership-safe
+cleanup, and failure handling without a cluster. Terraform tests use mocked
+Kubernetes objects but the real random provider to check key persistence across
+repeated applies. To also
 test real container creation, Blob upload/download, invalid credentials, and
 data retention after an Azurite restart, install Azurite 3.35.0 in a temporary
 directory and set `AZURITE_CLI` to its `node_modules/azurite/dist/src/blob/main.js`.
@@ -131,8 +162,15 @@ Without `AZURITE_CLI`, only this service test is skipped.
 For end-to-end Radius validation, use a dedicated test cluster with a default
 StorageClass. Publish the Bicep recipe with `rad bicep publish` and publish the
 Terraform directory with `make build-terraform-recipe`. Register each variant in
-turn in a Recipe Pack with the required key, attach the pack to the test
-Environment, then run `make test-recipe` with this variant's `RECIPE_PATH`.
+turn in a Recipe Pack without any secret-valued parameters, attach the pack to the
+test Environment, then run `make test-recipe` with this variant's `RECIPE_PATH`.
+For Bicep, the runner dispatches to `test/test-kubernetes.sh <workspace> <environment>`.
+This helper creates a unique resource name and its matching source Secret by
+piping a generated manifest directly to `kubectl create -f -`. It passes only
+`objectStorageResourceName` to `test/kubernetes/app.bicep`, then deletes the source
+Secret only after confirmed creation. Use the default Secret-name parameter for
+this test. The helper does not change the Environment namespace or Recipe Pack.
 See the [testing guide](../../docs/contributing/testing-resource-types-recipes.md).
-The shared `test/app.bicep` checks provisioning and secret wiring only; it does
-not perform Blob operations. The localhost Azurite test checks those operations.
+The dedicated Kubernetes app checks provisioning. The shared `test/app.bicep`
+also checks consumer secret wiring. Neither performs Blob operations; the
+localhost Azurite test checks those operations.

@@ -5,6 +5,10 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = ">= 2.37.1"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = ">= 3.6.0"
+    }
   }
 }
 
@@ -12,6 +16,7 @@ locals {
   resource_name  = "${var.context.resource.name}-blob"
   namespace      = var.context.runtime.kubernetes.namespace
   account_name   = "radiusstorage"
+  account_key    = random_bytes.account_key.base64
   container_name = try(var.context.resource.properties.containerName, null) == null ? "data" : var.context.resource.properties.containerName
   endpoint       = "http://${local.resource_name}.${local.namespace}.svc.cluster.local:10000/${local.account_name}"
   labels = {
@@ -56,6 +61,10 @@ request.end();
 JS
 }
 
+resource "random_bytes" "account_key" {
+  length = 64
+}
+
 resource "kubernetes_secret_v1" "credentials" {
   metadata {
     name      = local.resource_name
@@ -63,7 +72,7 @@ resource "kubernetes_secret_v1" "credentials" {
     labels    = local.labels
   }
   data = {
-    accounts = "${local.account_name}:${var.objectStorageAccountKey}"
+    accounts = "${local.account_name}:${local.account_key}"
   }
   type = "Opaque"
 }
@@ -105,7 +114,7 @@ resource "kubernetes_deployment_v1" "blob" {
       metadata {
         labels = local.labels
         annotations = {
-          "radapp.io/credential-hash" = sha256(var.objectStorageAccountKey)
+          "radapp.io/credential-hash" = sha256(local.account_key)
         }
       }
       spec {
@@ -201,8 +210,8 @@ output "result" {
       accountName = local.account_name
     }
     secrets = {
-      accountKey       = var.objectStorageAccountKey
-      connectionString = "DefaultEndpointsProtocol=http;AccountName=${local.account_name};AccountKey=${var.objectStorageAccountKey};BlobEndpoint=${local.endpoint};"
+      accountKey       = local.account_key
+      connectionString = "DefaultEndpointsProtocol=http;AccountName=${local.account_name};AccountKey=${local.account_key};BlobEndpoint=${local.endpoint};"
     }
   }
   sensitive = true

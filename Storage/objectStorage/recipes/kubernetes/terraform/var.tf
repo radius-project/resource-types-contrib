@@ -3,17 +3,6 @@ variable "context" {
   type        = any
 }
 
-variable "objectStorageAccountKey" {
-  description = "Platform-supplied base64 encoding of 64 random bytes. Keep stable across deployments. No emulator default key is used."
-  type        = string
-  sensitive   = true
-  nullable    = false
-  validation {
-    condition     = can(regex("^[A-Za-z0-9+/]{86}==$", var.objectStorageAccountKey))
-    error_message = "objectStorageAccountKey must be a base64-encoded 64-byte random key."
-  }
-}
-
 variable "objectStorageStorageSize" {
   description = "Persistent volume size. The cluster must have a matching volume provisioner."
   type        = string
