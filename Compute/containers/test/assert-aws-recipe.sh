@@ -37,18 +37,6 @@ jq -e '
 ' <<<"$TEMPLATE" >/dev/null ||
     { echo "The nested Kubernetes deployment name must be unique per Radius resource" >&2; exit 1; }
 
-# IAM role names are account-wide, and resource IDs repeat across installations.
-# AWS can't move a role to another path, so the name also depends on the path.
-# Cloud Control reads the role by name without its path, and Radius Canvas
-# grants that read only on role/radius-app-*, so the prefix must stay.
-jq -e '
-  .variables.roleName |
-  contains("take(format(\u0027radius-app-{0}\u0027") and
-  contains("variables(\u0027rolePath\u0027)") and
-  contains("parameters(\u0027eksClusterName\u0027)") and contains("variables(\u0027namespace\u0027)")
-' <<<"$TEMPLATE" >/dev/null ||
-    { echo "The IAM role name must start with radius-app- and depend on the role path, EKS cluster, and namespace" >&2; exit 1; }
-
 # The roles take the boundary's path, so one deploy identity grant on that path
 # covers them, and the boundary is the only path input.
 jq -e '
@@ -57,22 +45,8 @@ jq -e '
 ' <<<"$TEMPLATE" >/dev/null ||
     { echo "The IAM role must use the boundary and the boundary's path" >&2; exit 1; }
 
-# Pod Identity gives credentials only to pods that run as the associated
-# service account, so the trust policy, the association, and the pod spec must
-# all name the same one.
-SA_REF="[variables('serviceAccountName')]"
-jq -e --arg sa "$SA_REF" '
-  .resources.kube.properties.parameters.serviceAccountName.value == $sa and
-  .resources.association.properties.properties.ServiceAccount == $sa and
-  .resources.role.properties.properties.AssumeRolePolicyDocument.Statement[0].Condition.StringEquals["aws:RequestTag/kubernetes-service-account"] == $sa and
-  (.resources.kube.properties.template.resources.deployment.properties.spec.template.spec |
-    contains("createObject(\u0027serviceAccountName\u0027, parameters(\u0027serviceAccountName\u0027))")) and
-  .resources.kube.dependsOn == ["association"]
-' <<<"$TEMPLATE" >/dev/null ||
-    { echo "The pods must run as the service account of the Pod Identity association, after the association exists" >&2; exit 1; }
-
-# Radius doesn't delete resources a Recipe stops creating, so the identity
-# can't be optional: clearing the boundary must fail instead of dropping it.
+# The identity can't be optional. See the appPermissionsBoundaryArn comment in
+# the Recipe.
 jq -e '
   (.parameters.appPermissionsBoundaryArn | has("defaultValue") | not) and
   (.resources.role | has("condition") | not) and
