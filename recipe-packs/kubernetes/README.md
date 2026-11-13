@@ -59,7 +59,7 @@ kubectl create secret generic <resource-name>-blob-credentials \
 
 `--from-file` adds Kubernetes' base64 encoding. The object storage file must itself contain the base64 account key, not raw random bytes. Do not copy secret files into this repository.
 
-Keep the Secrets stable across redeployments. The operator owns backup and rotation; resource cleanup must not delete these supplied Secrets. MongoDB password changes need the database's rotation procedure, not only a Secret update. See [MongoDB](../../Data/mongoDatabases/README.md) and [objectStorage](../../Storage/objectStorage/README.md) for the Recipe contracts and rotation limits.
+Keep the Secrets stable when you deploy a resource again. The operator owns backup and rotation; resource cleanup must not delete these supplied Secrets. MongoDB password changes need the database's rotation procedure, not only a Secret update. See [MongoDB](../../Data/mongoDatabases/README.md) and [objectStorage](../../Storage/objectStorage/README.md) for the Recipe contracts and rotation limits.
 
 The pack stores no password or account key. Bicep secret inputs must use `@secure()`, but that annotation does not protect a value copied into a stored `RecipePack.parameters` property. Store only Secret names in Recipe configuration. Do not add a generated password as a pack default.
 
