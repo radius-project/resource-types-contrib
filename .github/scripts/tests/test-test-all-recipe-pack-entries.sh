@@ -476,6 +476,71 @@ fi
 cp "$TEST_ROOT/budget-aks.bicep" "$aks_pack"
 cp "$TEST_ROOT/budget-aci.bicep" "$aci_pack"
 
+# Credential setup belongs only to Bicep entries; Terraform retains its own state.
+mkdir -p "$FIXTURE_ROOT/Data/mongoDatabases/test" "$FIXTURE_ROOT/Storage/objectStorage/test"
+touch "$FIXTURE_ROOT/Data/mongoDatabases/test/app.bicep" "$FIXTURE_ROOT/Storage/objectStorage/test/app.bicep"
+for kind in bicep terraform; do
+    cat >"$FIXTURE_ROOT/recipe-packs/kubernetes/default.bicep" <<EOF
+resource pack 'Radius.Core/recipePacks@2025-08-01-preview' = {
+  name: 'default'
+  properties: {
+    recipes: {
+      'Radius.Data/mongoDatabases': {
+        kind: '$kind'
+        source: 'fixture-mongodb'
+      }
+      'Radius.Storage/objectStorage': {
+        kind: '$kind'
+        source: 'fixture-objectstorage'
+      }
+    }
+  }
+}
+EOF
+    : >"$CALL_LOG"
+    run_driver kubernetes kubernetes-ws kubernetes-env >/dev/null ||
+        fail "expected $kind credential entries to be dispatched"
+    mode=""
+    [[ "$kind" != bicep ]] || mode=" verify-kubernetes-credentials"
+    for type_dir in Data/mongoDatabases Storage/objectStorage; do
+        grep -Fxq "test-recipe-pack-entry.sh $type_dir kubernetes-ws kubernetes-env$mode" "$CALL_LOG" ||
+            fail "$kind $type_dir must use the matching test mode"
+    done
+done
+
+mkdir -p "$FIXTURE_ROOT/Data/sqlServerDatabases/test"
+touch "$FIXTURE_ROOT/Data/sqlServerDatabases/test/app.bicep"
+cat >"$FIXTURE_ROOT/recipe-packs/kubernetes/default.bicep" <<'EOF'
+resource pack 'Radius.Core/recipePacks@2025-08-01-preview' = {
+  name: 'default'
+  properties: {
+    recipes: {
+      'Radius.Data/sqlServerDatabases': {
+        kind: 'bicep'
+        source: 'fixture-sqlserver'
+      }
+    }
+  }
+}
+EOF
+for consent in "" N invalid Y; do
+    : >"$CALL_LOG"
+    status=0
+    RTC_SQLSERVER_ACCEPT_EULA="$consent" run_driver kubernetes kubernetes-ws kubernetes-env \
+        >"$TEST_ROOT/sql-entry.log" 2>&1 || status=$?
+    if [[ "$consent" == invalid ]]; then
+        [[ "$status" != 0 ]] || fail "invalid SQL consent must fail the pack runner"
+    else
+        [[ "$status" == 0 ]] || fail "valid SQL consent state must not fail the pack runner"
+    fi
+    if [[ "$consent" == Y ]]; then
+        grep -Fxq 'test-recipe-pack-entry.sh Data/sqlServerDatabases kubernetes-ws kubernetes-env' "$CALL_LOG" ||
+            fail "explicit opt-in must retain the SQL entry"
+    else
+        [[ ! -s "$CALL_LOG" ]] || fail "SQL-only pack must not access the cluster without consent"
+    fi
+done
+
 python3 - "$REPO_ROOT" <<'PY'
 import os
 from pathlib import Path

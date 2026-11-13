@@ -52,6 +52,27 @@ fi
 RESOURCE_TYPE_PATH="$(realpath --relative-to="$(pwd)" "$RESOURCE_TYPE_PATH" 2>/dev/null || echo "$RESOURCE_TYPE_PATH")"
 RESOURCE_TYPE_PATH="${RESOURCE_TYPE_PATH#./}"
 
+if [[ "$RESOURCE_TYPE_PATH" == Data/sqlServerDatabases && "${RTC_TEST_PLATFORM:-}" == kubernetes ]]; then
+    # shellcheck source=.github/scripts/lib-sqlserver-eula.sh
+    source "$SCRIPT_DIR/lib-sqlserver-eula.sh"
+    SQLSERVER_EULA="$(rtc_read_sqlserver_eula)"
+    [[ "$SQLSERVER_EULA" == Y ]] || exit 0
+fi
+
+if [[ "$TEST_MODE" == verify-kubernetes-credentials ]]; then
+    if [[ "${RTC_TEST_PLATFORM:-}" != kubernetes ||
+          ( "$RESOURCE_TYPE_PATH" != Data/mongoDatabases && "$RESOURCE_TYPE_PATH" != Storage/objectStorage ) ]]; then
+        echo "Error: Kubernetes credential tests require a supported Kubernetes Recipe Pack entry." >&2
+        exit 1
+    fi
+    helper="$RESOURCE_TYPE_PATH/test/test-kubernetes.sh"
+    if [[ ! -f "$helper" ]]; then
+        echo "Error: Kubernetes credential test helper not found: $helper" >&2
+        exit 1
+    fi
+    exec bash "$helper" "$WORKSPACE_NAME" "$ENVIRONMENT_NAME"
+fi
+
 TEST_FILE="$RESOURCE_TYPE_PATH/test/app.bicep"
 if [[ "$RESOURCE_TYPE_PATH" == "Data/postgreSqlDatabases" &&
     -n "${RTC_POSTGRES_TEST_HARNESS+x}" ]]; then
