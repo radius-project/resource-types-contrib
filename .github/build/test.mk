@@ -67,6 +67,7 @@ generate-recipe-pack: ## Generate a recipe pack Bicep template from available re
 .PHONY: test-generate-recipe-pack-empty
 test-generate-recipe-pack-empty: ## Test empty Recipe Pack output cleanup (no live environment needed)
 	@bash ./.github/scripts/tests/test-generate-recipe-pack-empty.sh
+	@bash ./.github/scripts/tests/test-sqlserver-eula.sh
 
 .PHONY: deploy-recipe-pack
 deploy-recipe-pack: ## Deploy a recipe pack using a Bicep template (requires BICEP_FILE parameter)

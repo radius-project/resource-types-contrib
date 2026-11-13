@@ -72,6 +72,13 @@ RESOURCE_TYPE="Radius.$CATEGORY/$RESOURCE_NAME"
 RECIPES_RELATIVE="${RECIPE_PATH#"${RESOURCE_TYPE_PATH}"/recipes/}"
 PLATFORM="${RECIPES_RELATIVE%%/*}"
 
+if [[ "$RESOURCE_TYPE" == Radius.Data/sqlServerDatabases && "$PLATFORM" == kubernetes ]]; then
+    # shellcheck source=.github/scripts/lib-sqlserver-eula.sh
+    source "$SCRIPT_DIR/lib-sqlserver-eula.sh"
+    SQLSERVER_EULA="$(rtc_read_sqlserver_eula)"
+    [[ "$SQLSERVER_EULA" == Y ]] || exit 0
+fi
+
 # Determine workspace and environment names based on platform (with overrides)
 RADIUS_WORKSPACE_OVERRIDE="${RADIUS_WORKSPACE_OVERRIDE:-}"
 RADIUS_ENVIRONMENT_OVERRIDE="${RADIUS_ENVIRONMENT_OVERRIDE:-}"

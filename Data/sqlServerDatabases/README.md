@@ -25,6 +25,114 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 | Platform | Recipe Pack | Recipe source |
 | --- | --- | --- |
 | Azure | [`recipe-packs/azure-aks/azure-aks.bicep`](../../recipe-packs/azure-aks/azure-aks.bicep) | Direct module — Azure Verified Module `mcr.microsoft.com/bicep/avm/res/sql/server:0.21.4` |
+| Kubernetes | Register either Recipe in an Environment Recipe Pack | [Bicep](recipes/kubernetes/bicep/kubernetes-sqlserver.bicep) or [Terraform](recipes/kubernetes/terraform/main.tf) |
+
+## Kubernetes Recipe
+
+These Recipes run SQL Server 2022 CU28 **Developer edition**, for development
+and test only. They are not a production or high-availability database service.
+The operator must read and accept the [Microsoft SQL Server license
+terms](https://go.microsoft.com/fwlink/?linkid=857698) before setting the required
+Recipe parameter `sqlServerAcceptEula` to `Y`. Neither Recipe supplies consent
+by default. Do not configure this Recipe as an unattended default without that
+operator decision.
+
+Both Recipes require Linux **amd64** nodes (not ARM or emulation), two available
+CPUs, at least 3 GiB of available container memory, and a default StorageClass
+with ReadWriteOnce storage that supports UID/GID 10001 through `fsGroup`.
+The container requests 2 GiB and limits memory to 3 GiB; SQL Server's memory
+target is 2048 MB. `sqlServerStorageSize` defaults to `8Gi`. Set a larger value
+before the first deployment when needed. The namespace comes from the Radius
+context; the Recipe does not create or change it.
+
+The Recipes create a PVC, a Secret, a single-replica Deployment with `Recreate`
+updates, and an internal ClusterIP Service. SQL Server creates the requested
+non-system `database` and the supplied SQL login. A non-`sa` login receives
+`sysadmin`, consistent with the resource's administrator contract; do not use
+this login for an untrusted application. Both `sa` and that login use the
+supplied password, which must meet SQL Server password policy. Login and database
+names must contain 1 to 128 UTF-16 code units. SQL identifiers and string
+literals are escaped; sqlcmd variable substitution is disabled.
+
+Readiness requires a successful query against the requested database as the
+requested login, not just an open socket. Connections use port **1433**;
+an input `port` does not change it. SQL Server uses its generated certificate.
+The local probe trusts that certificate (`sqlcmd -C`); applications must configure
+their own TLS trust. This Recipe does not supply a public CA certificate.
+
+Data survives Pod replacement. Keep the same database, username and password
+when redeploying an existing PVC. Changing resource properties is not a supported
+credential-rotation or database-rename procedure: SQL Server retains the original
+`sa` password in its system database. Use an operator-managed SQL maintenance
+procedure for such changes. A Secret update does not restart the Pod.
+All four objects, including the PVC, are listed in `result.resources`.
+**Deleting the Radius resource deletes the PVC and can delete all database data**,
+subject to the StorageClass reclaim policy. Back up data outside this PVC.
+
+`result.values` contains `host` (`<name>.<namespace>.svc.cluster.local`), `port`
+(`1433`) and `database`. The user supplies credentials through the sensitive
+resource input, so the Recipes do not return a second copy in `result.secrets`.
+Kubernetes stores the password in a Secret, not a command argument or ConfigMap.
+Enable Kubernetes Secret encryption and restrict RBAC. Terraform state also
+contains the Secret: use an encrypted state store with restricted access.
+
+For either Recipe, set these Environment Recipe Pack parameters:
+
+```bicep
+parameters: {
+  // Only after the operator has accepted the license terms:
+  sqlServerAcceptEula: 'Y'
+  sqlServerStorageSize: '8Gi' // optional
+}
+```
+
+The Bicep compiler embeds `terraform/bootstrap.sh` into the published module.
+Keep that sibling directory when building from this repository.
+The Terraform package is self-contained and must include `bootstrap.sh`.
+The following checks require no cluster and start no SQL Server. They use mock
+executables/provider plans and the Radius-bundled Bicep compiler. Set `BICEP_CLI`
+if that compiler is not at `~/.rad/bin/bicep` (`bicep.exe` on Windows).
+
+```bash
+node --test .github/scripts/tests/test-sqlserver-kubernetes.js
+shellcheck Data/sqlServerDatabases/recipes/kubernetes/terraform/bootstrap.sh
+bash .github/scripts/tests/test-sqlserver-eula.sh
+terraform -chdir=Data/sqlServerDatabases/recipes/kubernetes/terraform init -backend=false
+terraform -chdir=Data/sqlServerDatabases/recipes/kubernetes/terraform validate
+terraform -chdir=Data/sqlServerDatabases/recipes/kubernetes/terraform test
+```
+
+See the [testing guide](../../docs/contributing/testing-resource-types-recipes.md)
+for local publishing and Recipe Pack registration. In a **dedicated** test
+environment, register the Recipe with explicit license consent, then run:
+
+```bash
+# Only after the operator has accepted the Microsoft SQL Server license terms:
+export RTC_SQLSERVER_ACCEPT_EULA=Y
+make test-recipe RECIPE_PATH=Data/sqlServerDatabases/recipes/kubernetes/bicep
+make test-recipe RECIPE_PATH=Data/sqlServerDatabases/recipes/kubernetes/terraform
+```
+
+The generated test packs and the Recipe test runner also require that explicit
+opt-in. With `RTC_SQLSERVER_ACCEPT_EULA` unset, empty, or `N`, pack generation
+omits only the Kubernetes SQL Server entry and the runner prints a skip reason
+before any workspace or cluster command. An invalid value is an error. Azure SQL
+and other resource types are not affected. Ordinary CI has no license opt-in:
+it still builds both Recipes, but skips their live deployment tests.
+
+After acceptance, keep `RTC_SQLSERVER_ACCEPT_EULA=Y` set while generating,
+deploying and testing the test pack. Generation then includes the SQL Server
+entry and maps `sqlServerAcceptEula: 'Y'` for either language. An earlier pack
+generated without opt-in must be generated and deployed again; setting the
+variable only for `make test-recipe` does not change an existing pack.
+Neither script grants consent or changes an Environment by itself. For manually
+authored packs, set the required Recipe parameter yourself. No checked-in default
+pack or workflow supplies consent.
+
+The existing test app uses the non-`sa` login `radadmin` and database `appdb`.
+Its demo container has no SQL Server backend. Deployment readiness checks the SQL
+login and database; this app alone does not test application SQL queries or
+data persistence. Do not run these deployment tests against a shared cluster.
 
 ## Using the resource type
 
