@@ -6,6 +6,9 @@ param environment string
 @description('Application name. CI supplies a unique name for deployment and cleanup.')
 param applicationName string = 'objectstorage-azure-test'
 
+@description('Storage resource name. The Kubernetes test helper supplies a unique name matching its credentials Secret.')
+param objectStorageResourceName string = 'store'
+
 resource app 'Radius.Core/applications@2025-08-01-preview' = {
   name: applicationName
   properties: {
@@ -14,7 +17,7 @@ resource app 'Radius.Core/applications@2025-08-01-preview' = {
 }
 
 resource store 'Radius.Storage/objectStorage@2025-08-01-preview' = {
-  name: 'store'
+  name: objectStorageResourceName
   properties: {
     environment: environment
     application: app.id

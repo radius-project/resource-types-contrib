@@ -167,10 +167,12 @@ test Environment, then run `make test-recipe` with this variant's `RECIPE_PATH`.
 For Bicep, the runner dispatches to `test/test-kubernetes.sh <workspace> <environment>`.
 This helper creates a unique resource name and its matching source Secret by
 piping a generated manifest directly to `kubectl create -f -`. It passes only
-`objectStorageResourceName` to `test/kubernetes/app.bicep`, then deletes the source
+`objectStorageResourceName` to the shared `test/app.bicep`, then deletes the source
 Secret only after confirmed creation. Use the default Secret-name parameter for
 this test. The helper does not change the Environment namespace or Recipe Pack.
 See the [testing guide](../../docs/contributing/testing-resource-types-recipes.md).
-The dedicated Kubernetes app checks provisioning. The shared `test/app.bicep`
-also checks consumer secret wiring. Neither performs Blob operations; the
-localhost Azurite test checks those operations.
+All platforms use the same `test/app.bicep`, which checks provisioning and consumer
+secret wiring with `containerName: 'data'`. Its storage resource name defaults to
+`store`, preserving Azure and Terraform defaults. The Kubernetes Bicep helper
+supplies a unique name to match its source Secret. The app does not perform Blob
+operations; the localhost Azurite test checks those operations.

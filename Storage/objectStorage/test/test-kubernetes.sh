@@ -53,6 +53,6 @@ PY
 secret_created=true
 
 RTC_TEST_PLATFORM=kubernetes rtc_deploy_and_assert_test_app \
-    "$SCRIPT_DIR/kubernetes/app.bicep" Radius.Storage/objectStorage \
+    "$SCRIPT_DIR/app.bicep" Radius.Storage/objectStorage \
     "$resource_name" "$environment_id" "$workspace" "$namespace" \
     --parameters "objectStorageResourceName=$resource_name"

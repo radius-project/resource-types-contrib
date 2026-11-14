@@ -6,12 +6,14 @@ TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/rtc-objectstorage-secret-XXXXXX")"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 mkdir -p "$TEST_ROOT/repo/Storage/objectStorage/test" "$TEST_ROOT/repo/.github/scripts" "$TEST_ROOT/bin"
 cp "$REPO_ROOT/Storage/objectStorage/test/test-kubernetes.sh" "$TEST_ROOT/repo/Storage/objectStorage/test/"
+cp "$REPO_ROOT/Storage/objectStorage/test/app.bicep" "$TEST_ROOT/repo/Storage/objectStorage/test/"
 export TEST_CALLS="$TEST_ROOT/calls"
 export TEST_MANIFEST="$TEST_ROOT/manifest"
 cat >"$TEST_ROOT/repo/.github/scripts/lib-recipe-test.sh" <<'EOF'
 rtc_ensure_workspace_context() { printf 'workspace %s\n' "$*" >>"$TEST_CALLS"; }
 rtc_resolve_environment_path() { printf '/test/environment\t%s\n' "${TEST_NAMESPACE-fixture}"; }
 rtc_deploy_and_assert_test_app() {
+    [[ -f "$1" ]] || return 1
     printf 'deploy %s\n' "$*" >>"$TEST_CALLS"
     return "${TEST_DEPLOY_STATUS:-0}"
 }
@@ -54,6 +56,7 @@ assert len(base64.b64decode(key, validate=True)) == 64
 assert key not in calls and key not in output
 assert "kubectl create --namespace fixture --request-timeout=30s -f - -o name" in calls
 assert "objectStorageResourceName=" + name.removesuffix("-blob-credentials") in calls
+assert "/Storage/objectStorage/test/app.bicep Radius.Storage/objectStorage " in calls
 assert "kubectl delete secret " + name + " --namespace fixture" in calls
 assert "isolated-workspace" in calls and "/test/environment" in calls
 assert "--all" not in calls and "recipeParameters" not in calls
