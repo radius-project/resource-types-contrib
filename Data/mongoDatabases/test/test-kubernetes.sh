@@ -44,6 +44,51 @@ fi
 created=true
 unset password
 
-rtc_deploy_and_assert_test_app "$SCRIPT_DIR/kubernetes/app.bicep" \
+# The shared runner calls this assertion before deleting the test application.
+rtc_assert_recipe_result() {
+    local app_name="$2" namespace="$4" deployment
+    local selector="radapp.io/application=$app_name,radapp.io/resource=democontainer"
+    if ! kubectl wait deployment -n "$namespace" -l "$selector" \
+        --for=condition=Available --timeout=180s; then
+        echo "Error: MongoDB demo client is not available." >&2
+        return 1
+    fi
+    if ! deployment=$(kubectl get deployment -n "$namespace" -l "$selector" -o json |
+        jq -er 'if (.items | length) == 1 then .items[0].metadata.name else error("expected one demo deployment") end'); then
+        echo "Error: Could not select the MongoDB demo client deployment." >&2
+        return 1
+    fi
+    # shellcheck disable=SC2016 # $set is a literal MongoDB update operator.
+    if ! kubectl exec -n "$namespace" "deployment/$deployment" -c demo -- node -e '
+(async () => {
+    const { MongoClient } = require("mongodb");
+    const client = new MongoClient(process.env.MONGODB_CONNECTIONSTRING, {
+        serverSelectionTimeoutMS: 10000,
+        connectTimeoutMS: 10000,
+        socketTimeoutMS: 10000
+    });
+    try {
+        await client.connect();
+        const collection = client.db("mongo_db").collection("radius_recipe_test");
+        await collection.updateOne({_id: "connection"}, {$set: {value: "ok"}}, {upsert: true});
+        const document = await collection.findOne({_id: "connection"});
+        if (document?.value !== "ok") {
+            throw new Error("MongoDB test value did not match.");
+        }
+    } finally {
+        await client.close();
+    }
+})().catch(() => {
+    console.error("MongoDB authenticated write/read failed.");
+    process.exitCode = 1;
+});
+'; then
+        echo "Error: MongoDB demo client could not write/read through its managed connection-string Secret." >&2
+        return 1
+    fi
+    echo "==> MongoDB authenticated write/read passed"
+}
+
+rtc_deploy_and_assert_test_app "$SCRIPT_DIR/app.bicep" \
     Radius.Data/mongoDatabases mongorecipetest "$environment_path" "$workspace" "$namespace" \
     --parameters "mongoResourceName=$resource_name"

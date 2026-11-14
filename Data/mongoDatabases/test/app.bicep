@@ -6,6 +6,9 @@ param environment string
 @description('Application name. CI supplies a unique name for deployment and cleanup.')
 param applicationName string = 'mongodb-azure-test'
 
+@description('Database resource name. Kubernetes test setup creates its matching credential Secret.')
+param mongoResourceName string = 'mongo'
+
 var databaseName = 'mongo_db'
 
 resource app 'Radius.Core/applications@2025-08-01-preview' = {
@@ -16,7 +19,7 @@ resource app 'Radius.Core/applications@2025-08-01-preview' = {
 }
 
 resource mongo 'Radius.Data/mongoDatabases@2025-08-01-preview' = {
-  name: 'mongo'
+  name: mongoResourceName
   properties: {
     environment: environment
     application: app.id

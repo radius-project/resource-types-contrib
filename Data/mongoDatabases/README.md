@@ -125,15 +125,16 @@ For deployment checks, use a dedicated test cluster and follow the
 [testing guide](../../docs/contributing/testing-resource-types-recipes.md).
 Publish each recipe with these commands, then register it in the test
 Environment or generate and attach its Recipe Pack before deploying
-[`test/kubernetes/app.bicep`](test/kubernetes/app.bicep). This test checks an
-authenticated write/read through the managed connection-string secret. The Bicep
+[`test/app.bicep`](test/app.bicep), which is shared by all platforms. The Bicep
 test runner calls [`test/test-kubernetes.sh`](test/test-kubernetes.sh), which
 creates a uniquely named test Secret directly in the test namespace and passes
-only the matching `mongoResourceName` to the test app. It deletes that exact
+only the matching `mongoResourceName` to the test app. Before application cleanup,
+the helper runs an authenticated write/read in the existing demo container,
+using its MongoDB driver and managed connection-string Secret. It deletes the test
 Secret after the application test, including when deployment fails. It never
 writes the password to a Recipe Pack or Environment. Terraform tests use the
-recipe's state-backed password generation. The existing
-[`test/app.bicep`](test/app.bicep) remains the Azure test.
+recipe's state-backed password generation. The shared app's demo behavior and
+default resource name are unchanged for Azure and Terraform.
 
 ```bash
 make build-bicep-recipe RECIPE_PATH=Data/mongoDatabases/recipes/kubernetes/bicep/kubernetes-mongodb.bicep
