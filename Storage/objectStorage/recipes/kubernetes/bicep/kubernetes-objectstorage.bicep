@@ -16,12 +16,13 @@ param objectStorageStorageSize string = '1Gi'
 @description('Storage class for the persistent volume. Empty uses the cluster default.')
 param objectStorageStorageClassName string = ''
 
-var resourceName = '${context.resource.name}-blob'
+var resourceName = 'os-${replace(guid(toLower(context.resource.id)), '-', '')}'
 var namespace = context.runtime.kubernetes.namespace
 var accountName = 'radiusstorage'
 var objectStorageAccountKey = base64ToString(credentialSource.data.accountKey)
 var containerName = context.resource.properties.?containerName ?? 'data'
 var labels = {
+  'radapp.io/objectstorage-id': resourceName
   'radapp.io/resource': resourceName
   'radapp.io/application': context.?application.?name ?? ''
   'radapp.io/environment': context.?environment.?name ?? ''
@@ -112,7 +113,7 @@ resource blob 'apps/Deployment@v1' = {
     }
     selector: {
       matchLabels: {
-        'radapp.io/resource': resourceName
+        'radapp.io/objectstorage-id': resourceName
       }
     }
     template: {
@@ -205,7 +206,7 @@ resource svc 'core/Service@v1' = {
   spec: {
     type: 'ClusterIP'
     selector: {
-      'radapp.io/resource': resourceName
+      'radapp.io/objectstorage-id': resourceName
     }
     ports: [{ port: 10000 }]
   }

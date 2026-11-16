@@ -17,7 +17,7 @@ variables {
 run "defaults" {
   command = apply
   assert {
-    condition     = output.result.values.endpoint == "http://store-blob.storage-test.svc.cluster.local:10000/radiusstorage" && output.result.values.accountName == "radiusstorage"
+    condition     = output.result.values.endpoint == "http://os-86714f77d094524c9728a373864ae138.storage-test.svc.cluster.local:10000/radiusstorage" && output.result.values.accountName == "radiusstorage"
     error_message = "Use an in-namespace path-style Blob endpoint and the configured account."
   }
   assert {
@@ -37,7 +37,7 @@ run "defaults" {
     error_message = "Use one persistent writer without a WaitForFirstConsumer dependency deadlock."
   }
   assert {
-    condition     = toset(output.result.resources) == toset(["/planes/kubernetes/local/namespaces/storage-test/providers/core/Secret/store-blob", "/planes/kubernetes/local/namespaces/storage-test/providers/core/PersistentVolumeClaim/store-blob", "/planes/kubernetes/local/namespaces/storage-test/providers/apps/Deployment/store-blob", "/planes/kubernetes/local/namespaces/storage-test/providers/core/Service/store-blob"])
+    condition     = toset(output.result.resources) == toset([for kind in ["core/Secret", "core/PersistentVolumeClaim", "apps/Deployment", "core/Service"] : "/planes/kubernetes/local/namespaces/storage-test/providers/${kind}/${local.resource_name}"])
     error_message = "Track all four Kubernetes objects for Radius cleanup."
   }
 }
@@ -68,5 +68,29 @@ run "reapply_keeps_key" {
   assert {
     condition     = output.result.secrets.accountKey == run.defaults.result.secrets.accountKey && kubernetes_secret_v1.credentials.data.accounts == "radiusstorage:${run.defaults.result.secrets.accountKey}"
     error_message = "Repeated applies must preserve the state-backed random key and server credentials."
+  }
+
+}
+
+run "same_name_other_resource_group" {
+  command = plan
+  variables {
+    context = {
+      runtime = { kubernetes = { namespace = "storage-test" } }
+      resource = {
+        id         = "/planes/radius/local/resourceGroups/other/providers/Radius.Storage/objectStorage/store"
+        name       = "store"
+        type       = "Radius.Storage/objectStorage"
+        properties = {}
+      }
+    }
+  }
+  assert {
+    condition     = output.result.values.endpoint != run.defaults.result.values.endpoint && can(regex("^os-[a-f0-9]{32}$", local.resource_name))
+    error_message = "Full resource IDs must produce distinct bounded names for same-name stores."
+  }
+  assert {
+    condition     = kubernetes_service_v1.blob.spec[0].selector["radapp.io/objectstorage-id"] == local.resource_name && kubernetes_deployment_v1.blob.spec[0].selector[0].match_labels["radapp.io/objectstorage-id"] == local.resource_name && kubernetes_deployment_v1.blob.spec[0].template[0].metadata[0].labels["radapp.io/objectstorage-id"] == local.resource_name
+    error_message = "Service and Deployment selectors must use the isolated object storage identity."
   }
 }

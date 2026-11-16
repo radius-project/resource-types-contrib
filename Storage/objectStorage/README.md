@@ -93,12 +93,19 @@ requirement**: platform setup must create it before the recipe can run.
 ### Output and storage contract
 
 `result.values` contains `accountName: radiusstorage` and
-`endpoint: http://<resource-name>-blob.<namespace>.svc.cluster.local:10000/radiusstorage`.
+`endpoint: http://<generated-name>.<namespace>.svc.cluster.local:10000/radiusstorage`.
 `result.secrets` contains `accountKey` and
 `connectionString: DefaultEndpointsProtocol=http;AccountName=radiusstorage;AccountKey=<key>;BlobEndpoint=<endpoint>;`.
 The developer property `containerName` remains on the Radius resource. It is not
 part of the account endpoint. Use the returned connection string rather than
 `UseDevelopmentStorage=true`, which would select localhost and the public key.
+
+Both variants name their managed Kubernetes objects `os-` followed by a
+32-character UUID derived from the full, lowercase Radius resource ID. Names are
+35 characters long, including for long developer names. Stores in different
+resource groups have different names. A dedicated `radapp.io/objectstorage-id`
+label isolates Service and Deployment selectors from other resource types.
+The operator-owned source Secret name is unchanged.
 
 The server loads the same custom key from a Kubernetes Secret. The connection
 string includes a path-style Blob endpoint; `--disableProductStyleUrl` prevents

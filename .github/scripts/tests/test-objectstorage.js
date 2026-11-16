@@ -61,14 +61,22 @@ test('Bicep renders named-container initialization, persistent storage, credenti
     // external read, and still evaluate the recipe's base64 decoding and outputs.
     fs.writeFileSync(recipe, source.replace('credentialSource.data.accountKey',
       `'${Buffer.from(key).toString('base64')}'`));
-    for (const custom of [false, true]) {
+    const names = new Map();
+    for (const [group, name, custom] of [
+      ['test', 'store', false],
+      ['test', 'store', true],
+      ['other', 'store', false],
+      ['test', 'a'.repeat(100), false],
+      ['test', 'store-blob', false],
+    ]) {
+      const id = `/planes/radius/local/resourceGroups/${group}/providers/Radius.Storage/objectStorage/${name}`;
       const params = path.join(dir, 'test.bicepparam');
       fs.writeFileSync(params, `using './recipe.bicep'
 param context = {
   runtime: { kubernetes: { namespace: 'storage-test' } }
   resource: {
-    id: '/planes/radius/local/resourceGroups/test/providers/Radius.Storage/objectStorage/store'
-    name: 'store'
+    id: '${id}'
+    name: '${name}'
     type: 'Radius.Storage/objectStorage'
     properties: { ${custom ? "containerName: 'app-files'" : ''} }
   }
@@ -81,6 +89,21 @@ ${custom ? "param objectStorageStorageSize = '4Gi'\nparam objectStorageStorageCl
       assert.equal(resources.length, 4);
       const find = type => resources.find(r => r.type === `${type}@v1`).properties;
       const secret = find('core/Secret');
+      const hash = crypto.createHash('sha1')
+        .update(Buffer.from('11fb06fb712d4ddd98c7e71bbd588830', 'hex'))
+        .update(id.toLowerCase()).digest().subarray(0, 16);
+      hash[6] = (hash[6] & 0x0f) | 0x50;
+      hash[8] = (hash[8] & 0x3f) | 0x80;
+      const expectedName = `os-${hash.toString('hex')}`;
+      assert.equal(secret.metadata.name, expectedName);
+      for (const resource of resources) {
+        assert.equal(resource.properties.metadata.name, expectedName);
+      }
+      if (names.has(id)) assert.equal(names.get(id), expectedName);
+      else {
+        assert.ok(![...names.values()].includes(expectedName), 'Distinct full IDs must not share names');
+        names.set(id, expectedName);
+      }
       assert.equal(Buffer.from(secret.data.accounts, 'base64').toString(), `${account}:${key}`);
       const deployment = find('apps/Deployment');
       assert.equal(deployment.metadata.namespace, 'storage-test');
@@ -101,6 +124,8 @@ ${custom ? "param objectStorageStorageSize = '4Gi'\nparam objectStorageStorageCl
       const service = find('core/Service');
       assert.equal(service.spec.type, 'ClusterIP');
       assert.deepEqual(service.spec.selector, deployment.spec.selector.matchLabels);
+      assert.deepEqual(service.spec.selector, { 'radapp.io/objectstorage-id': expectedName });
+      assert.equal(deployment.spec.template.metadata.labels['radapp.io/objectstorage-id'], expectedName);
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

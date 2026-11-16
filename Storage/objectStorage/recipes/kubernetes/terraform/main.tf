@@ -13,18 +13,20 @@ terraform {
 }
 
 locals {
-  resource_name  = "${var.context.resource.name}-blob"
+  # Match Bicep guid()'s UUIDv5 namespace and normalize case for Radius IDs.
+  resource_name  = "os-${replace(uuidv5("11fb06fb-712d-4ddd-98c7-e71bbd588830", lower(var.context.resource.id)), "-", "")}"
   namespace      = var.context.runtime.kubernetes.namespace
   account_name   = "radiusstorage"
   account_key    = random_bytes.account_key.base64
   container_name = try(var.context.resource.properties.containerName, null) == null ? "data" : var.context.resource.properties.containerName
   endpoint       = "http://${local.resource_name}.${local.namespace}.svc.cluster.local:10000/${local.account_name}"
   labels = {
-    "radapp.io/resource"       = local.resource_name
-    "radapp.io/application"    = try(var.context.application.name, "")
-    "radapp.io/environment"    = try(var.context.environment.name, "")
-    "radapp.io/resource-type"  = replace(var.context.resource.type, "/", "-")
-    "radapp.io/resource-group" = split("/", var.context.resource.id)[5]
+    "radapp.io/objectstorage-id" = local.resource_name
+    "radapp.io/resource"         = local.resource_name
+    "radapp.io/application"      = try(var.context.application.name, "")
+    "radapp.io/environment"      = try(var.context.environment.name, "")
+    "radapp.io/resource-type"    = replace(var.context.resource.type, "/", "-")
+    "radapp.io/resource-group"   = split("/", var.context.resource.id)[5]
   }
   # Keep the authenticated startup probe identical to the Bicep recipe.
   initialize_container = <<-JS
@@ -108,7 +110,7 @@ resource "kubernetes_deployment_v1" "blob" {
       type = "Recreate"
     }
     selector {
-      match_labels = { "radapp.io/resource" = local.resource_name }
+      match_labels = { "radapp.io/objectstorage-id" = local.resource_name }
     }
     template {
       metadata {
@@ -189,7 +191,7 @@ resource "kubernetes_service_v1" "blob" {
   }
   spec {
     type     = "ClusterIP"
-    selector = { "radapp.io/resource" = local.resource_name }
+    selector = { "radapp.io/objectstorage-id" = local.resource_name }
     port {
       port        = 10000
       target_port = 10000
