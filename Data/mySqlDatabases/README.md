@@ -92,8 +92,20 @@ and `host`, `port`, and `database` in `result.values`. Neither returns
 The Pod reads them from a Kubernetes Secret. Protect Terraform state because
 the provider stores the Secret data there.
 
+The Terraform Recipe replaces the Deployment when an authored username or
+password changes. A built-in `terraform_data` resource tracks these inputs as
+sensitive state and triggers replacement; no credentials or password hashes
+are added to Pod annotations. This is not a live Secret watcher.
+The Bicep extension does not expose the Secret resource version;
+the Bicep Recipe does not support in-place credential updates. Recreate that
+development database with the new credentials instead.
+
 These are development Recipes. They do not configure persistent storage or
-backups. Pod replacement can lose data. Applying the TLS change rolls the
+backups. Credential updates reset the database and lose all existing data.
+Terraform's `Recreate` strategy stops the old Pod before starting its replacement;
+clients lose service during this reset. Back up data before changing
+credentials and update the database and client credentials together.
+Pod replacement can lose data. Applying the TLS change rolls the
 Deployment and rejects plaintext clients when `tls` is omitted or `required`.
 Configure clients for TLS before updating an existing deployment. MySQL `5.7`
 is retained for compatibility; prefer a supported MySQL release.
@@ -117,12 +129,16 @@ terraform -chdir=Data/mySqlDatabases/recipes/kubernetes/terraform init -backend=
 terraform -chdir=Data/mySqlDatabases/recipes/kubernetes/terraform fmt -check -recursive
 terraform -chdir=Data/mySqlDatabases/recipes/kubernetes/terraform validate
 terraform -chdir=Data/mySqlDatabases/recipes/kubernetes/terraform test
+node --test Data/mySqlDatabases/test/terraform-credentials.test.js
 ```
 
 These tests evaluate Bicep snapshots and mocked Terraform plans. They check
 defaults, explicit and null properties, TLS arguments, Secret references,
 namespace selection, selectors, actual ports, and cleanup/output contracts.
 Terraform also checks invalid version and TLS inputs.
+The credential test checks actual Terraform plan actions: username-only,
+password-only, and combined changes replace the Deployment after deletion,
+while unchanged credentials leave it and the Service in place.
 They do not prove live TLS behavior or deploy to a cluster.
 
 For each recipe kind, use the build, Recipe Pack, and `make test-recipe` steps

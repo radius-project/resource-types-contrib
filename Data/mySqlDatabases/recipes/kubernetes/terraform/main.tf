@@ -44,6 +44,10 @@ resource "kubernetes_secret_v1" "mysql" {
 }
 
 resource "kubernetes_deployment_v1" "mysql" {
+  lifecycle {
+    replace_triggered_by = [terraform_data.credentials]
+  }
+
   metadata {
     name      = local.resource_name
     namespace = local.namespace
@@ -51,6 +55,10 @@ resource "kubernetes_deployment_v1" "mysql" {
   }
 
   spec {
+    strategy {
+      type = "Recreate"
+    }
+
     selector {
       match_labels = {
         "radapp.io/resource" = local.resource_name
@@ -104,6 +112,14 @@ resource "kubernetes_deployment_v1" "mysql" {
         }
       }
     }
+  }
+}
+
+// Secret-backed environment variables are read only when a Pod starts.
+resource "terraform_data" "credentials" {
+  triggers_replace = {
+    username = sensitive(local.username)
+    password = sensitive(local.password)
   }
 }
 

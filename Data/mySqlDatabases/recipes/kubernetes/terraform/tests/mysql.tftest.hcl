@@ -155,3 +155,57 @@ run "invalid_tls" {
   }
   expect_failures = [var.context]
 }
+
+run "initial_credentials" {
+  command = apply
+}
+
+run "updated_credentials" {
+  command = plan
+  variables {
+    context = merge(var.context, {
+      resource = merge(var.context.resource, {
+        properties = merge(var.context.resource.properties, {
+          username = "updated"
+          password = "updated-fixture-only"
+        })
+      })
+    })
+  }
+  assert {
+    condition     = kubernetes_deployment_v1.mysql.spec[0].strategy[0].type == "Recreate" && kubernetes_deployment_v1.mysql.spec[0].template[0].metadata[0].annotations == null
+    error_message = "An updated Secret must change the Pod template and stop old Pods before MySQL reinitializes."
+  }
+
+  assert {
+    condition     = nonsensitive(kubernetes_secret_v1.mysql.data["PASSWORD"]) == "updated-fixture-only" && nonsensitive(kubernetes_secret_v1.mysql.data["USERNAME"]) == "updated"
+    error_message = "The replacement Pod must consume the updated credentials."
+  }
+
+}
+
+run "updated_password" {
+  command = plan
+  variables {
+    context = merge(var.context, {
+      resource = merge(var.context.resource, {
+        properties = merge(var.context.resource.properties, { password = "updated-fixture-only" })
+      })
+    })
+  }
+}
+
+run "updated_username" {
+  command = plan
+  variables {
+    context = merge(var.context, {
+      resource = merge(var.context.resource, {
+        properties = merge(var.context.resource.properties, { username = "updated" })
+      })
+    })
+  }
+}
+
+run "unchanged_credentials" {
+  command = plan
+}
