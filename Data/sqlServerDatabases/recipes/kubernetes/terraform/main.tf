@@ -121,7 +121,7 @@ resource "kubernetes_deployment_v1" "server" {
           }
           env {
             name  = "RADIUS_DATABASE"
-            value = local.database
+            value = replace(local.database, "$", "$$")
           }
           env {
             name = "RADIUS_USERNAME"

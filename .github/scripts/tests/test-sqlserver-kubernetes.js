@@ -128,6 +128,8 @@ test('compiled Bicep uses the shared bootstrap and the same database readiness c
   assert.equal(pod.securityContext.fsGroup, 10001);
   const container = pod.containers[0];
   assert.equal(container.command[2], "[variables('bootstrap')]");
+  assert.equal(container.env.find(env => env.name === 'RADIUS_DATABASE').value, "[replace(variables('database'), '$', '$$')]");
+  assert.equal(template.outputs.result.value.values.database, "[variables('database')]");
   assert.match(template.variables.readiness, /-U "\$RADIUS_USERNAME" -d "\$RADIUS_DATABASE"/);
   assert.equal(container.readinessProbe.exec.command[2], "[variables('readiness')]");
   assert.equal(template.resources.service.properties.spec.ports[0].targetPort, 'sqlserver');

@@ -98,7 +98,7 @@ resource server 'apps/Deployment@v1' = {
               { name: 'MSSQL_PID', value: 'Developer' }
               { name: 'MSSQL_TCP_PORT', value: '1433' }
               { name: 'MSSQL_MEMORY_LIMIT_MB', value: '2048' }
-              { name: 'RADIUS_DATABASE', value: database }
+              { name: 'RADIUS_DATABASE', value: replace(database, '$', '$$') }
               {
                 name: 'RADIUS_USERNAME'
                 valueFrom: {

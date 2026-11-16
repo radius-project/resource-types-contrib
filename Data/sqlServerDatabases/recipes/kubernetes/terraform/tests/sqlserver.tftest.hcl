@@ -12,7 +12,7 @@ variables {
       name = "sqlserver"
       type = "Radius.Data/sqlServerDatabases"
       properties = {
-        database = "custom]db'$(not-expanded)"
+        database = "custom]db'$(MSSQL_TCP_PORT)-$$-$$(MSSQL_PID)"
         username = "radadmin"
         password = "Fixture-only'$(not-expanded)42!"
         port     = 9999
@@ -38,6 +38,10 @@ run "database_login_and_persistence" {
   assert {
     condition     = output.result.values.port == 1433 && output.result.values.database == var.context.resource.properties.database && output.result.values.host == "sqlserver.isolated-test.svc.cluster.local"
     error_message = "Return the actual SQL port, database and namespace-qualified host."
+  }
+  assert {
+    condition     = one([for env in kubernetes_deployment_v1.server.spec[0].template[0].spec[0].container[0].env : env.value if env.name == "RADIUS_DATABASE"]) == "custom]db'$$(MSSQL_TCP_PORT)-$$$$-$$$$(MSSQL_PID)"
+    error_message = "Escape every dollar before kubelet expands literal environment values, while keeping the result database unchanged."
   }
   assert {
     condition = toset(output.result.resources) == toset([
