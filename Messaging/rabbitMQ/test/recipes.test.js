@@ -49,6 +49,15 @@ param context = {
       assert.equal(definition.users[0].password_hash, '');
       const deployment = resource('apps/Deployment@v1') || resource('apps/Deployment');
       const pod = deployment.properties.spec.template.spec;
+      const service = resource('core/Service@v1') || resource('core/Service');
+      const podLabels = deployment.properties.spec.template.metadata.labels;
+      const selector = service.properties.spec.selector;
+      const matches = labels => Object.entries(selector).every(([key, value]) => labels[key] === value);
+      assert.equal(matches(podLabels), true, 'Select this broker');
+      assert.equal(matches({ ...podLabels, 'radapp.io/resource-type': 'Radius.Data-redisCaches' }), false,
+        'Do not select a same-named resource of another type');
+      assert.equal(matches({ ...podLabels, 'radapp.io/resource-group': 'another-group' }), false,
+        'Do not select a same-named RabbitMQ resource from another group');
       definitionHashes.add(deployment.properties.spec.template.metadata.annotations['radapp.io/definitions-hash']);
       assert.equal(deployment.properties.spec.strategy.type, 'Recreate');
       assert.deepEqual(pod.containers[0].readinessProbe.exec.command, ['rabbitmq-diagnostics', '-q', 'check_running']);

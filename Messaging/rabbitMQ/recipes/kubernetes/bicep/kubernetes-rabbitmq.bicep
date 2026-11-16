@@ -255,6 +255,8 @@ resource svc 'core/Service@v1' = {
     type: 'ClusterIP'
     selector: {
       'radapp.io/resource': resourceName
+      'radapp.io/resource-type': labels['radapp.io/resource-type']
+      'radapp.io/resource-group': resourceGroupName
     }
     ports: [
       {

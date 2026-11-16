@@ -22,6 +22,22 @@ variables {
 run "generated_password" {
   command = apply
   assert {
+    condition = alltrue([
+      for key, value in kubernetes_service_v1.rabbitmq.spec[0].selector :
+      kubernetes_deployment_v1.rabbitmq.spec[0].template[0].metadata[0].labels[key] == value
+    ])
+    error_message = "The Service must select this broker's Pod."
+  }
+  assert {
+    condition = alltrue([
+      for labels in [
+        merge(kubernetes_deployment_v1.rabbitmq.spec[0].template[0].metadata[0].labels, { "radapp.io/resource-type" = "Radius.Data-redisCaches" }),
+        merge(kubernetes_deployment_v1.rabbitmq.spec[0].template[0].metadata[0].labels, { "radapp.io/resource-group" = "another-group" })
+      ] : !alltrue([for key, value in kubernetes_service_v1.rabbitmq.spec[0].selector : labels[key] == value])
+    ])
+    error_message = "The Service must reject same-named Pods from other resource types or groups."
+  }
+  assert {
     condition     = output.result.secrets.password == "fixture-generated-password" && kubernetes_secret_v1.credentials[0].data.password == output.result.secrets.password
     error_message = "Return the generated password through managed secrets and store the same value in Kubernetes."
   }

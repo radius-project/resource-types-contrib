@@ -180,8 +180,12 @@ resource "kubernetes_service_v1" "rabbitmq" {
     labels    = local.labels
   }
   spec {
-    type     = "ClusterIP"
-    selector = { "radapp.io/resource" = local.resource_name }
+    type = "ClusterIP"
+    selector = {
+      "radapp.io/resource"       = local.resource_name
+      "radapp.io/resource-type"  = local.labels["radapp.io/resource-type"]
+      "radapp.io/resource-group" = local.labels["radapp.io/resource-group"]
+    }
     port {
       port = local.port
     }
