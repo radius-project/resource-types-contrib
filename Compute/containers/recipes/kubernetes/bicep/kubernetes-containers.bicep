@@ -1,6 +1,9 @@
 @description('Radius context object passed into the recipe.')
 param context object
 
+@description('Service account that the Recipe creates and runs the pods as. Leave empty to use the namespace default service account.')
+param serviceAccountName string = ''
+
 extension kubernetes with {
   kubeConfig: ''
   namespace: context.runtime.kubernetes.namespace
@@ -39,8 +42,9 @@ var labels = {
 var resourceConnections = context.resource.?connections ?? {}
 var connectionDefinitions = context.resource.properties.?connections ?? {}
 
-// Properties to exclude from connection environment variables
-var excludedProperties = ['recipe', 'secrets', 'status', 'provisioningState']
+// Properties to exclude from connection environment variables. awsIamPolicy is
+// read by the aws-eks Recipe for the pod's IAM role.
+var excludedProperties = ['recipe', 'secrets', 'status', 'provisioningState', 'awsIamPolicy']
 var topLevelExcludedProperties = ['recipe', 'secrets', 'status', 'provisioningState', 'properties', 'secretName']
 
 // Identify direct Radius secret connections from resolved resource metadata.
@@ -319,7 +323,16 @@ var podVolumes = reduce(volumeItems, [], (acc, vol) => concat(acc, [union(
   } : {}
 )]))
 
+resource serviceAccount 'core/ServiceAccount@v1' = if (!empty(serviceAccountName)) {
+  metadata: {
+    name: serviceAccountName
+    namespace: namespace
+    labels: labels
+  }
+}
+
 resource deployment 'apps/Deployment@v1' = {
+  dependsOn: [serviceAccount]
   metadata: {
     name: normalizedName
     namespace: namespace
@@ -350,7 +363,8 @@ resource deployment 'apps/Deployment@v1' = {
         },
         length(podInitContainers) > 0 ? { initContainers: podInitContainers } : {},
         length(podVolumes) > 0 ? { volumes: podVolumes } : {},
-        contains(resourceProperties, 'restartPolicy') ? { restartPolicy: resourceProperties.restartPolicy } : {}
+        contains(resourceProperties, 'restartPolicy') ? { restartPolicy: resourceProperties.restartPolicy } : {},
+        empty(serviceAccountName) ? {} : { serviceAccountName: serviceAccountName }
       )
     }
   }
@@ -448,7 +462,9 @@ var deploymentResource = '/planes/kubernetes/local/namespaces/${namespace}/provi
 var serviceResources = reduce(servicesConfig, [], (acc, svc) => concat(acc, ['/planes/kubernetes/local/namespaces/${namespace}/providers/core/Service/${normalizedName}-${svc.normalizedContainerName}']))
 var hpaResource = hasAutoScaling ? ['/planes/kubernetes/local/namespaces/${namespace}/providers/autoscaling/HorizontalPodAutoscaler/${normalizedName}'] : []
 
-var allResources = concat([deploymentResource], serviceResources, hpaResource)
+var serviceAccountResource = empty(serviceAccountName) ? [] : ['/planes/kubernetes/local/namespaces/${namespace}/providers/core/ServiceAccount/${serviceAccountName}']
+
+var allResources = concat([deploymentResource], serviceResources, hpaResource, serviceAccountResource)
 
 // Publish each port-exposing container's in-cluster Service DNS host as a read-only
 // output so peers can address it by reference instead of hardcoding a Service name.
