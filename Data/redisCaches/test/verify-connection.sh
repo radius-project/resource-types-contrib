@@ -39,16 +39,19 @@ case "$REDIS_PLATFORM" in
             --tls -h "$REDIS_HOST" -p "$REDIS_PORT" PING 2>/dev/null) ||
             fail "access-key connection failed"
         test "$pong" = PONG || fail "access-key PING did not return PONG"
+        # redis-cli treats the AVM URL's empty user name as AUTH "", not AUTH default.
+        set -- --user default
         ;;
     kubernetes)
         case "$REDIS_URL" in
             redis://*) ;;
             *) fail "Kubernetes URL must use redis://" ;;
         esac
+        set --
         ;;
     *) fail "unknown platform" ;;
 esac
 
-pong=$(timeout 4 redis-cli --no-auth-warning -u "$REDIS_URL" PING 2>/dev/null) ||
+pong=$(timeout 4 redis-cli --no-auth-warning -u "$REDIS_URL" "$@" PING 2>/dev/null) ||
     fail "URL connection failed"
 test "$pong" = PONG || fail "URL PING did not return PONG"
