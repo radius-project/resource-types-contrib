@@ -575,11 +575,20 @@ for deploy_error in "$TRANSIENT_DEPLOY_ERROR" "$TERRAFORM_DOWNLOAD_ERROR" "$WRAP
     done
 done
 
-for trace_line in "TraceId: $ACI_TRACE_ID" "TraceId:  $ACI_TRACE_ID" $'\tTraceId:\t'"${ACI_TRACE_ID^^}"$' \t\r'; do
-    printf '%s\n\n%s\n' "$ACI_CONTAINER_TRANSITION_ERROR" "$trace_line" >"$TEST_ROOT/aci-transition.log"
-    assert_eq "Azure Container Instance group is still transitioning" \
-        "$(run_lib rtc_deployment_retry_reason "$TEST_ROOT/aci-transition.log")" \
-        "ACI transition with CLI trace metadata whitespace"
+for deploy_error in "$ACI_CONTAINER_TRANSITION_ERROR" "$TRANSIENT_DEPLOY_ERROR" "$WRAPPED_TERRAFORM_ERROR"; do
+    if [[ "$deploy_error" == "$ACI_CONTAINER_TRANSITION_ERROR" ]]; then
+        reason="Azure Container Instance group is still transitioning"
+    elif [[ "$deploy_error" == "$TRANSIENT_DEPLOY_ERROR" ]]; then
+        reason="Azure deployment connection reset"
+    else
+        reason="Terraform provider download connection reset"
+    fi
+    for trace_line in "TraceId: $ACI_TRACE_ID" "TraceId:  $ACI_TRACE_ID" $'\tTraceId:\t'"${ACI_TRACE_ID^^}"$' \t\r'; do
+        printf '%s\n\n%s\n' "$deploy_error" "$trace_line" >"$TEST_ROOT/retry-trace.log"
+        assert_eq "$reason" \
+            "$(run_lib rtc_deployment_retry_reason "$TEST_ROOT/retry-trace.log")" \
+            "$reason with CLI trace metadata whitespace"
+    done
 done
 
 for failures in 1 2 3; do
