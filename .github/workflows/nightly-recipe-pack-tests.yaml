@@ -34,6 +34,7 @@ jobs:
       RAD_ENVIRONMENT_NAME: default
       RTC_TEST_DIAGNOSTICS_DIR: test-diagnostics
       RTC_TEST_PLATFORM: kubernetes
+      RTC_POSTGRES_FEATURE_TESTS: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -258,6 +259,7 @@ jobs:
     env:
       RTC_TEST_DIAGNOSTICS_DIR: azure-test-diagnostics
       RTC_TEST_PLATFORM: azure
+      RTC_POSTGRES_FEATURE_TESTS: "1"
       RTC_ACI_TEST_SCOPE: exclude
       RTC_OPENAI_TEST_SCOPE: exclude
       AZURE_RESOURCE_GROUP: ${{ needs.nightly-azure-context.outputs.resource_group }}

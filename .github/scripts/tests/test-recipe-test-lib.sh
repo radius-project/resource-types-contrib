@@ -118,6 +118,10 @@ fi
 if [[ "$1" == "get" ]]; then
     printf '%s' "${KUBECTL_GET_OUTPUT:-}"
 fi
+if [[ "$1" == exec ]]; then
+    cat >/dev/null
+    exit "${KUBECTL_EXEC_EXIT_CODE:-0}"
+fi
 exit "${KUBECTL_EXIT_CODE:-0}"
 EOF
 chmod +x "$MOCK_BIN/kubectl"
@@ -485,6 +489,28 @@ if POSTGRES_JSON='{"properties":{}}' run_lib rtc_deploy_and_assert_test_app \
 fi
 grep -q '^rad app delete' "$CALL_LOG" || fail "assertion failure must still clean up"
 assert_eq "1" "$(grep -c '^rad deploy ' "$CALL_LOG")" "assertion failure deployment attempt count"
+
+# Nightly feature assertions must use the test client and retain shared cleanup.
+for probe_status in 0 1; do
+    : >"$CALL_LOG"
+    status=0
+    RTC_TEST_PLATFORM=azure RTC_POSTGRES_FEATURE_TESTS=1 KUBECTL_EXEC_EXIT_CODE="$probe_status" \
+        KUBECTL_GET_OUTPUT='{"items":[{"metadata":{"name":"pg-feature-client"}}]}' \
+        run_lib rtc_deploy_and_assert_test_app "$TEST_APP_BICEP" \
+            Radius.Data/postgreSqlDatabases rtc-test /envs/myenv myws my-ns >/dev/null 2>&1 || status=$?
+    assert_eq "$probe_status" "$status" "nightly feature probe failure propagation"
+    grep -q -- '--parameters verifyFeatures=true --parameters verifyInitialization=true' "$CALL_LOG" ||
+        fail "nightly deployment must enable the feature fixture"
+    grep -q 'kubectl exec -i -n my-ns deployment/pg-feature-client -- sh -s -- azure true' "$CALL_LOG" ||
+        fail "nightly assertions must query the real test client"
+    grep -q '^rad app delete' "$CALL_LOG" || fail "feature failure must retain shared application cleanup"
+done
+: >"$CALL_LOG"
+RTC_TEST_PLATFORM=azure run_lib rtc_deploy_and_assert_test_app "$TEST_APP_BICEP" \
+    Radius.Data/postgreSqlDatabases rtc-test /envs/myenv myws my-ns >/dev/null
+if grep -q 'verifyFeatures\|kubectl exec' "$CALL_LOG"; then
+    fail "ordinary deployments must not enable nightly feature checks"
+fi
 
 : >"$CALL_LOG"
 if CONTAINERS_JSON='{"properties":{}}' run_lib rtc_deploy_and_assert_test_app \

@@ -68,6 +68,31 @@ ${platform === 'azure' ? `${name === null ? '' : `param postgreSqlServerName = '
   }
 }
 
+test('Nightly app and adjacent Azure test harness compile with the current PostgreSQL schema', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rtc-postgresql-app-'));
+  try {
+    for (const file of ['app.bicep', 'initialize.sql']) {
+      fs.copyFileSync(path.join(root, 'Data/postgreSqlDatabases/test', file), path.join(dir, file));
+    }
+    run(process.env.RAD_CLI || 'rad', ['bicep', 'publish-extension',
+      '-f', path.join(root, 'Data/postgreSqlDatabases/postgreSqlDatabases.yaml'),
+      '--target', path.join(dir, 'postgresql.tgz')]);
+    fs.writeFileSync(path.join(dir, 'bicepconfig.json'), JSON.stringify({
+      extensions: {
+        radius: 'br:biceptypes.azurecr.io/radius:latest',
+        postgreSqlDatabases: './postgresql.tgz',
+      },
+    }));
+    run('bash', [path.join(root, '.github/scripts/prepare-postgres-test-harness.sh'),
+      path.join(dir, 'app.bicep'), path.join(dir, 'harness.bicep')]);
+    for (const file of ['app.bicep', 'harness.bicep']) {
+      run(bicep, ['build', path.join(dir, file), '--stdout']);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('Azure settings retain the AVM contract and merge operator pins without regard to case', () => {
   fixture('azure', ({ template, snapshot }) => {
     assert.equal(template.languageVersion, '2.0', 'Use symbolic references across Radius and Azure scopes');
