@@ -194,8 +194,10 @@ For `pull_request_target`, GitHub loads the caller and its local reusable
 workflow from the base branch, even when the worker checks out the PR head.
 A rerun uses the same workflow revision. To test a workflow change before it
 merges, run `validate-azure-openai-recipes.yaml` with `workflow_dispatch` on the
-same-repository PR branch. This does not replace the required PR check; a
-workflow change on the base branch can still be needed for that check.
+same-repository PR branch. Azure federated credentials must allow that branch's
+OIDC subject; main-only trust rejects the login before deployment. Do not broaden
+cloud trust to bypass this check. A workflow change on the base branch can still
+be needed for PR validation.
 
 `nightly-azure-openai-tests.yaml` runs daily at 10:00 UTC. CI, nightly, and
 release-candidate OpenAI jobs test the checked-in model pack entry, which uses
