@@ -53,7 +53,7 @@ this login for an untrusted application. Both `sa` and that login use the
 supplied password, which must meet SQL Server password policy. Login and database
 names must contain 1 to 128 UTF-16 code units. SQL identifiers and string
 literals are escaped; sqlcmd variable substitution is disabled.
-Literal dollar signs in the database environment value are escaped for kubelet,
+Literal dollar signs in the database environment value are escaped for the Kubernetes node agent,
 so names containing `$(MSSQL_TCP_PORT)` or `$$` match the returned database name.
 
 Readiness requires a successful query against the requested database as the
