@@ -134,7 +134,14 @@ case "$1 $2" in
         if [[ "${AZ_RESOURCE_LIST_FAIL:-0}" == 1 ]]; then exit 1; fi
         if [[ -n "${AZ_RESOURCE_LIST_DELAY_SECONDS:-}" ]]; then sleep "$AZ_RESOURCE_LIST_DELAY_SECONDS"; fi
         if grep -q '^rad app delete' "$CALL_LOG"; then
-            printf '%s\n' "${AZ_RESOURCES_AFTER:-[]}"
+            if [[ "${AZ_RESOURCE_LIST_AFTER_FAIL:-0}" == 1 ]]; then exit 1; fi
+            after_calls=$(awk '/^rad app delete / { count=0 }
+                /^az resource list / { count++ } END { print count }' "$CALL_LOG")
+            if ((after_calls <= ${AZ_STALE_RESOURCE_LIST_COUNT:-0})); then
+                printf '%s\n' "$AZ_STALE_RESOURCES"
+            else
+                printf '%s\n' "${AZ_RESOURCES_AFTER:-[]}"
+            fi
         else
             echo '[]'
         fi
@@ -1061,10 +1068,34 @@ if DEPLOY_EXIT_CODE=42 DEPLOY_ERROR='Unknown CLI failure' run_postgres >/dev/nul
 fi
 assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "raw exit 42 is not evidence of capacity"
 : >"$CALL_LOG"
+AZ_STALE_RESOURCE_LIST_COUNT=2 \
+    AZ_STALE_RESOURCES='[{"id":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/deleting"}]' \
+    run_postgres >/dev/null || fail "successful deployment must tolerate delayed Azure deletion visibility"
+assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "delayed cleanup must not redeploy a successful app"
+assert_eq 4 "$(grep -c '^az resource list ' "$CALL_LOG")" "cleanup must wait for a fresh empty inventory"
+
+: >"$CALL_LOG"
+DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" AZ_STALE_RESOURCE_LIST_COUNT=2 \
+    AZ_STALE_RESOURCES='[{"id":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/deleting"}]' \
+    run_postgres >/dev/null || fail "capacity recovery must wait for delayed Azure deletion visibility"
+awk '/^rad app delete / { after=1; snapshots=0 }
+    after && /^az resource list / { snapshots++ }
+    /^rad deploy / { attempts++; if (attempts == 2 && snapshots != 4) exit 1 }
+    END { if (attempts != 2) exit 1 }' "$CALL_LOG" ||
+    fail "capacity recovery must not allocate before the inventory confirms deletion"
+
+: >"$CALL_LOG"
+if AZ_RESOURCE_LIST_AFTER_FAIL=1 run_postgres >/dev/null 2>&1; then
+    fail "cleanup inventory errors must fail even after a successful deployment"
+fi
+assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "inventory errors must not permit recovery"
+
+: >"$CALL_LOG"
 if DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" \
     AZ_RESOURCES_AFTER='[{"id":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/leftover"}]' \
     run_postgres >/dev/null 2>&1; then fail "leftover Azure resources must block recovery"; fi
 assert_eq 1 "$(grep -c '^rad deploy ' "$CALL_LOG")" "leftover resource must block new allocation"
+assert_eq 7 "$(grep -c '^az resource list ' "$CALL_LOG")" "cleanup verification must stop after six checks"
 
 : >"$CALL_LOG"
 if POSTGRES_JSON='{"properties":{}}' run_postgres >/dev/null 2>&1; then fail "assertion failure must fail"; fi

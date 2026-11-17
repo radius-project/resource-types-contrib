@@ -569,7 +569,6 @@ jobs:
     uses: ./.github/workflows/test-azure-openai.yaml
     with:
       version: ${{ inputs.version }}
-      test_checked_in_pack: true
       release_candidate: true
     secrets: inherit
 
