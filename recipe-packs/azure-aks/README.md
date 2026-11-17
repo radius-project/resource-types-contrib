@@ -90,6 +90,20 @@ change. The Recipe uses the same account name and model settings as the previous
 direct-module entry. It returns the endpoint and API key through the standard
 Recipe result, with the key in `result.secrets.apiKey`.
 
+The pack pins this Recipe to commit
+`581148d94d2fc6a29371db487b52cf69ee6305ae`, published with
+[`Radius.AI/v0.3.0`](https://github.com/radius-project/resource-types-contrib/releases/tag/Radius.AI/v0.3.0).
+Main publication creates source-SHA and `edge` tags; namespace releases publish
+the source-SHA tag without promoting `latest`. The new `azure-recipes/models`
+repository has no `latest` tag until a stable Radius recipe publication promotes
+it, so using that alias prevents the pack from being released. Keep an explicit
+published source pin rather than switching to the floating `edge` tag. When
+updating the pin, verify all pack sources before releasing:
+
+```bash
+RECIPE_PACK=azure-aks ./.github/scripts/release/verify-recipe-pack-sources.sh
+```
+
 ### MySQL versions
 
 The `Radius.Data/mySqlDatabases` Recipe preserves the requested MySQL major version. The Resource Type's `8.0` value maps to the Azure module's `8.0.21` version token; `5.7` and `8.4` map directly to the corresponding Azure versions.

@@ -433,6 +433,39 @@ EOF
         fail "recipe pack release rejected Recipe sources that resolve"
 }
 
+test_azure_model_source_pin() {
+    local repo="$TEST_ROOT/azure-model-pin" checker="$TEST_ROOT/check-azure-model.sh"
+    local checked="$TEST_ROOT/checked-azure-sources"
+    local source="ghcr.io/radius-project/azure-recipes/models:581148d94d2fc6a29371db487b52cf69ee6305ae"
+    create_recipe_pack_repo "$repo" "azure-aks"
+    cp "$REPO_ROOT/recipe-packs/azure-aks/azure-aks.bicep" "$repo/recipe-packs/azure-aks/"
+
+    # Model publication has a stable namespace source pin, but no latest alias.
+    cat >"$checker" <<EOF
+#!/bin/bash
+echo "\$1" >>"$checked"
+case "\$1" in
+    "$source") exit 0 ;;
+    ghcr.io/radius-project/azure-recipes/models:*) exit 1 ;;
+    *) exit 0 ;;
+esac
+EOF
+    chmod +x "$checker"
+
+    REPO_ROOT="$repo" RECIPE_PACK=azure-aks CHECK_SOURCE_CMD="$checker" \
+        bash "$SOURCES_SCRIPT" >/dev/null 2>&1 ||
+        fail "Azure AKS release must resolve models without a latest alias"
+    grep -Fxq "$source" "$checked" ||
+        fail "Azure AKS source verification did not check the published model pin"
+
+    sed -i "s|$source|ghcr.io/radius-project/azure-recipes/models:latest|" \
+        "$repo/recipe-packs/azure-aks/azure-aks.bicep"
+    if REPO_ROOT="$repo" RECIPE_PACK=azure-aks CHECK_SOURCE_CMD="$checker" \
+        bash "$SOURCES_SCRIPT" >/dev/null 2>&1; then
+        fail "Azure AKS release accepted the missing model latest alias"
+    fi
+}
+
 test_recipe_pack_release_is_synced() {
     local repo="$TEST_ROOT/recipe-pack-sync" output="$TEST_ROOT/recipe-pack-sync.out" payload
     create_recipe_pack_repo "$repo" "kubernetes"
@@ -751,6 +784,7 @@ test_prerelease_labels
 test_recipe_pack_versioning
 test_recipe_pack_bundle
 test_recipe_pack_sources_must_resolve
+test_azure_model_source_pin
 test_recipe_pack_release_is_synced
 test_repo_wide_release_covers_all_units
 test_release_change_detection

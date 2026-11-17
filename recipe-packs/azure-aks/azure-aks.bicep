@@ -50,7 +50,8 @@ resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
       }
       'Radius.AI/models': {
         kind: 'bicep'
-        source: 'ghcr.io/radius-project/azure-recipes/models:latest'
+        // Published with Radius.AI/v0.3.0; this repository has no stable latest alias yet.
+        source: 'ghcr.io/radius-project/azure-recipes/models:581148d94d2fc6a29371db487b52cf69ee6305ae'
       }
       'Radius.AI/search': {
         kind: 'bicep'
