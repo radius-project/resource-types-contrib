@@ -565,32 +565,38 @@ for deploy_error in "$TRANSIENT_DEPLOY_ERROR" "$TERRAFORM_DOWNLOAD_ERROR" "$WRAP
     done
 done
 
-for failures in 1 4 5; do
-    : >"$CALL_LOG"
-    retry_status=0
-    DEPLOY_FAILURES="$failures" DEPLOY_ERROR="$ACI_CONTAINER_TRANSITION_ERROR" \
-        run_lib rtc_deploy_and_assert_test_app \
-        "$TEST_APP_WITH_PASSWORD" Radius.Compute/containers rtc-test /envs/myenv myws my-ns \
-        >"$TEST_ROOT/retry-output" 2>&1 || retry_status=$?
-    if ((failures < 5)); then
-        assert_eq "0" "$retry_status" "ACI transition recovery"
-        expected_attempts=$((failures + 1))
-    else
-        [[ "$retry_status" -ne 0 ]] || fail "exhausted ACI transition retries must fail"
-        expected_attempts=5
-    fi
-    assert_eq "$expected_attempts" "$(grep -c '^rad deploy ' "$CALL_LOG")" "ACI transition attempts"
-    assert_eq "1" "$(grep -c '^rad app delete ' "$CALL_LOG")" "ACI transition cleanup"
-    assert_eq "1" "$(grep '^rad deploy ' "$CALL_LOG" | sort -u | wc -l | tr -d ' ')" \
-        "ACI transition retries must preserve deployment arguments"
-    for ((attempt=1; attempt<expected_attempts; attempt++)); do
-        grep -Fxq "sleep $((30 * 2 ** (attempt - 1)))" "$CALL_LOG" ||
-            fail "ACI transition retries need exponential backoff"
+ACI_MIXED_TRANSIENT_JSON="$(jq -cn --argjson transition "$ACI_CONTAINER_TRANSITION_JSON" \
+    --argjson reset "${TRANSIENT_DEPLOY_ERROR#Error: }" \
+    '{code:"DeploymentFailed",details:[$transition,$reset]}')"
+for deploy_error in "$ACI_CONTAINER_TRANSITION_ERROR" "Error: $ACI_MIXED_TRANSIENT_JSON" \
+    "Error: $(jq -c '.details |= reverse' <<<"$ACI_MIXED_TRANSIENT_JSON")"; do
+    for failures in 1 4 5; do
+        : >"$CALL_LOG"
+        retry_status=0
+        DEPLOY_FAILURES="$failures" DEPLOY_ERROR="$deploy_error" \
+            run_lib rtc_deploy_and_assert_test_app \
+            "$TEST_APP_WITH_PASSWORD" Radius.Compute/containers rtc-test /envs/myenv myws my-ns \
+            >"$TEST_ROOT/retry-output" 2>&1 || retry_status=$?
+        if ((failures < 5)); then
+            assert_eq "0" "$retry_status" "ACI transition recovery"
+            expected_attempts=$((failures + 1))
+        else
+            [[ "$retry_status" -ne 0 ]] || fail "exhausted ACI transition retries must fail"
+            expected_attempts=5
+        fi
+        assert_eq "$expected_attempts" "$(grep -c '^rad deploy ' "$CALL_LOG")" "ACI transition attempts"
+        assert_eq "1" "$(grep -c '^rad app delete ' "$CALL_LOG")" "ACI transition cleanup"
+        assert_eq "1" "$(grep '^rad deploy ' "$CALL_LOG" | sort -u | wc -l | tr -d ' ')" \
+            "ACI transition retries must preserve deployment arguments"
+        for ((attempt=1; attempt<expected_attempts; attempt++)); do
+            grep -Fxq "sleep $((30 * 2 ** (attempt - 1)))" "$CALL_LOG" ||
+                fail "ACI transition retries need exponential backoff"
+        done
+        awk '/^rad app delete |^kubectl delete / { cleaned = 1 } /^rad deploy / && cleaned { exit 1 }' "$CALL_LOG" ||
+            fail "ACI transition retries must not delete resources between attempts"
+        grep -Fq 'Azure Container Instance group is still transitioning' "$TEST_ROOT/retry-output" ||
+            fail "ACI transition retry must log its reason"
     done
-    awk '/^rad app delete |^kubectl delete / { cleaned = 1 } /^rad deploy / && cleaned { exit 1 }' "$CALL_LOG" ||
-        fail "ACI transition retries must not delete resources between attempts"
-    grep -Fq 'Azure Container Instance group is still transitioning; retrying' "$TEST_ROOT/retry-output" ||
-        fail "ACI transition retry must log its reason"
 done
 
 # Permanent diagnostics must not qualify even if a download reset is also present.

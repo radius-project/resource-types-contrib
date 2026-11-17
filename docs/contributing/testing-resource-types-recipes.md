@@ -172,8 +172,9 @@ For the confirmed `AzureContainerInstance/ContainerGroupTransitioning` error on
 an ACI NGroups resource, the runner allows up to five deployment attempts. It
 waits 30, 60, 120, and 240 seconds between attempts, within the deployment
 deadline. These retries keep the same application and parameters and do not
-delete resources between attempts. Unknown or mixed permanent errors do not
-qualify.
+delete resources between attempts. The longer transition retry policy also
+applies when other reported errors are recognized transient failures.
+Unknown or mixed permanent errors do not qualify.
 
 The three-attempt limit and 10- and 20-second delays also apply when `terraform init` fails to download
 a provider package from `releases.hashicorp.com` with `connection reset by peer`.

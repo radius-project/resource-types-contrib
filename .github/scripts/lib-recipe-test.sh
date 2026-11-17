@@ -813,7 +813,7 @@ rtc_deploy_with_retry() (
         fi
         retry_reason=""
         if retry_reason=$(rtc_deployment_retry_reason "$deploy_log"); then
-            if [[ "$retry_reason" == "Azure Container Instance group is still transitioning" ]]; then
+            if [[ "; $retry_reason; " == *"; Azure Container Instance group is still transitioning; "* ]]; then
                 max_attempts=5
                 retry_delay=$((30 * 2 ** (attempt - 1)))
             else
