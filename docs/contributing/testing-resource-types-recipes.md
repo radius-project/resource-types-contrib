@@ -190,9 +190,10 @@ when model sources, their Kubernetes dependencies, Azure AKS packs, or shared
 test code change. External pull requests require approval for the exact head
 SHA before the job receives Azure credentials.
 
-`nightly-azure-openai-tests.yaml` runs daily at 10:00 UTC and also tests the
-checked-in model pack entry. Release candidates have a separate OpenAI job
-with the same pack coverage. All three use `test-azure-openai.yaml` and the
+`nightly-azure-openai-tests.yaml` runs daily at 10:00 UTC. CI, nightly, and
+release-candidate OpenAI jobs test the checked-in model pack entry, which uses
+the external AVM account module rather than a local wrapper Recipe.
+All three use `test-azure-openai.yaml` and the
 single shared job concurrency group `azure-openai-test-capacity`. One OpenAI
 test job runs at a time; up to 100 can wait. Other Azure tests do not wait for
 this slot. Cleanup runs before the job releases the slot, with a separate
@@ -204,7 +205,7 @@ entries in checked-in Azure packs. `exclude` omits those tests but retains
 other entries in the same packs. Unset or `all` keeps the full test set;
 other values fail. An OpenAI-only test run fails if no model recipe or pack
 entry is found. Kubernetes-backed client containers and secrets remain in
-the generated OpenAI pack. The model connection and secret assertions do
+the checked-in Azure AKS pack. The model connection and secret assertions do
 not change.
 
 This separation limits concurrent tests; it does not increase Azure quota

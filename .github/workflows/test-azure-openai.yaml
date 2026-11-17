@@ -11,9 +11,6 @@ on:
       checkout_ref:
         type: string
         default: ""
-      test_checked_in_pack:
-        type: boolean
-        default: false
       release_candidate:
         type: boolean
         default: false
@@ -128,33 +125,18 @@ jobs:
 
       - name: Deploy checked-in OpenAI Recipe Pack
         id: pack_deploy
-        if: inputs.test_checked_in_pack
         env:
           RECIPE_PACK_USE_LOCAL_RECIPES: ${{ !inputs.release_candidate && 'true' || 'false' }}
         run: bash .github/scripts/deploy-all-checked-in-recipe-packs.sh azure "$AZURE_ENVIRONMENT_NAME"
 
       - name: Test checked-in OpenAI Recipe Pack entry
         id: pack_test
-        if: inputs.test_checked_in_pack && steps.pack_deploy.outcome == 'success'
+        if: steps.pack_deploy.outcome == 'success'
         timeout-minutes: 25
         run: |
           export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 25 * 60 ))
           make test-recipe-pack-entries PLATFORM_GROUP=azure \
             WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
-
-      - name: Test generated OpenAI Bicep recipe
-        id: basic_test
-        timeout-minutes: 25
-        run: |
-          set -euo pipefail
-          export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 25 * 60 ))
-          RECIPE_PLATFORM_FILTER=azure make generate-recipe-pack \
-            PACK_NAME=openaiBicepRecipePack OUTPUT_FILE=recipe-pack-openai.bicep
-          make deploy-recipe-pack BICEP_FILE=recipe-pack-openai.bicep RESOURCE_GROUP=default
-          make update-env-recipe-pack RECIPE_PACK_NAME=openaiBicepRecipePack \
-            ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
-          RECIPE_PLATFORM_FILTER=azure make test \
-            ENVIRONMENT="$AZURE_ENVIRONMENT_NAME" RECIPE_TYPE=bicep
 
       - name: Collect workflow failure diagnostics
         if: ${{ !cancelled() && failure() }}
@@ -174,18 +156,13 @@ jobs:
       - name: Report OpenAI test failures
         if: ${{ !cancelled() }}
         env:
-          TEST_CHECKED_IN_PACK: ${{ inputs.test_checked_in_pack }}
           PACK_DEPLOY_OUTCOME: ${{ steps.pack_deploy.outcome }}
           PACK_TEST_OUTCOME: ${{ steps.pack_test.outcome }}
-          BASIC_TEST_OUTCOME: ${{ steps.basic_test.outcome }}
         run: |
           set -euo pipefail
-          outcomes=("generated OpenAI recipe:$BASIC_TEST_OUTCOME")
-          if [[ "$TEST_CHECKED_IN_PACK" == true ]]; then
-            outcomes+=("checked-in OpenAI pack deployment:$PACK_DEPLOY_OUTCOME"
-              "checked-in OpenAI pack entry:$PACK_TEST_OUTCOME")
-          fi
-          bash .github/scripts/report-azure-test-failures.sh "${outcomes[@]}"
+          bash .github/scripts/report-azure-test-failures.sh \
+            "checked-in OpenAI pack deployment:$PACK_DEPLOY_OUTCOME" \
+            "checked-in OpenAI pack entry:$PACK_TEST_OUTCOME"
 
       - name: Collect Radius pod logs
         if: always()
