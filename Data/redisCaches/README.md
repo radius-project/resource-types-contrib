@@ -66,8 +66,23 @@ support described above, Radius creates `CONNECTION_REDIS_CONNECTIONSTRING`
 for StackExchange.Redis clients. The test app checks the URL with `redis-cli`.
 Azure Recipe Pack tests also check the URL format, the StackExchange.Redis
 format, and a TLS connection with the separate access key.
+For the Azure URL check, the probe passes `--user default` after `-u`.
+Without this option, `redis-cli` sends an empty user name from the AVM URL
+and authentication fails even with the correct access key.
 The URL probe checks `redis-cli`; it does not prove that other clients can
 parse the raw Azure URL.
+
+Run the real-client regression locally with Docker and OpenSSL:
+
+```bash
+make test-redis-connection-integration
+```
+
+This uses a temporary TLS certificate and synthetic credentials with the
+same Redis client image as the test app. It has no cloud dependency, opens
+no host ports, and disables the container's external network. Docker pulls
+the image if it is not already present. The test removes its container
+and local files after it runs. The Bicep validation job also runs this check.
 
 To run this check against an existing Azure Environment with the updated
 namespace and Recipe Pack:
