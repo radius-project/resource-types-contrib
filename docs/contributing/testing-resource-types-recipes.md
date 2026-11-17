@@ -190,6 +190,13 @@ when model sources, their Kubernetes dependencies, Azure AKS packs, or shared
 test code change. External pull requests require approval for the exact head
 SHA before the job receives Azure credentials.
 
+For `pull_request_target`, GitHub loads the caller and its local reusable
+workflow from the base branch, even when the worker checks out the PR head.
+A rerun uses the same workflow revision. To test a workflow change before it
+merges, run `validate-azure-openai-recipes.yaml` with `workflow_dispatch` on the
+same-repository PR branch. This does not replace the required PR check; a
+workflow change on the base branch can still be needed for that check.
+
 `nightly-azure-openai-tests.yaml` runs daily at 10:00 UTC. CI, nightly, and
 release-candidate OpenAI jobs test the checked-in model pack entry, which uses
 the external AVM account module rather than a local wrapper Recipe.
@@ -535,6 +542,13 @@ deadline bounds deployment and the existing one-size recovery attempt.
 CI opts in with `RTC_POSTGRES_RECIPE_SELECTION_FILE`. Other per-recipe runs
 keep their existing behavior and do not consume the pack-entry phase's selection
 deadline. Other recipe failures keep their failure status.
+
+After application cleanup, the shared test helper checks Azure resource IDs
+up to six times, with ten seconds between checks. Azure inventory can briefly
+show a resource after deletion completes. The helper must confirm that no new
+IDs remain before it passes the test or tries another size. An inventory error
+fails at once. IDs that remain after the final check also fail the test and are
+reported in the log. The helper does not delete untracked resources.
 
 Nightly and release-candidate generated Bicep recipe tests also set
 `RTC_POSTGRES_RECIPE_SELECTION_FILE`. Both test paths validate the probe-selected
