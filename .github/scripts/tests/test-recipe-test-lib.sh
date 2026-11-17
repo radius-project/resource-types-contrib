@@ -508,12 +508,22 @@ grep -Fq -- '--parameters password=Aa1!mock-generated-password' "$CALL_LOG" \
 
 # Retry only confirmed transient deployment and Terraform provider download failures.
 TRANSIENT_DEPLOY_ERROR='Error: {"code":"ResourceDeploymentFailure","message":"System.IO.IOException: Connection reset by peer","target":"/subscriptions/test/resourceGroups/test/providers/Microsoft.KeyVault/vaults/test"}'
-ACI_CONTAINER_TRANSITION_MESSAGE='Error(s) encountered during update of the Container Scale Set. [{"ErrorCode": "AzureContainerInstance/ContainerGroupTransitioning", "SampleErrorMessage": "The container group is still transitioning, please retry later."}]'
+ACI_CONTAINER_TRANSITION_MESSAGE=$'Error(s) encountered during update of the Container Scale Set. Please see the individual errors below and take corrective actions. [\r\n  {\r\n    "ErrorCode": "AzureContainerInstance/ContainerGroupTransitioning",\r\n    "SampleErrorMessage": "The container group \'b08c0d27-2ab7-408e-a4bb-51d123603fdb\' is still transitioning, please retry later.",\r\n    "ExceptionType": "AciException",\r\n    "ErrorTargets": "b08c0d27-2ab7-408e-a4bb-51d123603fdb"\r\n  }\r\n]'
 ACI_CONTAINER_TRANSITION_JSON="$(jq -cn --arg message "$ACI_CONTAINER_TRANSITION_MESSAGE" \
-    '{code:"DeploymentFailed",details:[{code:"ResourceDeploymentFailure",target:"/subscriptions/test/resourceGroups/test/providers/Microsoft.ContainerInstance/ngroups/ngroups-test",details:[{code:"AzureContainerInstance/ContainerGroupTransitioning",message:$message,target:"19bc9d8e-0987-44ca-870f-9a3a524f6c16"}]}]}')"
+    '{code:"DeploymentFailed",details:[{
+      code:"ResourceDeploymentFailure",target:"/planes/radius/local/resourceGroups/default/providers/Radius.Compute/containers/myApp",
+      details:[{code:"RecipeDeploymentFailed",message:"failed to deploy recipe default of type Radius.Compute/containers",
+        details:[{code:"DeploymentFailed",details:[{
+          code:"ResourceDeploymentFailure",target:"/subscriptions/test/resourceGroups/test/providers/Microsoft.ContainerInstance/ngroups/ngroups-test",
+          details:[{code:"AzureContainerInstance/ContainerGroupTransitioning",message:$message,target:"b08c0d27-2ab7-408e-a4bb-51d123603fdb"}]
+        }]}]
+      }]
+    }]}')"
 ACI_CONTAINER_TRANSITION_ERROR="Error: $ACI_CONTAINER_TRANSITION_JSON"
+ACI_TRACE_ID=a5764c250e7cde5fa61b487e6664e48a
+ACI_CONTAINER_TRANSITION_WITH_TRACE="$ACI_CONTAINER_TRANSITION_ERROR"$'\n\nTraceId:  '"$ACI_TRACE_ID"$'\n'
 ACI_WRONG_TARGET_ERROR="Error: $(jq -cn --argjson error "$ACI_CONTAINER_TRANSITION_JSON" \
-    '$error | .details[0].target |= sub("/ngroups/"; "/other/")')"
+    '$error | .details[0].details[0].details[0].details[0].target |= sub("/ngroups/"; "/other/")')"
 TERRAFORM_DOWNLOAD_ERROR='terraform init failure: exit status 1
 
 Error: Failed to install provider
@@ -565,16 +575,62 @@ for deploy_error in "$TRANSIENT_DEPLOY_ERROR" "$TERRAFORM_DOWNLOAD_ERROR" "$WRAP
     done
 done
 
-: >"$CALL_LOG"
-DEPLOY_FAILURES=1 DEPLOY_ERROR="$ACI_CONTAINER_TRANSITION_ERROR" \
-    run_lib rtc_deploy_and_assert_test_app \
-    "$TEST_APP_WITH_PASSWORD" Radius.Compute/containers rtc-test /envs/myenv myws my-ns \
-    >"$TEST_ROOT/retry-output" 2>&1 ||
-    fail "an ACI container-group transition should recover"
-assert_eq "2" "$(grep -c '^rad deploy ' "$CALL_LOG")" "ACI transition retry attempts"
-assert_eq "1" "$(grep -c '^rad app delete ' "$CALL_LOG")" "ACI transition cleanup"
-grep -Fq 'Azure Container Instance group is still transitioning; retrying' "$TEST_ROOT/retry-output" ||
-    fail "ACI transition retry must log its reason"
+for trace_line in "TraceId: $ACI_TRACE_ID" "TraceId:  $ACI_TRACE_ID" $'\tTraceId:\t'"${ACI_TRACE_ID^^}"$' \t\r'; do
+    printf '%s\n\n%s\n' "$ACI_CONTAINER_TRANSITION_ERROR" "$trace_line" >"$TEST_ROOT/aci-transition.log"
+    assert_eq "Azure Container Instance group is still transitioning" \
+        "$(run_lib rtc_deployment_retry_reason "$TEST_ROOT/aci-transition.log")" \
+        "ACI transition with CLI trace metadata whitespace"
+done
+
+for failures in 1 2 3; do
+    : >"$CALL_LOG"
+    retry_status=0
+    DEPLOY_FAILURES="$failures" DEPLOY_ERROR="$ACI_CONTAINER_TRANSITION_WITH_TRACE" \
+        run_lib rtc_deploy_and_assert_test_app \
+        "$TEST_APP_WITH_PASSWORD" Radius.Compute/containers rtc-test /envs/myenv myws my-ns \
+        >"$TEST_ROOT/retry-output" 2>&1 || retry_status=$?
+    if [[ "$failures" -lt 3 ]]; then
+        assert_eq "0" "$retry_status" "ACI transition recovery with CLI trace metadata"
+        expected_attempts=$((failures + 1))
+    else
+        [[ "$retry_status" -ne 0 ]] || fail "exhausted ACI transition retries must fail"
+        expected_attempts=3
+    fi
+    assert_eq "$expected_attempts" "$(grep -c '^rad deploy ' "$CALL_LOG")" "ACI transition retry attempts"
+    assert_eq "$((expected_attempts - 1))" "$(grep -c '^sleep ' "$CALL_LOG")" "ACI transition delay count"
+    grep -Fxq 'sleep 10' "$CALL_LOG" || fail "ACI transition first retry must wait 10 seconds"
+    if [[ "$expected_attempts" -eq 3 ]]; then
+        grep -Fxq 'sleep 20' "$CALL_LOG" || fail "ACI transition second retry must wait 20 seconds"
+    fi
+    assert_eq "1" "$(grep '^rad deploy ' "$CALL_LOG" | sort -u | wc -l | tr -d ' ')" \
+        "ACI transition retries must preserve deployment arguments"
+    assert_eq "1" "$(grep -c '^rad app delete ' "$CALL_LOG")" "ACI transition cleanup"
+    awk '/^rad app delete |^kubectl delete / { cleaned = 1 } /^rad deploy / && cleaned { exit 1 }' "$CALL_LOG" ||
+        fail "ACI transition cleanup must not run between attempts"
+    grep -Fq 'Azure Container Instance group is still transitioning; retrying' "$TEST_ROOT/retry-output" ||
+        fail "ACI transition retry must log its reason"
+    grep -Fq "TraceId:  $ACI_TRACE_ID" "$TEST_ROOT/retry-output" ||
+        fail "CLI trace metadata must remain visible"
+done
+
+for diagnostic in \
+    "TraceId:$ACI_TRACE_ID" \
+    "TraceId: ${ACI_TRACE_ID:1}" \
+    "TraceId: ${ACI_TRACE_ID}0" \
+    "TraceId: ${ACI_TRACE_ID:1}g" \
+    "TraceId: $ACI_TRACE_ID AuthorizationFailed: access denied" \
+    "TraceId: $ACI_TRACE_ID"$'\nAuthorizationFailed: access denied' \
+    "TraceId: $ACI_TRACE_ID"$'\nUnknownDiagnostic: unclassified problem' \
+    "TraceId: $ACI_TRACE_ID"$'\n{"code":"AuthorizationFailed","message":"access denied"}' \
+    "TraceId: $ACI_TRACE_ID"$'\n{"message":"unclassified deployment failure"}'; do
+    : >"$CALL_LOG"
+    if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$ACI_CONTAINER_TRANSITION_ERROR"$'\n'"$diagnostic" \
+        run_lib rtc_deploy_with_retry "$TEST_APP_BICEP" >"$TEST_ROOT/retry-output" 2>&1; then
+        fail "ACI transition with invalid metadata or mixed failures must fail"
+    fi
+    assert_eq "1" "$(grep -c '^rad deploy ' "$CALL_LOG")" "invalid or mixed ACI failure attempts: $diagnostic"
+    grep -q '^sleep ' "$CALL_LOG" && fail "invalid or mixed ACI failures must not back off"
+done
 
 # Permanent diagnostics must not qualify even if a download reset is also present.
 for permanent_error in \
@@ -646,9 +702,10 @@ for deploy_error in \
     "$(jq -cn --argjson error "$ACI_CONTAINER_TRANSITION_JSON" \
         '{code:"DeploymentFailed",details:[$error,{code:"ResourceDeploymentFailure",message:"AuthorizationFailed: access denied"}]}')" \
     'Connection reset by peer' \
+    "TraceId: $ACI_TRACE_ID" \
     '{"code":"ResourceDeploymentFailure","message":"Connection reset by peer","target":"/planes/radius/local/resourceGroups/test/providers/Radius.Data/widgets/test"}'; do
     : >"$CALL_LOG"
-    if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$deploy_error" run_lib rtc_deploy_and_assert_test_app \
+    if DEPLOY_EXIT_CODE=1 DEPLOY_ERROR="$deploy_error"$'\nTraceId:  '"$ACI_TRACE_ID" run_lib rtc_deploy_and_assert_test_app \
         "$TEST_APP_BICEP" Radius.Security/secrets rtc-test /envs/myenv myws my-ns >/dev/null 2>&1; then
         fail "non-retryable errors must fail"
     fi
