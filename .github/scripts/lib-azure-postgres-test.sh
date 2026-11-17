@@ -78,6 +78,31 @@ rtc_postgres_positive_limit() {
     [[ "$value" =~ ^[1-9][0-9]{0,5}$ ]] && ((10#$value <= maximum))
 }
 
+rtc_record_postgres_test_event() {
+    local event="$1" location="$2" size="$3" attempt="$4" status="${5:-null}" record
+    local phase="${RTC_POSTGRES_TEST_PHASE:-pack-entry}"
+    local diagnostics_root="${RTC_TEST_DIAGNOSTICS_DIR-${RTC_AZURE_DIAGNOSTICS_DIR:-}}"
+    if [[ ! "$location" =~ ^[a-z0-9]+$ || ! "$phase" =~ ^[A-Za-z0-9_./:-]{1,256}$ ]]; then
+        echo "Error: invalid PostgreSQL diagnostic context." >&2
+        return 1
+    fi
+    rtc_postgres_test_tuple "$size" || return 1
+    record=$(jq -cn --arg event "$event" --arg phase "$phase" --arg location "$location" \
+        --arg size "$size" --arg skuName "$postgres_sku" --arg tier "$postgres_tier" \
+        --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --argjson attempt "$attempt" --argjson status "$status" \
+        '{version:1,event:$event,phase:$phase,timestamp:$timestamp,location:$location,
+          size:$size,skuName:$skuName,tier:$tier,attempt:$attempt,status:$status}') || return 1
+    echo "==> PostgreSQL test: $record"
+    if [[ -n "$diagnostics_root" ]]; then
+        if ! mkdir -p "$diagnostics_root" ||
+            ! printf '%s\n' "$record" >>"$diagnostics_root/postgres-test-events.jsonl"; then
+            echo "Error: could not save PostgreSQL test diagnostics." >&2
+            return 1
+        fi
+    fi
+}
+
 # Sets the size and deadline only after the record matches the deployed recipe.
 rtc_read_postgres_test_selection() {
     local location="$1" fallback_deadline="$2" selection_status
@@ -121,6 +146,7 @@ rtc_read_postgres_test_selection() {
         echo "Error: PostgreSQL selection deadline has expired." >&2
         return 1
     fi
+    rtc_record_postgres_test_event probe-selection-validated "$location" "$postgres_test_size" 0
 }
 
 rtc_postgres_catalog_result() {
