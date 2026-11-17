@@ -222,6 +222,22 @@ rtc_snapshot_azure_resource_ids() {
     ' <<<"$inventory"
 }
 
+rtc_wait_for_azure_resource_cleanup() {
+    local before="$1" after
+    while true; do
+        if ! after=$(rtc_snapshot_azure_resource_ids); then
+            echo "Error: Could not verify Azure resource deletion." >&2
+            return 1
+        fi
+        if [[ -z "$(comm -13 <(printf '%s\n' "$before" | sed '/^$/d') \
+            <(printf '%s\n' "$after" | sed '/^$/d'))" ]]; then
+            return 0
+        fi
+        echo "==> Waiting for Azure resource deletion to appear in the resource inventory."
+        sleep 10 || return 1
+    done
+}
+
 # Retry one untried size only when the shared helper confirms safe cleanup.
 rtc_test_azure_postgresql_app() (
     local test_file="$1" environment_path="$2" workspace_name="$3" kubernetes_namespace="$4"
@@ -769,10 +785,9 @@ rtc_save_deployment_error() {
     fi
 }
 
-# Retry confirmed download or Azure transport failures without deleting partially
-# deployed resources. Terraform init fails before apply; keep deployment arguments.
+# Retry confirmed transient failures without deleting partially deployed resources.
 rtc_deploy_with_retry() (
-    local deploy_log retry_reason attempt=1 max_attempts=3
+    local deploy_log retry_reason retry_delay attempt=1 max_attempts=3
     local -a pipeline_status
     deploy_log=$(mktemp "${TMPDIR:-/tmp}/rtc-deploy-XXXXXX") || return 1
     trap 'rm -f "$deploy_log"' EXIT
@@ -796,8 +811,19 @@ rtc_deploy_with_retry() (
             rtc_deployment_retry_reason "$deploy_log" aci-quota >/dev/null; then
             return 43
         fi
-        if [[ "$attempt" -ge "$max_attempts" ]] ||
-            ! retry_reason=$(rtc_deployment_retry_reason "$deploy_log"); then
+        retry_reason=""
+        if retry_reason=$(rtc_deployment_retry_reason "$deploy_log"); then
+            if [[ "$retry_reason" == "Azure Container Instance group is still transitioning" ]]; then
+                max_attempts=5
+                retry_delay=$((30 * 2 ** (attempt - 1)))
+            else
+                max_attempts=3
+                retry_delay=$((attempt * 10))
+            fi
+        else
+            retry_reason=""
+        fi
+        if [[ "$attempt" -ge "$max_attempts" || -z "$retry_reason" ]]; then
             if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 &&
                   "${pipeline_status[0]}" != 124 && "${pipeline_status[0]}" != 137 ]]; then
                 if rtc_has_postgresql_capacity_failure "$deploy_log"; then return 42; fi
@@ -807,8 +833,8 @@ rtc_deploy_with_retry() (
             return "${pipeline_status[0]}"
         fi
 
-        echo "==> $retry_reason; retrying in $((attempt * 10)) seconds (attempt $((attempt + 1))/$max_attempts)"
-        sleep "$((attempt * 10))" || return 1
+        echo "==> $retry_reason; retrying in $retry_delay seconds (attempt $((attempt + 1))/$max_attempts)"
+        sleep "$retry_delay" || return 1
         attempt=$((attempt + 1))
     done
 )
@@ -860,7 +886,7 @@ rtc_collect_test_diagnostics() {
 rtc_deploy_and_assert_test_app_once() {
     local test_file="$1" resource_type="$2" app_name_prefix="$3" environment_path="$4" workspace_name="$5" kubernetes_namespace="$6"
     local app_name started locks_before="" inventory_locks="" deploy_status=0 azure_before="" azure_after=""
-    local step_remaining="" step_deadline="${RTC_AZURE_TEST_STEP_DEADLINE_EPOCH:-}" step_reserve=360
+    local step_remaining="" step_deadline="${RTC_AZURE_TEST_STEP_DEADLINE_EPOCH:-}" step_reserve=360 container_deploy_limit=900
     local diagnostics_collected=0
     local -a params=() deploy_timeout=() cleanup_timeout=()
     local -a deploy_command=(rtc_deploy_with_retry)
@@ -874,6 +900,7 @@ rtc_deploy_and_assert_test_app_once() {
     elif [[ "${RTC_ACI_QUOTA_RECOVERY:-0}" == 1 ]]; then
         # Parallel network deletes can need several 60-second dependency retries.
         step_reserve=660
+        container_deploy_limit=1500
     fi
 
     if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ||
@@ -975,8 +1002,8 @@ rtc_deploy_and_assert_test_app_once() {
             bash "${BASH_SOURCE[0]}")
     fi
     if [[ -n "$step_remaining" ]]; then
-        if [[ "$resource_type" == Radius.Compute/containers ]] && ((step_remaining > 900)); then
-            step_remaining=900
+        if [[ "$resource_type" == Radius.Compute/containers ]] && ((step_remaining > container_deploy_limit)); then
+            step_remaining="$container_deploy_limit"
         fi
         if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]] && ((step_remaining > remaining)); then
             step_remaining="$remaining"
@@ -1085,7 +1112,15 @@ rtc_deploy_and_assert_test_app_once() {
         fi
         return 1
     fi
-    if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 || "${RTC_ACI_QUOTA_RECOVERY:-0}" == 1 ]]; then
+    if [[ "${RTC_ACI_QUOTA_RECOVERY:-0}" == 1 ]]; then
+        # shellcheck disable=SC2016 # Expanded by the child shell.
+        if ! timeout --kill-after=5s 90s bash -c \
+            'source "$1"; shift; rtc_wait_for_azure_resource_cleanup "$@"' \
+            bash "${BASH_SOURCE[0]}" "$azure_before"; then
+            echo "Error: Azure resource deletion was not confirmed within 90 seconds; capacity recovery is blocked." >&2
+            return 1
+        fi
+    elif [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ]]; then
         if ! azure_after=$(rtc_snapshot_azure_resource_ids) ||
             [[ -n "$(comm -13 <(printf '%s\n' "$azure_before" | sed '/^$/d') \
                 <(printf '%s\n' "$azure_after" | sed '/^$/d'))" ]]; then
@@ -1108,7 +1143,7 @@ rtc_test_azure_aci_app() (
         rtc_deploy_and_assert_test_app_once "${test_args[@]}" || status=$?
         if ((status == 0)); then return 0; fi
         if ((status != 43)); then return 1; fi
-        if ((attempt == 2 || deadline - $(date +%s) <= 720)); then
+        if ((attempt == 2 || deadline - $(date +%s) <= 2220)); then
             echo "Error: ACI quota recovery exhausted; deployment was not validated." >&2
             return 1
         fi
@@ -1124,7 +1159,7 @@ rtc_deploy_and_assert_test_app() {
         return $?
     fi
 
-    local deadline=$(( $(date +%s) + 1200 )) inherited="${RTC_AZURE_TEST_STEP_DEADLINE_EPOCH:-}"
+    local deadline=$(( $(date +%s) + 4500 )) inherited="${RTC_AZURE_TEST_STEP_DEADLINE_EPOCH:-}"
     if [[ -n "$inherited" ]]; then
         if [[ ! "$inherited" =~ ^[1-9][0-9]{0,10}$ ]]; then
             echo "Error: Invalid Azure test step deadline." >&2

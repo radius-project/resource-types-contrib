@@ -19,14 +19,27 @@ mkdir -p "$TEST_ROOT/bin" "$TEST_ROOT/logs"
 export CALL_LOG="$TEST_ROOT/calls" PATH="$TEST_ROOT/bin:$PATH"
 export GITHUB_ACTIONS=true RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg
 export TMPDIR="$TEST_ROOT/logs"
+REAL_DATE="$(command -v date)"
+export REAL_DATE
 unset RTC_AZURE_TEST_STEP_DEADLINE_EPOCH RTC_TEST_DIAGNOSTICS_DIR RTC_AZURE_DIAGNOSTICS_DIR
 
+cat >"$TEST_ROOT/bin/date" <<'EOF'
+#!/bin/bash
+if [[ "$*" == +%s && -n "${MOCK_TIME_FILE:-}" ]]; then
+    echo $(( $("$REAL_DATE" +%s) + $(cat "$MOCK_TIME_FILE") ))
+else
+    exec "$REAL_DATE" "$@"
+fi
+EOF
 cat >"$TEST_ROOT/bin/rad" <<'EOF'
 #!/bin/bash
 echo "rad $*" >>"$CALL_LOG"
 case "$1 $2" in
     "deploy "*)
         attempt="$(grep -c '^rad deploy ' "$CALL_LOG")"
+        if [[ -n "${MOCK_TIME_FILE:-}" ]]; then
+            echo $(( $(cat "$MOCK_TIME_FILE") + 1500 )) >"$MOCK_TIME_FILE"
+        fi
         if ((attempt <= ${FAILURES:-1})); then
             printf 'Error: %s\n' "$DEPLOY_ERROR" >&2
             exit "${DEPLOY_EXIT_CODE:-1}"
@@ -39,6 +52,9 @@ case "$1 $2" in
         else echo '{"properties":{"hosts":{"simple":"second"}}}'; fi
         ;;
     "app delete")
+        if [[ -n "${MOCK_TIME_FILE:-}" ]]; then
+            echo $(( $(cat "$MOCK_TIME_FILE") + 360 )) >"$MOCK_TIME_FILE"
+        fi
         if [[ "${CLEANUP_BUDGET_REQUIRED:-0}" == 1 && "${TEST_TIMEOUT_BUDGET:-}" != 6m ]]; then exit 124; fi
         exit "${DELETE_FAIL:-0}" ;;
 esac
@@ -50,7 +66,11 @@ case "$1 $2" in
     "resource list")
         if [[ "${INVENTORY_FAIL:-0}" == 1 ]] ||
             { [[ "${AFTER_INVENTORY_FAIL:-0}" == 1 ]] && grep -q '^rad app delete ' "$CALL_LOG"; }; then exit 1; fi
-        if [[ "${LEAK:-0}" == 1 ]] && grep -q '^rad app delete ' "$CALL_LOG"; then
+        if [[ "${BEFORE_RESOURCE:-0}" == 1 ]]; then
+            echo '[{"id":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.ContainerInstance/ngroups/existing"}]'
+        elif { [[ "${LEAK:-0}" == 1 ]] ||
+            { [[ "${DELETE_LAG:-0}" == 1 ]] && [[ "$(grep -c '^az resource list ' "$CALL_LOG")" == 2 ]]; }; } &&
+            grep -q '^rad app delete ' "$CALL_LOG"; then
             echo '[{"id":"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.ContainerInstance/ngroups/leak"}]'
         else echo '[]'; fi
         ;;
@@ -72,12 +92,19 @@ EOF
 cat >"$TEST_ROOT/bin/sleep" <<'EOF'
 #!/bin/bash
 echo "sleep $*" >>"$CALL_LOG"
+if [[ -n "${MOCK_TIME_FILE:-}" ]]; then
+    echo $(( $(cat "$MOCK_TIME_FILE") + $1 )) >"$MOCK_TIME_FILE"
+fi
 exit "${SLEEP_FAIL:-0}"
 EOF
 cat >"$TEST_ROOT/bin/timeout" <<'EOF'
 #!/bin/bash
 echo "timeout $*" >>"$CALL_LOG"
 export TEST_TIMEOUT_BUDGET="$2"
+if [[ "$*" == *'rtc_wait_for_azure_resource_cleanup'* && "${LEAK:-0}" == 1 ]]; then
+    shift 2
+    exec /usr/bin/timeout --kill-after=1s 0.5s "$@"
+fi
 if [[ -n "${OUTER_TIMEOUT:-}" && "$*" == *'rtc_test_azure_aci_app'* ]]; then
     shift 2
     exec /usr/bin/timeout --kill-after=1s "$OUTER_TIMEOUT" "$@"
@@ -122,19 +149,42 @@ awk '/^rad app delete / { cleaned++ } /^az resource list / { snapshots++ }
     fail "retry must follow deletion and resource verification"
 [[ "$(grep '^rad deploy ' "$CALL_LOG" | sed -E 's/.*applicationName=([^ ]+).*/\1/' | sort -u | wc -l)" == 2 ]] ||
     fail "quota recovery must use a new application name"
-grep -Eq '^timeout --kill-after=5s (119[0-9]|1200)s bash -c .*rtc_test_azure_aci_app' "$CALL_LOG" ||
-    fail "full ACI test needs a 20-minute limit"
+grep -Eq '^timeout --kill-after=5s (449[0-9]|4500)s bash -c .*rtc_test_azure_aci_app' "$CALL_LOG" ||
+    fail "full ACI test needs a 75-minute limit"
 [[ -z "$(find "$TMPDIR" -type f -print -quit)" ]] || fail "deployment transcript leaked"
 
 CLEANUP_BUDGET_REQUIRED=1 run_test || fail "ACI cleanup must allow dependency retries on both attempts"
 [[ "$(grep -c '^timeout --kill-after=5s 6m rad app delete ' "$CALL_LOG")" == 2 ]] ||
     fail "successful and failed ACI deployments need six-minute cleanup"
-grep -Eq '^timeout --kill-after=5s (53[0-9]|540)s bash -c .*rtc_deploy_with_retry' "$CALL_LOG" ||
-    fail "ACI deployment must reserve eleven minutes for cleanup and diagnostics"
+[[ "$(grep -c '^timeout --kill-after=5s 1500s bash -c .*rtc_deploy_with_retry' "$CALL_LOG")" == 2 ]] ||
+    fail "both ACI deployment attempts need a 25-minute budget"
 [[ "$(grep -c '^timeout --kill-after=5s 30s kubectl delete ' "$CALL_LOG")" == 3 ]] ||
     fail "successful deployment Kubernetes cleanup must be bounded"
 [[ "$(grep -c '^kubectl delete .*--request-timeout=10s --wait=false$' "$CALL_LOG")" == 3 ]] ||
     fail "failed deployment Kubernetes cleanup must be bounded"
+
+DELETE_LAG=1 run_test || fail "delayed Azure inventory updates must allow safe quota recovery"
+attempts 2
+grep -q '^sleep 10$' "$CALL_LOG" || fail "cleanup verification must poll"
+awk '/^az resource list / { snapshots++ }
+    /^rad deploy / { attempts++; if (attempts == 2 && snapshots < 4) exit 1 }' "$CALL_LOG" ||
+    fail "quota retry must wait for delayed resource deletion"
+[[ "$(grep -c '^timeout --kill-after=5s 90s bash -c .*rtc_wait_for_azure_resource_cleanup' "$CALL_LOG")" == 2 ]] ||
+    fail "each cleanup verification needs a 90-second limit"
+BEFORE_RESOURCE=1 run_test || fail "pre-existing resources must not block cleanup verification"
+if grep -q '^az resource delete ' "$CALL_LOG"; then fail "cleanup verification must not delete resources"; fi
+
+printf '0\n' >"$TEST_ROOT/clock"
+MOCK_TIME_FILE="$TEST_ROOT/clock" run_test ||
+    fail "two 25-minute deployments with six-minute cleanup and quota backoff must fit"
+attempts 2
+[[ "$(grep -c '^timeout --kill-after=5s 1500s bash -c .*rtc_deploy_with_retry' "$CALL_LOG")" == 2 ]] ||
+    fail "elapsed deployment and cleanup time must leave a full second deployment budget"
+
+RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$(( $(date +%s) + 1080 ))" FAILURES=0 run_test ||
+    fail "a shorter caller deadline must still allow deployment with cleanup reserve"
+grep -Eq '^timeout --kill-after=5s (41[0-9]|420)s bash -c .*rtc_deploy_with_retry' "$CALL_LOG" ||
+    fail "shorter caller deadline must preserve the eleven-minute reserve"
 
 RTC_TEST_DIAGNOSTICS_DIR="$TEST_ROOT/diagnostics" run_test || fail "quota recovery with diagnostics"
 [[ -n "$(find "$TEST_ROOT/diagnostics" -name azure.json -print -quit)" ]] || fail "quota diagnostics not saved"
@@ -194,6 +244,11 @@ done
 if RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$(( $(date +%s) + 715 ))" run_test; then fail "insufficient retry budget"; fi
 attempts 1
 if grep -q '^sleep ' "$CALL_LOG"; then fail "insufficient retry budget must block backoff"; fi
+if RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$(( $(date +%s) + 2220 ))" run_test; then
+    fail "quota recovery must not start without a full second deployment and cleanup budget"
+fi
+attempts 1
+if grep -q '^sleep 60$' "$CALL_LOG"; then fail "insufficient full retry budget must block backoff"; fi
 status=0
 OUTER_TIMEOUT=0.001s run_test || status=$?
 [[ "$status" == 1 ]] || fail "outer timeout must fail, not pass or redeploy"
@@ -474,6 +529,14 @@ assert "RTC_ACI_TEST_SCOPE=only RECIPE_PLATFORM_FILTER=azure make test" in worke
 assert 'if [[ "$RELEASE_CANDIDATE" != true ]]; then\n            export RTC_ACI_TEST_DESIRED_COUNT=1' in worker
 pack_step = worker.split("- name: Test checked-in ACI Recipe Pack entry", 1)[1].split("- name:", 1)[0]
 assert "RTC_ACI_TEST_DESIRED_COUNT" not in pack_step
+job_limit = int(re.search(r"name: Test ACI Recipes.*?timeout-minutes: (\d+)", worker, re.S).group(1))
+for step_name in ("Test checked-in ACI Recipe Pack entry", "Test generated ACI Bicep recipe"):
+    step = worker.split(f"- name: {step_name}", 1)[1].split("- name:", 1)[0]
+    step_limit = int(re.search(r"timeout-minutes: (\d+)", step).group(1))
+    assert step_limit >= 80, step_name
+    deadline_minutes = int(re.search(r"date \+%s\) \+ (\d+) \* 60", step).group(1))
+    assert deadline_minutes == step_limit, step_name
+assert job_limit >= 2 * step_limit + 40, "job must allow both tests, setup, and cleanup"
 for step_name in ("Deploy checked-in ACI Recipe Pack", "Test checked-in ACI Recipe Pack entry",
                   "Test generated ACI Bicep recipe"):
     step = worker.split(f"- name: {step_name}", 1)[1].split("- name:", 1)[0]

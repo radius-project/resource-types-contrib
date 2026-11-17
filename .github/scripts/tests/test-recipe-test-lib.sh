@@ -171,7 +171,7 @@ cat >"$MOCK_BIN/sleep" <<'EOF'
 #!/bin/bash
 echo "sleep $*" >>"$CALL_LOG"
 case "$*" in
-    10|20) ;;
+    10|20|30|60|120|240) ;;
     *) exec "$REAL_SLEEP" "$@" ;;
 esac
 EOF
@@ -565,16 +565,33 @@ for deploy_error in "$TRANSIENT_DEPLOY_ERROR" "$TERRAFORM_DOWNLOAD_ERROR" "$WRAP
     done
 done
 
-: >"$CALL_LOG"
-DEPLOY_FAILURES=1 DEPLOY_ERROR="$ACI_CONTAINER_TRANSITION_ERROR" \
-    run_lib rtc_deploy_and_assert_test_app \
-    "$TEST_APP_WITH_PASSWORD" Radius.Compute/containers rtc-test /envs/myenv myws my-ns \
-    >"$TEST_ROOT/retry-output" 2>&1 ||
-    fail "an ACI container-group transition should recover"
-assert_eq "2" "$(grep -c '^rad deploy ' "$CALL_LOG")" "ACI transition retry attempts"
-assert_eq "1" "$(grep -c '^rad app delete ' "$CALL_LOG")" "ACI transition cleanup"
-grep -Fq 'Azure Container Instance group is still transitioning; retrying' "$TEST_ROOT/retry-output" ||
-    fail "ACI transition retry must log its reason"
+for failures in 1 4 5; do
+    : >"$CALL_LOG"
+    retry_status=0
+    DEPLOY_FAILURES="$failures" DEPLOY_ERROR="$ACI_CONTAINER_TRANSITION_ERROR" \
+        run_lib rtc_deploy_and_assert_test_app \
+        "$TEST_APP_WITH_PASSWORD" Radius.Compute/containers rtc-test /envs/myenv myws my-ns \
+        >"$TEST_ROOT/retry-output" 2>&1 || retry_status=$?
+    if ((failures < 5)); then
+        assert_eq "0" "$retry_status" "ACI transition recovery"
+        expected_attempts=$((failures + 1))
+    else
+        [[ "$retry_status" -ne 0 ]] || fail "exhausted ACI transition retries must fail"
+        expected_attempts=5
+    fi
+    assert_eq "$expected_attempts" "$(grep -c '^rad deploy ' "$CALL_LOG")" "ACI transition attempts"
+    assert_eq "1" "$(grep -c '^rad app delete ' "$CALL_LOG")" "ACI transition cleanup"
+    assert_eq "1" "$(grep '^rad deploy ' "$CALL_LOG" | sort -u | wc -l | tr -d ' ')" \
+        "ACI transition retries must preserve deployment arguments"
+    for ((attempt=1; attempt<expected_attempts; attempt++)); do
+        grep -Fxq "sleep $((30 * 2 ** (attempt - 1)))" "$CALL_LOG" ||
+            fail "ACI transition retries need exponential backoff"
+    done
+    awk '/^rad app delete |^kubectl delete / { cleaned = 1 } /^rad deploy / && cleaned { exit 1 }' "$CALL_LOG" ||
+        fail "ACI transition retries must not delete resources between attempts"
+    grep -Fq 'Azure Container Instance group is still transitioning; retrying' "$TEST_ROOT/retry-output" ||
+        fail "ACI transition retry must log its reason"
+done
 
 # Permanent diagnostics must not qualify even if a download reset is also present.
 for permanent_error in \

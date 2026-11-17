@@ -45,7 +45,7 @@ jobs:
     name: Test ACI Recipes
     needs: select-slot
     runs-on: ubuntu-24.04
-    timeout-minutes: 100
+    timeout-minutes: 200
     concurrency:
       group: azure-aci-test-capacity-${{ needs.select-slot.outputs.slot }}
       cancel-in-progress: false
@@ -147,22 +147,22 @@ jobs:
       - name: Test checked-in ACI Recipe Pack entry
         id: pack_test
         if: inputs.test_checked_in_pack && steps.pack_deploy.outcome == 'success'
-        timeout-minutes: 25
+        timeout-minutes: 80
         env:
           RTC_ACI_TEST_SCOPE: only
         run: |
-          export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 25 * 60 ))
+          export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 80 * 60 ))
           make test-recipe-pack-entries PLATFORM_GROUP=azure \
             WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
 
       - name: Test generated ACI Bicep recipe
         id: basic_test
-        timeout-minutes: 25
+        timeout-minutes: 80
         env:
           RELEASE_CANDIDATE: ${{ inputs.release_candidate }}
         run: |
           set -euo pipefail
-          export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 25 * 60 ))
+          export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 80 * 60 ))
           if [[ "$RELEASE_CANDIDATE" != true ]]; then
             export RTC_ACI_TEST_DESIRED_COUNT=1
           fi

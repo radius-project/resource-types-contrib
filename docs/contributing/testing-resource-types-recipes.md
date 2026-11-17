@@ -168,7 +168,14 @@ seconds before retrying. Retries reuse the same application name and parameters;
 cleanup runs only after the final attempt. Other deployment errors, assertion
 failures, and cleanup failures still fail the test.
 
-The same retry limit and delays apply when `terraform init` fails to download
+For the confirmed `AzureContainerInstance/ContainerGroupTransitioning` error on
+an ACI NGroups resource, the runner allows up to five deployment attempts. It
+waits 30, 60, 120, and 240 seconds between attempts, within the deployment
+deadline. These retries keep the same application and parameters and do not
+delete resources between attempts. Unknown or mixed permanent errors do not
+qualify.
+
+The three-attempt limit and 10- and 20-second delays also apply when `terraform init` fails to download
 a provider package from `releases.hashicorp.com` with `connection reset by peer`.
 This includes errors inside a Radius `RecipeDeploymentFailed` JSON response.
 Each retry logs the reason and the next attempt number. No other Terraform
@@ -300,22 +307,34 @@ In GitHub Actions, both Azure container per-recipe tests and Recipe Pack entry
 tests allow one clean redeployment for the exact structured
 `AzureContainerInstance/ContainerGroupQuotaReached` error on an ACI NGroups
 resource. All failure details must qualify. The runner collects diagnostics,
-deletes the failed application, and confirms that the Azure resource-group
-inventory has no new resource IDs before it waits 60 seconds and retries with a
-new application name. Failed cleanup, failed inventory, mixed errors, registry
+deletes the failed application, and polls the Azure resource-group inventory
+every ten seconds for up to 90 seconds to confirm that no new resource IDs remain.
+It then waits 60 seconds and retries with a new application name. Verification
+only reads the inventory; it does not delete resources, and it ignores IDs
+present before deployment. Failed cleanup, failed inventory, mixed errors, registry
 errors, and regional-capacity errors do not qualify.
 
-The full ACI test has a 20-minute limit, shortened by any enclosing test-step
-deadline. It reserves eleven minutes for diagnostics, cleanup, and inventory
-checks. Application deletion has a six-minute limit on both successful and
+The full ACI test has a 75-minute limit, shortened by any enclosing test-step
+deadline. Each deployment has a 25-minute limit, including transition retries.
+Each attempt reserves eleven minutes for diagnostics, cleanup, and inventory
+checks. The test creates two NGroups with separate networks, NAT gateways,
+load balancers, public IPs, security groups, and container profiles, plus
+storage and secrets. Two 25-minute deployments, two eleven-minute reserves,
+and the one-minute quota wait fit within the full limit.
+Application deletion has a six-minute limit on both successful and
 failed deployments. Radius deletes Azure output resources in parallel; network
 dependencies can cause 60-second retries while the NGroup, load balancer,
 virtual network, NAT gateway, and public IPs are removed. A three-minute limit
 can stop the test while those retries are still active. The longer limit does
 not fix control-plane deletion errors or prove that deletion will finish.
 Cleanup failure still fails the test and blocks quota recovery.
-A retry starts only if more than twelve minutes remain. Existing transport retries
-still use the same application within each deployment attempt. A second quota rejection
+A quota retry starts only if more than 37 minutes remain: 25 minutes for
+deployment, eleven minutes for cleanup and diagnostics, and one minute to wait.
+The workflow gives each test step 80 minutes and the shared job 200 minutes,
+so both the checked-in pack and generated recipe can complete with setup and
+final resource-group cleanup. These are limits, not fixed waits.
+Existing transport retries still use the same application within each deployment
+attempt. A second quota rejection
 fails with `deployment was not validated`; quota rejection never counts as a
 passing test.
 
@@ -714,20 +733,20 @@ Azure context is optional for Radius logs: missing credentials, a missing resour
 group, or a failed Azure account lookup cannot prevent cluster log collection.
 Azure API reads run only with a valid Azure subscription and resource group.
 
-In GitHub Actions, the Azure container test limits `rad deploy` to 15 minutes
-and `rad app delete` to 3 minutes after a deployment or assertion failure,
-with a further 5-second kill limit for each. App cleanup after a successful
-test has no timeout.
-This leaves time to collect evidence when provisioning stalls, instead of
-waiting for the 30-minute job limit. A timeout remains a test failure.
+In GitHub Actions, the Azure ACI container test limits `rad deploy` to 25 minutes
+and `rad app delete` to six minutes on success or failure, with a further
+five-second kill limit for each. Its full 75-minute limit includes one possible
+quota recovery attempt and reserves eleven minutes per attempt for diagnostics,
+cleanup, and verification.
+This leaves time to collect evidence when provisioning stalls. A timeout remains a test failure.
 Collection runs before app cleanup, and Kubernetes cleanup is still attempted.
 The nightly and release candidate test steps also pass their absolute deadline
 as `RTC_AZURE_TEST_STEP_DEADLINE_EPOCH`. Each Azure deployment must stop at least
-six minutes before that deadline, or eighteen minutes for PostgreSQL capacity recovery
+six minutes before that deadline, eleven minutes for ACI, or eighteen minutes for PostgreSQL capacity recovery
 to preserve its twelve-minute application deletion budget and cleanup verification.
 Assertions use the time left before the same
-cutoff; they cannot use the diagnostics and cleanup reserve. Container tests retain their shorter
-15-minute limit. PostgreSQL tests retain their shorter recovery deadline.
+cutoff; they cannot use the diagnostics and cleanup reserve. ACI deployments
+also retain their 25-minute cap. PostgreSQL tests retain their shorter recovery deadline.
 Other failure cleanup uses a three-minute application deletion limit and bounded
 Kubernetes deletion requests. PostgreSQL recovery waits for Kubernetes cleanup
 and blocks recovery if deletion fails. A test cannot start a deployment after the
