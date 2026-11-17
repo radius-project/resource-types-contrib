@@ -1086,10 +1086,23 @@ rtc_deploy_and_assert_test_app_once() {
         return 1
     fi
     if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 || "${RTC_ACI_QUOTA_RECOVERY:-0}" == 1 ]]; then
-        if ! azure_after=$(rtc_snapshot_azure_resource_ids) ||
-            [[ -n "$(comm -13 <(printf '%s\n' "$azure_before" | sed '/^$/d') \
-                <(printf '%s\n' "$azure_after" | sed '/^$/d'))" ]]; then
+        local deletion_attempt pending_ids
+        for deletion_attempt in {1..6}; do
+            if ! azure_after=$(rtc_snapshot_azure_resource_ids); then
+                echo "Error: Could not verify Azure resource deletion; capacity recovery is blocked." >&2
+                return 1
+            fi
+            pending_ids=$(comm -13 <(printf '%s\n' "$azure_before" | sed '/^$/d') \
+                <(printf '%s\n' "$azure_after" | sed '/^$/d')) || return 1
+            [[ -n "$pending_ids" ]] || break
+            if ((deletion_attempt < 6)); then
+                echo "==> Waiting for Azure resource deletion to appear in the inventory ($deletion_attempt/6)."
+                sleep 10 || return 1
+            fi
+        done
+        if [[ -n "$pending_ids" ]]; then
             echo "Error: Azure resource deletion was not confirmed; capacity recovery is blocked." >&2
+            printf '%s\n' "$pending_ids" >&2
             return 1
         fi
     fi

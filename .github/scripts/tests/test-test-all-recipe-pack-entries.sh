@@ -285,7 +285,7 @@ echo "param applicationName string" >"$FIXTURE_ROOT/AI/models/test/app.bicep"
 sed "/    recipes: {/a\\
       'Radius.AI/models': {\\
         kind: 'bicep'\\
-        source: 'ghcr.io/radius-project/azure-recipes/models:latest'\\
+        source: 'mcr.microsoft.com/bicep/avm/res/cognitive-services/account:0.19.2'\\
       }" "$TEST_ROOT/aks-pack.bicep" >"$aks_pack"
 : >"$CALL_LOG"
 RTC_OPENAI_TEST_SCOPE=only RTC_ACI_TEST_SCOPE=exclude run_driver azure azure-ws azure-env >/dev/null ||
@@ -448,7 +448,7 @@ echo "param applicationName string" >"$FIXTURE_ROOT/Storage/objectStorage/test/a
 sed "/    recipes: {/a\\
       'Radius.AI/models': {\\
         kind: 'bicep'\\
-        source: 'ghcr.io/radius-project/azure-recipes/models:latest'\\
+        source: 'mcr.microsoft.com/bicep/avm/res/cognitive-services/account:0.19.2'\\
       }\\
       'Radius.Storage/objectStorage': {\\
         kind: 'bicep'\\

@@ -198,9 +198,19 @@ when model sources, their Kubernetes dependencies, Azure AKS packs, or shared
 test code change. External pull requests require approval for the exact head
 SHA before the job receives Azure credentials.
 
-`nightly-azure-openai-tests.yaml` runs daily at 10:00 UTC and also tests the
-checked-in model pack entry. Release candidates have a separate OpenAI job
-with the same pack coverage. All three use `test-azure-openai.yaml` and the
+For `pull_request_target`, GitHub loads the caller and its local reusable
+workflow from the base branch, even when the worker checks out the PR head.
+A rerun uses the same workflow revision. To test a workflow change before it
+merges, run `validate-azure-openai-recipes.yaml` with `workflow_dispatch` on the
+same-repository PR branch. Azure federated credentials must allow that branch's
+OIDC subject; main-only trust rejects the login before deployment. Do not broaden
+cloud trust to bypass this check. A workflow change on the base branch can still
+be needed for PR validation.
+
+`nightly-azure-openai-tests.yaml` runs daily at 10:00 UTC. CI, nightly, and
+release-candidate OpenAI jobs test the checked-in model pack entry, which uses
+the external AVM account module rather than a local wrapper Recipe.
+All three use `test-azure-openai.yaml` and the
 single shared job concurrency group `azure-openai-test-capacity`. One OpenAI
 test job runs at a time; up to 100 can wait. Other Azure tests do not wait for
 this slot. Cleanup runs before the job releases the slot, with a separate
@@ -212,7 +222,7 @@ entries in checked-in Azure packs. `exclude` omits those tests but retains
 other entries in the same packs. Unset or `all` keeps the full test set;
 other values fail. An OpenAI-only test run fails if no model recipe or pack
 entry is found. Kubernetes-backed client containers and secrets remain in
-the generated OpenAI pack. The model connection and secret assertions do
+the checked-in Azure AKS pack. The model connection and secret assertions do
 not change.
 
 This separation limits concurrent tests; it does not increase Azure quota
@@ -542,6 +552,13 @@ deadline bounds deployment and the existing one-size recovery attempt.
 CI opts in with `RTC_POSTGRES_RECIPE_SELECTION_FILE`. Other per-recipe runs
 keep their existing behavior and do not consume the pack-entry phase's selection
 deadline. Other recipe failures keep their failure status.
+
+After application cleanup, the shared test helper checks Azure resource IDs
+up to six times, with ten seconds between checks. Azure inventory can briefly
+show a resource after deletion completes. The helper must confirm that no new
+IDs remain before it passes the test or tries another size. An inventory error
+fails at once. IDs that remain after the final check also fail the test and are
+reported in the log. The helper does not delete untracked resources.
 
 Nightly and release-candidate generated Bicep recipe tests also set
 `RTC_POSTGRES_RECIPE_SELECTION_FILE`. Both test paths validate the probe-selected
