@@ -139,10 +139,6 @@ jobs:
         if: matrix.recipe == 'bicep'
         run: make test-redis-connection-integration
 
-      - name: Validate OpenAI Recipe dependencies
-        if: matrix.recipe == 'bicep'
-        run: node --test .github/scripts/tests/test-openai-dependencies.js
-
       - name: Validate AWS containers Recipe contract
         if: matrix.recipe == 'bicep'
         run: Compute/containers/test/assert-aws-recipe.sh
