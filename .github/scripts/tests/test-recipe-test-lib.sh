@@ -1147,9 +1147,16 @@ run_postgres_entry() {
 }
 : >"$CALL_LOG"
 RTC_TEST_PLATFORM=azure AZURE_RESOURCE_GROUP=rg RTC_POSTGRES_TEST_SIZE=M \
+    RTC_POSTGRES_TEST_PHASE=recipe-pack:azure-aks RTC_TEST_DIAGNOSTICS_DIR="$TEST_ROOT/entry-events" \
     EXPECTED_POSTGRES_HARNESS_DIRECTORY="$REPO_ROOT/Data/postgreSqlDatabases/test" \
     run_postgres_entry >/dev/null || fail "single-entry Azure runner must retain the source configuration and pass selected M"
 grep -q -- '--parameters postgresSize=M' "$CALL_LOG" || fail "single-entry runner must pass M to Bicep"
+jq -se 'length == 2 and
+    all(.[]; .phase == "recipe-pack:azure-aks" and .location == "centralus" and
+        .size == "M" and .skuName == "Standard_D2ds_v5" and .tier == "GeneralPurpose" and .attempt == 1) and
+    .[0].event == "mapped-deployment-request" and .[1].event == "deployment-result" and .[1].status == 0
+' "$TEST_ROOT/entry-events/postgres-test-events.jsonl" >/dev/null ||
+    fail "pack-entry deployment diagnostics must match the effective selected tuple"
 deployed_harness="$(sed -n 's/^rad deploy \([^ ]*\) .*/\1/p' "$CALL_LOG")"
 [[ -n "$deployed_harness" && ! -e "$REPO_ROOT/$deployed_harness" ]] ||
     fail "successful PostgreSQL deployment must remove its temporary harness"
@@ -1192,11 +1199,74 @@ deployed_harness="$(sed -n 's/^rad deploy \([^ ]*\) .*/\1/p' "$CALL_LOG")"
     fail "per-recipe runner must remove its temporary harness"
 : >"$CALL_LOG"
 RTC_POSTGRES_RECIPE_SELECTION_FILE="$selection_file" AZURE_LOCATION=centralus AZURE_RESOURCE_GROUP=rg \
-    DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres_recipe >/dev/null ||
+    RTC_TEST_DIAGNOSTICS_DIR="$TEST_ROOT/postgres-events" \
+    DEPLOY_FAILURES=1 DEPLOY_ERROR="$POSTGRES_CAPACITY_ERROR" run_postgres_recipe >"$TEST_ROOT/postgres-events.log" ||
     fail "per-recipe runner must use bounded same-region capacity recovery"
 [[ "$(grep -c '^rad deploy ' "$CALL_LOG")" == 2 ]] ||
     fail "per-recipe capacity recovery must try at most two deployments"
 grep -q -- '--parameters postgresSize=S' "$CALL_LOG" || fail "capacity recovery must try untried S"
+jq -se '
+    length == 5 and
+    all(.[]; .location == "centralus" and
+        .phase == "recipe:Data/postgreSqlDatabases/recipes/azure/bicep") and
+    .[0].event == "probe-selection-validated" and .[0].size == "M" and
+    .[1].event == "mapped-deployment-request" and .[1].size == "M" and
+    .[1].skuName == "Standard_D2ds_v5" and .[1].tier == "GeneralPurpose" and .[1].attempt == 1 and
+    .[2].event == "deployment-result" and .[2].status == 42 and
+    .[3].event == "mapped-deployment-request" and .[3].size == "S" and
+    .[3].skuName == "Standard_B1ms" and .[3].tier == "Burstable" and .[3].attempt == 2 and
+    .[4].event == "deployment-result" and .[4].status == 0
+' "$TEST_ROOT/postgres-events/postgres-test-events.jsonl" >/dev/null ||
+    fail "diagnostics must distinguish selected M from the effective M and recovery S requests"
+! grep -q 'mock-generated-password' "$TEST_ROOT/postgres-events.log" \
+    "$TEST_ROOT/postgres-events/postgres-test-events.jsonl" || fail "SKU diagnostics must not expose passwords"
+
+# Run the callers' real output-to-record step, then the actual per-recipe runner.
+python3 - "$REPO_ROOT" "$TEST_ROOT" <<'PY'
+import pathlib
+import re
+import sys
+import textwrap
+
+root, output = map(pathlib.Path, sys.argv[1:])
+for name in ["nightly", "release-candidate"]:
+    workflow = (root / f".github/workflows/{name}-recipe-pack-tests.yaml").read_text(encoding="utf-8")
+    record = workflow.split("      - name: Record PostgreSQL preflight result\n", 1)[1]
+    record = record.split("\n      - name:", 1)[0]
+    script = re.search(r"(?m)^        run: \|\n((?:          .*\n|\n)+)", record)
+    assert script, name
+    (output / f"{name}-record.sh").write_text(textwrap.dedent(script[1]), encoding="utf-8")
+    step_name = "Test Azure Bicep recipes" if name == "nightly" else "Test released Azure Bicep recipes"
+    step = workflow.split(f"      - name: {step_name}\n", 1)[1].split("\n      - name:", 1)[0]
+    assert "RTC_POSTGRES_RECIPE_SELECTION_FILE: ${{ env.RTC_AZURE_SELECTION_FILE }}" in step, name
+PY
+for workflow in nightly release-candidate; do
+    for selected_size in S M; do
+        if [[ "$selected_size" == S ]]; then sku=Standard_B1ms; tier=Burstable
+        else sku=Standard_D2ds_v5; tier=GeneralPurpose; fi
+        candidate="$TEST_ROOT/$workflow-$selected_size.json"
+        SELECTION_STATUS=selected SELECTED_SIZE="$selected_size" SELECTED_SKU="$sku" SELECTED_TIER="$tier" \
+            ATTEMPTS='[]' AZURE_LOCATION=centralus RTC_AZURE_SELECTION_FILE="$candidate" \
+            bash "$TEST_ROOT/$workflow-record.sh"
+        jq -e 'has("deadlineEpochSeconds") | not' "$candidate" >/dev/null ||
+            fail "selection evidence must not expire during setup or unrelated test phases"
+        : >"$CALL_LOG"
+        RTC_POSTGRES_RECIPE_SELECTION_FILE="$candidate" AZURE_LOCATION=centralus AZURE_RESOURCE_GROUP=rg \
+            RTC_POSTGRES_TEST_SIZE=S run_postgres_recipe >"$TEST_ROOT/$workflow-$selected_size.log" ||
+            fail "$workflow must propagate selected $selected_size through the generated-pack recipe runner"
+        grep -q -- "--parameters postgresSize=$selected_size" "$CALL_LOG" ||
+            fail "$workflow must deploy selected $selected_size"
+        grep -q "\"skuName\":\"$sku\",\"tier\":\"$tier\",\"attempt\":1" "$TEST_ROOT/$workflow-$selected_size.log" ||
+            fail "$workflow must log the mapped SKU and tier"
+    done
+done
+
+: >"$CALL_LOG"
+if RTC_POSTGRES_RECIPE_SELECTION_FILE="$selection_file" AZURE_LOCATION=centralus AZURE_RESOURCE_GROUP=rg \
+    RTC_TEST_DIAGNOSTICS_DIR="$selection_file" run_postgres_recipe >/dev/null 2>&1; then
+    fail "diagnostic write failures must be explicit"
+fi
+! grep -q '^rad deploy ' "$CALL_LOG" || fail "diagnostic write failure must stop deployment"
 
 for invalid in missing malformed no-selection region sku tier expired configured-region group-read; do
     candidate="$TEST_ROOT/ci-postgres-$invalid.json"

@@ -206,7 +206,11 @@ test("non-container failures collect account, model, MongoDB and PostgreSQL stat
       return { value: { value: [{ id: `${mongo}/mongodbDatabases/test`, properties: { provisioningState: "Creating" } }] } };
     }
     if (url.pathname.endsWith("/flexibleServers")) {
-      return { value: { value: [{ id: postgres, properties: { state: "Ready", secret } }] } };
+      return { value: { value: [{
+        id: postgres, location: "centralus",
+        sku: { name: "Standard_D2ds_v5", tier: "GeneralPurpose", secret },
+        properties: { state: "Ready", secret },
+      }] } };
     }
     return { value: { value: [] } };
   }, { resourceType: "Radius.AI/models" });
@@ -216,7 +220,24 @@ test("non-container failures collect account, model, MongoDB and PostgreSQL stat
   assert.equal(report.resources.find((r) => r.id.endsWith("/deployments/chat")).provisioningState, "Failed");
   assert.equal(report.resources.find((r) => r.id === postgres).state, "Ready");
   assert.equal(report.resources.find((r) => r.id === postgres).provisioningState, null);
+  assert.equal(report.resources.find((r) => r.id === postgres).location, "centralus");
+  assert.deepEqual(report.resources.find((r) => r.id === postgres).sku,
+    { name: "Standard_D2ds_v5", tier: "GeneralPurpose" });
   assert.ok(calls.some((args) => args[4].includes("/flexibleServers?")));
+  assert.ok(!JSON.stringify(report).includes(secret));
+});
+
+test("PostgreSQL SKU snapshots omit invalid values and nested data", async () => {
+  const { report } = await withMock(async (args) => {
+    if (new URL(args[4]).pathname.endsWith("/flexibleServers")) {
+      return { value: { value: [{
+        id: id("Microsoft.DBforPostgreSQL/flexibleServers", "postgres"),
+        sku: { name: { secret }, tier: secret, credentials: secret },
+      }] } };
+    }
+    return { value: { value: [] } };
+  });
+  assert.deepEqual(report.resources.find((r) => r.id.endsWith("/postgres")).sku, { name: null, tier: null });
   assert.ok(!JSON.stringify(report).includes(secret));
 });
 

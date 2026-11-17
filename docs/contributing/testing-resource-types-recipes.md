@@ -543,6 +543,25 @@ CI opts in with `RTC_POSTGRES_RECIPE_SELECTION_FILE`. Other per-recipe runs
 keep their existing behavior and do not consume the pack-entry phase's selection
 deadline. Other recipe failures keep their failure status.
 
+Nightly and release-candidate generated Bicep recipe tests also set
+`RTC_POSTGRES_RECIPE_SELECTION_FILE`. Both test paths validate the probe-selected
+region, size, SKU, and tier. The selection record does not start a deployment
+deadline while cluster setup or unrelated tests run. Pack-entry tests use their
+step deadline; generated-recipe tests start a fresh 30-minute work deadline.
+An explicit deadline in a selection record is still enforced.
+
+The test log and `azure-test-diagnostics/postgres-test-events.jsonl` record
+`probe-selection-validated`, `mapped-deployment-request`, and `deployment-result`
+events. Each event includes the phase, region, logical size, SKU, tier, timestamp,
+and attempt. Result events include the test helper's return status
+(`0` for success, `42` for a confirmed capacity failure after cleanup).
+Mapped requests describe the size passed to the test harness and its validated
+recipe mapping, not an observed Azure PUT. Failure snapshots in `azure.json`
+also include the SKU name and tier of PostgreSQL servers returned by Azure.
+These are later resource-group snapshots, not proof of an individual request.
+A rejected create can leave no server to inspect. Neither record includes
+passwords, recipe context, or raw deployment parameters.
+
 CI keeps the sanitized selection record in `azure-test-diagnostics` and adds
 the attempt table to the job summary. The job limit is 150 minutes to include
 the search, normal tests, and owned-group cleanup. Each matrix job uses a

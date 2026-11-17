@@ -109,9 +109,10 @@ preflight() {
                 echo "Error: PostgreSQL selection requires the existing resource group's region." >&2
                 return 1
             fi
-            postgres_deadline=$(( $(date +%s) + 1800 ))
+            postgres_deadline="${RTC_AZURE_TEST_STEP_DEADLINE_EPOCH:-$(( $(date +%s) + 1800 ))}"
             if [[ -n "${RTC_AZURE_SELECTION_FILE+x}" ]]; then
-                rtc_read_postgres_test_selection "$location" "$postgres_deadline" || return 1
+                RTC_POSTGRES_TEST_PHASE="recipe-pack:$pack_id" \
+                    rtc_read_postgres_test_selection "$location" "$postgres_deadline" || return 1
             else
                 # Never relocate an existing group or repeat the full region search.
                 AZURE_LOCATION="$location" RTC_POSTGRES_TEST_SIZE=S \
@@ -214,6 +215,7 @@ for pack_id in "${packs[@]}"; do
             continue
         fi
         if ! RTC_TEST_PLATFORM="$platform_group" RTC_POSTGRES_TEST_SIZE="$postgres_test_size" \
+            RTC_POSTGRES_TEST_PHASE="recipe-pack:$pack_id" \
             RTC_POSTGRES_TEST_DEADLINE_EPOCH="$postgres_deadline" \
             "$SCRIPT_DIR/test-recipe-pack-entry.sh" "${test_args[@]}"; then
             echo "==> FAILED: $resource_type_dir (from pack '$pack_id')" >&2

@@ -147,6 +147,7 @@ if [[ "$RESOURCE_TYPE" == "Radius.Data/postgreSqlDatabases" && "$PLATFORM" == az
     -v RTC_POSTGRES_RECIPE_SELECTION_FILE ]]; then
     # shellcheck source=.github/scripts/lib-azure-postgres-test.sh
     source "$SCRIPT_DIR/lib-azure-postgres-test.sh"
+    export RTC_POSTGRES_TEST_PHASE="recipe:$RECIPE_PATH"
     rtc_validate_postgres_test_pack "$SCRIPT_DIR/../../recipe-packs/azure-aks/azure-aks.bicep" || exit 1
     RTC_AZURE_SELECTION_FILE="$RTC_POSTGRES_RECIPE_SELECTION_FILE"
     subscription_args=()

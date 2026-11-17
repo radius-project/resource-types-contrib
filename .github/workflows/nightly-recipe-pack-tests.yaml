@@ -283,13 +283,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$(dirname "$RTC_AZURE_SELECTION_FILE")"
-          deadline=$(( $(date +%s) + 2700 ))
           jq -n --arg status "$SELECTION_STATUS" --arg location "$AZURE_LOCATION" \
             --arg size "$SELECTED_SIZE" --arg skuName "$SELECTED_SKU" \
-            --arg tier "$SELECTED_TIER" --argjson attempts "$ATTEMPTS" \
-            --argjson deadlineEpochSeconds "$deadline" '
-            {version:1,status:$status,location:$location,attempts:$attempts,
-             deadlineEpochSeconds:$deadlineEpochSeconds}
+            --arg tier "$SELECTED_TIER" --argjson attempts "$ATTEMPTS" '
+            {version:1,status:$status,location:$location,attempts:$attempts}
             + (if $status == "selected" then
                 {postgres:{size:$size,skuName:$skuName,tier:$tier}}
               else {} end)
@@ -400,6 +397,7 @@ jobs:
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
+          RTC_POSTGRES_RECIPE_SELECTION_FILE: ${{ env.RTC_AZURE_SELECTION_FILE }}
         run: |
           set -euo pipefail
           pack_name="nightlyazurebiceprecipepack"
