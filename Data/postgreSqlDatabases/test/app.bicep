@@ -24,6 +24,9 @@ param verifyFeatures bool = false
 @description('Run the nightly SQL fixture. Enable only for Azure and Kubernetes Bicep; Kubernetes Terraform does not support initSql.')
 param verifyInitialization bool = false
 
+@description('Create the requested extensions in the nightly SQL fixture. Enable only for Azure: its allow-list does not install extensions, but the Kubernetes Recipe does, and the test must not hide a missing Recipe step.')
+param createExtensionsInInitSql bool = false
+
 @description('Optional initialization SQL for the Bicep recipe regression test.')
 @secure()
 param initSql string = ''
@@ -36,7 +39,8 @@ param postgresSize string = 'S'
 @secure()
 param password string
 
-var initializationSql = verifyInitialization ? loadTextContent('initialize.sql') : initSql
+var extensionSql = createExtensionsInInitSql ? loadTextContent('initialize-extensions.sql') : ''
+var initializationSql = verifyInitialization ? '${extensionSql}${loadTextContent('initialize.sql')}' : initSql
 
 resource app 'Radius.Core/applications@2025-08-01-preview' = {
   name: applicationName

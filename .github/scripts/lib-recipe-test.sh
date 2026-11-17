@@ -944,7 +944,8 @@ rtc_deploy_and_assert_test_app_once() {
     params+=(--parameters "applicationName=$app_name")
     if [[ "$resource_type" == Radius.Data/postgreSqlDatabases &&
         "${RTC_TEST_PLATFORM:-}" == azure && "${RTC_POSTGRES_FEATURE_TESTS:-0}" == 1 ]]; then
-        params+=(--parameters verifyFeatures=true --parameters verifyInitialization=true)
+        params+=(--parameters verifyFeatures=true --parameters verifyInitialization=true
+            --parameters createExtensionsInInitSql=true)
     fi
 
     if [[ "${RTC_AZURE_LOCK_GUARD:-0}" == "1" ]]; then

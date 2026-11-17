@@ -71,9 +71,12 @@ ${platform === 'azure' ? `${name === null ? '' : `param postgreSqlServerName = '
 test('Nightly app and adjacent Azure test harness compile with the current PostgreSQL schema', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rtc-postgresql-app-'));
   try {
-    for (const file of ['app.bicep', 'initialize.sql']) {
+    for (const file of ['app.bicep', 'initialize.sql', 'initialize-extensions.sql']) {
       fs.copyFileSync(path.join(root, 'Data/postgreSqlDatabases/test', file), path.join(dir, file));
     }
+    // Kubernetes Recipes install requested extensions; the shared fixture must not hide that step.
+    assert.doesNotMatch(fs.readFileSync(path.join(dir, 'initialize.sql'), 'utf8'), /CREATE EXTENSION/i);
+    assert.match(fs.readFileSync(path.join(dir, 'initialize-extensions.sql'), 'utf8'), /pg_trgm[\s\S]*btree_gin/);
     run(process.env.RAD_CLI || 'rad', ['bicep', 'publish-extension',
       '-f', path.join(root, 'Data/postgreSqlDatabases/postgreSqlDatabases.yaml'),
       '--target', path.join(dir, 'postgresql.tgz')]);

@@ -145,6 +145,10 @@ deployment tests, without enabling more live deployments in PR checks:
 - Azure and Kubernetes Bicep run [`test/initialize.sql`](test/initialize.sql).
   The probe queries its schema, table, and seed row. Kubernetes Terraform
   checks settings and extensions only; it does not support `initSql`.
+- Only Azure also runs [`test/initialize-extensions.sql`](test/initialize-extensions.sql),
+  because its allow-list does not install extensions. The Kubernetes Recipe
+  installs them from `extensions`, so the shared SQL does not create them. A
+  missing Recipe step then fails the extension check.
 
 All feature queries use `sslmode=verify-full`. The Kubernetes client uses the
 public CA already supplied by the transport test. The Azure client uses the
