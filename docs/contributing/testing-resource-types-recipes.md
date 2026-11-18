@@ -168,6 +168,14 @@ seconds before retrying. Retries reuse the same application name and parameters;
 cleanup runs only after the final attempt. Other deployment errors, assertion
 failures, and cleanup failures still fail the test.
 
+The same retry limit and delays apply to
+`AzureContainerInstance/ContainerGroupTransitioning` errors for
+`Microsoft.ContainerInstance/ngroups` when the error confirms that the group is
+still transitioning. A standalone CLI `TraceId:` line with a 32-digit hexadecimal
+ID does not block a retry; spaces and tabs around the ID are allowed. The trace
+ID does not qualify an error for retry. Unknown errors and mixed failures still
+fail without a retry.
+
 The same retry limit and delays apply when `terraform init` fails to download
 a provider package from `releases.hashicorp.com` with `connection reset by peer`.
 This includes errors inside a Radius `RecipeDeploymentFailed` JSON response.

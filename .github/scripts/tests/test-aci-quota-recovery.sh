@@ -102,7 +102,7 @@ QUOTA_JSON="$(jq -cn --arg target "$NGROUP" \
       message:("[{\"ErrorCode\":\"AzureContainerInstance/ContainerGroupQuotaReached\","
       + "\"SampleErrorMessage\":\"StandardCores exceeded in westus3\"}]")}]}]}')"
 QUOTA="$QUOTA_JSON"
-QUOTA+=$'\nTraceId: 0123456789abcdef0123456789abcdef'
+QUOTA+=$'\nTraceId:  0123456789abcdef0123456789abcdef'
 export DEPLOY_ERROR="$QUOTA"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
