@@ -1062,6 +1062,13 @@ rtc_deploy_and_assert_test_app_once() {
         fi
     fi
 
+    if [[ "${RTC_PURGE_OPENAI_ACCOUNTS:-false}" == true && "$resource_type" == Radius.AI/models ]]; then
+        if ! timeout --kill-after=5s 90s bash "$(dirname "${BASH_SOURCE[0]}")/cleanup-openai-accounts.sh" true record; then
+            echo "Error: OpenAI account identities were not saved; retaining the application for owned cleanup." >&2
+            return 1
+        fi
+    fi
+
     echo "==> Cleaning up test application"
     local cleanup_status=0
     if ! ${cleanup_timeout[@]+"${cleanup_timeout[@]}"} rad app delete "$app_name" --workspace "$workspace_name" --yes; then

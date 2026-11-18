@@ -171,7 +171,8 @@ assert "if:" not in deploy, "every OpenAI run must deploy the checked-in pack"
 assert "RECIPE_PACK_USE_LOCAL_RECIPES: ${{ !inputs.release_candidate && 'true' || 'false' }}" in worker
 step = worker.split("- name: Test checked-in OpenAI Recipe Pack entry", 1)[1].split("- name:", 1)[0]
 assert "if: steps.pack_deploy.outcome == 'success'" in step
-assert "make test-recipe-pack-entries PLATFORM_GROUP=azure" in step
+assert 'bash "$RTC_OPENAI_SCRIPTS_DIR/test-all-recipe-pack-entries.sh"' in step
+assert 'bash "$RTC_OPENAI_SCRIPTS_DIR/cleanup-openai-accounts.sh" true begin' in step
 assert "continue-on-error:" not in step
 assert "RTC_AZURE_TEST_STEP_DEADLINE_EPOCH" in step
 report = worker.split("- name: Report OpenAI test failures", 1)[1].split("- name:", 1)[0]
@@ -184,7 +185,7 @@ for deploy_outcome in ("success", "failure", "cancelled", "skipped"):
                  "PACK_TEST_OUTCOME": test_outcome})
         assert (result.returncode == 0) == (deploy_outcome == test_outcome == "success"), (
             deploy_outcome, test_outcome, result.stdout, result.stderr)
-assert re.search(r"name: Release OpenAI capacity.*?if: always\(\).*?run: make cleanup-azure-resources",
+assert re.search(r'name: Release OpenAI capacity.*?if: always\(\).*?run: bash "\$RTC_OPENAI_SCRIPTS_DIR/cleanup-azure-resources.sh"',
                  worker, re.S)
 assert "cleanup-openai-resources:" in worker
 fallback = worker.split("  cleanup-openai-resources:", 1)[1]
@@ -200,6 +201,13 @@ assert worker.index("Release OpenAI capacity") < worker.index("\n  cleanup-opena
 assert worker.count("\n  cleanup-") == 1, "do not add a separate purge job"
 assert "timeout-minutes: 20" in worker.split("- name: Release OpenAI capacity", 1)[1]
 assert "bash .github/scripts/cleanup-azure-resources.sh" in fallback
+assert worker.count("ref: ${{ github.workflow_sha }}") == 2
+assert "path: .openai-workflow" in worker
+assert "ref: ${{ inputs.checkout_ref || github.sha }}" in worker
+assert "cleanup_result: ${{ steps.openai_cleanup.outcome }}" in worker
+assert "RTC_OPENAI_RELEASE_CONFIRMED: ${{ needs.test-openai.outputs.cleanup_result == 'success' && 'true' || 'false' }}" in fallback
+assert "RTC_REPO_ROOT: ${{ github.workspace }}" in worker
+assert worker.index("Require the CI repository before provisioning") < worker.index("- name: Checkout")
 
 ci = (workflows / "validate-azure-openai-recipes.yaml").read_text()
 assert "pull_request_target:" in ci and "merge_group:" in ci
