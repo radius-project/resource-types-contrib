@@ -353,14 +353,30 @@ resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
 
 ### Recipe Guidelines
 
-- Published Bicep recipes use `edge` for main and `latest` for the newest stable Radius release. The **Publish Bicep Recipes** workflow requires an existing public Radius release for `release_version`; this version is independent of namespace and Recipe Pack versions. It publishes source-SHA and full-version tags first, then promotes `latest` from the attested digest after all recipes succeed. A newer full-version tag prevents an older manual run from moving `latest`. Retain those full-version tags, and finish a failed newer publication rather than promoting an older version over it. `pin_only` publishes only the immutable source pin and never moves aliases.
-- Every publication, including `pin_only` and retries, rebuilds the checked-out recipe into an internal `build-<source-sha>` staging tag. The publisher uses the digest reported by `rad`, verifies the staging readback, and reuses source-SHA and full-version tags only when they match that build. A conflict fails without overwriting those tags or recording an attestation subject, including when a compiler or dependency change alters the build. Alias promotion remains digest-only. Run `make test-release-automation` with Bash and jq for the offline publication and alias regressions.
+- Published Bicep recipes use `edge` for main and `latest` for the newest stable Radius release. A namespace release (`pin_only`) publishes only the immutable source SHA. Neither a namespace nor a Recipe Pack release moves `latest`.
+- Source publications rebuild each recipe into `build-<source-sha>`, compare the digest reported by `rad` with the registry readback, and reject conflicting source-SHA or full-version tags. A [planned Radius final](#publishing-for-a-radius-release) promotes these digests without rebuilding.
 - Prefer standard, versioned modules (for example, Azure Verified Modules) where available, and pin the version with the `:<tag>` syntax so deployments are reproducible.
 - Recipes should be idempotent, meaning they can be run multiple times without causing issues.
 - Map developer-authored properties (such as `size`) onto concrete infrastructure settings using `{{context.*}}` parameter expressions rather than exposing platform-specific properties on the Resource Type.
 - Map every read-only property of the Resource Type from a module output via the `outputs` field so consumers can connect to the provisioned resource. See [When a module has no output for a property](#when-a-module-has-no-output-for-a-property) for what to do when the module does not expose one.
 - Handle secrets securely: mark sensitive properties `x-radius-sensitive: true` on the Resource Type and never log or expose credentials.
 - The Kubernetes Recipe Pack should be self-contained (in-cluster, no cloud provider configuration) so it can serve as the zero-config `kubernetes/` pack.
+
+### Publishing for a Radius release
+
+After a stable Radius release is public, Radius dispatches **Publish Bicep Recipes** on `main`. The run title is `bicep-recipes / <release_identifier>`.
+
+| Dispatch input | Value |
+| --- | --- |
+| `release_version` | Stable `X.Y.Z`, without `v` |
+| `release_identifier` | `vX.Y.Z-<40-hex Radius release commit>` |
+| `recipe_source_commit` | 40-hex contrib commit from the Radius plan's top-level `recipeSourceCommit` |
+
+The workflow verifies the public release and tag, reads `.github/release-plans/vX.Y.Z.yaml` at the tag's **commit**, and requires the recipe source to be reachable from contrib `main`. A main push signs one build inventory containing every recipe name and digest and a `recipe-source.txt` subject (the source SHA plus a newline). The final run verifies that statement's workflow identity, main ref and source commit. It never checks out or executes the frozen source, and does not sign old digests as builds of the dispatch commit.
+
+All source tags must still resolve to their signed digests. An existing `X.Y.Z` tag must match; a missing one is created by digest. Only after every full-version tag succeeds can `latest` move, and a newer stable tag prevents rollback. Retain the full-version tags. If a run fails, repair the original publication and retry the same inputs; **do not substitute current main**. For the first automated final, freeze a commit **after** the inventory-producing workflow is on main and its source publication succeeds. Commits without an inventory cannot be promoted this way.
+
+Manual runs without a version still refresh `edge`. A version-only manual run uses the frozen pin if the stable release plan has one; historical releases without a pin retain the checked-out build path. A manual prerelease may publish its full-version tag, never `latest`. Run `make test-release-automation` with Bash, jq and yq v4 for offline verification and registry retry tests.
 
 ### When a module has no output for a property
 

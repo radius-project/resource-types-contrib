@@ -353,13 +353,57 @@ grep -Fq 'conflicting digest' "$CASE_ROOT/output" || fail "wrong rejection reaso
 [[ -z "$(ls -A "$CASE_ROOT/subjects")" ]] ||
     fail "unverified content was recorded for attestation"
 
+# Final promotion checks the entire frozen inventory before writing. It uses
+# only OCI digests, including when a retry reconciles a partial publication.
+REPOSITORY='ghcr.io/radius-project/kube-recipes/demo'
+other='ghcr.io/radius-project/azure-aci-recipes/demo'
+new_case frozen_promotion
+seed "$SOURCE" "$DIGEST"
+seed edge "$NEWER"
+seed latest "$OLDER"
+seed 0.62.2 "$NEWER"
+run_helper tag-version "$SOURCE" 0.62.1 "$SUBJECTS"
+success
+tag_is 0.62.1 "$DIGEST"
+tag_is latest "$OLDER"
+tag_is edge "$NEWER"
+before="$(writes)"
+run_helper tag-version "$SOURCE" 0.62.1 "$SUBJECTS"
+success
+run_helper promote 0.62.1 "$SUBJECTS"
+success
+[[ "$before" == 1 && "$(writes)" == 1 ]] || fail "unexpected build or tag write"
+
+for conflict in source version missing denied; do
+    new_case "frozen_${conflict}"
+    seed "$SOURCE" "$DIGEST"
+    printf '%s  %s\n' "${OLDER#sha256:}" "$other" >>"$SUBJECTS"
+    # The single-quoted arguments to change are jq programs.
+    # shellcheck disable=SC2016
+    case "$conflict" in
+    source) change --arg k "$other:$SOURCE" --arg d "$NEWER" '.tags[$k] = $d' ;;
+    version)
+        change --arg s "$other:$SOURCE" --arg d "$OLDER" --arg v "$other:0.62.1" --arg n "$NEWER" \
+            '.tags[$s] = $d | .tags[$v] = $n'
+        ;;
+    denied)
+        change --arg s "$other:$SOURCE" --arg d "$OLDER" --arg v "$other:0.62.1" \
+            '.tags[$s] = $d | .resolve_errors[$v] = "HTTP 403 forbidden"'
+        ;;
+    esac
+    run_helper tag-version "$SOURCE" 0.62.1 "$SUBJECTS"
+    [[ "$STATUS" != 0 ]] || fail "accepted conflicting or unavailable pin/version"
+    no_writes
+done
+
 new_case workflow_contract
 workflow="$SCRIPTS/../workflows/publish-bicep-recipes.yaml"
 for expected in \
     'queue: max' \
-    'needs: [publish-bicep-recipes, attest-bicep-recipes]' \
+    'needs: [verify-release, publish-bicep-recipes, attest-bicep-recipes]' \
+    '!inputs.release_identifier && !inputs.recipe_source_commit' \
     "!contains(inputs.release_version, '-') && !inputs.pin_only" \
-    "repos/radius-project/radius/releases/tags/v\${RELEASE_VERSION}" \
+    "format('bicep-recipes / {0}', inputs.release_identifier)" \
     "tags=\"\$COMMIT_SHA\""; do
     grep -Fq "$expected" "$workflow" || fail "missing workflow contract: $expected"
 done
