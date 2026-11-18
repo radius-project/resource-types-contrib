@@ -44,6 +44,7 @@ jobs:
       RTC_TEST_PLATFORM: azure
       RTC_ACI_TEST_SCOPE: exclude
       RTC_OPENAI_TEST_SCOPE: only
+      RTC_PURGE_OPENAI_ACCOUNTS: "true"
       AZURE_RESOURCE_GROUP: rrttest-${{ github.run_id }}-${{ github.run_attempt }}-openai
       AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'westus3' }}
       AZURE_WORKSPACE_NAME: default
@@ -113,9 +114,16 @@ jobs:
         timeout-minutes: 5
         run: |
           set -euo pipefail
+          if ! exists="$(az group exists --name "$AZURE_RESOURCE_GROUP" \
+            --subscription "$AZURE_SUBSCRIPTION_ID" --output tsv)" || [[ "$exists" != false ]]; then
+            echo "::error::Refusing to claim an existing or unverified resource group."
+            exit 1
+          fi
           az group create --name "$AZURE_RESOURCE_GROUP" --location "$AZURE_LOCATION" \
             --subscription "$AZURE_SUBSCRIPTION_ID" --output none \
-            --tags "creationTime=$(date +%s)"
+            --tags "creationTime=$(date +%s)" \
+              "rtcRepository=$GITHUB_REPOSITORY" "rtcRunId=$GITHUB_RUN_ID" \
+              "rtcRunAttempt=$GITHUB_RUN_ATTEMPT" "rtcPurpose=azure-openai-test"
 
       - name: Configure Azure Provider
         env:
@@ -196,7 +204,7 @@ jobs:
 
       - name: Release OpenAI capacity before leaving the slot
         if: always()
-        timeout-minutes: 15
+        timeout-minutes: 20
         run: make cleanup-azure-resources
 
   cleanup-openai-resources:
@@ -204,11 +212,13 @@ jobs:
     needs: test-openai
     if: always()
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     permissions:
       id-token: write
       contents: read
     env:
+      RTC_PURGE_OPENAI_ACCOUNTS: "true"
+      AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'westus3' }}
       AZURE_RESOURCE_GROUP: rrttest-${{ github.run_id }}-${{ github.run_attempt }}-openai
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
     steps:
@@ -224,6 +234,6 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Confirm resource-group deletion
-        timeout-minutes: 15
+      - name: Confirm OpenAI purge, quota recovery, and resource-group deletion
+        timeout-minutes: 20
         run: bash .github/scripts/cleanup-azure-resources.sh

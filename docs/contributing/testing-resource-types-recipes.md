@@ -209,6 +209,39 @@ this slot. Cleanup runs before the job releases the slot, with a separate
 fallback cleanup job. A failed cleanup, cancellation, or lost runner can
 leave Azure resources behind.
 
+The OpenAI worker sets `RTC_PURGE_OPENAI_ACCOUNTS=true` for its existing
+in-slot cleanup and fallback cleanup. Before deleting the resource group,
+cleanup deletes remaining active OpenAI accounts and purges their soft-deleted
+records, including accounts already deleted by the recipe test. It checks both
+inventories again and waits for regional `OpenAI.S0.AccountCount` usage to
+decrease by the number of owned accounts and leave at least one free account.
+The purge phase has a six-minute limit. Resource-group deletion retains its
+twelve-minute limit; the complete cleanup step has a twenty-minute limit.
+
+Purge requires a live resource group with an exact subscription and group ID,
+plus matching `rtcRepository`, `rtcRunId`, `rtcRunAttempt`, and `rtcPurpose`
+tags. The group name must match the current run and attempt. Creation refuses
+to claim an existing group. Each account ID must belong to that exact group,
+with kind `OpenAI` and the configured location. An account name prefix alone
+never permits a purge. Cleanup retains the tagged group if purge or quota
+verification fails so fallback cleanup can check the same ownership evidence.
+If the group is already absent, cleanup only verifies account absence and free
+quota; it does not purge without ownership evidence.
+
+The Azure identity needs account read/delete, deleted-account read/purge
+(`Microsoft.CognitiveServices/locations/resourceGroups/deletedAccounts/delete`),
+and regional usage read permissions, as well as resource-group cleanup access.
+Permission errors, invalid inventories, and delayed quota recovery fail cleanup
+explicitly. GitHub releases the slot when a job ends even if cleanup fails.
+An operator must review a failed cleanup before relying on available capacity.
+No new purge job or scheduled workflow is added.
+
+This cleanup does not purge historical accounts whose resource groups are
+absent, including the existing soft-deleted account backlog. An operator must
+establish separate ownership evidence and approval for that backlog. A full
+regional quota can still block new tests until that work is complete. These
+checks do not guarantee model token quota or service capacity.
+
 `RTC_OPENAI_TEST_SCOPE=only` selects Azure `AI/models` recipes and model
 entries in checked-in Azure packs. `exclude` omits those tests but retains
 other entries in the same packs. Unset or `all` keeps the full test set;

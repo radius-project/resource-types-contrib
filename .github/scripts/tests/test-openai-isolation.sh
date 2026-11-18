@@ -190,6 +190,16 @@ assert "cleanup-openai-resources:" in worker
 fallback = worker.split("  cleanup-openai-resources:", 1)[1]
 assert "inputs.checkout_ref" not in fallback
 assert "if: always()" in fallback
+assert worker.count("RTC_PURGE_OPENAI_ACCOUNTS: \"true\"") == 2
+assert worker.count("AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'westus3' }}") == 2
+for tag in ("rtcRepository=$GITHUB_REPOSITORY", "rtcRunId=$GITHUB_RUN_ID",
+            "rtcRunAttempt=$GITHUB_RUN_ATTEMPT", "rtcPurpose=azure-openai-test"):
+    assert tag in worker, tag
+assert "Refusing to claim an existing or unverified resource group." in worker
+assert worker.index("Release OpenAI capacity") < worker.index("\n  cleanup-openai-resources:")
+assert worker.count("\n  cleanup-") == 1, "do not add a separate purge job"
+assert "timeout-minutes: 20" in worker.split("- name: Release OpenAI capacity", 1)[1]
+assert "bash .github/scripts/cleanup-azure-resources.sh" in fallback
 
 ci = (workflows / "validate-azure-openai-recipes.yaml").read_text()
 assert "pull_request_target:" in ci and "merge_group:" in ci
