@@ -401,7 +401,6 @@ workflow="$SCRIPTS/../workflows/publish-bicep-recipes.yaml"
 for expected in \
     'queue: max' \
     'needs: [verify-release, publish-bicep-recipes, attest-bicep-recipes]' \
-    '!inputs.release_identifier && !inputs.recipe_source_commit' \
     "!contains(inputs.release_version, '-') && !inputs.pin_only" \
     "format('bicep-recipes / {0}', inputs.release_identifier)" \
     "tags=\"\$COMMIT_SHA\""; do

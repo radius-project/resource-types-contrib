@@ -38,6 +38,7 @@ tag_digest() {
         status=$?
         [[ "$status" == 10 ]] || return "$status"
     fi
+    [[ "${5:-}" != check-only ]] || return 0
 
     # A lost write response is safe only when readback proves the intended tag.
     if ! oras tag "$repository@$digest" "$tag" >&2; then
@@ -93,7 +94,7 @@ publish() {
 
 tag_version() {
     local source="$1" version="$2" subjects="$3"
-    local checksum repository extra digest current status
+    local checksum repository extra digest
     [[ "$source" =~ ^[0-9a-f]{40}$ && "$version" =~ ^${STABLE_VERSION}$ ]] ||
         fail "Final publication requires a source SHA and stable full version."
     [[ -s "$subjects" ]] || fail "No verified recipe subjects were supplied."
@@ -106,12 +107,7 @@ tag_version() {
         digest="sha256:$checksum"
         [[ "$(resolve "$repository:$source")" == "$digest" ]] ||
             fail "Source tag does not match the signed digest: $repository:$source"
-        if current="$(resolve "$repository:$version")"; then
-            [[ "$current" == "$digest" ]] || fail "Immutable tag $repository:$version has a conflicting digest."
-        else
-            status=$?
-            [[ "$status" == 10 ]] || return "$status"
-        fi
+        tag_digest "$repository" "$digest" "$version" false check-only
     done <"$subjects"
 
     while read -r checksum repository || [[ -n "$checksum$repository" ]]; do

@@ -374,7 +374,20 @@ After a stable Radius release is public, Radius dispatches **Publish Bicep Recip
 
 The workflow verifies the public release and tag, reads `.github/release-plans/vX.Y.Z.yaml` at the tag's **commit**, and requires the recipe source to be reachable from contrib `main`. A main push signs one build inventory containing every recipe name and digest and a `recipe-source.txt` subject (the source SHA plus a newline). The final run verifies that statement's workflow identity, main ref and source commit. It never checks out or executes the frozen source, and does not sign old digests as builds of the dispatch commit.
 
-All source tags must still resolve to their signed digests. An existing `X.Y.Z` tag must match; a missing one is created by digest. Only after every full-version tag succeeds can `latest` move, and a newer stable tag prevents rollback. Retain the full-version tags. If a run fails, repair the original publication and retry the same inputs; **do not substitute current main**. For the first automated final, freeze a commit **after** the inventory-producing workflow is on main and its source publication succeeds. Commits without an inventory cannot be promoted this way.
+Before freezing the first automated final, set `pin` to the SHA of a successful main build that ran this workflow. Inspect its actual signed recipe names and digests without dispatching a release or writing any tags:
+
+```bash
+repo=radius-project/resource-types-contrib
+locator=$(mktemp)
+printf '%s\n' "$pin" >"$locator"
+gh attestation verify "$locator" --repo "$repo" \
+  --signer-workflow "$repo/.github/workflows/publish-bicep-recipes.yaml" \
+  --source-ref refs/heads/main --source-digest "$pin" --signer-digest "$pin" \
+  --deny-self-hosted-runners --format json --jq '.[].verificationResult.statement.subject'
+rm -f "$locator"
+```
+
+All source tags must still resolve to their signed digests. A missing `X.Y.Z` tag is created by digest; an existing one must match. Only after every version tag succeeds can `latest` move, and a newer stable tag prevents rollback. Retain the version tags. If provenance is missing or a publication fails, repair the original build and retry with the same inputs; **do not substitute current main**.
 
 Manual runs without a version still refresh `edge`. A version-only manual run uses the frozen pin if the stable release plan has one; historical releases without a pin retain the checked-out build path. A manual prerelease may publish its full-version tag, never `latest`. Run `make test-release-automation` with Bash, jq and yq v4 for offline verification and registry retry tests.
 

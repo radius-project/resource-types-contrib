@@ -99,7 +99,6 @@ jobs:
       contents: read
       attestations: read
     outputs:
-      mode: ${{ steps.release.outputs.mode }}
       source: ${{ steps.release.outputs.source }}
       subjects: ${{ steps.release.outputs.subjects }}
     steps:
@@ -130,9 +129,8 @@ jobs:
       !cancelled() &&
       github.repository == 'radius-project/resource-types-contrib' &&
       github.ref == 'refs/heads/main' &&
-      !inputs.release_identifier && !inputs.recipe_source_commit &&
       (needs.verify-release.result == 'skipped' ||
-       (needs.verify-release.result == 'success' && needs.verify-release.outputs.mode == 'build'))
+       (needs.verify-release.result == 'success' && needs.verify-release.outputs.source == 'checkout'))
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -298,8 +296,7 @@ jobs:
     if: >-
       !cancelled() && needs.verify-release.result == 'success' &&
       inputs.release_version && !contains(inputs.release_version, '-') && !inputs.pin_only &&
-      (needs.verify-release.outputs.mode == 'promote' ||
-       (needs.verify-release.outputs.mode == 'build' && needs.attest-bicep-recipes.result == 'success'))
+      (needs.verify-release.outputs.source != 'checkout' || needs.attest-bicep-recipes.result == 'success')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -326,13 +323,12 @@ jobs:
       - name: Promote verified recipe digests
         env:
           RELEASE_VERSION: ${{ inputs.release_version }}
-          RELEASE_MODE: ${{ needs.verify-release.outputs.mode }}
           RECIPE_SOURCE_COMMIT: ${{ needs.verify-release.outputs.source }}
           SUBJECTS: ${{ needs.verify-release.outputs.subjects || needs.publish-bicep-recipes.outputs.subjects }}
         run: |
           subjects="$RUNNER_TEMP/recipe-subjects.txt"
           printf '%s\n' "$SUBJECTS" >"$subjects"
-          if [[ "$RELEASE_MODE" == promote ]]; then
+          if [[ "$RECIPE_SOURCE_COMMIT" != checkout ]]; then
             bash .github/scripts/recipe-oci.sh tag-version "$RECIPE_SOURCE_COMMIT" "$RELEASE_VERSION" "$subjects"
           fi
           bash .github/scripts/recipe-oci.sh promote "$RELEASE_VERSION" "$subjects"
