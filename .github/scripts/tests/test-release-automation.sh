@@ -757,5 +757,6 @@ test_release_change_detection
 test_recipe_tags
 test_recipe_publication_subjects
 bash "${REPO_ROOT}/.github/scripts/tests/test-recipe-oci.sh"
+bash "${REPO_ROOT}/.github/scripts/tests/test-final-recipe-release.sh"
 test_release_candidate_sources
 echo "Release automation tests passed"
