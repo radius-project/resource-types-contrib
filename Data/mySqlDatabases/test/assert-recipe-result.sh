@@ -47,29 +47,88 @@ jq -e '
   ([.. | objects | keys[]] | index("password") == null)
 ' <<<"$AWS_TEMPLATE" >/dev/null
 
-# Radius resource IDs repeat across installations, so AWS names must also hash
-# the cluster and the Environment's Kubernetes namespace.
-jq -e '
-  (.variables.namespace | contains("runtime") and contains("kubernetes") and contains("namespace")) and
-  (.variables.name | contains("eksClusterName") and contains("variables('"'"'namespace'"'"')") and contains(".resource.id"))
-' <<<"$AWS_TEMPLATE" >/dev/null ||
-    { echo "AWS MySQL Recipe names must hash the cluster, namespace, and resource ID" >&2; exit 1; }
+# Check names by evaluating the Recipe for sample inputs, so the checks hold
+# however the Bicep is written. Prints the AWS resources that a deploy would
+# send, keyed by resource type.
+aws_resources() {
+    local cluster="$1" namespace="$2" resource_id="$3" version="$4"
+    cat >"$WORK_DIR/recipe.bicepparam" <<EOF
+using './recipe.bicep'
+param context = {
+  application: null
+  environment: { id: '/planes/radius/local/resourceGroups/test/providers/Radius.Core/environments/test' }
+  runtime: { kubernetes: { namespace: '$namespace' } }
+  resource: {
+    id: '$resource_id'
+    name: 'db'
+    properties: { username: 'admin1', password: 'Passw0rd123', version: '$version' }
+  }
+}
+param eksClusterName = '$cluster'
+param subnetIds = 'subnet-0abc,subnet-0def'
+EOF
+    # Command substitutions don't inherit set -e, so return on failure instead
+    # of reading the previous sample's snapshot.
+    rm -f "$WORK_DIR/recipe.snapshot.json"
+    "$BICEP" snapshot "$WORK_DIR/recipe.bicepparam" --mode Overwrite >/dev/null || return 1
+    jq -c '.predictedResources | map({key: (.type | sub("@.*$"; "")), value: .properties}) | from_entries' \
+        "$WORK_DIR/recipe.snapshot.json"
+}
 
-# AWS can't change a parameter group's family, so its name must include the
-# version. Otherwise a group left by a failed deploy blocks other versions.
-# RDS allows only letters, digits, and hyphens, so drop the dot.
-jq -e \
-  --arg pg "[format('{0}-{1}', variables('name'), replace(variables('version'), '.', ''))]" \
-  --arg ref "[variables('parameterGroupName')]" '
-  .variables.parameterGroupName == $pg and
-  (.resources.parameterGroup.properties | .alias == $ref and .properties.DBParameterGroupName == $ref)
-' <<<"$AWS_TEMPLATE" >/dev/null ||
-    { echo "AWS MySQL Recipe parameter group name must end with the version without the dot" >&2; exit 1; }
+# Prints the DB instance name after checking that the subnet group and the
+# parameter group are named after it and that the DB instance uses both. The
+# parameter group name ends with the version without the dot.
+aws_name() {
+    local resources name pg
+    resources="$(aws_resources "$@")" || return 1
+    name="$(jq -r '."AWS.RDS/DBInstance".properties.DBInstanceIdentifier' <<<"$resources")" || return 1
+    pg="$name-${4//./}"
+    if ! jq -e --arg name "$name" --arg pg "$pg" '
+      (."AWS.RDS/DBInstance" | .alias == $name and .properties.DBSubnetGroupName == $name and .properties.DBParameterGroupName == $pg) and
+      (."AWS.RDS/DBSubnetGroup" | .alias == $name and .properties.DBSubnetGroupName == $name) and
+      (."AWS.RDS/DBParameterGroup" | .alias == $pg and .properties.DBParameterGroupName == $pg)
+    ' <<<"$resources" >/dev/null; then
+        echo "AWS MySQL Recipe must name the subnet group $name and the parameter group $pg, and the DB instance must use both" >&2
+        return 1
+    fi
+    echo "$name"
+}
+
+ID=/planes/radius/local/resourceGroups/test/providers/Radius.Data/mySqlDatabases/db
+name="$(aws_name cluster-a ns-a "$ID" 8.4)"
+
+# A different name makes the next deploy create a new DB instance and leave
+# the old one, so existing names must not change.
+[[ "$name" == mysql-7vm536dxwdw5m ]] ||
+    { echo "AWS MySQL Recipe names changed to $name, which would replace existing databases" >&2; exit 1; }
+
+# Radius resource IDs repeat across installations, so names must also hash the
+# cluster and the Environment's Kubernetes namespace. Cluster names and
+# namespaces can contain `-`, so moving one across the boundary must change
+# the name too.
+expect_other_name() {
+    local other
+    other="$(aws_name "$1" "$2" "$3" 8.4)"
+    [[ "$other" != "$name" ]] ||
+        { echo "AWS MySQL Recipe names must hash the cluster, namespace, and resource ID: $* also gives $name" >&2; exit 1; }
+}
+expect_other_name cluster-b ns-a "$ID"
+expect_other_name cluster-a ns-b "$ID"
+expect_other_name cluster-a ns-a "${ID}2"
+expect_other_name cluster a-ns-a "$ID"
+expect_other_name cluster-a-ns a "$ID"
+
+# AWS can't change a parameter group's family, so only the parameter group
+# name includes the version, which aws_name checks.
+name_80="$(aws_name cluster-a ns-a "$ID" 8.0)"
+[[ "$name_80" == "$name" ]] ||
+    { echo "AWS MySQL Recipe DB instance names must not depend on the version" >&2; exit 1; }
 
 # The aws-eks pack must pass every required Recipe parameter and nothing the
 # Recipe does not declare.
 # shellcheck source=.github/scripts/lib-recipe-packs.sh
 source "$REPO_ROOT/.github/scripts/lib-recipe-packs.sh"
-rtc_check_recipe_pack_params "$AWS_PACK_PATH" "Radius.Data/mySqlDatabases" "$AWS_TEMPLATE"
+AWS_PACK_TEMPLATE=$(rtc_build_recipe_pack "$AWS_PACK_PATH")
+rtc_check_recipe_pack_params "$AWS_PACK_TEMPLATE" "Radius.Data/mySqlDatabases" "$AWS_TEMPLATE"
 
 echo "AWS MySQL Recipe result and pack parameter contract test passed"

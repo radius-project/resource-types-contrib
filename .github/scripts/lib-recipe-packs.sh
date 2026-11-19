@@ -314,47 +314,57 @@ rtc_recipe_pack_entry_body() {
     ' "$bicep_file" 2>/dev/null
 }
 
-# Print the names of the parameters that one Resource Type entry in a pack
-# passes to its Recipe, one per line. Keys of nested objects are not
-# parameter names, so only the first level of `parameters` counts.
-rtc_recipe_pack_entry_param_names() {
-    local bicep_file="$1" resource_type="$2" body
-    body="$(rtc_recipe_pack_entry_body "$bicep_file" "$resource_type")"
-    awk '
-        { sub(/\r$/, "") }
-        !inside && /^[[:space:]]*parameters:[[:space:]]*\{[[:space:]]*$/ { inside = 1; depth = 1; next }
-        inside {
-            line = $0
-            if (depth == 1 && match(line, /^[[:space:]]*[A-Za-z0-9_]+:/)) {
-                key = substr(line, RSTART, RLENGTH - 1)
-                gsub(/[[:space:]]/, "", key)
-                print key
-            }
-            depth += gsub(/\{/, "{", line) - gsub(/\}/, "}", line)
-            if (depth <= 0) inside = 0
-        }
-    ' <<<"$body"
+# Compile a pack's Bicep template and print the ARM JSON. `extension radius`
+# needs a bicepconfig.json next to the file, so compile a copy in a scratch
+# directory. Needs the Bicep CLI that the rad CLI installs.
+rtc_build_recipe_pack() {
+    local bicep_file="$1" work_dir status=0
+    work_dir="$(mktemp -d "${TMPDIR:-/tmp}/rtc-recipe-pack-build-XXXXXX")"
+    cp "$bicep_file" "$work_dir/pack.bicep"
+    cat >"$work_dir/bicepconfig.json" <<'EOF'
+{
+  "extensions": {
+    "radius": "br:biceptypes.azurecr.io/radius:latest"
+  }
+}
+EOF
+    "$HOME/.rad/bin/bicep" build --stdout "$work_dir/pack.bicep" || status=$?
+    rm -rf "$work_dir"
+    return "$status"
 }
 
 # Check that a pack entry passes every required parameter of its Recipe and
 # nothing the Recipe doesn't declare, because a deployment rejects undeclared
-# parameters. template_json is the Recipe compiled with `bicep build`.
+# parameters. Both templates are compiled, so the check sees the parameter
+# names however the Bicep is written. pack_json is the pack compiled with
+# rtc_build_recipe_pack, and template_json is the Recipe compiled with
+# `bicep build`.
 rtc_check_recipe_pack_params() {
-    local bicep_file="$1" resource_type="$2" template_json="$3"
-    local body names passed declared required
-    body="$(rtc_recipe_pack_entry_body "$bicep_file" "$resource_type")"
-    if [[ -z "$body" ]]; then
-        echo "Error: $bicep_file has no entry for $resource_type." >&2
+    local pack_json="$1" resource_type="$2" template_json="$3"
+    local entries passed declared required
+    # Bicep compiles a value that isn't an object literal, such as a variable,
+    # to an expression string, which has no names to read.
+    entries="$(jq -c --arg type "$resource_type" '
+        [.resources[] | select(.type | startswith("Radius.Core/recipePacks@")) | .properties.properties.recipes
+          | if type == "object" then .[$type] | select(. != null) else error end]
+    ' <<<"$pack_json" 2>/dev/null)" || {
+        echo "Error: can't read the recipes of the pack. Write each Recipe Pack's recipes as an object literal." >&2
+        return 1
+    }
+    if [[ "$(jq 'length' <<<"$entries")" != 1 ]]; then
+        echo "Error: the pack must have exactly one entry for $resource_type." >&2
         return 1
     fi
-    names="$(rtc_recipe_pack_entry_param_names "$bicep_file" "$resource_type")"
-    passed="$(jq -Rsc 'split("\n") | map(select(length > 0))' <<<"$names")"
+    passed="$(jq -c '.[0].parameters // {} | if type == "object" then keys else error end' <<<"$entries" 2>/dev/null)" || {
+        echo "Error: can't read the parameter names of $resource_type in the pack. Write its parameters as an object literal." >&2
+        return 1
+    }
     declared="$(jq -c '.parameters | del(.context) | keys' <<<"$template_json")"
     required="$(jq -c '.parameters | del(.context) | with_entries(select(.value | has("defaultValue") | not)) | keys' <<<"$template_json")"
     jq -en --argjson passed "$passed" --argjson declared "$declared" --argjson required "$required" '
         ($required - $passed) == [] and ($passed - $declared) == []
     ' >/dev/null || {
-        echo "Error: $resource_type in $bicep_file passes $passed. Its Recipe requires $required and declares $declared." >&2
+        echo "Error: $resource_type in the pack passes $passed. Its Recipe requires $required and declares $declared." >&2
         return 1
     }
 }

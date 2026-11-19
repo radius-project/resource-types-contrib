@@ -161,41 +161,82 @@ assert_eq "$expected" "$actual" "CRLF recipe pack entries"
 actual="$(run_in_fixture rtc_recipe_pack_name "$crlf_template")"
 assert_eq "azure-aks" "$actual" "CRLF recipe pack name"
 
-# rtc_recipe_pack_entry_param_names lists only first-level parameter keys, so
-# "source" inside the nested object is not a parameter.
-aks_pack="$FIXTURE_ROOT/recipe-packs/azure-aks/azure-aks.bicep"
-actual="$(run_in_fixture rtc_recipe_pack_entry_param_names "$aks_pack" "Radius.Data/gadgets" | tr '\n' ',')"
-assert_eq "nested," "$actual" "parameter names for gadgets"
-actual="$(run_in_fixture rtc_recipe_pack_entry_param_names "$crlf_template" "Radius.Data/gadgets" | tr '\n' ',')"
-assert_eq "nested," "$actual" "CRLF parameter names for gadgets"
-actual="$(run_in_fixture rtc_recipe_pack_entry_param_names "$aks_pack" "Radius.Data/widgets")"
-assert_eq "" "$actual" "parameter names for an entry without parameters"
+# rtc_check_recipe_pack_params reads the parameter names of the compiled pack,
+# as `bicep build` writes them for a pack with `extension radius`. Only the
+# first level of `parameters` counts, so "source" inside the nested object is
+# not a parameter, and other resources' recipes don't count.
+pack_json() {
+    jq -cn --argjson gadgets "$1" '{
+      languageVersion: "2.0",
+      resources: {
+        pack: {
+          import: "radius",
+          type: "Radius.Core/recipePacks@2025-08-01-preview",
+          properties: { name: "azure-aks", properties: { recipes: {
+            "Radius.Data/widgets": { kind: "bicep", source: "ghcr.io/radius-project/kube-recipes/widgets:latest" },
+            "Radius.Data/gadgets": $gadgets
+          } } }
+        },
+        other: {
+          import: "radius",
+          type: "Radius.Core/environments@2025-08-01-preview",
+          properties: { name: "env", properties: { recipes: { "Radius.Data/gadgets": { parameters: { region: "x" } } } } }
+        }
+      }
+    }'
+}
+pack="$(pack_json '{"kind":"bicep","source":"gadget-module","parameters":{"nested":{"source":"user-override"}}}')"
 
-# rtc_check_recipe_pack_params passes when the entry passes every required
-# parameter and only declared ones. Optional parameters may be omitted.
+# Passes when the entry passes every required parameter and only declared
+# ones. Optional parameters may be omitted.
 template='{"parameters":{"context":{"type":"object"},"nested":{"type":"object"},"tier":{"type":"string","defaultValue":"basic"}}}'
-run_in_fixture rtc_check_recipe_pack_params "$aks_pack" "Radius.Data/gadgets" "$template" ||
+run_in_fixture rtc_check_recipe_pack_params "$pack" "Radius.Data/gadgets" "$template" ||
     fail "rtc_check_recipe_pack_params should accept a pack that passes the required parameters"
+run_in_fixture rtc_check_recipe_pack_params "$pack" "Radius.Data/widgets" '{"parameters":{"context":{"type":"object"}}}' ||
+    fail "rtc_check_recipe_pack_params should accept an entry without parameters for a Recipe that requires none"
 
 template='{"parameters":{"context":{"type":"object"},"nested":{"type":"object"},"region":{"type":"string"}}}'
-if output="$(run_in_fixture rtc_check_recipe_pack_params "$aks_pack" "Radius.Data/gadgets" "$template" 2>&1)"; then
+if output="$(run_in_fixture rtc_check_recipe_pack_params "$pack" "Radius.Data/gadgets" "$template" 2>&1)"; then
     fail "rtc_check_recipe_pack_params should reject a missing required parameter"
 fi
 [[ "$output" == *'requires ["nested","region"]'* ]] ||
     fail "the missing-parameter error should list the required parameters: $output"
 
 template='{"parameters":{"context":{"type":"object"}}}'
-if output="$(run_in_fixture rtc_check_recipe_pack_params "$aks_pack" "Radius.Data/gadgets" "$template" 2>&1)"; then
+if output="$(run_in_fixture rtc_check_recipe_pack_params "$pack" "Radius.Data/gadgets" "$template" 2>&1)"; then
     fail "rtc_check_recipe_pack_params should reject an undeclared parameter"
 fi
 [[ "$output" == *'passes ["nested"]'* ]] ||
     fail "the undeclared-parameter error should list the passed parameters: $output"
 
-if output="$(run_in_fixture rtc_check_recipe_pack_params "$aks_pack" "Radius.Data/missing" "$template" 2>&1)"; then
+if output="$(run_in_fixture rtc_check_recipe_pack_params "$pack" "Radius.Data/missing" "$template" 2>&1)"; then
     fail "rtc_check_recipe_pack_params should reject a pack without the entry"
 fi
-[[ "$output" == *"has no entry for Radius.Data/missing"* ]] ||
+[[ "$output" == *"exactly one entry for Radius.Data/missing"* ]] ||
     fail "the missing-entry error should name the Resource Type: $output"
+
+two_packs="$(jq -c '.resources.second = .resources.pack' <<<"$pack")"
+if output="$(run_in_fixture rtc_check_recipe_pack_params "$two_packs" "Radius.Data/gadgets" "$template" 2>&1)"; then
+    fail "rtc_check_recipe_pack_params should reject two entries for the same Resource Type"
+fi
+[[ "$output" == *"exactly one entry for Radius.Data/gadgets"* ]] ||
+    fail "the duplicate-entry error should name the Resource Type: $output"
+
+# Bicep compiles a value that isn't an object literal to an expression string,
+# which has no names to read.
+pack="$(pack_json '{"kind":"bicep","source":"gadget-module","parameters":"[variables(\u0027gadgetParameters\u0027)]"}')"
+if output="$(run_in_fixture rtc_check_recipe_pack_params "$pack" "Radius.Data/gadgets" "$template" 2>&1)"; then
+    fail "rtc_check_recipe_pack_params should reject parameters it can't read"
+fi
+[[ "$output" == *"can't read the parameter names of Radius.Data/gadgets"* ]] ||
+    fail "the expression-parameters error should name the Resource Type: $output"
+
+pack="$(jq -c '.resources.pack.properties.properties.recipes = "[variables(\u0027recipes\u0027)]"' <<<"$pack")"
+if output="$(run_in_fixture rtc_check_recipe_pack_params "$pack" "Radius.Data/gadgets" "$template" 2>&1)"; then
+    fail "rtc_check_recipe_pack_params should reject recipes it can't read"
+fi
+[[ "$output" == *"can't read the recipes of the pack"* ]] ||
+    fail "the expression-recipes error should say the recipes can't be read: $output"
 
 # rtc_list_direct_module_types: kubernetes pack has zero gaps (its only entry
 # is repo-owned); azure-aks pack flags only Data/gadgets (Data/widgets is
