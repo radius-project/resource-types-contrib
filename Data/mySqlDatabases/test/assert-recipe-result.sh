@@ -164,6 +164,12 @@ storage="$(pack_mysql_storage)" || exit 1
 storage="$(pack_mysql_storage 22)" || exit 1
 [[ "$storage" == 22 ]] ||
     { echo "The aws-eks pack must pass mySqlAllocatedStorage to the MySQL Recipe as allocatedStorage, not $storage" >&2; exit 1; }
+# The Recipe rejects less than 20 GiB on every MySQL deploy, so the pack must
+# reject it when it is deployed.
+if pack_mysql_storage 19 >/dev/null 2>&1; then
+    echo "The aws-eks pack must reject mySqlAllocatedStorage below 20" >&2
+    exit 1
+fi
 resources="$(aws_resources cluster-a ns-a "$ID" 8.4 "$storage")" || exit 1
 jq -e '."AWS.RDS/DBInstance".properties.AllocatedStorage == "22"' <<<"$resources" >/dev/null ||
     { echo "AWS MySQL Recipe must send allocatedStorage as the DB instance AllocatedStorage" >&2; exit 1; }

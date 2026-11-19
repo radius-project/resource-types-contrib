@@ -6,7 +6,7 @@ param eksClusterName string
 @description('Comma-separated IDs of VPC subnets for AWS Recipes that need a subnet group, for example subnet-0abc,subnet-0def. Use subnets in the EKS cluster VPC that span at least two Availability Zones. A JSON array string is also accepted.')
 param subnetIds string
 
-@description('Storage in GiB for every Radius.Data/mySqlDatabases DB instance. RDS can\'t shrink storage, so after storage grows outside Radius, set this to the largest current size. See recipe-packs/aws-eks/README.md.')
+@description('Storage in GiB for every Radius.Data/mySqlDatabases DB instance. RDS can\'t shrink storage, so after storage grows outside Radius, set this to at least the largest current size. See recipe-packs/aws-eks/README.md.')
 @minValue(20)
 param mySqlAllocatedStorage int = 20
 
