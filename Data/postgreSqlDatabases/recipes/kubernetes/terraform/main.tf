@@ -49,6 +49,7 @@ locals {
   protected_settings = ["port", "ssl", "ssl_cert_file", "ssl_key_file", "hba_file"]
   # Escape dollars before kubelet expands Pod arguments; the shell receives the original text.
   server_args   = flatten([for name, value in local.server_settings : ["-c", replace("${name}=${value}", "$", "$$")] if !contains(local.protected_settings, lower(name))])
+  init_sql      = try(var.context.resource.properties.initSql, null) == null ? "" : tostring(var.context.resource.properties.initSql)
   extension_sql = join("\n", [for name in local.extensions : "CREATE EXTENSION IF NOT EXISTS \"${replace(name, "\"", "\"\"")}\";"])
 
   labels = {
@@ -60,18 +61,19 @@ locals {
   }
 }
 
-resource "kubernetes_config_map" "extensions" {
-  count = length(local.extensions) > 0 ? 1 : 0
+resource "kubernetes_config_map" "init_sql" {
+  count = length(local.extensions) > 0 || local.init_sql != "" ? 1 : 0
 
   metadata {
-    name      = "${local.resource_name}-extensions"
+    name      = "${local.resource_name}-init-sql"
     namespace = local.namespace
     labels    = local.labels
   }
 
-  data = {
-    "00-extensions.sql" = local.extension_sql
-  }
+  data = merge(
+    length(local.extensions) > 0 ? { "00-extensions.sql" = local.extension_sql } : {},
+    local.init_sql != "" ? { "01-init.sql" = local.init_sql } : {}
+  )
 }
 
 resource "kubernetes_secret" "postgres" {
@@ -205,9 +207,9 @@ resource "kubernetes_deployment" "postgresql" {
           args = concat(["postgres"], local.server_args)
 
           dynamic "volume_mount" {
-            for_each = kubernetes_config_map.extensions
+            for_each = kubernetes_config_map.init_sql
             content {
-              name       = "extensions"
+              name       = "init-sql"
               mount_path = "/docker-entrypoint-initdb.d"
               read_only  = true
             }
@@ -268,9 +270,9 @@ resource "kubernetes_deployment" "postgresql" {
         }
 
         dynamic "volume" {
-          for_each = kubernetes_config_map.extensions
+          for_each = kubernetes_config_map.init_sql
           content {
-            name = "extensions"
+            name = "init-sql"
             config_map {
               name = volume.value.metadata[0].name
             }
@@ -328,7 +330,7 @@ output "result" {
       "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Secret/${kubernetes_secret.postgres.metadata[0].name}",
       "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Service/${local.resource_name}",
       "/planes/kubernetes/local/namespaces/${local.namespace}/providers/apps/Deployment/${local.resource_name}"
-    ], [for config in kubernetes_config_map.extensions : "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/ConfigMap/${config.metadata[0].name}"])
+    ], [for config in kubernetes_config_map.init_sql : "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/ConfigMap/${config.metadata[0].name}"])
     values = {
       host     = "${kubernetes_service.postgres.metadata[0].name}.${kubernetes_service.postgres.metadata[0].namespace}.svc.cluster.local"
       port     = local.port
