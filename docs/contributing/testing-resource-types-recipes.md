@@ -97,6 +97,27 @@ These tests use a stub `rad`. They do not require a cluster or registry access.
 
 ### 3. Build Your Recipes
 
+#### Dapr input checks
+
+For the four current Dapr Kubernetes Recipes, run these checks without a cluster.
+Use Node, Radius's bundled Bicep CLI, Python, and Terraform 1.7 or later:
+
+```bash
+python -m pip install -r .github/scripts/tests/dapr-schema-requirements.txt
+make test-dapr-schema test-dapr-inputs
+```
+
+The schema checks cover malformed metadata, secret references, and scope lists.
+Bicep snapshots and Terraform mock-provider tests check platform access
+parameters, subset rules, default and custom modes, root Component fields,
+output contracts, and stable resource identity. They do not prove live Dapr
+access, ownership rejection, retained data, or cleanup safety.
+
+The existing `Dapr/*/test/app.bicep` applications remain the live operation
+tests. They write and read state, publish and receive messages, read seeded
+configuration, and check allowed and denied secret reads. Use the generated
+Recipe Pack and existing test commands below to run them against a test cluster.
+
 #### Bicep Recipe
 
 ```bash

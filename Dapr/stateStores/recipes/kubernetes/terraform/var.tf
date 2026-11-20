@@ -4,6 +4,17 @@ variable "context" {
   default     = null
 }
 
+variable "daprAllowedAppIds" {
+  description = "Platform allowlist of Dapr app IDs. Resource scopes may narrow this list but cannot extend it. If empty, the resource must set nonempty scopes."
+  type        = list(string)
+  default     = []
+  nullable    = false
+  validation {
+    condition     = length(distinct(var.daprAllowedAppIds)) == length(var.daprAllowedAppIds) && alltrue([for id in var.daprAllowedAppIds : can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", id)) && length(id) <= 63])
+    error_message = "daprAllowedAppIds must contain unique IDs of 1 to 63 lowercase letters, digits, or hyphens, with a letter or digit at each end."
+  }
+}
+
 variable "actorStateStore" {
   description = "Sets the default Redis state store as the Dapr actor state store. Only one state store in a namespace can be the actor state store. Applies only when the resource does not set componentType."
   type        = bool

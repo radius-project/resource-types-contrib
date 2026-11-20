@@ -33,14 +33,32 @@ locals {
   dapr_version      = try(local.properties.version, null) != null ? local.properties.version : "v1"
   secret_store_name = try(local.properties.auth.secretStore, null) != null ? local.properties.auth.secretStore : ""
 
-  # Dapr loads the component only into the listed app IDs. Without `scopes`,
-  # every Dapr app in the namespace can load the component, so omit the field
-  # when the list is empty.
-  scope_list = try(local.properties.scopes, null) != null ? tolist(local.properties.scopes) : []
-  component_scopes = {
-    for key, value in { scopes = local.scope_list } : key => value
-    if length(local.scope_list) > 0
-  }
+  # Never emit an empty list: Dapr treats it as namespace-wide access.
+  scope_list        = try(local.properties.scopes, null) != null ? tolist(local.properties.scopes) : var.daprAllowedAppIds
+  component_scopes  = { scopes = local.scope_list }
+  resource_metadata = try(merge(local.properties.metadata), {})
+  invalid_metadata = [
+    for name, entry in local.resource_metadata : name if !try(
+      trimspace(name) != "" && length(keys(entry)) == 1 &&
+      (contains(keys(entry), "value") != contains(keys(entry), "secretKeyRef")) &&
+      (contains(keys(entry), "secretKeyRef") ? (
+        length(keys(entry.secretKeyRef)) == 2 &&
+        trimspace(entry.secretKeyRef.name) != "" && trimspace(entry.secretKeyRef.key) != ""
+      ) : entry.value != null), false
+    )
+  ]
+  supported_properties = ["environment", "application", "connections", "codeReference", "recipe", "status", "componentType", "version", "metadata", "auth", "scopes", "componentName"]
+  input_errors = compact([
+    length(local.scope_list) == 0 ? "Set nonempty scopes or platform daprAllowedAppIds." : "",
+    alltrue([for id in local.scope_list : can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", id)) && length(id) <= 63]) ? "" : "scopes must contain valid Dapr app IDs of 1 to 63 lowercase letters, digits, or hyphens, with a letter or digit at each end.",
+    length(distinct(local.scope_list)) == length(local.scope_list) ? "" : "scopes must not contain duplicate IDs.",
+    length(var.daprAllowedAppIds) == 0 || length(setsubtract(local.scope_list, var.daprAllowedAppIds)) == 0 ? "" : "scopes must be a subset of platform daprAllowedAppIds.",
+    length(local.invalid_metadata) == 0 ? "" : "Each metadata entry must set exactly one of value or secretKeyRef; secretKeyRef must contain nonempty name and key only.",
+    length(setsubtract(keys(local.properties), local.supported_properties)) == 0 ? "" : "Unsupported resource property. Use the Radius.Dapr/stateStores schema.",
+    !contains(keys(local.properties), "componentType") || can(regex("^state\\.[^\\s]+$", local.requested_type)) ? "" : "componentType must name a state component, or be omitted for the default.",
+    can(regex("^[^\\s]+$", local.dapr_version)) ? "" : "version must be nonempty, or omitted for v1.",
+    (try(local.properties.auth, null) == null ? true : try(alltrue([for key in keys(local.properties.auth) : key == "secretStore"]) && (!contains(keys(local.properties.auth), "secretStore") || trimspace(local.secret_store_name) != ""), false)) ? "" : "auth supports only a nonempty secretStore name."
+  ])
 
   redis_name = "daprstate-${substr(sha1(var.context.resource.id), 0, 13)}"
   redis_port = 6379
@@ -74,9 +92,19 @@ locals {
   }
 }
 
+resource "terraform_data" "validate_inputs" {
+  lifecycle {
+    precondition {
+      condition     = length(local.input_errors) == 0
+      error_message = "Invalid Radius.Dapr/stateStores inputs. ${join(" ", local.input_errors)} Fix the inputs and deploy again."
+    }
+  }
+}
+
 # Default Redis state store. A single-replica, non-persistent Redis.
 resource "kubernetes_deployment_v1" "redis" {
-  count = local.use_default ? 1 : 0
+  count      = local.use_default ? 1 : 0
+  depends_on = [terraform_data.validate_inputs]
 
   metadata {
     name      = local.redis_name
@@ -130,7 +158,8 @@ resource "kubernetes_deployment_v1" "redis" {
 }
 
 resource "kubernetes_service_v1" "redis" {
-  count = local.use_default ? 1 : 0
+  count      = local.use_default ? 1 : 0
+  depends_on = [terraform_data.validate_inputs]
 
   metadata {
     name      = local.redis_name
@@ -168,6 +197,7 @@ resource "kubernetes_manifest" "dapr_component" {
   )
 
   depends_on = [
+    terraform_data.validate_inputs,
     kubernetes_deployment_v1.redis,
     kubernetes_service_v1.redis
   ]
