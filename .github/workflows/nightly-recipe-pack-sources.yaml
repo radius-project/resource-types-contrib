@@ -15,7 +15,7 @@ name: Nightly Recipe Pack Sources
 
 on:
   schedule:
-    - cron: "0 8 * * *" # 08:00 UTC daily
+    - cron: "8 8 * * *" # 08:08 UTC daily
   workflow_dispatch:
 
 permissions: {}
