@@ -41,6 +41,7 @@ jq -e --arg sa "$SA_REF" '
 # Recipe does not declare.
 # shellcheck source=.github/scripts/lib-recipe-packs.sh
 source "$REPO_ROOT/.github/scripts/lib-recipe-packs.sh"
-rtc_check_recipe_pack_params "$PACK_PATH" "Radius.Compute/containers" "$TEMPLATE"
+PACK_TEMPLATE=$(rtc_build_recipe_pack "$PACK_PATH")
+rtc_check_recipe_pack_params "$PACK_TEMPLATE" "Radius.Compute/containers" "$TEMPLATE"
 
 echo "AWS containers Recipe and pack parameter contract test passed"
