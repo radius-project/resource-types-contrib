@@ -217,6 +217,77 @@ this slot. Cleanup runs before the job releases the slot, with a separate
 fallback cleanup job. A failed cleanup, cancellation, or lost runner can
 leave Azure resources behind.
 
+The OpenAI worker sets `RTC_PURGE_OPENAI_ACCOUNTS=true` for its existing
+in-slot cleanup and fallback cleanup. Before deleting the resource group,
+cleanup deletes remaining active OpenAI accounts and purges their soft-deleted
+records, including accounts already deleted by the recipe test. It checks both
+inventories again and waits for regional `OpenAI.S0.AccountCount` usage to
+return to its saved target and leave at least one free account when this run
+had accounts to purge. A run with no accounts skips that quota wait; it does not
+claim that unrelated regional quota is available.
+The purge phase has a six-minute limit. Resource-group deletion retains its
+twelve-minute limit; the complete cleanup step has a twenty-minute limit.
+
+The worker checks the repository before provisioning. Recipe sources stay at
+the approved checkout ref. A separate, sparse checkout of `github.workflow_sha`
+supplies the test runner, cleanup wrapper, and purge helper. Thus a PR with an
+old cleanup wrapper cannot delete the group before the new purge checks run.
+
+Before deploying the model, the worker saves its account-quota baseline in the
+owned group's `rtcOpenaiCleanup` tag. The shared test runner records deployed
+account names in that tag before `rad app delete`. Each name combines with the
+already verified subscription, group, kind, and location to identify an
+account. Cleanup waits for those accounts even if they are temporarily absent
+from both Azure lists. A failed identity write retains the test application.
+If deployment fails without creating an account, recording and fallback cleanup
+can close the empty inventory only when Azure reports no non-terminal deployments
+or resources in the group, no Cognitive Services account appears in the generic
+resource inventory, and account usage is at or below the saved baseline.
+Missing states or failed reads do not prove completion. The empty completion is
+saved before application teardown, so subsequent cleanup does not wait for free
+quota owned by other runs. Saved account identities are never discarded when
+both account lists are temporarily empty.
+
+The same tag stores the original quota target and completed purges. A retry or
+fallback reuses that target; it never raises it because an account has already
+disappeared. If cleanup starts before a model test begins, it saves a target
+based on the current usage minus the visible owned accounts before deleting any.
+Tag write failures stop cleanup. The tag is limited to 256 characters; an
+unexpectedly large test inventory fails rather than dropping account identities.
+
+Purge requires a live resource group with an exact subscription and group ID,
+plus matching `rtcRepository`, `rtcRunId`, `rtcRunAttempt`, and `rtcPurpose`
+tags. The group name must match the current run and attempt. Creation refuses
+to claim an existing group. Each account ID must belong to that exact group,
+with kind `OpenAI` and the configured location. An account name prefix alone
+never permits a purge. Cleanup retains the tagged group if purge or quota
+verification fails so fallback cleanup can check the same ownership evidence.
+If the group is already absent, cleanup only verifies account absence; it does
+not purge without ownership evidence or claim regional quota recovery.
+
+After successful in-slot cleanup, its step result is passed to the existing
+fallback job. That job still checks group and deleted-account absence, but
+does not check quota again: another worker can already be using the released
+slot. Failed or interrupted cleanup has no such confirmation and must verify
+the saved quota target during recovery.
+
+The Azure identity needs account read/delete, deleted-account read/purge
+(`Microsoft.CognitiveServices/locations/resourceGroups/deletedAccounts/delete`),
+regional usage read, deployment/resource list access, and group tag write
+permissions, as well as resource-group cleanup access. If a runner stops after
+purging an account but before recording
+that purge in the tag, an operator may need to verify its state.
+Permission errors, invalid inventories, and delayed quota recovery fail cleanup
+explicitly. GitHub releases the slot when a job ends even if cleanup fails.
+An operator must review a failed cleanup before relying on available capacity.
+No new purge job or scheduled workflow is added.
+
+This cleanup does not purge historical accounts whose resource groups are
+absent, including the existing soft-deleted account backlog. An operator must
+establish separate ownership evidence and approval for that backlog. A full
+regional quota can still block new tests until that work is complete. These
+checks do not guarantee model token quota or service capacity.
+
 `RTC_OPENAI_TEST_SCOPE=only` selects Azure `AI/models` recipes and model
 entries in checked-in Azure packs. `exclude` omits those tests but retains
 other entries in the same packs. Unset or `all` keeps the full test set;
