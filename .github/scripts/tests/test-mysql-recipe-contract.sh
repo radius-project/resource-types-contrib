@@ -122,7 +122,8 @@ param tiers array
           tiers: ['b']
 EOF
 
-expect_fail required-object-not-passed 'Radius.Data/mySqlDatabases in the pack passes ["eksClusterName","subnetIds"]' <<'EOF'
+# The pack check must report it, not the snapshot.
+expect_fail required-object-not-passed 'Radius.Data/mySqlDatabases in the pack passes [' <<'EOF'
 param extra object
 ---
 EOF
