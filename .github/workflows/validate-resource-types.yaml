@@ -131,6 +131,10 @@ jobs:
         if: matrix.recipe == 'bicep'
         run: Data/mySqlDatabases/test/assert-recipe-result.sh
 
+      - name: Test MySQL Recipe contract test
+        if: matrix.recipe == 'bicep'
+        run: .github/scripts/tests/test-mysql-recipe-contract.sh
+
       - name: Test PostgreSQL settings
         if: matrix.recipe == 'bicep'
         run: make test-postgresql-settings
