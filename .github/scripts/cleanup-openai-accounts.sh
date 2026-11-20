@@ -116,6 +116,31 @@ usage() {
     ' <<<"$data" || fail "Invalid OpenAI account quota"
 }
 
+empty_run_settled() {
+    local deployments resources current active_now deleted_now
+    deployments="$(az_read deployment group list --resource-group "$AZURE_RESOURCE_GROUP")" ||
+        fail "Cannot verify deployment completion for an empty OpenAI run"
+    resources="$(az_read resource list --resource-group "$AZURE_RESOURCE_GROUP" --expand provisioningState)" ||
+        fail "Cannot verify resource completion for an empty OpenAI run"
+    jq -en --argjson deployments "$deployments" --argjson resources "$resources" \
+        --arg prefix "${group_id,,}/providers/" '
+        def terminal: type == "string" and
+            (ascii_downcase | IN("succeeded", "failed", "canceled", "cancelled", "deleted"));
+        ($deployments | type) == "array" and ($resources | type) == "array" and
+        all($deployments[]; .properties.provisioningState | terminal) and
+        all($resources[];
+            (.id | type) == "string" and (.id | ascii_downcase | startswith($prefix)) and
+            (.id | ascii_downcase | contains("/providers/microsoft.cognitiveservices/accounts/") | not) and
+            ((.properties.provisioningState // .provisioningState) | terminal))
+    ' >/dev/null || return 1
+    current="$(usage)"
+    jq -en --argjson current "$current" --argjson state "$state" \
+        '$current.currentValue <= $state.target' >/dev/null || return 1
+    active_now="$(inventory active)"
+    deleted_now="$(inventory deleted)"
+    [[ "$active_now" == '[]' && "$deleted_now" == '[]' ]]
+}
+
 active="$(inventory active)"
 deleted="$(inventory deleted)"
 expected="$(jq -cn --argjson active "$active" --argjson deleted "$deleted" \
@@ -139,11 +164,19 @@ if [[ "$mode" == begin ]]; then
     save_state
     exit 0
 elif [[ "$mode" == record ]]; then
-    [[ -n "$state" && "$count" != 0 ]] ||
+    [[ -n "$state" ]] ||
         fail "Cannot record deployed OpenAI account identities; retain the app for cleanup"
+    if [[ "$count" == 0 && "$(jq '.accounts | length' <<<"$state")" == 0 ]]; then
+        empty_run_settled ||
+            fail "Empty OpenAI inventory is not settled; retain the app for cleanup"
+        state="$(jq -c '.recording = false' <<<"$state")"
+    fi
 elif [[ -z "$state" ]]; then
-    before="$(usage)"
-    target="$(jq --argjson count "$count" '.currentValue - $count' <<<"$before")"
+    target=0
+    if [[ "$count" != 0 ]]; then
+        before="$(usage)"
+        target="$(jq --argjson count "$count" '.currentValue - $count' <<<"$before")"
+    fi
     (( target >= 0 )) || fail "Quota usage is lower than the owned account inventory; operator review required"
     state="$(jq -cn --argjson target "$target" '{target:$target,accounts:{},recording:false}')"
 fi
@@ -188,6 +221,16 @@ while (( SECONDS < deadline )); do
         state="$(jq -c --arg name "$name" '.accounts[$name] = true' <<<"$state")"
         save_state
     done < <(jq -r --argjson purged "$purged" '[.[].name] - $purged | .[]' <<<"$deleted")
+    if [[ "$(jq '.recording' <<<"$state")" == true && "$expected" == '[]' &&
+        "$active" == '[]' && "$deleted" == '[]' ]] && empty_run_settled; then
+        state="$(jq -c '.recording = false' <<<"$state")"
+        save_state
+    fi
+    if [[ "$expected" == '[]' && "$active" == '[]' && "$deleted" == '[]' &&
+        "$(jq '.recording' <<<"$state")" == false ]]; then
+        echo "No OpenAI accounts belonged to this run; regional quota is unchanged by this cleanup"
+        exit 0
+    fi
     current="$(usage)"
     if [[ "$(jq 'length' <<<"$active")" == 0 && "$(jq 'length' <<<"$deleted")" == 0 ]] &&
         jq -en --argjson expected "$expected" --argjson purged "$purged" \

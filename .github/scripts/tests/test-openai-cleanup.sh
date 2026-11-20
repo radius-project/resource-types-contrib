@@ -62,6 +62,12 @@ case "$1 $2 $3" in
         jq '{properties:{tags:.tags}}' <<<"$group" ;;
     "group delete "*) exit "${GROUP_DELETE_FAIL:-0}" ;;
     "group create "*) exit "${GROUP_CREATE_FAIL:-0}" ;;
+    "deployment group list")
+        [[ "${DEPLOYMENT_LIST_FAIL:-0}" == 0 ]] || exit 1
+        echo "${DEPLOYMENTS_JSON:-[]}" ;;
+    "resource list "*)
+        [[ "${RESOURCE_LIST_FAIL:-0}" == 0 ]] || exit 1
+        echo "${RESOURCES_JSON:-[]}" ;;
     "cognitiveservices account list")
         [[ "${ACTIVE_FAIL:-0}" == 0 ]] || exit 1
         if [[ "${NO_ACTIVE_BEFORE_DEPLOY:-0}" == 1 ]] && ! grep -q '^rad deploy ' "$CLOUD_LOG"; then
@@ -213,8 +219,10 @@ empty_quota='[{"name":{"value":"OpenAI.S0.AccountCount"},"currentValue":28,"limi
 GROUP_EXISTS=false DELETED_JSON='[]' USAGE_JSON="$empty_quota" run_test || fail "idempotent absent group"
 no_mutation
 ACTIVE_JSON='[]' DELETED_JSON='[]' USAGE_JSON="$empty_quota" run_test || fail "idempotent empty group"
-if ACTIVE_JSON='[]' DELETED_JSON='[]' HELPER_TIMEOUT=2s run_test; then fail "full quota must not report capacity"; fi
-if grep -q '^az group delete ' "$CALL_LOG"; then fail "retain evidence when capacity is unavailable"; fi
+ACTIVE_JSON='[]' DELETED_JSON='[]' USAGE_FAIL=1 run_test ||
+    fail "empty run must not depend on unrelated regional quota"
+if grep -q '^az cognitiveservices usage list ' "$CALL_LOG"; then fail "empty run must skip quota"; fi
+grep -q '^az group delete ' "$CALL_LOG" || fail "delete an empty group at full regional quota"
 RTC_PURGE_OPENAI_ACCOUNTS=false run_test || fail "ordinary Azure cleanup unchanged"
 if grep -q '^az cognitiveservices ' "$CALL_LOG"; then fail "purge is opt-in"; fi
 
@@ -254,6 +262,10 @@ cat >"$TEST_ROOT/bin/rad" <<'EOF'
 #!/bin/bash
 echo "rad $*" >>"$CALL_LOG"
 echo "rad $*" >>"$CLOUD_LOG"
+if [[ "$1" == deploy && "${DEPLOY_FAIL:-0}" == 1 ]]; then
+    echo '{"error":{"code":"InsufficientQuota","message":"Account quota is exhausted"}}' >&2
+    exit 1
+fi
 EOF
 chmod +x "$TEST_ROOT/bin/rad"
 printf 'param applicationName string\n' >"$TEST_ROOT/app.bicep"
@@ -284,6 +296,70 @@ reset_test
 if NO_ACTIVE_BEFORE_DEPLOY=1 DELETED_JSON='[]' QUOTA_START=28 record_deployment 1 \
     >"$TEST_ROOT/output" 2>&1; then fail "failed identity persistence must block app deletion"; fi
 if grep -q '^rad app delete ' "$CALL_LOG"; then fail "do not erase an unrecorded identity"; fi
+
+# A quota-rejected deployment can finish without ever creating an account.
+pending="$(jq -c '.tags.rtcOpenaiCleanup = "{\"target\":30,\"accounts\":{},\"recording\":true}"' <<<"$GROUP_JSON")"
+reset_test
+: >"$CALL_LOG"
+if ACTIVE_JSON='[]' DELETED_JSON='[]' QUOTA_START=30 DEPLOY_FAIL=1 record_deployment \
+    >"$TEST_ROOT/output" 2>&1; then fail "quota-rejected test must still fail"; fi
+grep -q '^rad app delete ' "$CALL_LOG" || fail "empty failed deployment must allow app teardown"
+jq -e '.tags.rtcOpenaiCleanup | fromjson | .recording == false and .accounts == {}' \
+    "$GROUP_STATE" >/dev/null || fail "record empty failure before app teardown"
+ACTIVE_JSON='[]' DELETED_JSON='[]' QUOTA_START=30 invoke_cleanup ||
+    fail "clean up quota-rejected run without claiming available capacity"
+reset_test
+echo "$pending" >"$GROUP_STATE"
+ACTIVE_JSON='[]' DELETED_JSON='[]' QUOTA_START=30 \
+    bash "$REPO_ROOT/.github/scripts/cleanup-openai-accounts.sh" true record \
+    >"$TEST_ROOT/output" 2>&1 || fail "record a settled empty deployment at full quota"
+jq -e '.tags.rtcOpenaiCleanup | fromjson | .recording == false and .accounts == {}' \
+    "$GROUP_STATE" >/dev/null || fail "persist empty completion before app teardown"
+ACTIVE_JSON='[]' DELETED_JSON='[]' USAGE_FAIL=1 invoke_cleanup ||
+    fail "recorded empty run must clean up without a quota read"
+if grep -q '^az cognitiveservices usage list ' "$CALL_LOG"; then fail "recorded empty cleanup rechecked quota"; fi
+ACTIVE_JSON='[]' DELETED_JSON='[]' GROUP_JSON="$pending" QUOTA_START=30 run_test ||
+    fail "fallback must settle and remove an empty run at full quota"
+terminal_resource="$(jq -cn --arg id "$GROUP_ID/providers/Microsoft.Storage/storageAccounts/test" \
+    '[{id:$id,provisioningState:"Succeeded"}]')"
+ACTIVE_JSON='[]' DELETED_JSON='[]' GROUP_JSON="$pending" RESOURCES_JSON="$terminal_resource" \
+    DEPLOYMENTS_JSON='[{"properties":{"provisioningState":"Failed"}}]' run_test ||
+    fail "terminal failed deployment and unrelated completed resource allow empty cleanup"
+
+for status in Accepted Running Creating Updating Deleting; do
+    deployments="$(jq -cn --arg status "$status" '[{properties:{provisioningState:$status}}]')"
+    if ACTIVE_JSON='[]' DELETED_JSON='[]' GROUP_JSON="$pending" DEPLOYMENTS_JSON="$deployments" \
+        HELPER_TIMEOUT=2s run_test; then fail "retain empty run with $status deployment"; fi
+    no_mutation
+done
+hidden_account="$(jq -cn --arg id "$GROUP_ID/providers/Microsoft.CognitiveServices/accounts/hidden" \
+    '[{id:$id,provisioningState:"Succeeded"}]')"
+if ACTIVE_JSON='[]' DELETED_JSON='[]' GROUP_JSON="$pending" RESOURCES_JSON="$hidden_account" \
+    HELPER_TIMEOUT=2s run_test; then fail "generic inventory account must prevent empty completion"; fi
+no_mutation
+resources="$(jq -cn --arg id "$GROUP_ID/providers/Microsoft.Storage/storageAccounts/test" \
+    '[{id:$id,properties:{provisioningState:"Updating"}}]')"
+if ACTIVE_JSON='[]' DELETED_JSON='[]' GROUP_JSON="$pending" RESOURCES_JSON="$resources" \
+    HELPER_TIMEOUT=2s run_test; then fail "retain empty run with an updating resource"; fi
+no_mutation
+for control in DEPLOYMENT_LIST_FAIL RESOURCE_LIST_FAIL USAGE_FAIL; do
+    if (export "$control=1"; ACTIVE_JSON='[]' DELETED_JSON='[]' GROUP_JSON="$pending" run_test); then
+        fail "empty completion must fail closed for $control"
+    fi
+    no_mutation
+done
+for bad in '{}' '[{}]'; do
+    if ACTIVE_JSON='[]' DELETED_JSON='[]' GROUP_JSON="$pending" DEPLOYMENTS_JSON="$bad" \
+        HELPER_TIMEOUT=2s run_test; then fail "unknown deployment states cannot prove empty completion"; fi
+    no_mutation
+    if ACTIVE_JSON='[]' DELETED_JSON='[]' GROUP_JSON="$pending" RESOURCES_JSON="$bad" \
+        HELPER_TIMEOUT=2s run_test; then fail "unknown resource states cannot prove empty completion"; fi
+    no_mutation
+done
+lower_baseline="$(jq -c '.tags.rtcOpenaiCleanup = "{\"target\":29,\"accounts\":{},\"recording\":true}"' <<<"$GROUP_JSON")"
+if ACTIVE_JSON='[]' DELETED_JSON='[]' GROUP_JSON="$lower_baseline" QUOTA_START=30 \
+    HELPER_TIMEOUT=2s run_test; then fail "empty inventory with elevated usage is not settled"; fi
+no_mutation
 
 reset_test
 python3 - "$REPO_ROOT" <<'PY'

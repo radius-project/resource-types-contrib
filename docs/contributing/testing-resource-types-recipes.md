@@ -222,7 +222,9 @@ in-slot cleanup and fallback cleanup. Before deleting the resource group,
 cleanup deletes remaining active OpenAI accounts and purges their soft-deleted
 records, including accounts already deleted by the recipe test. It checks both
 inventories again and waits for regional `OpenAI.S0.AccountCount` usage to
-return to its saved target and leave at least one free account.
+return to its saved target and leave at least one free account when this run
+had accounts to purge. A run with no accounts skips that quota wait; it does not
+claim that unrelated regional quota is available.
 The purge phase has a six-minute limit. Resource-group deletion retains its
 twelve-minute limit; the complete cleanup step has a twenty-minute limit.
 
@@ -237,8 +239,14 @@ account names in that tag before `rad app delete`. Each name combines with the
 already verified subscription, group, kind, and location to identify an
 account. Cleanup waits for those accounts even if they are temporarily absent
 from both Azure lists. A failed identity write retains the test application.
-If deployment fails before any identity can be recorded, cleanup cannot report
-success while that deployment's account inventory remains unknown.
+If deployment fails without creating an account, recording and fallback cleanup
+can close the empty inventory only when Azure reports no non-terminal deployments
+or resources in the group, no Cognitive Services account appears in the generic
+resource inventory, and account usage is at or below the saved baseline.
+Missing states or failed reads do not prove completion. The empty completion is
+saved before application teardown, so subsequent cleanup does not wait for free
+quota owned by other runs. Saved account identities are never discarded when
+both account lists are temporarily empty.
 
 The same tag stores the original quota target and completed purges. A retry or
 fallback reuses that target; it never raises it because an account has already
@@ -254,8 +262,8 @@ to claim an existing group. Each account ID must belong to that exact group,
 with kind `OpenAI` and the configured location. An account name prefix alone
 never permits a purge. Cleanup retains the tagged group if purge or quota
 verification fails so fallback cleanup can check the same ownership evidence.
-If the group is already absent, cleanup only verifies account absence and free
-quota; it does not purge without ownership evidence.
+If the group is already absent, cleanup only verifies account absence; it does
+not purge without ownership evidence or claim regional quota recovery.
 
 After successful in-slot cleanup, its step result is passed to the existing
 fallback job. That job still checks group and deleted-account absence, but
@@ -265,8 +273,9 @@ the saved quota target during recovery.
 
 The Azure identity needs account read/delete, deleted-account read/purge
 (`Microsoft.CognitiveServices/locations/resourceGroups/deletedAccounts/delete`),
-regional usage read, and group tag write permissions, as well as resource-group
-cleanup access. If a runner stops after purging an account but before recording
+regional usage read, deployment/resource list access, and group tag write
+permissions, as well as resource-group cleanup access. If a runner stops after
+purging an account but before recording
 that purge in the tag, an operator may need to verify its state.
 Permission errors, invalid inventories, and delayed quota recovery fail cleanup
 explicitly. GitHub releases the slot when a job ends even if cleanup fails.
