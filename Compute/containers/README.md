@@ -11,6 +11,12 @@ A list of available Recipes for this Resource Type, including links to the Bicep
 |Platform| IaC Language| Recipe Name | Stage |
 |---|---|---|---|
 | TODO | TODO | TODO | Alpha |
+| Azure Container Apps | Bicep / Terraform (AzAPI) | [Delegated native TCP](recipes/azure-aca/README.md) | Experimental |
+
+The ACA recipe supports **native TCP only**. HTTP, TLS and UDP Routes are
+rejected, not partially applied. It requires a delegation-capable Radius
+runtime; published Radius APIs do not yet enable this experimental contract.
+See the recipe documentation for port, workload and deployment limitations.
 
 ## Recipe Input Properties
 
