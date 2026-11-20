@@ -37,30 +37,45 @@ test "$result" = t || {
 }
 
 if ! result=$(query "SELECT
-    (SELECT setting FROM pg_settings WHERE name = 'log_min_duration_statement') = '1000'
-    AND (SELECT setting FROM pg_settings WHERE name = 'port') = '5432'
-    AND (SELECT count(*) FROM pg_extension WHERE extname IN ('pg_trgm', 'btree_gin')) = 2"); then
+    (SELECT setting FROM pg_settings WHERE name = 'log_min_duration_statement'),
+    (SELECT setting FROM pg_settings WHERE name = 'port'),
+    (SELECT count(*) FROM pg_extension WHERE extname IN ('pg_trgm', 'btree_gin'))"); then
     echo "Error: Could not query PostgreSQL extensions and server settings." >&2
     exit 1
 fi
-test "$result" = t || {
-    echo "Error: PostgreSQL extensions, application settings, or protected port differ from the expected state." >&2
-    exit 1
+IFS='|' read -r log_duration port extension_count <<EOF
+$result
+EOF
+mismatch=0
+expect() {
+    if [ "$3" != "$2" ]; then
+        echo "Error: PostgreSQL $1 is '$3', expected '$2'." >&2
+        mismatch=1
+    fi
 }
+expect log_min_duration_statement 1000 "$log_duration"
+expect port 5432 "$port"
+expect "extension count (pg_trgm, btree_gin)" 2 "$extension_count"
+test "$mismatch" = 0 || exit 1
 
 if [ "$platform" = azure ]; then
-    if ! result=$(query "SELECT
-        ARRAY['pg_trgm', 'btree_gin'] <@ regexp_split_to_array(lower(current_setting('azure.extensions')), '\s*,\s*')
-        AND current_setting('require_secure_transport') = 'on'"); then
+    if ! result=$(query "SELECT lower(current_setting('azure.extensions')), current_setting('require_secure_transport')"); then
         echo "Error: Could not query the Azure PostgreSQL allow-list and transport policy." >&2
         exit 1
     fi
-    test "$result" = t || {
-        echo "Error: Azure PostgreSQL extension allow-list or required TLS policy differs from the expected state." >&2
-        exit 1
-    }
+    IFS='|' read -r allow_list secure_transport <<EOF
+$result
+EOF
+    normalized=",$(printf '%s' "$allow_list" | tr -d ' ' | tr -d '\r'),"
+    for extension in pg_trgm btree_gin; do
+        case "$normalized" in
+            *",$extension,"*) ;;
+            *) echo "Error: azure.extensions is '$allow_list', missing '$extension'." >&2; mismatch=1 ;;
+        esac
+    done
+    expect require_secure_transport on "$secure_transport"
+    test "$mismatch" = 0 || exit 1
 fi
-
 if [ "$check_initialization" = true ]; then
     if ! result=$(query "SELECT count(*) = 1 AND min(value) = 'nightly-seed' FROM rtc_nightly.seed WHERE id = 1"); then
         echo "Error: Could not query the PostgreSQL initialization schema and table." >&2

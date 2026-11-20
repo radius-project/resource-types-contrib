@@ -13,8 +13,8 @@ printf '%s\n' "$PGSSLMODE" >>"$FEATURE_MODE_LOG"
 printf '%s\n' "$*" >>"$FEATURE_QUERY_LOG"
 case "$*" in
     *pg_stat_ssl*) result="${TLS_RESULT:-t}"; failure="${TLS_FAILURE:-0}" ;;
-    *pg_settings*) result="${SETTINGS_RESULT:-t}"; failure="${SETTINGS_FAILURE:-0}" ;;
-    *azure.extensions*) result="${ALLOWLIST_RESULT:-t}"; failure="${ALLOWLIST_FAILURE:-0}" ;;
+    *pg_settings*) result="${SETTINGS_RESULT:-1000|5432|2}"; failure="${SETTINGS_FAILURE:-0}" ;;
+    *azure.extensions*) result="${ALLOWLIST_RESULT:-pg_trgm, btree_gin|on}"; failure="${ALLOWLIST_FAILURE:-0}" ;;
     *rtc_nightly.seed*) result="${SEED_RESULT:-t}"; failure="${SEED_FAILURE:-0}" ;;
     *) echo "Unexpected query" >&2; exit 1 ;;
 esac
@@ -47,7 +47,7 @@ if grep -q azure.extensions "$FEATURE_QUERY_LOG"; then fail "Kubernetes must not
 sh "$probe" kubernetes false "$tmp/ca.crt" >"$tmp/output"
 if grep -q rtc_nightly.seed "$FEATURE_QUERY_LOG"; then fail "Terraform must not claim initSql support"; fi
 
-for fault in TLS_RESULT=f SETTINGS_RESULT=f ALLOWLIST_RESULT=f SEED_RESULT=f \
+for fault in TLS_RESULT=f "SETTINGS_RESULT=1000|6432|1" "ALLOWLIST_RESULT=pg_trgm|off" SEED_RESULT=f \
     TLS_FAILURE=1 SETTINGS_FAILURE=1 ALLOWLIST_FAILURE=1 SEED_FAILURE=1; do
     if env "$fault" sh "$probe" azure true "$tmp/ca.crt" >"$tmp/output" 2>&1; then
         fail "$fault must fail the runtime probe"
@@ -57,4 +57,10 @@ done
 if sh "$probe" azure true "$tmp/missing-ca" >"$tmp/output" 2>&1; then
     fail "a missing CA bundle must fail, not fall back to unverified TLS"
 fi
+SETTINGS_RESULT='1000|6432|1' sh "$probe" azure true "$tmp/ca.crt" >"$tmp/output" 2>&1 || true
+grep -q "port is '6432', expected '5432'" "$tmp/output" || fail "a mismatch must report the actual port"
+grep -q "extension count (pg_trgm, btree_gin) is '1', expected '2'" "$tmp/output" || fail "a mismatch must report every differing value"
+ALLOWLIST_RESULT='pg_trgm|off' sh "$probe" azure true "$tmp/ca.crt" >"$tmp/output" 2>&1 || true
+grep -q "azure.extensions is 'pg_trgm', missing 'btree_gin'" "$tmp/output" || fail "allow-list mismatch must show the list"
+grep -q "require_secure_transport is 'off'" "$tmp/output" || fail "transport mismatch must show the value"
 echo "PostgreSQL nightly feature probe tests passed."
