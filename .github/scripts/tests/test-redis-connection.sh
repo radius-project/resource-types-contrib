@@ -29,7 +29,7 @@ case "$*" in
         test "${REDISCLI_AUTH:-}" = 'fixture+/key=' || exit 1
         test "${FAIL_ACCESS_KEY:-0}" = 0 || exit 1
         ;;
-    '--no-auth-warning -u rediss://:fixture+/key=@cache.example:10000 PING'|\
+    '--no-auth-warning -u rediss://:fixture+/key=@cache.example:10000 --user default PING'|\
     '--no-auth-warning -u redis://cache.example:6379 PING')
         test "${FAIL_URL:-0}" = 0 || exit 1
         ;;

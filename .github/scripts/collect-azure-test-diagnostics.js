@@ -98,6 +98,12 @@ function resource(value, scope) {
   });
   return {
     id: scopedId(v.id, scope), type: text(v.type), name: text(v.name), location: text(v.location),
+    ...(/\/providers\/Microsoft\.DBforPostgreSQL\/flexibleServers\/[^/]+$/i.test(scopedId(v.id, scope) ?? "") ? {
+      sku: {
+        name: text(object(v.sku).name, /^Standard_[a-z0-9_]{1,80}$/i),
+        tier: text(object(v.sku).tier, /^(Burstable|GeneralPurpose|MemoryOptimized)$/),
+      },
+    } : {}),
     provisioningState: text(p.provisioningState) ?? text(v.provisioningState), state: text(p.state),
     instanceView: instanceView(p.instanceView),
     containers: containers(p.containers), initContainers: containers(p.initContainers),

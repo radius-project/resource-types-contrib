@@ -104,6 +104,10 @@ endif
 .PHONY: test-direct-module-recipes-unit
 test-direct-module-recipes-unit: test-recipe-pack-entries-unit ## Compatibility alias for the Recipe Pack entry unit test suite
 
+.PHONY: test-redis-connection-integration
+test-redis-connection-integration: ## Test the Redis probe with real local TLS Redis (requires Docker and OpenSSL)
+	@bash ./.github/scripts/tests/test-redis-connection-integration.sh
+
 .PHONY: test-recipe-pack-entries-unit
 test-recipe-pack-entries-unit: ## Run fixture-based unit tests for all Recipe Pack entry test scripts (no live environment needed)
 	@bash ./.github/scripts/tests/test-azure-cli-with-refresh.sh

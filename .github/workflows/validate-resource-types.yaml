@@ -135,9 +135,9 @@ jobs:
         if: matrix.recipe == 'bicep'
         run: make test-postgresql-settings
 
-      - name: Validate OpenAI Recipe dependencies
+      - name: Test Redis client authentication
         if: matrix.recipe == 'bicep'
-        run: node --test .github/scripts/tests/test-openai-dependencies.js
+        run: make test-redis-connection-integration
 
       - name: Validate AWS containers Recipe contract
         if: matrix.recipe == 'bicep'

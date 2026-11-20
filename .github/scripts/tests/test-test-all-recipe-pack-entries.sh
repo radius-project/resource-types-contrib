@@ -149,6 +149,9 @@ echo "test-recipe-pack-entry.sh $*" >>"$CALL_LOG"
 if [[ "$1" == Data/postgreSqlDatabases && "${RTC_TEST_PLATFORM:-}" == azure ]]; then
     [[ "${RTC_POSTGRES_TEST_SIZE:-}" == "${EXPECTED_POSTGRES_SIZE:-S}" ]] || exit 96
     [[ "${RTC_POSTGRES_TEST_DEADLINE_EPOCH:-}" =~ ^[0-9]+$ ]] || exit 95
+    if [[ -n "${EXPECTED_POSTGRES_DEADLINE:-}" ]]; then
+        [[ "$RTC_POSTGRES_TEST_DEADLINE_EPOCH" == "$EXPECTED_POSTGRES_DEADLINE" ]] || exit 93
+    fi
     sleep "${POSTGRES_SLEEP:-0}"
 fi
 case "$2" in
@@ -282,7 +285,7 @@ echo "param applicationName string" >"$FIXTURE_ROOT/AI/models/test/app.bicep"
 sed "/    recipes: {/a\\
       'Radius.AI/models': {\\
         kind: 'bicep'\\
-        source: 'ghcr.io/radius-project/azure-recipes/models:latest'\\
+        source: 'mcr.microsoft.com/bicep/avm/res/cognitive-services/account:0.19.2'\\
       }" "$TEST_ROOT/aks-pack.bicep" >"$aks_pack"
 : >"$CALL_LOG"
 RTC_OPENAI_TEST_SCOPE=only RTC_ACI_TEST_SCOPE=exclude run_driver azure azure-ws azure-env >/dev/null ||
@@ -381,6 +384,21 @@ test-recipe-pack-entry.sh Compute/containers azure-ws azure-env"
 diff -u <(echo "$expected") "$CALL_LOG" ||
     fail "selected PostgreSQL must run before unrelated entries, without dropping any"
 
+jq 'del(.deadlineEpochSeconds)' "$selection" >"$TEST_ROOT/selection-without-deadline.json"
+phase_deadline=$(( $(date +%s) + 2700 ))
+: >"$CALL_LOG"
+RTC_AZURE_SELECTION_FILE="$TEST_ROOT/selection-without-deadline.json" \
+    RTC_AZURE_TEST_STEP_DEADLINE_EPOCH="$phase_deadline" RTC_AZURE_PACK_ENTRY_PHASE=postgres \
+    RTC_TEST_DIAGNOSTICS_DIR="$TEST_ROOT/postgres-diagnostics" EXPECTED_POSTGRES_SIZE=M \
+    EXPECTED_POSTGRES_DEADLINE="$phase_deadline" \
+    run_driver azure azure-ws azure-env >"$TEST_ROOT/postgres-output" ||
+    fail "PostgreSQL must consume the probe selection with a fresh phase deadline"
+jq -se 'length == 1 and .[0].event == "probe-selection-validated" and
+    .[0].phase == "recipe-pack:azure-aks" and .[0].location == "westus3" and
+    .[0].size == "M" and .[0].skuName == "Standard_D2ds_v5" and .[0].tier == "GeneralPurpose"
+' "$TEST_ROOT/postgres-diagnostics/postgres-test-events.jsonl" >/dev/null ||
+    fail "pack-entry diagnostics must record the validated probe tuple"
+
 # The workflow's separate PostgreSQL phase can use its full bounded budget without
 # preventing the later unrelated-entry phase from starting.
 : >"$CALL_LOG"
@@ -430,7 +448,7 @@ echo "param applicationName string" >"$FIXTURE_ROOT/Storage/objectStorage/test/a
 sed "/    recipes: {/a\\
       'Radius.AI/models': {\\
         kind: 'bicep'\\
-        source: 'ghcr.io/radius-project/azure-recipes/models:latest'\\
+        source: 'mcr.microsoft.com/bicep/avm/res/cognitive-services/account:0.19.2'\\
       }\\
       'Radius.Storage/objectStorage': {\\
         kind: 'bicep'\\

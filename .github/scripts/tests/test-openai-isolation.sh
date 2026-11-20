@@ -124,7 +124,30 @@ import subprocess
 import sys
 import textwrap
 
-workflows = pathlib.Path(sys.argv[1]) / ".github/workflows"
+root = pathlib.Path(sys.argv[1])
+workflows = root / ".github/workflows"
+pack = (root / "recipe-packs/azure-aks/azure-aks.bicep").read_text()
+entry = re.search(r"'Radius\.AI/models': \{(.*?)\n      \}", pack, re.S).group(1)
+for setting in (
+    "kind: 'bicep'",
+    "source: 'mcr.microsoft.com/bicep/avm/res/cognitive-services/account:0.19.2'",
+    "name: 'oai-{{context.azure.resourceNameHash}}'",
+    "customSubDomainName: 'oai-{{context.azure.resourceNameHash}}'",
+    "kind: 'OpenAI'",
+    "sku: 'S0'",
+    "disableLocalAuth: false",
+    "publicNetworkAccess: 'Enabled'",
+    "enableTelemetry: false",
+    "kind: 'None'",
+):
+    assert setting in entry, setting
+assert re.search(
+    r"deployments: \[\s*\{\s*name: 'chat'\s*model: \{\s*format: 'OpenAI'\s*"
+    r"name: '\{\{context.resource.properties.model\}\}'\s*version: '2025-08-07'\s*\}\s*"
+    r"sku: \{\s*name: 'GlobalStandard'\s*capacity: 1\s*\}\s*\}\s*\]", entry)
+assert re.search(
+    r"outputs: \{\s*endpoint: 'endpoint'\s*secrets: \{\s*apiKey: 'primaryKey'\s*\}\s*\}", entry)
+
 for filename, job in (
     ("validate-azure-recipes", "validate-azure-recipes"),
     ("nightly-recipe-pack-tests", "nightly-azure-recipe-pack-tests"),
@@ -141,12 +164,26 @@ assert "cancel-in-progress: false\n      queue: max" in worker
 assert "RTC_OPENAI_TEST_SCOPE: only" in worker
 assert "RTC_ACI_TEST_SCOPE: exclude" in worker
 assert "make build-azure-recipes" in worker
-assert 'RECIPE_PLATFORM_FILTER=azure make test' in worker
+assert "test_checked_in_pack" not in worker
+assert "Test generated OpenAI Bicep recipe" not in worker
+deploy = worker.split("- name: Deploy checked-in OpenAI Recipe Pack", 1)[1].split("- name:", 1)[0]
+assert "if:" not in deploy, "every OpenAI run must deploy the checked-in pack"
 assert "RECIPE_PACK_USE_LOCAL_RECIPES: ${{ !inputs.release_candidate && 'true' || 'false' }}" in worker
-for step_name in ("Test checked-in OpenAI Recipe Pack entry", "Test generated OpenAI Bicep recipe"):
-    step = worker.split(f"- name: {step_name}", 1)[1].split("- name:", 1)[0]
-    assert "continue-on-error:" not in step
-    assert "RTC_AZURE_TEST_STEP_DEADLINE_EPOCH" in step
+step = worker.split("- name: Test checked-in OpenAI Recipe Pack entry", 1)[1].split("- name:", 1)[0]
+assert "if: steps.pack_deploy.outcome == 'success'" in step
+assert "make test-recipe-pack-entries PLATFORM_GROUP=azure" in step
+assert "continue-on-error:" not in step
+assert "RTC_AZURE_TEST_STEP_DEADLINE_EPOCH" in step
+report = worker.split("- name: Report OpenAI test failures", 1)[1].split("- name:", 1)[0]
+command = textwrap.dedent(report.split("        run: |\n", 1)[1])
+for deploy_outcome in ("success", "failure", "cancelled", "skipped"):
+    for test_outcome in ("success", "failure", "cancelled", "skipped"):
+        result = subprocess.run(
+            ["bash", "-c", command], cwd=root, capture_output=True, text=True,
+            env={**os.environ, "PACK_DEPLOY_OUTCOME": deploy_outcome,
+                 "PACK_TEST_OUTCOME": test_outcome})
+        assert (result.returncode == 0) == (deploy_outcome == test_outcome == "success"), (
+            deploy_outcome, test_outcome, result.stdout, result.stderr)
 assert re.search(r"name: Release OpenAI capacity.*?if: always\(\).*?run: make cleanup-azure-resources",
                  worker, re.S)
 assert "cleanup-openai-resources:" in worker
@@ -179,8 +216,8 @@ for path_result in ("success", "failure", "cancelled", "skipped"):
 
 for filename in ("nightly-azure-openai-tests", "release-candidate-recipe-pack-tests"):
     source = (workflows / f"{filename}.yaml").read_text()
-    assert "uses: ./.github/workflows/test-azure-openai.yaml" in source, filename
-    assert "test_checked_in_pack: true" in source, filename
+    caller = source.split("uses: ./.github/workflows/test-azure-openai.yaml", 1)[1].split("secrets: inherit", 1)[0]
+    assert "test_checked_in_pack:" not in caller, filename
 assert "release_candidate: true" in (workflows / "release-candidate-recipe-pack-tests.yaml").read_text()
 PY
 

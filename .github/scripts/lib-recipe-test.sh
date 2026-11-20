@@ -226,9 +226,11 @@ rtc_snapshot_azure_resource_ids() {
 rtc_test_azure_postgresql_app() (
     local test_file="$1" environment_path="$2" workspace_name="$3" kubernetes_namespace="$4"
     local size="${RTC_POSTGRES_TEST_SIZE:-S}" deadline="${RTC_POSTGRES_TEST_DEADLINE_EPOCH:-}"
-    local remaining status attempt test_harness script_dir
+    local remaining status attempt test_harness script_dir location="${AZURE_LOCATION:-}"
     case "$size" in S|M) ;; *) echo "Error: PostgreSQL test size must be S or M." >&2; return 1 ;; esac
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
+    # shellcheck source=.github/scripts/lib-azure-postgres-test.sh
+    source "$script_dir/lib-azure-postgres-test.sh"
     # Keep Bicep configuration and relative file paths tied to the source.
     test_harness=$(mktemp "$(dirname "$test_file")/rtc-postgres-test-XXXXXX.bicep") || return 1
     trap 'rm -f -- "$test_harness"' EXIT
@@ -246,11 +248,23 @@ rtc_test_azure_postgresql_app() (
             echo "Error: PostgreSQL deployment deadline has expired." >&2
             return 1
         fi
+        if [[ -z "$location" ]]; then
+            local -a subscription_args=()
+            [[ -z "${AZURE_SUBSCRIPTION_ID:-}" ]] || subscription_args=(--subscription "$AZURE_SUBSCRIPTION_ID")
+            if [[ -z "${AZURE_RESOURCE_GROUP:-}" ]] ||
+                ! location=$(timeout --kill-after=5s 30s az group show --name "$AZURE_RESOURCE_GROUP" \
+                    "${subscription_args[@]}" --query location --output tsv); then
+                echo "Error: could not read the PostgreSQL deployment region." >&2
+                return 1
+            fi
+        fi
+        rtc_record_postgres_test_event mapped-deployment-request "$location" "$size" "$attempt" || return 1
         status=0
         RTC_POSTGRES_CAPACITY_RECOVERY=1 RTC_POSTGRES_TEST_DEADLINE_EPOCH="$deadline" \
             rtc_deploy_and_assert_test_app "$test_file" Radius.Data/postgreSqlDatabases \
                 "recipepacktest-pg-$size-$attempt" "$environment_path" "$workspace_name" "$kubernetes_namespace" \
                 --parameters "postgresSize=$size" || status=$?
+        rtc_record_postgres_test_event deployment-result "$location" "$size" "$attempt" "$status" || return 1
         if ((status == 0)); then return 0; fi
         if ((status != 42 || attempt == 2)); then
             echo "Error: PostgreSQL deployment failed (size $size, attempt $attempt, status $status)." >&2
@@ -605,7 +619,7 @@ harmless_progress = re.compile(
     r"\s*(?:Location:\s*[a-z][a-z0-9-]*|Status:\s*(?:Running|Accepted|Succeeded)"
     r"|WARNING: Radius type compatibility is not verified\.)\s*"
 )
-harmless_quota_metadata = re.compile(r"TraceId: [0-9a-fA-F]{32}")
+harmless_cli_metadata = re.compile(r"\s*TraceId:\s+[0-9a-fA-F]{32}\s*")
 wrappers = {"DeploymentFailed", "RecipeDeploymentFailed", "ResourceDeploymentFailure", "ResourceOperationFailure"}
 reasons = []
 invalid = False
@@ -736,7 +750,7 @@ else:
     for line in "".join(residual).splitlines():
         if (bare_failure.search(line) and not (
             harmless_progress.fullmatch(line)
-            or (quota_only and harmless_quota_metadata.fullmatch(line))
+            or harmless_cli_metadata.fullmatch(line)
         )) or (
             failure_prefix.search(line) and failure_prefix.sub("", line).strip()
         ):
@@ -1095,10 +1109,23 @@ rtc_deploy_and_assert_test_app_once() {
         return 1
     fi
     if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 || "${RTC_ACI_QUOTA_RECOVERY:-0}" == 1 ]]; then
-        if ! azure_after=$(rtc_snapshot_azure_resource_ids) ||
-            [[ -n "$(comm -13 <(printf '%s\n' "$azure_before" | sed '/^$/d') \
-                <(printf '%s\n' "$azure_after" | sed '/^$/d'))" ]]; then
+        local deletion_attempt pending_ids
+        for deletion_attempt in {1..6}; do
+            if ! azure_after=$(rtc_snapshot_azure_resource_ids); then
+                echo "Error: Could not verify Azure resource deletion; capacity recovery is blocked." >&2
+                return 1
+            fi
+            pending_ids=$(comm -13 <(printf '%s\n' "$azure_before" | sed '/^$/d') \
+                <(printf '%s\n' "$azure_after" | sed '/^$/d')) || return 1
+            [[ -n "$pending_ids" ]] || break
+            if ((deletion_attempt < 6)); then
+                echo "==> Waiting for Azure resource deletion to appear in the inventory ($deletion_attempt/6)."
+                sleep 10 || return 1
+            fi
+        done
+        if [[ -n "$pending_ids" ]]; then
             echo "Error: Azure resource deletion was not confirmed; capacity recovery is blocked." >&2
+            printf '%s\n' "$pending_ids" >&2
             return 1
         fi
     fi
