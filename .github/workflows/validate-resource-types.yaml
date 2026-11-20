@@ -127,6 +127,13 @@ jobs:
       - name: Install Radius CLI
         run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
 
+      - name: Set up Terraform for Dapr input tests
+        if: matrix.recipe == 'bicep'
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.16.6"
+          terraform_wrapper: false
+
       - name: Validate MySQL Recipe result contract
         if: matrix.recipe == 'bicep'
         run: Data/mySqlDatabases/test/assert-recipe-result.sh
@@ -134,6 +141,14 @@ jobs:
       - name: Test PostgreSQL settings
         if: matrix.recipe == 'bicep'
         run: make test-postgresql-settings
+
+      - name: Install Dapr schema test dependencies
+        if: matrix.recipe == 'bicep'
+        run: python -m pip install -r .github/scripts/tests/dapr-schema-requirements.txt
+
+      - name: Test Dapr schemas and Recipe inputs
+        if: matrix.recipe == 'bicep'
+        run: make test-dapr-schema test-dapr-inputs
 
       - name: Test Redis client authentication
         if: matrix.recipe == 'bicep'
