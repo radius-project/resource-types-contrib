@@ -38,7 +38,7 @@ values. An operator can still pass a concrete account name. The account kind,
 model version, deployment name, SKU, capacity, and network settings are unchanged.
 The Recipe reports both Azure resource IDs for cleanup.
 
-This wrapper is temporary. AVM account `0.19.3` fixes the same ordering
+This wrapper is temporary. AVM account `0.19.3` fixes the same race
 ([Azure/bicep-registry-modules#7612](https://github.com/Azure/bicep-registry-modules/issues/7612)).
 Once it is published, the pack can use that module directly again.
 

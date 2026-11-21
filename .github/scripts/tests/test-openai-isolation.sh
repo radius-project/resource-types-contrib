@@ -128,8 +128,9 @@ root = pathlib.Path(sys.argv[1])
 workflows = root / ".github/workflows"
 pack = (root / "recipe-packs/azure-aks/azure-aks.bicep").read_text()
 entry = re.search(r"'Radius\.AI/models': \{(.*?)\n      \}", pack, re.S).group(1)
-# Until AVM account 0.19.3 is published, the pack uses the wrapper Recipe, which
-# reads account keys only after the model deployment (Azure/bicep-registry-modules#7612).
+# Until AVM account 0.19.3 is published, the pack uses the wrapper Recipe, which reads
+# account keys before it starts the model deployment so the two never overlap
+# (Azure/bicep-registry-modules#7612).
 assert "kind: 'bicep'" in entry
 assert "source: 'ghcr.io/radius-project/azure-recipes/models:latest'" in entry
 assert "parameters:" not in entry, "the wrapper derives the account name from context"

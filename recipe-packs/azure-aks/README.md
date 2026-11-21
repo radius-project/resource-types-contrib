@@ -85,12 +85,12 @@ still returns only `url` and needs no password.
 
 The `Radius.AI/models` Recipe completes the AVM account module and its key
 outputs before it starts the `chat` model deployment. This prevents concurrent
-account key reads and model provisioning, without a test retry or an AVM version
-change. The Recipe uses the same account name and model settings as the previous
-direct-module entry. It returns the endpoint and API key through the standard
+account key reads and model provisioning without a test retry. The Recipe pins
+AVM account `0.15.0`, older than the `0.19.2` module the pack used directly; the
+account name and model settings are unchanged. It returns the endpoint and API key through the standard
 Recipe result, with the key in `result.secrets.apiKey`.
 The wrapper is temporary until AVM account `0.19.3`, which fixes the same
-ordering, is published.
+race, is published.
 
 ### MySQL versions
 
