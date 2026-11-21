@@ -90,5 +90,5 @@ types:
                 apiKey:
                   type: string
                   readOnly: true
-                  description: "(Read Only) The API key used to call the model inference endpoint. Mapped from the recipe module's `primaryKey` output; delivered via the managed secret."
+                  description: "(Read Only) The API key used to call the model inference endpoint. Returned in the recipe's secrets; delivered via the managed secret."
           required: [environment]
