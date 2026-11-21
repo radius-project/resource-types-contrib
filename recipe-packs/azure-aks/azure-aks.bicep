@@ -50,39 +50,7 @@ resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
       }
       'Radius.AI/models': {
         kind: 'bicep'
-        source: 'mcr.microsoft.com/bicep/avm/res/cognitive-services/account:0.19.2'
-        parameters: {
-          name: 'oai-{{context.azure.resourceNameHash}}'
-          kind: 'OpenAI'
-          sku: 'S0'
-          customSubDomainName: 'oai-{{context.azure.resourceNameHash}}'
-          disableLocalAuth: false
-          publicNetworkAccess: 'Enabled'
-          deployments: [
-            {
-              name: 'chat'
-              model: {
-                format: 'OpenAI'
-                name: '{{context.resource.properties.model}}'
-                version: '2025-08-07'
-              }
-              sku: {
-                name: 'GlobalStandard'
-                capacity: 1
-              }
-            }
-          ]
-          enableTelemetry: false
-          lock: {
-            kind: 'None'
-          }
-        }
-        outputs: {
-          endpoint: 'endpoint'
-          secrets: {
-            apiKey: 'primaryKey'
-          }
-        }
+        source: 'ghcr.io/radius-project/azure-recipes/models:latest'
       }
       'Radius.AI/search': {
         kind: 'bicep'

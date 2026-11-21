@@ -41,7 +41,7 @@ Defaults are applied when a resource is written, not when a Resource Type is reg
 | `Radius.Data/sqlServerDatabases` | Bicep | Azure Verified Module — `mcr.microsoft.com/bicep/avm/res/sql/server:0.21.4` |
 | `Radius.Data/postgreSqlDatabases` | Bicep | `ghcr.io/radius-project/azure-aks-recipes/postgresqldatabases:latest`, using AVM `avm/res/db-for-postgre-sql/flexible-server:0.15.2` |
 | `Radius.AI/search` | Bicep | Azure Verified Module — `avm/res/search/search-service` |
-| `Radius.AI/models` | Bicep | Azure Verified Module — `avm/res/cognitive-services/account:0.19.2` |
+| `Radius.AI/models` | Bicep | `ghcr.io/radius-project/azure-recipes/models` |
 | `Radius.Messaging/rabbitMQ` | Bicep | `ghcr.io/radius-project/kube-recipes/rabbitmq` |
 | `Radius.Messaging/kafka` | Bicep | Azure Verified Module — `avm/res/event-hub/namespace` |
 | `Radius.Data/mongoDatabases` | Bicep | Azure Verified Module — `avm/res/document-db/database-account` |
@@ -80,6 +80,17 @@ To update an existing deployment, register a `Radius.Data` namespace that
 declares `secrets.connectionString`, deploy this pack, then redeploy the
 application and its connected containers. The Kubernetes Redis Recipe
 still returns only `url` and needs no password.
+
+### OpenAI account keys
+
+The `Radius.AI/models` Recipe completes the AVM account module and its key
+outputs before it starts the `chat` model deployment. This prevents concurrent
+account key reads and model provisioning without a test retry. The Recipe pins
+AVM account `0.15.0`, older than the `0.19.2` module the pack used directly; the
+account name and model settings are unchanged. It returns the endpoint and API key through the standard
+Recipe result, with the key in `result.secrets.apiKey`.
+The wrapper is temporary until AVM account `0.19.3`, which fixes the same
+race, is published.
 
 ### MySQL versions
 

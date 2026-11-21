@@ -128,25 +128,12 @@ root = pathlib.Path(sys.argv[1])
 workflows = root / ".github/workflows"
 pack = (root / "recipe-packs/azure-aks/azure-aks.bicep").read_text()
 entry = re.search(r"'Radius\.AI/models': \{(.*?)\n      \}", pack, re.S).group(1)
-for setting in (
-    "kind: 'bicep'",
-    "source: 'mcr.microsoft.com/bicep/avm/res/cognitive-services/account:0.19.2'",
-    "name: 'oai-{{context.azure.resourceNameHash}}'",
-    "customSubDomainName: 'oai-{{context.azure.resourceNameHash}}'",
-    "kind: 'OpenAI'",
-    "sku: 'S0'",
-    "disableLocalAuth: false",
-    "publicNetworkAccess: 'Enabled'",
-    "enableTelemetry: false",
-    "kind: 'None'",
-):
-    assert setting in entry, setting
-assert re.search(
-    r"deployments: \[\s*\{\s*name: 'chat'\s*model: \{\s*format: 'OpenAI'\s*"
-    r"name: '\{\{context.resource.properties.model\}\}'\s*version: '2025-08-07'\s*\}\s*"
-    r"sku: \{\s*name: 'GlobalStandard'\s*capacity: 1\s*\}\s*\}\s*\]", entry)
-assert re.search(
-    r"outputs: \{\s*endpoint: 'endpoint'\s*secrets: \{\s*apiKey: 'primaryKey'\s*\}\s*\}", entry)
+# Until AVM account 0.19.3 is published, the pack uses the wrapper Recipe, which reads
+# account keys before it starts the model deployment so the two never overlap
+# (Azure/bicep-registry-modules#7612).
+assert "kind: 'bicep'" in entry
+assert "source: 'ghcr.io/radius-project/azure-recipes/models:latest'" in entry
+assert "parameters:" not in entry, "the wrapper derives the account name from context"
 
 for filename, job in (
     ("validate-azure-recipes", "validate-azure-recipes"),

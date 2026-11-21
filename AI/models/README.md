@@ -22,7 +22,25 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 | Platform | Recipe Pack | Recipe source |
 | --- | --- | --- |
-| Azure | [`recipe-packs/azure-aks/azure-aks.bicep`](../../recipe-packs/azure-aks/azure-aks.bicep) | Direct module — Azure Verified Module `mcr.microsoft.com/bicep/avm/res/cognitive-services/account:0.19.2` |
+| Azure | [`recipe-packs/azure-aks/azure-aks.bicep`](../../recipe-packs/azure-aks/azure-aks.bicep) | [`azure-openai.bicep`](recipes/azure/bicep/azure-openai.bicep), published as `ghcr.io/radius-project/azure-recipes/models` |
+
+The Azure Recipe completes the pinned AVM account module (`0.15.0`), including
+its key outputs, before it starts the `chat` model deployment. The model
+deployment has an explicit dependency on that module. This prevents account
+`listKeys` requests from running at the same time as model provisioning.
+The Recipe returns the stored key through `result.secrets.apiKey`; it does not
+read the account keys again during model provisioning.
+
+The Recipe reads `context.azure.resourceNameHash` to keep the Azure AKS pack's
+`oai-<hash>` account name. The pack must not pass a `{{context...}}` expression
+as `openAIAccountName`: parameters for this context-aware Recipe are literal
+values. An operator can still pass a concrete account name. The account kind,
+model version, deployment name, SKU, capacity, and network settings are unchanged.
+The Recipe reports both Azure resource IDs for cleanup.
+
+This wrapper is temporary. AVM account `0.19.3` fixes the same race
+([Azure/bicep-registry-modules#7612](https://github.com/Azure/bicep-registry-modules/issues/7612)).
+Once it is published, the pack can use that module directly again.
 
 ## Using the resource type
 
