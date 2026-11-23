@@ -50,6 +50,7 @@ locals {
   # Escape dollars before kubelet expands Pod arguments; the shell receives the original text.
   server_args   = flatten([for name, value in local.server_settings : ["-c", replace("${name}=${value}", "$", "$$")] if !contains(local.protected_settings, lower(name))])
   init_sql      = try(var.context.resource.properties.initSql, null) == null ? "" : tostring(var.context.resource.properties.initSql)
+  has_init_sql  = local.init_sql != ""
   extension_sql = join("\n", [for name in local.extensions : "CREATE EXTENSION IF NOT EXISTS \"${replace(name, "\"", "\"\"")}\";"])
 
   labels = {
@@ -61,8 +62,23 @@ locals {
   }
 }
 
-resource "kubernetes_config_map" "init_sql" {
-  count = length(local.extensions) > 0 || local.init_sql != "" ? 1 : 0
+resource "kubernetes_config_map" "extensions" {
+  count = length(local.extensions) > 0 ? 1 : 0
+
+  metadata {
+    name      = "${local.resource_name}-extensions"
+    namespace = local.namespace
+    labels    = local.labels
+  }
+
+  data = {
+    "00-extensions.sql" = local.extension_sql
+  }
+}
+
+# Initialization SQL can contain credentials, so it is stored in a Secret, not a ConfigMap.
+resource "kubernetes_secret" "init_sql" {
+  count = local.has_init_sql ? 1 : 0
 
   metadata {
     name      = "${local.resource_name}-init-sql"
@@ -70,10 +86,9 @@ resource "kubernetes_config_map" "init_sql" {
     labels    = local.labels
   }
 
-  data = merge(
-    length(local.extensions) > 0 ? { "00-extensions.sql" = local.extension_sql } : {},
-    local.init_sql != "" ? { "01-init.sql" = local.init_sql } : {}
-  )
+  data = {
+    "01-init.sql" = local.init_sql
+  }
 }
 
 resource "kubernetes_secret" "postgres" {
@@ -207,9 +222,9 @@ resource "kubernetes_deployment" "postgresql" {
           args = concat(["postgres"], local.server_args)
 
           dynamic "volume_mount" {
-            for_each = kubernetes_config_map.init_sql
+            for_each = length(local.extensions) > 0 || local.has_init_sql ? [1] : []
             content {
-              name       = "init-sql"
+              name       = "extensions"
               mount_path = "/docker-entrypoint-initdb.d"
               read_only  = true
             }
@@ -269,12 +284,35 @@ resource "kubernetes_deployment" "postgresql" {
           }
         }
 
+        # Keep the original ConfigMap volume when only extensions are set so existing Pods are not rolled.
         dynamic "volume" {
-          for_each = kubernetes_config_map.init_sql
+          for_each = length(local.extensions) > 0 && !local.has_init_sql ? kubernetes_config_map.extensions : []
           content {
-            name = "init-sql"
+            name = "extensions"
             config_map {
               name = volume.value.metadata[0].name
+            }
+          }
+        }
+
+        dynamic "volume" {
+          for_each = local.has_init_sql ? [1] : []
+          content {
+            name = "extensions"
+            projected {
+              dynamic "sources" {
+                for_each = kubernetes_config_map.extensions
+                content {
+                  config_map {
+                    name = sources.value.metadata[0].name
+                  }
+                }
+              }
+              sources {
+                secret {
+                  name = kubernetes_secret.init_sql[0].metadata[0].name
+                }
+              }
             }
           }
         }
@@ -330,7 +368,8 @@ output "result" {
       "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Secret/${kubernetes_secret.postgres.metadata[0].name}",
       "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Service/${local.resource_name}",
       "/planes/kubernetes/local/namespaces/${local.namespace}/providers/apps/Deployment/${local.resource_name}"
-    ], [for config in kubernetes_config_map.init_sql : "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/ConfigMap/${config.metadata[0].name}"])
+      ], [for config in kubernetes_config_map.extensions : "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/ConfigMap/${config.metadata[0].name}"],
+    [for secret in kubernetes_secret.init_sql : "/planes/kubernetes/local/namespaces/${local.namespace}/providers/core/Secret/${secret.metadata[0].name}"])
     values = {
       host     = "${kubernetes_service.postgres.metadata[0].name}.${kubernetes_service.postgres.metadata[0].namespace}.svc.cluster.local"
       port     = local.port

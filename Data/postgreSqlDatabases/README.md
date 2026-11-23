@@ -114,8 +114,10 @@ the existing Kubernetes Bicep ConfigMap storage: that Recipe mounts the
 script under `/docker-entrypoint-initdb.d/` and runs it when the data
 directory is empty. It does not run changed SQL against an existing volume.
 The Kubernetes Terraform Recipe does the same: it stores the SQL in the
-`<name>-init-sql` ConfigMap as `01-init.sql`, next to the generated
-`00-extensions.sql`. Empty `initSql` creates no script.
+`<name>-init-sql` Secret as `01-init.sql`, because the SQL can contain
+credentials. The generated `00-extensions.sql` stays in the
+`<name>-extensions` ConfigMap. Both files appear in
+`/docker-entrypoint-initdb.d/`. Empty `initSql` creates no script.
 
 ### Local settings and initialization checks
 
