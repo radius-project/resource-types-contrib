@@ -63,6 +63,9 @@ Namespace releases publish Bicep recipes at their commit-SHA tags with
 `pin_only`; they deliberately do not update `latest`. Consumers that retain
 literal `:latest` references receive fixes when that alias advances through
 **Publish Bicep Recipes** with a stable, Radius-aligned `release_version`.
+For planned finals, the [release handoff](../docs/contributing/contributing-resource-types-recipes.md#publishing-for-a-radius-release)
+promotes the signed recipes from the contrib commit frozen in the public Radius
+release plan, not the contents of `main` at dispatch time.
 Do not substitute a namespace or pack version, or replay an existing Radius
 release version, to force an update. Follow the established publication
 lifecycle instead. Both checked-in Kubernetes and AKS packs pass their Gateway

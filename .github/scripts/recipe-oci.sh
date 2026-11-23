@@ -38,6 +38,7 @@ tag_digest() {
         status=$?
         [[ "$status" == 10 ]] || return "$status"
     fi
+    [[ "${5:-}" != check-only ]] || return 0
 
     # A lost write response is safe only when readback proves the intended tag.
     if ! oras tag "$repository@$digest" "$tag" >&2; then
@@ -91,6 +92,29 @@ publish() {
     printf '%s\n' "$digest"
 }
 
+tag_version() {
+    local source="$1" version="$2" subjects="$3"
+    local checksum repository extra digest
+    [[ "$source" =~ ^[0-9a-f]{40}$ && "$version" =~ ^${STABLE_VERSION}$ ]] ||
+        fail "Final publication requires a source SHA and stable full version."
+    [[ -s "$subjects" ]] || fail "No verified recipe subjects were supplied."
+
+    # Check the whole set before the first write. A missing source pin is not
+    # permission to rebuild; a different version digest is never overwritten.
+    while read -r checksum repository extra || [[ -n "$checksum$repository$extra" ]]; do
+        [[ "$checksum" =~ ^[0-9a-f]{64}$ && "$repository" =~ ^ghcr\.io/radius-project/[a-z0-9-]+-recipes/[a-z0-9]+(-[a-z0-9]+)*$ &&
+            -z "$extra" ]] || fail "Invalid signed recipe subject."
+        digest="sha256:$checksum"
+        [[ "$(resolve "$repository:$source")" == "$digest" ]] ||
+            fail "Source tag does not match the signed digest: $repository:$source"
+        tag_digest "$repository" "$digest" "$version" false check-only
+    done <"$subjects"
+
+    while read -r checksum repository || [[ -n "$checksum$repository" ]]; do
+        tag_digest "$repository" "sha256:$checksum" "$version" false
+    done <"$subjects"
+}
+
 promote() {
     local version="$1" subjects="$2" channel="${3:-}"
     local checksum repository extra digest tags stable newest alias
@@ -136,10 +160,15 @@ publish)
     shift
     publish "$@"
     ;;
+tag-version)
+    (($# == 4)) || fail "Usage: $0 tag-version <source-sha> <version> <subjects-file>"
+    shift
+    tag_version "$@"
+    ;;
 promote)
     (($# == 3 || $# == 4)) || fail "Usage: $0 promote <version> <subjects-file> [channel]"
     shift
     promote "$@"
     ;;
-*) fail "Expected publish or promote." ;;
+*) fail "Expected publish, tag-version or promote." ;;
 esac
