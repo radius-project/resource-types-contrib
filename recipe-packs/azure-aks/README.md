@@ -41,7 +41,7 @@ Defaults are applied when a resource is written, not when a Resource Type is reg
 | `Radius.Data/sqlServerDatabases` | Bicep | Azure Verified Module — `mcr.microsoft.com/bicep/avm/res/sql/server:0.21.4` |
 | `Radius.Data/postgreSqlDatabases` | Bicep | `ghcr.io/radius-project/azure-aks-recipes/postgresqldatabases:latest`, using AVM `avm/res/db-for-postgre-sql/flexible-server:0.15.2` |
 | `Radius.AI/search` | Bicep | Azure Verified Module — `avm/res/search/search-service` |
-| `Radius.AI/models` | Bicep | Azure Verified Module — `avm/res/cognitive-services/account:0.19.2` |
+| `Radius.AI/models` | Bicep | Azure Verified Module — `avm/res/cognitive-services/account:0.19.3` |
 | `Radius.Messaging/rabbitMQ` | Bicep | `ghcr.io/radius-project/kube-recipes/rabbitmq` |
 | `Radius.Messaging/kafka` | Bicep | Azure Verified Module — `avm/res/event-hub/namespace` |
 | `Radius.Data/mongoDatabases` | Bicep | Azure Verified Module — `avm/res/document-db/database-account` |
