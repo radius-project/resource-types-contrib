@@ -130,7 +130,7 @@ pack = (root / "recipe-packs/azure-aks/azure-aks.bicep").read_text()
 entry = re.search(r"'Radius\.AI/models': \{(.*?)\n      \}", pack, re.S).group(1)
 for setting in (
     "kind: 'bicep'",
-    "source: 'mcr.microsoft.com/bicep/avm/res/cognitive-services/account:0.19.2'",
+    "source: 'mcr.microsoft.com/bicep/avm/res/cognitive-services/account:0.19.3'",
     "name: 'oai-{{context.azure.resourceNameHash}}'",
     "customSubDomainName: 'oai-{{context.azure.resourceNameHash}}'",
     "kind: 'OpenAI'",
