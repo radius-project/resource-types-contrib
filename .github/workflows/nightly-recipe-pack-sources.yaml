@@ -1,0 +1,73 @@
+# yaml-language-server: $schema=https://www.schemastore.org/github-workflow.json
+---
+name: Nightly Recipe Pack Sources
+
+# Checks that every Recipe source in each checked-in Recipe Pack can be pulled
+# anonymously, the same way release-recipe-pack.yaml checks it before a release.
+#
+# Pull request and nightly tests replace pack sources with recipes built from
+# the checkout, so they never pull from the registry. A missing tag or a private
+# GHCR package stays hidden until a release runs. This workflow finds it earlier.
+#
+# It uses no cloud account and no cluster. A failure here is an early warning
+# and does not block pull requests. A new registry path has no `latest` tag until
+# its one-time bootstrap, so a failure can be expected before its first release.
+
+on:
+  schedule:
+    - cron: "8 8 * * *" # 08:08 UTC daily
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: nightly-recipe-pack-sources
+  cancel-in-progress: false
+
+jobs:
+  list-packs:
+    name: List Recipe Packs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      packs: ${{ steps.packs.outputs.packs }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: List releasable Recipe Packs
+        id: packs
+        run: |
+          set -euo pipefail
+          packs="$(./.github/scripts/release/list-recipe-packs.sh | jq -R . | jq -sc .)"
+          if [[ "$packs" == "[]" ]]; then
+            echo "::error::No releasable Recipe Packs found"
+            exit 1
+          fi
+          echo "packs=$packs" >> "$GITHUB_OUTPUT"
+
+  verify-sources:
+    name: Verify ${{ matrix.pack }} sources
+    needs: list-packs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        pack: ${{ fromJSON(needs.list-packs.outputs.packs) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify Recipe sources resolve
+        env:
+          RECIPE_PACK: ${{ matrix.pack }}
+        run: ./.github/scripts/release/verify-recipe-pack-sources.sh
