@@ -236,14 +236,19 @@ The pinned driver reads `lib-recipe-packs.sh` mappings from the approved head,
 so discovery can handle new pack IDs, including packs for other platforms.
 Recording and purge helpers remain pinned to the workflow revision.
 
-Before deploying the model, the worker saves its account-quota baseline in the
-owned group's `rtcOpenaiCleanup` tag. The shared test runner records deployed
-account names in that tag before `rad app delete`. Each name combines with the
+Before activating the pack, the worker saves its account-quota baseline in the
+owned group's `rtcOpenaiCleanup` tag without marking a request pending. A pack
+activation failure or expired pre-deploy deadline can therefore clean up an
+empty group. The shared test runner records deployed account names and completion
+in one tag update before `rad app delete`. Each name combines with the
 already verified subscription, group, kind, and location to identify an
 account. Cleanup waits for those accounts even if they are temporarily absent
 from both Azure lists. A failed identity write retains the test application.
-Before each model request, the runner marks its outcome unknown in the saved
-state. Only a successful deployment command records completion; later assertion
+After the final pre-deploy deadline check, the runner marks the request outcome
+unknown in the saved state. Only one model request is allowed per owned test
+group; a second entry fails before sending its request. This prevents a prior
+account's tombstone from being used as evidence for another request.
+Only a successful deployment command records completion; later assertion
 failures do not erase that completion. A timeout, interruption, or failed command
 does not prove that the server stopped working. This includes quota errors:
 without a confirmed terminal server result, they remain unknown.
@@ -253,8 +258,11 @@ or resources in the group, no Cognitive Services account appears in the generic
 resource inventory, and account usage is at or below the saved baseline.
 Empty Azure lists and baseline usage alone do not prove completion. An unknown
 empty run retains the app and owned group until its account appears or an
-operator verifies the outcome. Missing states or failed reads do not prove
-completion. The empty completion is
+operator verifies the outcome. Fallback polls for late accounts from that
+single pending request, checks group ownership again, saves verified names
+without changing the quota target, and deletes newly visible active accounts
+within the same cleanup deadline.
+Missing states or failed reads do not prove completion. Empty completion is
 saved before application teardown, so subsequent cleanup does not wait for free
 quota owned by other runs. Saved account identities are never discarded when
 both account lists are temporarily empty.

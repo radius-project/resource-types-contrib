@@ -34,8 +34,8 @@ az_read() {
     timeout --kill-after=5s 30s az "$@" --subscription "$AZURE_SUBSCRIPTION_ID" --output json
 }
 
-state=""
-if [[ "$group_exists" == true ]]; then
+verify_ownership() {
+    local group
     group="$(az_read group show --name "$AZURE_RESOURCE_GROUP")" || fail "Cannot read resource-group ownership"
     jq -e --arg id "${group_id,,}" --arg repo "$GITHUB_REPOSITORY" \
         --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" '
@@ -43,6 +43,12 @@ if [[ "$group_exists" == true ]]; then
         .tags.rtcRepository == $repo and .tags.rtcRunId == $run and
         .tags.rtcRunAttempt == $attempt and .tags.rtcPurpose == "azure-openai-test"
     ' <<<"$group" >/dev/null || fail "Resource-group ownership does not match this run"
+    printf '%s\n' "$group"
+}
+
+state=""
+if [[ "$group_exists" == true ]]; then
+    group="$(verify_ownership)"
     state="$(jq -r '.tags.rtcOpenaiCleanup // ""' <<<"$group")"
     if [[ -n "$state" ]]; then
         jq -e '
@@ -50,6 +56,7 @@ if [[ "$group_exists" == true ]]; then
             .target >= 0 and (.target | floor) == .target and
             (.recording | type) == "boolean" and (.accounts | type) == "object" and
             ((has("completed") | not) or (.completed | type) == "boolean") and
+            ((has("requested") | not) or (.requested | type) == "boolean") and
             all(.accounts | to_entries[];
                 (.key | test("^[a-z0-9][a-z0-9_.-]*$")) and (.value | type) == "boolean")
         ' <<<"$state" >/dev/null || fail "Invalid saved OpenAI cleanup state"
@@ -99,7 +106,7 @@ inventory() {
                 ($mode == "deleted" and (.id | ascii_downcase) ==
                     ($deletedPrefix + $location + "/resourcegroups/" + $group +
                         "/deletedaccounts/" + (.name | ascii_downcase)))))
-        then map(.name |= ascii_downcase)
+        then map({name:(.name | ascii_downcase)})
         else error("unexpected scoped OpenAI account identity or location") end
     ' <<<"$data" || fail "Invalid $1 account inventory"
 }
@@ -165,12 +172,16 @@ saved_state="$state"
 if [[ "$mode" == begin ]]; then
     [[ -z "$state" && "$count" == 0 ]] || fail "OpenAI test must start with an empty, unrecorded owned group"
     before="$(usage)"
-    state="$(jq -c '{target:.currentValue,accounts:{},recording:true}' <<<"$before")"
+    state="$(jq -c '{target:.currentValue,accounts:{},recording:false}' <<<"$before")"
     save_state
     exit 0
 elif [[ "$mode" == prepare ]]; then
     [[ -n "$state" ]] || fail "Cannot deploy without saved OpenAI cleanup state"
-    state="$(jq -c '.completed = false | .recording = true' <<<"$state")"
+    [[ "$(jq '.requested // false' <<<"$state")" == false &&
+        "$(jq '.recording' <<<"$state")" == false &&
+        "$(jq '.accounts | length' <<<"$state")" == 0 && "$count" == 0 ]] ||
+        fail "Only one OpenAI model request is allowed per owned test group"
+    state="$(jq -c '.completed = false | .recording = true | .requested = true' <<<"$state")"
     save_state
     exit 0
 elif [[ "$mode" == record ]]; then
@@ -180,7 +191,6 @@ elif [[ "$mode" == record ]]; then
         fail "Invalid deployment completion result"
     if [[ "${3:-unknown}" == completed ]]; then
         state="$(jq -c '.completed = true' <<<"$state")"
-        save_state
     fi
     if [[ "$count" == 0 && "$(jq '.accounts | length' <<<"$state")" == 0 ]]; then
         empty_run_settled ||
@@ -211,23 +221,41 @@ expected="$(jq -c '.accounts | keys' <<<"$state")"
 
 # Keep the tagged group until all tombstones are purged so fallback cleanup can
 # establish ownership even if this runner stops between account deletion and purge.
-while IFS= read -r name; do
-    echo "Deleting owned OpenAI account '$name' in '$AZURE_RESOURCE_GROUP'"
-    timeout --kill-after=5s 60s az cognitiveservices account delete \
-        --name "$name" --resource-group "$AZURE_RESOURCE_GROUP" \
-        --subscription "$AZURE_SUBSCRIPTION_ID" --output none ||
-        fail "OpenAI account deletion failed or timed out"
-done < <(jq -r '.[].name' <<<"$active")
-
+deleting='[]'
 purged="$(jq -c '[.accounts | to_entries[] | select(.value) | .key]' <<<"$state")"
 deadline=$((SECONDS + 300))
 while (( SECONDS < deadline )); do
     active="$(inventory active)"
     deleted="$(inventory deleted)"
-    jq -en --argjson active "$active" --argjson deleted "$deleted" --argjson expected "$expected" '
-        ([$active[], $deleted[]] | map(.name) - $expected | length) == 0
-    ' >/dev/null || fail "Account inventory changed outside the cleanup snapshot"
+    observed="$(jq -cn --argjson active "$active" --argjson deleted "$deleted" \
+        '[$active[], $deleted[]] | map(.name) | unique')"
+    new="$(jq -cn --argjson observed "$observed" --argjson expected "$expected" '$observed - $expected')"
+    if [[ "$new" != '[]' ]]; then
+        [[ "$(jq '.recording' <<<"$state")" == true ]] ||
+            fail "Account inventory changed outside the cleanup snapshot"
+        verify_ownership >/dev/null
+        state="$(jq -c --argjson names "$new" '
+            reduce $names[] as $name (.; .accounts[$name] = false) |
+            .recording = false
+        ' <<<"$state")"
+        save_state
+        expected="$(jq -c '.accounts | keys' <<<"$state")"
+    elif [[ "$observed" != '[]' && "$(jq '.recording' <<<"$state")" == true ]]; then
+        verify_ownership >/dev/null
+        state="$(jq -c '.recording = false' <<<"$state")"
+        save_state
+    fi
     while IFS= read -r name; do
+        verify_ownership >/dev/null
+        echo "Deleting owned OpenAI account '$name' in '$AZURE_RESOURCE_GROUP'"
+        timeout --kill-after=5s 60s az cognitiveservices account delete \
+            --name "$name" --resource-group "$AZURE_RESOURCE_GROUP" \
+            --subscription "$AZURE_SUBSCRIPTION_ID" --output none ||
+            fail "OpenAI account deletion failed or timed out"
+        deleting="$(jq -c --arg name "$name" '. + [$name]' <<<"$deleting")"
+    done < <(jq -r --argjson deleting "$deleting" '[.[].name] - $deleting | .[]' <<<"$active")
+    while IFS= read -r name; do
+        verify_ownership >/dev/null
         echo "Purging owned soft-deleted OpenAI account '$name' in '$AZURE_RESOURCE_GROUP'"
         timeout --kill-after=5s 60s az cognitiveservices account purge \
             --name "$name" --resource-group "$AZURE_RESOURCE_GROUP" --location "$AZURE_LOCATION" \

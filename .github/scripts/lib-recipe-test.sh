@@ -947,12 +947,6 @@ rtc_deploy_and_assert_test_app_once() {
         fi
     fi
 
-    if [[ "${RTC_PURGE_OPENAI_ACCOUNTS:-false}" == true && "$resource_type" == Radius.AI/models ]]; then
-        if ! timeout --kill-after=5s 90s bash "$(dirname "${BASH_SOURCE[0]}")/cleanup-openai-accounts.sh" true prepare; then
-            echo "Error: Could not mark OpenAI deployment outcome unknown before sending the request." >&2
-            return 1
-        fi
-    fi
     echo "==> Deploying test application from $test_file"
     if [[ "${GITHUB_ACTIONS:-}" == true && "${RTC_TEST_PLATFORM:-}" == azure && -n "$step_deadline" ]]; then
         step_remaining=$((step_deadline - $(date +%s) - step_reserve))
@@ -993,6 +987,12 @@ rtc_deploy_and_assert_test_app_once() {
         deploy_command=("${deploy_timeout[@]}" bash -c \
             'source "$1"; shift; rtc_deploy_with_retry "$@"' \
             bash "${BASH_SOURCE[0]}")
+    fi
+    if [[ "${RTC_PURGE_OPENAI_ACCOUNTS:-false}" == true && "$resource_type" == Radius.AI/models ]]; then
+        if ! timeout --kill-after=5s 90s bash "$(dirname "${BASH_SOURCE[0]}")/cleanup-openai-accounts.sh" true prepare; then
+            echo "Error: Could not mark OpenAI deployment outcome unknown before sending the request." >&2
+            return 1
+        fi
     fi
     if RTC_TEST_DIAGNOSTIC_APP="$app_name" RTC_TEST_DIAGNOSTIC_STARTED="$started" \
         "${deploy_command[@]}" "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then

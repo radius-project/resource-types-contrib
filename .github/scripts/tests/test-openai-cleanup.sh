@@ -52,13 +52,22 @@ case "$1 $2 $3" in
         else echo "${GROUP_EXISTS:-true}"; fi ;;
     "group show "*)
         [[ "${OWNERSHIP_FAIL:-0}" == 0 ]] || exit 1
+        if [[ "${OWNERSHIP_LOST:-0}" == 1 &&
+            "$(grep -c '^az group show ' "$CLOUD_LOG")" -gt 1 ]]; then
+            jq '.tags.rtcRunId = "other"' "$GROUP_STATE"
+            exit
+        fi
         cat "$GROUP_STATE" ;;
     "tag update "*)
         [[ "${TAG_FAIL:-0}" == 0 ]] || exit 1
         while [[ "$1" != --tags ]]; do shift; done
         state="${2#rtcOpenaiCleanup=}"
+        if [[ "${FAIL_IDENTITY_WRITE:-0}" == 1 ]] &&
+            jq -e '.accounts | has("live")' <<<"$state" >/dev/null; then exit 1; fi
         group="$(jq -c --arg state "$state" '.tags.rtcOpenaiCleanup = $state' "$GROUP_STATE")"
         echo "$group" >"$GROUP_STATE"
+        if [[ "${INTERRUPT_IDENTITY_WRITE:-0}" == 1 ]] &&
+            jq -e '.accounts | has("live")' <<<"$state" >/dev/null; then exit 1; fi
         jq '{properties:{tags:.tags}}' <<<"$group" ;;
     "group delete "*) exit "${GROUP_DELETE_FAIL:-0}" ;;
     "group create "*) exit "${GROUP_CREATE_FAIL:-0}" ;;
@@ -71,10 +80,13 @@ case "$1 $2 $3" in
         echo "${RESOURCES_JSON:-[]}" ;;
     "cognitiveservices account list")
         [[ "${ACTIVE_FAIL:-0}" == 0 ]] || exit 1
-        if [[ "${NO_ACTIVE_BEFORE_DEPLOY:-0}" == 1 ]] && ! grep -q '^rad deploy ' "$CLOUD_LOG"; then
+        if [[ "$(grep -c '^az cognitiveservices account list ' "$CLOUD_LOG")" -le "${ACTIVE_DELAY_READS:-0}" ]]; then
+            echo '[]'
+        elif [[ "${NO_ACTIVE_BEFORE_DEPLOY:-0}" == 1 ]] && ! grep -q '^rad deploy ' "$CLOUD_LOG"; then
             echo '[]'
         elif grep -Eq '^(az cognitiveservices account delete|rad app delete) ' "$CLOUD_LOG" && [[ "${ACTIVE_STUCK:-0}" == 0 ]]; then
             echo '[]'
+        elif [[ -n "${ACTIVE_FILE:-}" ]]; then cat "$ACTIVE_FILE"
         else echo "$ACTIVE_JSON"; fi ;;
     "cognitiveservices account list-deleted")
         [[ "${DELETED_FAIL:-0}" == 0 ]] || exit 1
@@ -263,6 +275,7 @@ cat >"$TEST_ROOT/bin/rad" <<'EOF'
 #!/bin/bash
 echo "rad $*" >>"$CALL_LOG"
 echo "rad $*" >>"$CLOUD_LOG"
+if [[ "$1 $2" == "env update" && "${ENV_UPDATE_FAIL:-0}" == 1 ]]; then exit 1; fi
 if [[ "$1" == deploy && "${DEPLOY_FAIL:-0}" == 1 ]]; then
     echo '{"error":{"code":"InsufficientQuota","message":"Account quota is exhausted"}}' >&2
     exit "${DEPLOY_EXIT:-1}"
@@ -274,8 +287,8 @@ reset_test
 : >"$CALL_LOG"
 record_deployment() {
     bash "$REPO_ROOT/.github/scripts/cleanup-openai-accounts.sh" true begin || return 1
-    local TAG_FAIL="${1:-0}"
-    export TAG_FAIL
+    local FAIL_IDENTITY_WRITE="${1:-0}"
+    export FAIL_IDENTITY_WRITE
     # shellcheck source=.github/scripts/lib-recipe-test.sh
     source "$REPO_ROOT/.github/scripts/lib-recipe-test.sh"
     rtc_deploy_and_assert_test_app "$TEST_ROOT/app.bicep" Radius.AI/models openai /env default ""
@@ -296,6 +309,8 @@ reset_test
 : >"$CALL_LOG"
 if NO_ACTIVE_BEFORE_DEPLOY=1 DELETED_JSON='[]' QUOTA_START=28 record_deployment 1 \
     >"$TEST_ROOT/output" 2>&1; then fail "failed identity persistence must block app deletion"; fi
+grep -q '^rad deploy ' "$CALL_LOG" || fail "identity failure test must reach model deployment"
+grep -q '^az tag update .*accounts.*live' "$CALL_LOG" || fail "identity failure test must attempt the name write"
 if grep -q '^rad app delete ' "$CALL_LOG"; then fail "do not erase an unrecorded identity"; fi
 
 # A quota-rejected deployment can finish without ever creating an account.
@@ -385,13 +400,94 @@ jq -n '[{properties:{provisioningState:"Failed"},metadata:("x" * 140000)}]' >"$l
 ACTIVE_JSON='[]' DELETED_JSON='[]' GROUP_JSON="$pending" DEPLOYMENTS_FILE="$large" run_test ||
     fail "settled empty run must accept deployment metadata above the per-argument limit"
 reset_test
-echo "$pending" >"$GROUP_STATE"
+jq '.tags.rtcOpenaiCleanup |= (fromjson | .recording = false | tojson)' <<<"$pending" >"$GROUP_STATE"
 ACTIVE_JSON='[]' DELETED_JSON='[]' bash "$REPO_ROOT/.github/scripts/cleanup-openai-accounts.sh" true prepare \
     >"$TEST_ROOT/output" 2>&1 || fail "prepare another request after a completed deployment"
 jq -e '.tags.rtcOpenaiCleanup | fromjson | .recording and (.completed == false)' "$GROUP_STATE" >/dev/null ||
     fail "a prior success must not prove completion of the next request"
 if ACTIVE_JSON='[]' DELETED_JSON='[]' bash "$REPO_ROOT/.github/scripts/cleanup-openai-accounts.sh" true record unknown \
     >"$TEST_ROOT/output" 2>&1; then fail "do not reuse a prior completion receipt"; fi
+
+# Completion and observed names must survive the same interrupted write.
+reset_test
+: >"$CALL_LOG"
+echo "$unknown" >"$GROUP_STATE"
+if DELETED_JSON='[]' INTERRUPT_IDENTITY_WRITE=1 \
+    bash "$REPO_ROOT/.github/scripts/cleanup-openai-accounts.sh" true record completed \
+    >"$TEST_ROOT/output" 2>&1; then fail "simulate an interrupted identity-write response"; fi
+jq -e '.tags.rtcOpenaiCleanup | fromjson | .completed and .accounts.live == false' \
+    "$GROUP_STATE" >/dev/null || fail "first completed write must also contain the observed identity"
+[[ "$(grep -c '^az tag update ' "$CALL_LOG")" == 1 ]] || fail "save completion and names atomically"
+if ACTIVE_JSON='[]' DELETED_JSON='[]' HELPER_TIMEOUT=2s invoke_cleanup; then
+    fail "fallback must wait for the observed identity despite empty inventories and baseline usage"
+fi
+no_mutation
+recorded_tombstone="$(jq -c '[.[] | select(.name == "live")]' <<<"$ACTIVE_JSON")"
+ACTIVE_JSON='[]' DELETED_JSON="$recorded_tombstone" invoke_cleanup ||
+    fail "fallback must purge the interrupted write's recorded account"
+
+# One pending request may discover its new or saved account during the final fallback.
+for saved in false true; do
+    late_state="$unknown"
+    if [[ "$saved" == true ]]; then
+        late_state="$(jq -c '.tags.rtcOpenaiCleanup |=
+            (fromjson | .accounts.live = false | .recording = false | tojson)' <<<"$unknown")"
+    fi
+    ACTIVE_DELAY_READS=1 DELETED_JSON='[]' GROUP_JSON="$late_state" run_test ||
+        fail "fallback must delete a late active account (saved=$saved) in the same invocation"
+    grep -q '^az cognitiveservices account delete --name live ' "$CALL_LOG" || fail "delete late active account"
+    grep -q '^az cognitiveservices account purge --name live ' "$CALL_LOG" || fail "purge late active account"
+    jq -e '.tags.rtcOpenaiCleanup | fromjson | .target == 30 and .accounts.live' "$GROUP_STATE" >/dev/null ||
+        fail "late capture must retain the saved quota target"
+done
+if ACTIVE_DELAY_READS=1 DELETED_JSON='[]' GROUP_JSON="$unknown" OWNERSHIP_LOST=1 run_test; then
+    fail "late capture must recheck group ownership"
+fi
+no_mutation
+
+# Do not send a second request that could be confused with the first account.
+reset_test
+: >"$CALL_LOG"
+NO_ACTIVE_BEFORE_DEPLOY=1 DELETED_JSON='[]' QUOTA_START=28 record_deployment \
+    >"$TEST_ROOT/output" 2>&1 || fail "first model entry"
+if NO_ACTIVE_BEFORE_DEPLOY=1 DELETED_JSON='[]' QUOTA_START=28 DEPLOY_FAIL=1 DEPLOY_EXIT=124 \
+    bash -c 'source "$1"; rtc_deploy_and_assert_test_app "$2" Radius.AI/models second /env default ""' \
+    bash "$REPO_ROOT/.github/scripts/lib-recipe-test.sh" "$TEST_ROOT/app.bicep" \
+    >>"$TEST_ROOT/output" 2>&1; then fail "second model entry must be rejected before sending"; fi
+[[ "$(grep -c '^rad deploy ' "$CALL_LOG")" == 1 ]] || fail "second entry must not send a deployment"
+grep -q 'Only one OpenAI model request' "$TEST_ROOT/output" || fail "explain the group request limit"
+NO_ACTIVE_BEFORE_DEPLOY=1 DELETED_JSON='[]' QUOTA_START=28 invoke_cleanup ||
+    fail "first account remains cleanable after rejecting the second request"
+
+large_account="$TEST_ROOT/active-account.json"
+jq 'map(.metadata = ("x" * 140000))' <<<"$ACTIVE_JSON" >"$large_account"
+ACTIVE_FILE="$large_account" DELETED_JSON='[]' run_test || fail "cleanup must reduce large account objects to names"
+
+cat >"$TEST_ROOT/bin/date" <<'EOF'
+#!/bin/bash
+if [[ "${EXPIRE_SECOND_CHECK:-0}" == 1 && "$*" == '+%s' ]]; then
+    reads="$(cat "$DATE_READS_FILE" 2>/dev/null || echo 0)"
+    reads=$((reads + 1))
+    echo "$reads" >"$DATE_READS_FILE"
+    if ((reads >= 3)); then echo 2000; else echo 1000; fi
+else
+    exec /usr/bin/date "$@"
+fi
+EOF
+chmod +x "$TEST_ROOT/bin/date"
+export DATE_READS_FILE="$TEST_ROOT/date-reads"
+reset_test
+: >"$CALL_LOG"
+if NO_ACTIVE_BEFORE_DEPLOY=1 ACTIVE_JSON='[]' DELETED_JSON='[]' EXPIRE_SECOND_CHECK=1 \
+    RTC_TEST_PLATFORM=azure RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=1500 record_deployment \
+    >"$TEST_ROOT/output" 2>&1; then fail "expired second deadline check must fail the entry"; fi
+grep -q 'budget exhausted before deployment' "$TEST_ROOT/output" || fail "exercise the deadline check"
+[[ "$(cat "$DATE_READS_FILE")" == 3 ]] || fail "expire only the second deadline check"
+if grep -q '^rad deploy ' "$CALL_LOG"; then fail "deadline failure must not deploy"; fi
+jq -e '.tags.rtcOpenaiCleanup | fromjson | .recording == false and (.requested != true)' \
+    "$GROUP_STATE" >/dev/null || fail "deadline rejection must leave no pending request"
+ACTIVE_JSON='[]' DELETED_JSON='[]' USAGE_FAIL=1 invoke_cleanup ||
+    fail "deadline failure before request must allow empty cleanup"
 
 reset_test
 python3 - "$REPO_ROOT" <<'PY'
@@ -508,6 +604,25 @@ rtc_deploy_and_assert_test_app "$1/test/app.bicep" Radius.AI/models openai /env 
     calls = log.read_text()
     assert "unpinned-recording" not in calls, calls
     assert 'true record completed' in calls and "az tag update " in calls, calls
+
+    log.write_text("")
+    pathlib.Path(os.environ["CLOUD_LOG"]).write_text("")
+    pathlib.Path(os.environ["GROUP_STATE"]).write_text(os.environ["GROUP_JSON"])
+    begin = subprocess.run(["bash", str(tools / "cleanup-openai-accounts.sh"), "true", "begin"],
+                           env=env, capture_output=True, text=True)
+    assert begin.returncode == 0, (begin.stdout, begin.stderr)
+    result = subprocess.run(["bash", str(tools / "test-all-recipe-pack-entries.sh"),
+                             "azure", "default", "default"],
+                            cwd=checkout, env={**env, "ENV_UPDATE_FAIL": "1"},
+                            capture_output=True, text=True)
+    assert result.returncode != 0, "activation failure must fail the test"
+    calls = log.read_text()
+    assert "rad env update " in calls and "rad deploy " not in calls, calls
+    cleanup_result = subprocess.run(["bash", str(tools / "cleanup-azure-resources.sh")],
+                                    cwd=checkout, env={**env, "USAGE_FAIL": "1"},
+                                    capture_output=True, text=True)
+    assert cleanup_result.returncode == 0, (cleanup_result.stdout, cleanup_result.stderr)
+    assert "az group delete " in log.read_text(), "activation failure must allow group cleanup"
 PY
 
 echo "OpenAI cleanup tests passed"
