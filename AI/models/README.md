@@ -22,7 +22,9 @@ Recipes for this resource type are provided through the platform Recipe Packs at
 
 | Platform | Recipe Pack | Recipe source |
 | --- | --- | --- |
-| Azure | [`recipe-packs/azure-aks/azure-aks.bicep`](../../recipe-packs/azure-aks/azure-aks.bicep) | Direct module — Azure Verified Module `mcr.microsoft.com/bicep/avm/res/cognitive-services/account:0.19.2` |
+| Azure | [`recipe-packs/azure-aks/azure-aks.bicep`](../../recipe-packs/azure-aks/azure-aks.bicep) | Direct module — Azure Verified Module `mcr.microsoft.com/bicep/avm/res/cognitive-services/account:0.19.3` |
+
+Use account module `0.19.3` or later. Earlier versions read the account keys while the model deployment is still provisioning, which can fail with `RequestConflict` ([Azure/bicep-registry-modules#7612](https://github.com/Azure/bicep-registry-modules/issues/7612)).
 
 ## Using the resource type
 

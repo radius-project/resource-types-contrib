@@ -50,7 +50,7 @@ resource azureAksRecipePack 'Radius.Core/recipePacks@2025-08-01-preview' = {
       }
       'Radius.AI/models': {
         kind: 'bicep'
-        source: 'mcr.microsoft.com/bicep/avm/res/cognitive-services/account:0.19.2'
+        source: 'mcr.microsoft.com/bicep/avm/res/cognitive-services/account:0.19.3'
         parameters: {
           name: 'oai-{{context.azure.resourceNameHash}}'
           kind: 'OpenAI'
