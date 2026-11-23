@@ -64,6 +64,7 @@ case "$1 $2 $3" in
     "group create "*) exit "${GROUP_CREATE_FAIL:-0}" ;;
     "deployment group list")
         [[ "${DEPLOYMENT_LIST_FAIL:-0}" == 0 ]] || exit 1
+        if [[ -n "${DEPLOYMENTS_FILE:-}" ]]; then cat "$DEPLOYMENTS_FILE"; exit; fi
         echo "${DEPLOYMENTS_JSON:-[]}" ;;
     "resource list "*)
         [[ "${RESOURCE_LIST_FAIL:-0}" == 0 ]] || exit 1
@@ -264,7 +265,7 @@ echo "rad $*" >>"$CALL_LOG"
 echo "rad $*" >>"$CLOUD_LOG"
 if [[ "$1" == deploy && "${DEPLOY_FAIL:-0}" == 1 ]]; then
     echo '{"error":{"code":"InsufficientQuota","message":"Account quota is exhausted"}}' >&2
-    exit 1
+    exit "${DEPLOY_EXIT:-1}"
 fi
 EOF
 chmod +x "$TEST_ROOT/bin/rad"
@@ -298,20 +299,18 @@ if NO_ACTIVE_BEFORE_DEPLOY=1 DELETED_JSON='[]' QUOTA_START=28 record_deployment 
 if grep -q '^rad app delete ' "$CALL_LOG"; then fail "do not erase an unrecorded identity"; fi
 
 # A quota-rejected deployment can finish without ever creating an account.
-pending="$(jq -c '.tags.rtcOpenaiCleanup = "{\"target\":30,\"accounts\":{},\"recording\":true}"' <<<"$GROUP_JSON")"
+pending="$(jq -c '.tags.rtcOpenaiCleanup = "{\"target\":30,\"accounts\":{},\"recording\":true,\"completed\":true}"' <<<"$GROUP_JSON")"
 reset_test
 : >"$CALL_LOG"
 if ACTIVE_JSON='[]' DELETED_JSON='[]' QUOTA_START=30 DEPLOY_FAIL=1 record_deployment \
     >"$TEST_ROOT/output" 2>&1; then fail "quota-rejected test must still fail"; fi
-grep -q '^rad app delete ' "$CALL_LOG" || fail "empty failed deployment must allow app teardown"
-jq -e '.tags.rtcOpenaiCleanup | fromjson | .recording == false and .accounts == {}' \
-    "$GROUP_STATE" >/dev/null || fail "record empty failure before app teardown"
-ACTIVE_JSON='[]' DELETED_JSON='[]' QUOTA_START=30 invoke_cleanup ||
-    fail "clean up quota-rejected run without claiming available capacity"
+if grep -q '^rad app delete ' "$CALL_LOG"; then fail "unverified rejection must retain app"; fi
+jq -e '.tags.rtcOpenaiCleanup | fromjson | .recording and (.completed != true)' \
+    "$GROUP_STATE" >/dev/null || fail "a rejected command is not proof of server-side completion"
 reset_test
 echo "$pending" >"$GROUP_STATE"
 ACTIVE_JSON='[]' DELETED_JSON='[]' QUOTA_START=30 \
-    bash "$REPO_ROOT/.github/scripts/cleanup-openai-accounts.sh" true record \
+    bash "$REPO_ROOT/.github/scripts/cleanup-openai-accounts.sh" true record completed \
     >"$TEST_ROOT/output" 2>&1 || fail "record a settled empty deployment at full quota"
 jq -e '.tags.rtcOpenaiCleanup | fromjson | .recording == false and .accounts == {}' \
     "$GROUP_STATE" >/dev/null || fail "persist empty completion before app teardown"
@@ -361,10 +360,44 @@ if ACTIVE_JSON='[]' DELETED_JSON='[]' GROUP_JSON="$lower_baseline" QUOTA_START=3
     HELPER_TIMEOUT=2s run_test; then fail "empty inventory with elevated usage is not settled"; fi
 no_mutation
 
+unknown="$(jq -c '.tags.rtcOpenaiCleanup = "{\"target\":30,\"accounts\":{},\"recording\":true}"' <<<"$GROUP_JSON")"
+for status in 124 137; do
+    reset_test
+    : >"$CALL_LOG"
+    if ACTIVE_JSON='[]' DELETED_JSON='[]' DEPLOY_FAIL=1 DEPLOY_EXIT="$status" record_deployment \
+        >"$TEST_ROOT/output" 2>&1; then fail "timed-out deployment must fail"; fi
+    if grep -q '^rad app delete ' "$CALL_LOG"; then fail "timeout must retain app through empty interval"; fi
+    if ACTIVE_JSON='[]' DELETED_JSON='[]' HELPER_TIMEOUT=2s invoke_cleanup; then
+        fail "fallback must retain unknown deployment through empty interval"
+    fi
+    no_mutation
+    DELETED_JSON='[]' invoke_cleanup || fail "fallback must recover once the late account appears"
+    grep -q '^az cognitiveservices account purge --name live ' "$CALL_LOG" || fail "purge late account"
+done
+reset_test
+echo "$unknown" >"$GROUP_STATE"
+: >"$CALL_LOG"
+if ACTIVE_JSON='[]' DELETED_JSON='[]' bash "$REPO_ROOT/.github/scripts/cleanup-openai-accounts.sh" true record \
+    >"$TEST_ROOT/output" 2>&1; then fail "missing completion evidence must retain unknown empty run"; fi
+no_mutation
+large="$TEST_ROOT/deployments.json"
+jq -n '[{properties:{provisioningState:"Failed"},metadata:("x" * 140000)}]' >"$large"
+ACTIVE_JSON='[]' DELETED_JSON='[]' GROUP_JSON="$pending" DEPLOYMENTS_FILE="$large" run_test ||
+    fail "settled empty run must accept deployment metadata above the per-argument limit"
+reset_test
+echo "$pending" >"$GROUP_STATE"
+ACTIVE_JSON='[]' DELETED_JSON='[]' bash "$REPO_ROOT/.github/scripts/cleanup-openai-accounts.sh" true prepare \
+    >"$TEST_ROOT/output" 2>&1 || fail "prepare another request after a completed deployment"
+jq -e '.tags.rtcOpenaiCleanup | fromjson | .recording and (.completed == false)' "$GROUP_STATE" >/dev/null ||
+    fail "a prior success must not prove completion of the next request"
+if ACTIVE_JSON='[]' DELETED_JSON='[]' bash "$REPO_ROOT/.github/scripts/cleanup-openai-accounts.sh" true record unknown \
+    >"$TEST_ROOT/output" 2>&1; then fail "do not reuse a prior completion receipt"; fi
+
 reset_test
 python3 - "$REPO_ROOT" <<'PY'
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -421,6 +454,60 @@ with tempfile.TemporaryDirectory(prefix="rtc-approved-head-") as directory:
     calls = log.read_text()
     assert "old-wrapper" not in calls and "account purge --name soft" in calls, calls
     assert recipe.read_text() == "// approved PR head recipe\n", "keep approved recipe sources intact"
+    recipe.write_text("param applicationName string\n")
+
+    tools = checkout / ".openai-workflow/.github/scripts"
+    shutil.copytree(pathlib.Path(sys.argv[1]) / ".github/scripts", tools)
+    head_scripts = checkout / ".github/scripts"
+    for name in ("lib-recipe-packs.sh", "lib-namespaces.sh"):
+        shutil.copy2(tools / name, head_scripts / name)
+    library = head_scripts / "lib-recipe-packs.sh"
+    library.write_text(library.read_text().replace(
+        "aws-eks)", "future-aws)").replace("azure-aks | azure-aci)", "future-azure)"))
+    for pack_id in ("future-azure", "future-aws"):
+        pack = checkout / "recipe-packs" / pack_id / "main.bicep"
+        pack.parent.mkdir(parents=True)
+        pack.write_text("""resource pack 'Radius.Core/recipePacks@2025-08-01-preview' = {
+  name: 'future-pack'
+  properties: {
+    recipes: {
+      'Radius.AI/models': {
+        kind: 'bicep'
+        source: 'example.com/model:1'
+      }
+    }
+  }
+}
+""")
+    # Keep the driver and recording library pinned, but isolate unrelated CLI setup.
+    (tools / "test-recipe-pack-entry.sh").write_text("""#!/bin/bash
+set -euo pipefail
+source "$(dirname "$0")/lib-recipe-test.sh"
+rtc_deploy_and_assert_test_app "$1/test/app.bicep" Radius.AI/models openai /env default ""
+""")
+    (tools / "test-recipe-pack-entry.sh").chmod(0o755)
+    (head_scripts / "cleanup-openai-accounts.sh").write_text(
+        '#!/bin/bash\necho unpinned-recording >>"$CALL_LOG"\nexit 99\n')
+    (head_scripts / "lib-recipe-test.sh").write_text("exit 99\n")
+    log.write_text("")
+    pathlib.Path(os.environ["CLOUD_LOG"]).write_text("")
+    pathlib.Path(os.environ["GROUP_STATE"]).write_text(os.environ["GROUP_JSON"])
+    env = {**os.environ, "RTC_REPO_ROOT": str(checkout),
+           "RTC_OPENAI_TEST_SCOPE": "only",
+           "RTC_RECIPE_PACK_LIBRARY": str(library),
+           "NO_ACTIVE_BEFORE_DEPLOY": "1", "DELETED_JSON": "[]", "QUOTA_START": "28"}
+    begin = subprocess.run(["bash", str(tools / "cleanup-openai-accounts.sh"), "true", "begin"],
+                           env=env, capture_output=True, text=True)
+    assert begin.returncode == 0, (begin.stdout, begin.stderr)
+    result = subprocess.run(["bash", str(tools / "test-all-recipe-pack-entries.sh"),
+                             "azure", "default", "default"],
+                            cwd=checkout, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert "AI/models (from pack 'future-azure')" in result.stdout, result.stdout
+    assert "from pack 'future-aws'" not in result.stdout, result.stdout
+    calls = log.read_text()
+    assert "unpinned-recording" not in calls, calls
+    assert 'true record completed' in calls and "az tag update " in calls, calls
 PY
 
 echo "OpenAI cleanup tests passed"

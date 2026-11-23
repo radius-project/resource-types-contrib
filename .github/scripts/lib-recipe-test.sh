@@ -860,6 +860,7 @@ rtc_collect_test_diagnostics() {
 rtc_deploy_and_assert_test_app_once() {
     local test_file="$1" resource_type="$2" app_name_prefix="$3" environment_path="$4" workspace_name="$5" kubernetes_namespace="$6"
     local app_name started locks_before="" inventory_locks="" deploy_status=0 azure_before="" azure_after=""
+    local openai_deployment_result=unknown
     local step_remaining="" step_deadline="${RTC_AZURE_TEST_STEP_DEADLINE_EPOCH:-}" step_reserve=360
     local diagnostics_collected=0
     local -a params=() deploy_timeout=() cleanup_timeout=()
@@ -946,6 +947,12 @@ rtc_deploy_and_assert_test_app_once() {
         fi
     fi
 
+    if [[ "${RTC_PURGE_OPENAI_ACCOUNTS:-false}" == true && "$resource_type" == Radius.AI/models ]]; then
+        if ! timeout --kill-after=5s 90s bash "$(dirname "${BASH_SOURCE[0]}")/cleanup-openai-accounts.sh" true prepare; then
+            echo "Error: Could not mark OpenAI deployment outcome unknown before sending the request." >&2
+            return 1
+        fi
+    fi
     echo "==> Deploying test application from $test_file"
     if [[ "${GITHUB_ACTIONS:-}" == true && "${RTC_TEST_PLATFORM:-}" == azure && -n "$step_deadline" ]]; then
         step_remaining=$((step_deadline - $(date +%s) - step_reserve))
@@ -990,6 +997,7 @@ rtc_deploy_and_assert_test_app_once() {
     if RTC_TEST_DIAGNOSTIC_APP="$app_name" RTC_TEST_DIAGNOSTIC_STARTED="$started" \
         "${deploy_command[@]}" "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
         echo "==> Test deployment successful"
+        openai_deployment_result=completed
 
         local assertion_remaining="" assertion_status=0
         local -a assertion_command=(rtc_assert_recipe_result)
@@ -1063,7 +1071,8 @@ rtc_deploy_and_assert_test_app_once() {
     fi
 
     if [[ "${RTC_PURGE_OPENAI_ACCOUNTS:-false}" == true && "$resource_type" == Radius.AI/models ]]; then
-        if ! timeout --kill-after=5s 90s bash "$(dirname "${BASH_SOURCE[0]}")/cleanup-openai-accounts.sh" true record; then
+        if ! timeout --kill-after=5s 90s bash "$(dirname "${BASH_SOURCE[0]}")/cleanup-openai-accounts.sh" \
+            true record "$openai_deployment_result"; then
             echo "Error: OpenAI account identities were not saved; retaining the application for owned cleanup." >&2
             return 1
         fi

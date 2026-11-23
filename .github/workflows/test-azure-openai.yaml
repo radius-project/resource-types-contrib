@@ -163,6 +163,7 @@ jobs:
         run: |
           set -euo pipefail
           export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 25 * 60 ))
+          export RTC_RECIPE_PACK_LIBRARY="$RTC_REPO_ROOT/.github/scripts/lib-recipe-packs.sh"
           bash "$RTC_OPENAI_SCRIPTS_DIR/cleanup-openai-accounts.sh" true begin
           bash "$RTC_OPENAI_SCRIPTS_DIR/test-all-recipe-pack-entries.sh" \
             azure "$AZURE_WORKSPACE_NAME" "$AZURE_ENVIRONMENT_NAME"

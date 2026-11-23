@@ -22,7 +22,8 @@ fail() { echo "Error: $*; OpenAI capacity release is not confirmed." >&2; exit 1
 [[ "${1:-}" == true || "${1:-}" == false ]] || fail "Missing resource-group existence result"
 group_exists="$1"
 mode="${2:-cleanup}"
-[[ "$mode" == begin || "$mode" == record || "$mode" == cleanup ]] || fail "Invalid cleanup operation"
+[[ "$mode" == begin || "$mode" == prepare || "$mode" == record || "$mode" == cleanup ]] ||
+    fail "Invalid cleanup operation"
 [[ "${RTC_OPENAI_RELEASE_CONFIRMED:-false}" == true || "${RTC_OPENAI_RELEASE_CONFIRMED:-false}" == false ]] ||
     fail "Invalid release confirmation"
 group_id="/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP"
@@ -48,6 +49,7 @@ if [[ "$group_exists" == true ]]; then
             type == "object" and (.target | type) == "number" and
             .target >= 0 and (.target | floor) == .target and
             (.recording | type) == "boolean" and (.accounts | type) == "object" and
+            ((has("completed") | not) or (.completed | type) == "boolean") and
             all(.accounts | to_entries[];
                 (.key | test("^[a-z0-9][a-z0-9_.-]*$")) and (.value | type) == "boolean")
         ' <<<"$state" >/dev/null || fail "Invalid saved OpenAI cleanup state"
@@ -118,14 +120,17 @@ usage() {
 
 empty_run_settled() {
     local deployments resources current active_now deleted_now
+    [[ "$(jq '.completed // false' <<<"$state")" == true ]] || return 1
     deployments="$(az_read deployment group list --resource-group "$AZURE_RESOURCE_GROUP")" ||
         fail "Cannot verify deployment completion for an empty OpenAI run"
     resources="$(az_read resource list --resource-group "$AZURE_RESOURCE_GROUP" --expand provisioningState)" ||
         fail "Cannot verify resource completion for an empty OpenAI run"
-    jq -en --argjson deployments "$deployments" --argjson resources "$resources" \
-        --arg prefix "${group_id,,}/providers/" '
+    printf '%s\n%s\n' "$deployments" "$resources" |
+        jq -es --arg prefix "${group_id,,}/providers/" '
         def terminal: type == "string" and
             (ascii_downcase | IN("succeeded", "failed", "canceled", "cancelled", "deleted"));
+        .[0] as $deployments | .[1] as $resources |
+        length == 2 and
         ($deployments | type) == "array" and ($resources | type) == "array" and
         all($deployments[]; .properties.provisioningState | terminal) and
         all($resources[];
@@ -163,9 +168,20 @@ if [[ "$mode" == begin ]]; then
     state="$(jq -c '{target:.currentValue,accounts:{},recording:true}' <<<"$before")"
     save_state
     exit 0
+elif [[ "$mode" == prepare ]]; then
+    [[ -n "$state" ]] || fail "Cannot deploy without saved OpenAI cleanup state"
+    state="$(jq -c '.completed = false | .recording = true' <<<"$state")"
+    save_state
+    exit 0
 elif [[ "$mode" == record ]]; then
     [[ -n "$state" ]] ||
         fail "Cannot record deployed OpenAI account identities; retain the app for cleanup"
+    [[ "${3:-unknown}" == completed || "${3:-unknown}" == unknown ]] ||
+        fail "Invalid deployment completion result"
+    if [[ "${3:-unknown}" == completed ]]; then
+        state="$(jq -c '.completed = true' <<<"$state")"
+        save_state
+    fi
     if [[ "$count" == 0 && "$(jq '.accounts | length' <<<"$state")" == 0 ]]; then
         empty_run_settled ||
             fail "Empty OpenAI inventory is not settled; retain the app for cleanup"

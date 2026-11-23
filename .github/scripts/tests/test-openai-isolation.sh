@@ -207,6 +207,7 @@ assert "ref: ${{ inputs.checkout_ref || github.sha }}" in worker
 assert "cleanup_result: ${{ steps.openai_cleanup.outcome }}" in worker
 assert "RTC_OPENAI_RELEASE_CONFIRMED: ${{ needs.test-openai.outputs.cleanup_result == 'success' && 'true' || 'false' }}" in fallback
 assert "RTC_REPO_ROOT: ${{ github.workspace }}" in worker
+assert 'export RTC_RECIPE_PACK_LIBRARY="$RTC_REPO_ROOT/.github/scripts/lib-recipe-packs.sh"' in step
 assert worker.index("Require the CI repository before provisioning") < worker.index("- name: Checkout")
 
 ci = (workflows / "validate-azure-openai-recipes.yaml").read_text()
