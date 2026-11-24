@@ -144,3 +144,87 @@ run "empty_extensions_and_settings" {
     error_message = "Empty properties must keep the default startup."
   }
 }
+
+run "init_sql_only" {
+  command = plan
+  variables {
+    context = {
+      application = { name = "testapp" }
+      environment = { name = "testenv" }
+      runtime     = { kubernetes = { namespace = "test" } }
+      resource = {
+        id   = "/planes/radius/local/resourceGroups/test/providers/Radius.Data/postgreSqlDatabases/postgresql"
+        name = "postgresql"
+        type = "Radius.Data/postgreSqlDatabases"
+        properties = {
+          username = "fixture"
+          password = "fixture-only"
+          initSql  = "CREATE TABLE IF NOT EXISTS t (id int);"
+        }
+      }
+    }
+  }
+  assert {
+    condition     = length(kubernetes_config_map.extensions) == 0 && nonsensitive(kubernetes_secret.init_sql[0].data["01-init.sql"]) == "CREATE TABLE IF NOT EXISTS t (id int);"
+    error_message = "initSql must be stored as 01-init.sql in a Secret, with no ConfigMap."
+  }
+  assert {
+    condition     = kubernetes_deployment.postgresql.spec[0].template[0].spec[0].container[0].volume_mount[0].mount_path == "/docker-entrypoint-initdb.d" && kubernetes_deployment.postgresql.spec[0].template[0].spec[0].volume[0].projected[0].sources[0].secret[0].name == "postgresql-init-sql"
+    error_message = "The init ConfigMap must be mounted in /docker-entrypoint-initdb.d."
+  }
+  assert {
+    condition     = contains(output.result.resources, "/planes/kubernetes/local/namespaces/test/providers/core/Secret/postgresql-init-sql")
+    error_message = "Track the init Secret for Radius cleanup."
+  }
+}
+
+run "init_sql_with_extensions" {
+  command = plan
+  variables {
+    context = {
+      application = { name = "testapp" }
+      environment = { name = "testenv" }
+      runtime     = { kubernetes = { namespace = "test" } }
+      resource = {
+        id   = "/planes/radius/local/resourceGroups/test/providers/Radius.Data/postgreSqlDatabases/postgresql"
+        name = "postgresql"
+        type = "Radius.Data/postgreSqlDatabases"
+        properties = {
+          username   = "fixture"
+          password   = "fixture-only"
+          extensions = ["pg_trgm"]
+          initSql    = "SELECT 1;"
+        }
+      }
+    }
+  }
+  assert {
+    condition     = kubernetes_config_map.extensions[0].data["00-extensions.sql"] == "CREATE EXTENSION IF NOT EXISTS \"pg_trgm\";" && !contains(keys(kubernetes_config_map.extensions[0].data), "01-init.sql") && length(kubernetes_deployment.postgresql.spec[0].template[0].spec[0].volume[0].projected[0].sources) == 2
+    error_message = "Extensions stay in the ConfigMap; SQL goes to the Secret; both are projected into one directory."
+  }
+}
+
+run "empty_init_sql_is_ignored" {
+  command = plan
+  variables {
+    context = {
+      application = { name = "testapp" }
+      environment = { name = "testenv" }
+      runtime     = { kubernetes = { namespace = "test" } }
+      resource = {
+        id   = "/planes/radius/local/resourceGroups/test/providers/Radius.Data/postgreSqlDatabases/postgresql"
+        name = "postgresql"
+        type = "Radius.Data/postgreSqlDatabases"
+        properties = {
+          username = "fixture"
+          password = "fixture-only"
+          initSql  = ""
+        }
+      }
+    }
+  }
+  assert {
+    condition     = length(kubernetes_secret.init_sql) == 0
+    error_message = "Empty initSql must not create a ConfigMap."
+  }
+}

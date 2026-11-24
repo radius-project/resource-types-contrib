@@ -18,7 +18,7 @@ Developer documentation is embedded in the resource type definition YAML file an
 | `size` | string (`S`, `M`, `L`) | Optional | The size of the PostgreSQL database. Defaults to `S`. The Recipe maps the size onto a concrete cloud SKU/tier. |
 | `extensions` | array of strings | Optional | Extension names. Azure allow-lists them; the application must create each extension in its database. Kubernetes creates them when the database is first initialized. Defaults to `[]`. |
 | `serverSettings` | object of strings | Optional | PostgreSQL server parameter names and values. Reserved TLS and port settings cannot be changed through this object. Defaults to `{}`. See [Azure configuration rules](recipes/azure/README.md#settings-and-operator-overrides). |
-| `initSql` | string (`x-radius-sensitive`) | Optional | SQL for users, schemas, and seed data. Azure runs it after provisioning; it must be safe to repeat. Kubernetes Bicep runs it when the data directory is empty. See [database initialization](#database-initialization). |
+| `initSql` | string (`x-radius-sensitive`) | Optional | SQL for users, schemas, and seed data. Azure runs it after provisioning; it must be safe to repeat. Kubernetes Bicep and Terraform run it when the data directory is empty. See [database initialization](#database-initialization). |
 | `tls` | string (`required`, `optional`) | Optional | The requested transport policy for connections to the database server. Defaults to `required`. Use `optional`, which permits non-TLS connections, only when the server is not publicly reachable. See below for platform behavior and operator overrides. |
 | `host` | string | Read only | The host name used to connect to the database. Set from the Recipe module's output. |
 | `port` | integer | Optional | The TCP port used to connect to the database. Defaults to `5432`, the standard port every Recipe in this repository provisions. A Recipe that provisions the database on a different port overwrites this value from its own output. Setting it in an application definition changes only the value reported to connected containers, never the port the server listens on. |
@@ -113,7 +113,11 @@ Bicep parameter if the script contains credentials. This does not change
 the existing Kubernetes Bicep ConfigMap storage: that Recipe mounts the
 script under `/docker-entrypoint-initdb.d/` and runs it when the data
 directory is empty. It does not run changed SQL against an existing volume.
-The Kubernetes Terraform Recipe does not implement `initSql`.
+The Kubernetes Terraform Recipe does the same: it stores the SQL in the
+`<name>-init-sql` Secret as `01-init.sql`, because the SQL can contain
+credentials. The generated `00-extensions.sql` stays in the
+`<name>-extensions` ConfigMap. Both files appear in
+`/docker-entrypoint-initdb.d/`. Empty `initSql` creates no script.
 
 ### Local settings and initialization checks
 
@@ -189,7 +193,7 @@ An automatically generated self-signed certificate is not trusted by default. De
 
 ### Updates and data protection
 
-**Back up and plan to restore data before upgrading, changing policy, or restarting the Deployment.** These Recipes do not provision durable database volumes; a replacement Pod starts with an empty database. Bicep's `initSql` runs again on an empty database and is not a substitute for a backup.
+**Back up and plan to restore data before upgrading, changing policy, or restarting the Deployment.** These Recipes do not provision durable database volumes; a replacement Pod starts with an empty database. The Kubernetes `initSql` runs again on an empty database and is not a substitute for a backup.
 
 Changing `tls` changes the Pod template and triggers a rollout. The dedicated authentication file is configured on every startup, not just initial database creation. Wait for rollout completion before relying on the new policy; a failed rollout can leave an old ready Pod serving the previous policy until the operator repairs the rollout.
 
