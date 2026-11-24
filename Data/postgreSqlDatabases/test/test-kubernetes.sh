@@ -27,7 +27,7 @@ IFS=$'\t' read -r environment_id namespace <<<"$resolved"
 # Never overwrite an operator's database or certificate.
 for resource in secret/postgresql-tls secret/postgresql-credentials secret/postgresql-client-credentials \
     deployment/postgresql deployment/democontainer service/postgresql service/democontainer \
-    configmap/postgresql-init-sql; do
+    configmap/postgresql-init-sql configmap/postgresql-extensions; do
     existing="$(kubectl get "$resource" -n "$namespace" --ignore-not-found -o name)"
     [[ -z "$existing" ]] || {
         echo "Error: $resource already exists; use an isolated test environment." >&2
@@ -119,12 +119,20 @@ init_sql=""
 if [[ "$recipe_kind" == bicep ]]; then
     init_sql='CREATE TABLE tls_init_marker (value integer); INSERT INTO tls_init_marker VALUES (337);'
 fi
+verify_features=false
+verify_initialization=false
+if [[ "${RTC_POSTGRES_FEATURE_TESTS:-0}" == 1 ]]; then
+    verify_features=true
+    if [[ "$recipe_kind" == bicep ]]; then verify_initialization=true; fi
+fi
 
 deploy() {
     local policy="$1"
     app_deleted=false
     jq -n --arg password "$password" --arg app "$app_name" --arg tls "$policy" --arg init "$init_sql" \
+        --argjson features "$verify_features" --argjson initialize "$verify_initialization" \
         '{parameters: {password: {value: $password}, applicationName: {value: $app},
+          verifyFeatures: {value: $features}, verifyInitialization: {value: $initialize},
           tls: {value: $tls}, verifyTransport: {value: true}, initSql: {value: $init}}}' >"$tmp/parameters.json"
     timeout "$deploy_timeout" rad deploy "$SCRIPT_DIR/app.bicep" --application "$app_name" \
         --workspace "$workspace" -e "$environment_id" --parameters "@$tmp/parameters.json"
@@ -190,7 +198,10 @@ assert_transport() {
         "$plaintext_auth" "$plaintext_auth" >"$tmp/expected-hba"
     kubectl exec -n "$namespace" deployment/postgresql -- cat /tls-runtime/pg_hba.conf >"$tmp/actual-hba"
     diff -u "$tmp/expected-hba" "$tmp/actual-hba"
-    if [[ "$recipe_kind" == bicep ]]; then
+    if [[ "$verify_features" == true ]]; then
+        kubectl exec -i -n "$namespace" "$client" -- sh -s -- \
+            kubernetes "$verify_initialization" /tmp/postgresql-test-ca.crt <"$SCRIPT_DIR/verify-features.sh"
+    elif [[ "$recipe_kind" == bicep ]]; then
         [[ "$(kubectl exec -n "$namespace" deployment/postgresql -- sh -ec \
             'psql -X -w -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT value FROM tls_init_marker"')" == 337 ]]
     fi

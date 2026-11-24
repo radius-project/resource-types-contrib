@@ -1,4 +1,5 @@
 extension radius
+extension postgreSqlDatabases
 
 @description('The ID of your Radius Environment. Set automatically by the rad CLI.')
 param environment string
@@ -17,7 +18,17 @@ param tls string = ''
 @description('Use a psql client for the Kubernetes transport tests instead of the demo application.')
 param verifyTransport bool = false
 
+@description('Check extensions and server settings in the nightly deployment tests.')
+param verifyFeatures bool = false
+
+@description('Run the nightly SQL fixture. Enable only for Azure and Kubernetes Bicep; Kubernetes Terraform does not support initSql.')
+param verifyInitialization bool = false
+
+@description('Create the requested extensions in the nightly SQL fixture. Enable only for Azure: its allow-list does not install extensions, but the Kubernetes Recipe does, and the test must not hide a missing Recipe step.')
+param createExtensionsInInitSql bool = false
+
 @description('Optional initialization SQL for the Bicep recipe regression test.')
+@secure()
 param initSql string = ''
 
 @description('Portable PostgreSQL size. Azure capacity tests can select an approved alternative.')
@@ -27,6 +38,9 @@ param postgresSize string = 'S'
 @description('Database admin password. Set on the `password` property of the database (x-radius-sensitive, so Radius encrypts it at rest and injects it decrypted into the Recipe) and stored in a Radius.Security/secrets resource for the consuming container to bind by reference.')
 @secure()
 param password string
+
+var extensionSql = createExtensionsInInitSql ? loadTextContent('initialize-extensions.sql') : ''
+var initializationSql = verifyInitialization ? '${extensionSql}${loadTextContent('initialize.sql')}' : initSql
 
 resource app 'Radius.Core/applications@2025-08-01-preview' = {
   name: applicationName
@@ -55,7 +69,7 @@ resource dbCreds 'Radius.Security/secrets@2025-08-01-preview' = {
   }
 }
 
-resource postgresql 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
+resource postgresql 'postgreSqlDatabases:Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
   name: 'postgresql'
   properties: {
     environment: environment
@@ -65,7 +79,17 @@ resource postgresql 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
     username: 'radadmin'
     password: password
     ...(empty(tls) ? {} : { tls: tls == 'optional' ? 'optional' : 'required' })
-    ...(empty(initSql) ? {} : { initSql: initSql })
+    ...(verifyFeatures ? {
+      extensions: [
+        'pg_trgm'
+        'btree_gin'
+      ]
+      serverSettings: {
+        log_min_duration_statement: '1000'
+        port: '6432'
+      }
+    } : {})
+    ...(empty(initializationSql) ? {} : { initSql: initializationSql })
   }
 }
 
@@ -76,8 +100,8 @@ resource democontainer 'Radius.Compute/containers@2025-08-01-preview' = {
     application: app.id
     containers: {
       demo: {
-        image: verifyTransport ? 'postgres:16-alpine' : 'ghcr.io/radius-project/samples/demo:latest'
-        ...(verifyTransport ? {
+        image: verifyTransport || verifyFeatures ? 'postgres:16-alpine' : 'ghcr.io/radius-project/samples/demo:latest'
+        ...(verifyTransport || verifyFeatures ? {
           command: ['/bin/sh', '-c', 'exec sleep infinity']
         } : {
           ports: {
