@@ -66,14 +66,23 @@ elif [[ "$mode" != cleanup ]]; then
 fi
 
 save_state() {
-    local response
+    local response confirmed
     ((${#state} <= 256)) || fail "OpenAI cleanup state exceeds the Azure tag value limit"
-    response="$(timeout --kill-after=5s 30s az tag update --resource-id "$group_id" \
+    if response="$(timeout --kill-after=5s 30s az tag update --resource-id "$group_id" \
         --operation Merge --tags "rtcOpenaiCleanup=$state" \
-        --subscription "$AZURE_SUBSCRIPTION_ID" --output json)" ||
-        fail "Cannot save OpenAI cleanup state before continuing"
-    jq -e --arg state "$state" '.properties.tags.rtcOpenaiCleanup == $state' <<<"$response" >/dev/null ||
-        fail "OpenAI cleanup state write was not confirmed"
+        --subscription "$AZURE_SUBSCRIPTION_ID" --output json)" &&
+        jq -e --arg state "$state" '.properties.tags.rtcOpenaiCleanup == $state' <<<"$response" >/dev/null; then
+        return
+    fi
+    if [[ "$mode" == prepare ]]; then
+        echo "Warning: Pending request tag response was unclear; checking saved ownership and state" >&2
+        confirmed="$(verify_ownership)"
+        jq -e --arg state "$state" '.tags.rtcOpenaiCleanup == $state' <<<"$confirmed" >/dev/null ||
+            fail "Pending request state was not confirmed"
+        echo "Pending request state confirmed by readback"
+        return
+    fi
+    fail "Cannot save and confirm OpenAI cleanup state before continuing"
 }
 
 inventory() {
@@ -174,6 +183,8 @@ if [[ "$mode" == begin ]]; then
     before="$(usage)"
     state="$(jq -c '{target:.currentValue,accounts:{},recording:false}' <<<"$before")"
     save_state
+    jq -e '.currentValue < .limit' <<<"$before" >/dev/null ||
+        fail "No regional OpenAI.S0.AccountCount slot is free; model deployment was not submitted"
     exit 0
 elif [[ "$mode" == prepare ]]; then
     [[ -n "$state" ]] || fail "Cannot deploy without saved OpenAI cleanup state"
@@ -193,6 +204,10 @@ elif [[ "$mode" == record ]]; then
         state="$(jq -c '.completed = true' <<<"$state")"
     fi
     if [[ "$count" == 0 && "$(jq '.accounts | length' <<<"$state")" == 0 ]]; then
+        if [[ "${3:-unknown}" == completed ]]; then
+            state="$(jq -c '.recording = true' <<<"$state")"
+            save_state
+        fi
         empty_run_settled ||
             fail "Empty OpenAI inventory is not settled; retain the app for cleanup"
         state="$(jq -c '.recording = false' <<<"$state")"

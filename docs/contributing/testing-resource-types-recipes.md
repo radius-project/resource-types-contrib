@@ -239,7 +239,10 @@ Recording and purge helpers remain pinned to the workflow revision.
 Before activating the pack, the worker saves its account-quota baseline in the
 owned group's `rtcOpenaiCleanup` tag without marking a request pending. A pack
 activation failure or expired pre-deploy deadline can therefore clean up an
-empty group. The shared test runner records deployed account names and completion
+empty group. If account usage is at or above its limit, baseline setup fails
+before activation or model submission, while leaving cleanup possible.
+This check does not reserve a slot against other Azure users.
+The shared test runner records deployed account names and completion
 in one tag update before `rad app delete`. Each name combines with the
 already verified subscription, group, kind, and location to identify an
 account. Cleanup waits for those accounts even if they are temporarily absent
@@ -248,6 +251,12 @@ After the final pre-deploy deadline check, the runner marks the request outcome
 unknown in the saved state. Only one model request is allowed per owned test
 group; a second entry fails before sending its request. This prevents a prior
 account's tombstone from being used as evidence for another request.
+The model deployment is submitted only once, including after a retryable
+connection reset. Error capture and failure diagnostics still run; retry
+behavior for other resource tests is unchanged.
+Before marking a request pending, the runner budgets the 90-second preparation
+helper and a ten-minute post-deployment reserve for recording, diagnostics, and
+teardown. It recalculates the deployment timeout after preparation returns.
 Only a successful deployment command records completion; later assertion
 failures do not erase that completion. A timeout, interruption, or failed command
 does not prove that the server stopped working. This includes quota errors:
@@ -262,8 +271,11 @@ operator verifies the outcome. Fallback polls for late accounts from that
 single pending request, checks group ownership again, saves verified names
 without changing the quota target, and deletes newly visible active accounts
 within the same cleanup deadline.
-Missing states or failed reads do not prove completion. Empty completion is
-saved before application teardown, so subsequent cleanup does not wait for free
+Missing states or failed reads do not prove completion. For an empty snapshot,
+the runner saves command completion with recording still pending before checking
+Azure state. Fallback can then finish settlement when Azure operations become
+terminal. Completion alone never discards previously saved names.
+Empty settlement is saved before application teardown, so cleanup does not wait for free
 quota owned by other runs. Saved account identities are never discarded when
 both account lists are temporarily empty.
 
@@ -271,7 +283,9 @@ The same tag stores the original quota target and completed purges. A retry or
 fallback reuses that target; it never raises it because an account has already
 disappeared. If cleanup starts before a model test begins, it saves a target
 based on the current usage minus the visible owned accounts before deleting any.
-Tag write failures stop cleanup. The tag is limited to 256 characters; an
+If the pending-tag write response is unclear, preparation reads the owned group
+again and proceeds only if its saved tag exactly matches the attempted state.
+Other unconfirmed writes stop cleanup. The tag is limited to 256 characters; an
 unexpectedly large test inventory fails rather than dropping account identities.
 
 Purge requires a live resource group with an exact subscription and group ID,

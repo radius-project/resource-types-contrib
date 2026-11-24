@@ -62,6 +62,18 @@ case "$1 $2 $3" in
         [[ "${TAG_FAIL:-0}" == 0 ]] || exit 1
         while [[ "$1" != --tags ]]; do shift; done
         state="${2#rtcOpenaiCleanup=}"
+        if [[ "${SLOW_PREPARE:-0}" == 1 ]] &&
+            jq -e '.requested and .recording and (.completed == false)' <<<"$state" >/dev/null; then
+            echo 1060 >"$CLOCK_FILE"
+        fi
+        if [[ "${INTERRUPT_PENDING_WRITE:-0}" == 1 ]] &&
+            jq -e '.requested and .recording and (.completed == false) and .accounts == {}' <<<"$state" >/dev/null; then
+            if [[ "${PENDING_WRITE_MISSING:-0}" == 0 ]]; then
+                jq --arg state "$state" '.tags.rtcOpenaiCleanup = $state' "$GROUP_STATE" >"$GROUP_STATE.next"
+                mv "$GROUP_STATE.next" "$GROUP_STATE"
+            fi
+            exit 1
+        fi
         if [[ "${FAIL_IDENTITY_WRITE:-0}" == 1 ]] &&
             jq -e '.accounts | has("live")' <<<"$state" >/dev/null; then exit 1; fi
         group="$(jq -c --arg state "$state" '.tags.rtcOpenaiCleanup = $state' "$GROUP_STATE")"
@@ -276,6 +288,10 @@ cat >"$TEST_ROOT/bin/rad" <<'EOF'
 echo "rad $*" >>"$CALL_LOG"
 echo "rad $*" >>"$CLOUD_LOG"
 if [[ "$1 $2" == "env update" && "${ENV_UPDATE_FAIL:-0}" == 1 ]]; then exit 1; fi
+if [[ "$1" == deploy && "${DEPLOY_RESET:-0}" == 1 ]]; then
+    echo 'Error: {"code":"ResourceDeploymentFailure","message":"System.IO.IOException: Connection reset by peer","target":"/subscriptions/test/resourceGroups/test/providers/Microsoft.KeyVault/vaults/test"}' >&2
+    exit 1
+fi
 if [[ "$1" == deploy && "${DEPLOY_FAIL:-0}" == 1 ]]; then
     echo '{"error":{"code":"InsufficientQuota","message":"Account quota is exhausted"}}' >&2
     exit "${DEPLOY_EXIT:-1}"
@@ -291,6 +307,9 @@ record_deployment() {
     export FAIL_IDENTITY_WRITE
     # shellcheck source=.github/scripts/lib-recipe-test.sh
     source "$REPO_ROOT/.github/scripts/lib-recipe-test.sh"
+    if [[ "${CAPTURE_DEPLOY_ERROR:-0}" == 1 ]]; then
+        rtc_save_deployment_error() { echo "saved-deployment-error" >>"$CALL_LOG"; }
+    fi
     rtc_deploy_and_assert_test_app "$TEST_ROOT/app.bicep" Radius.AI/models openai /env default ""
 }
 NO_ACTIVE_BEFORE_DEPLOY=1 DELETED_JSON='[]' QUOTA_START=28 record_deployment \
@@ -313,11 +332,69 @@ grep -q '^rad deploy ' "$CALL_LOG" || fail "identity failure test must reach mod
 grep -q '^az tag update .*accounts.*live' "$CALL_LOG" || fail "identity failure test must attempt the name write"
 if grep -q '^rad app delete ' "$CALL_LOG"; then fail "do not erase an unrecorded identity"; fi
 
-# A quota-rejected deployment can finish without ever creating an account.
+reset_test
+: >"$CALL_LOG"
+NO_ACTIVE_BEFORE_DEPLOY=1 DELETED_JSON='[]' QUOTA_START=28 INTERRUPT_PENDING_WRITE=1 record_deployment \
+    >"$TEST_ROOT/output" 2>&1 || fail "confirm a pending tag after its write response is lost"
+[[ "$(grep -c '^rad deploy ' "$CALL_LOG")" == 1 ]] || fail "confirmed pending write must submit exactly once"
+grep -q 'Pending request state confirmed by readback' "$TEST_ROOT/output" || fail "require explicit readback"
+reset_test
+: >"$CALL_LOG"
+if NO_ACTIVE_BEFORE_DEPLOY=1 DELETED_JSON='[]' QUOTA_START=28 INTERRUPT_PENDING_WRITE=1 \
+    PENDING_WRITE_MISSING=1 record_deployment >"$TEST_ROOT/output" 2>&1; then
+    fail "an unconfirmed pending write must prevent deployment"
+fi
+if grep -q '^rad deploy ' "$CALL_LOG"; then fail "never deploy on a mismatched pending-state readback"; fi
+
+reset_test
+: >"$CALL_LOG"
+if ACTIVE_JSON='[]' DELETED_JSON='[]' QUOTA_START=29 DEPLOY_RESET=1 CAPTURE_DEPLOY_ERROR=1 \
+    record_deployment >"$TEST_ROOT/output" 2>&1; then fail "retryable reset must fail the single submission"; fi
+[[ "$(grep -c '^rad deploy ' "$CALL_LOG")" == 1 ]] || fail "purge-enabled models must not retry an accepted request"
+grep '^Error: {"code":"ResourceDeploymentFailure"' "$TEST_ROOT/output" >"$TEST_ROOT/reset.json"
+bash -c 'source "$1"; rtc_deployment_retry_reason "$2"' \
+    bash "$REPO_ROOT/.github/scripts/lib-recipe-test.sh" "$TEST_ROOT/reset.json" |
+    grep -q 'Azure deployment connection reset' || fail "reset fixture must otherwise qualify for retry"
+grep -q '^saved-deployment-error$' "$CALL_LOG" || fail "single submission must preserve error capture"
+jq -e '.tags.rtcOpenaiCleanup | fromjson | .requested and .recording and (.completed == false)' \
+    "$GROUP_STATE" >/dev/null || fail "reset must retain the pending request"
+if grep -q '^rad app delete ' "$CALL_LOG"; then fail "unknown reset outcome must retain the app"; fi
+
+# Preserve successful command completion even when Azure still reports work.
+reset_test
+: >"$CALL_LOG"
+ACTIVE_JSON='[]' DELETED_JSON='[]' QUOTA_START=29 \
+    bash "$REPO_ROOT/.github/scripts/cleanup-openai-accounts.sh" true begin >"$TEST_ROOT/output" 2>&1 ||
+    fail "begin running-to-terminal case"
+ACTIVE_JSON='[]' DELETED_JSON='[]' \
+    bash "$REPO_ROOT/.github/scripts/cleanup-openai-accounts.sh" true prepare >>"$TEST_ROOT/output" 2>&1 ||
+    fail "prepare running-to-terminal case"
+if ACTIVE_JSON='[]' DELETED_JSON='[]' DEPLOYMENTS_JSON='[{"properties":{"provisioningState":"Running"}}]' \
+    bash "$REPO_ROOT/.github/scripts/cleanup-openai-accounts.sh" true record completed \
+    >>"$TEST_ROOT/output" 2>&1; then fail "running Azure operations must prevent empty settlement"; fi
+jq -e '.tags.rtcOpenaiCleanup | fromjson | .completed and .recording and .accounts == {}' \
+    "$GROUP_STATE" >/dev/null || fail "save completion while keeping recording pending"
+ACTIVE_JSON='[]' DELETED_JSON='[]' QUOTA_START=29 \
+    DEPLOYMENTS_JSON='[{"properties":{"provisioningState":"Succeeded"}}]' invoke_cleanup ||
+    fail "fallback must settle after Azure becomes terminal using the saved receipt"
+
+# Full account quota must stop the run before it creates a pending request.
+reset_test
+: >"$CALL_LOG"
+if ACTIVE_JSON='[]' DELETED_JSON='[]' QUOTA_START=30 record_deployment \
+    >"$TEST_ROOT/output" 2>&1; then fail "full account quota must fail before deployment"; fi
+grep -q 'No regional OpenAI.S0.AccountCount slot is free' "$TEST_ROOT/output" || fail "report account capacity"
+if grep -q '^rad deploy ' "$CALL_LOG"; then fail "full quota must not send a model deployment"; fi
+jq -e '.tags.rtcOpenaiCleanup | fromjson | .recording == false and (.requested != true)' \
+    "$GROUP_STATE" >/dev/null || fail "full quota must leave no pending request"
+ACTIVE_JSON='[]' DELETED_JSON='[]' USAGE_FAIL=1 invoke_cleanup ||
+    fail "full quota must still allow group cleanup"
+
+# A rejected request with a free slot still has an unknown server outcome.
 pending="$(jq -c '.tags.rtcOpenaiCleanup = "{\"target\":30,\"accounts\":{},\"recording\":true,\"completed\":true}"' <<<"$GROUP_JSON")"
 reset_test
 : >"$CALL_LOG"
-if ACTIVE_JSON='[]' DELETED_JSON='[]' QUOTA_START=30 DEPLOY_FAIL=1 record_deployment \
+if ACTIVE_JSON='[]' DELETED_JSON='[]' QUOTA_START=29 DEPLOY_FAIL=1 record_deployment \
     >"$TEST_ROOT/output" 2>&1; then fail "quota-rejected test must still fail"; fi
 if grep -q '^rad app delete ' "$CALL_LOG"; then fail "unverified rejection must retain app"; fi
 jq -e '.tags.rtcOpenaiCleanup | fromjson | .recording and (.completed != true)' \
@@ -379,7 +456,7 @@ unknown="$(jq -c '.tags.rtcOpenaiCleanup = "{\"target\":30,\"accounts\":{},\"rec
 for status in 124 137; do
     reset_test
     : >"$CALL_LOG"
-    if ACTIVE_JSON='[]' DELETED_JSON='[]' DEPLOY_FAIL=1 DEPLOY_EXIT="$status" record_deployment \
+    if ACTIVE_JSON='[]' DELETED_JSON='[]' QUOTA_START=29 DEPLOY_FAIL=1 DEPLOY_EXIT="$status" record_deployment \
         >"$TEST_ROOT/output" 2>&1; then fail "timed-out deployment must fail"; fi
     if grep -q '^rad app delete ' "$CALL_LOG"; then fail "timeout must retain app through empty interval"; fi
     if ACTIVE_JSON='[]' DELETED_JSON='[]' HELPER_TIMEOUT=2s invoke_cleanup; then
@@ -470,6 +547,8 @@ if [[ "${EXPIRE_SECOND_CHECK:-0}" == 1 && "$*" == '+%s' ]]; then
     reads=$((reads + 1))
     echo "$reads" >"$DATE_READS_FILE"
     if ((reads >= 3)); then echo 2000; else echo 1000; fi
+elif [[ -n "${CLOCK_FILE:-}" && "$*" == '+%s' ]]; then
+    cat "$CLOCK_FILE"
 else
     exec /usr/bin/date "$@"
 fi
@@ -478,8 +557,8 @@ chmod +x "$TEST_ROOT/bin/date"
 export DATE_READS_FILE="$TEST_ROOT/date-reads"
 reset_test
 : >"$CALL_LOG"
-if NO_ACTIVE_BEFORE_DEPLOY=1 ACTIVE_JSON='[]' DELETED_JSON='[]' EXPIRE_SECOND_CHECK=1 \
-    RTC_TEST_PLATFORM=azure RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=1500 record_deployment \
+if NO_ACTIVE_BEFORE_DEPLOY=1 ACTIVE_JSON='[]' DELETED_JSON='[]' QUOTA_START=29 EXPIRE_SECOND_CHECK=1 \
+    RTC_TEST_PLATFORM=azure RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=1800 record_deployment \
     >"$TEST_ROOT/output" 2>&1; then fail "expired second deadline check must fail the entry"; fi
 grep -q 'budget exhausted before deployment' "$TEST_ROOT/output" || fail "exercise the deadline check"
 [[ "$(cat "$DATE_READS_FILE")" == 3 ]] || fail "expire only the second deadline check"
@@ -488,6 +567,28 @@ jq -e '.tags.rtcOpenaiCleanup | fromjson | .recording == false and (.requested !
     "$GROUP_STATE" >/dev/null || fail "deadline rejection must leave no pending request"
 ACTIVE_JSON='[]' DELETED_JSON='[]' USAGE_FAIL=1 invoke_cleanup ||
     fail "deadline failure before request must allow empty cleanup"
+
+clock="$TEST_ROOT/clock"
+echo 1000 >"$clock"
+reset_test
+: >"$CALL_LOG"
+ACTIVE_JSON='[]' DELETED_JSON='[]' QUOTA_START=29 CLOCK_FILE="$clock" SLOW_PREPARE=1 \
+    RTC_TEST_PLATFORM=azure RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=2500 record_deployment \
+    >"$TEST_ROOT/output" 2>&1 || fail "slow prepare must leave a bounded deployment budget"
+grep -q '^timeout --kill-after=5s 840s bash -c .*rtc_deploy_with_retry' "$CALL_LOG" ||
+    fail "deployment timeout must use the clock after prepare and preserve the 600-second cleanup reserve"
+grep -q '^timeout --kill-after=5s 90s bash .* true prepare' "$CALL_LOG" || fail "bound prepare"
+grep -q '^timeout --kill-after=5s 90s bash .* true record' "$CALL_LOG" || fail "bound record"
+
+echo 1000 >"$clock"
+reset_test
+: >"$CALL_LOG"
+if ACTIVE_JSON='[]' DELETED_JSON='[]' QUOTA_START=29 CLOCK_FILE="$clock" \
+    RTC_TEST_PLATFORM=azure RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=1650 record_deployment \
+    >"$TEST_ROOT/output" 2>&1; then fail "insufficient prepare budget must fail before marking pending"; fi
+if grep -q '^rad deploy ' "$CALL_LOG"; then fail "insufficient helper budget must not deploy"; fi
+jq -e '.tags.rtcOpenaiCleanup | fromjson | .recording == false and (.requested != true)' \
+    "$GROUP_STATE" >/dev/null || fail "reserve both helper calls before marking pending"
 
 reset_test
 python3 - "$REPO_ROOT" <<'PY'
