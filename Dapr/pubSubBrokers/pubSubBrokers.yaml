@@ -5,6 +5,9 @@ types:
       The Radius.Dapr/pubSubBrokers Resource Type deploys a Dapr pub/sub broker
       component. It replaces the legacy `Applications.Dapr/pubSubBrokers` type.
 
+      The platform Recipe must supply `daprAllowedAppIds`, or the resource
+      must set `scopes`. Empty effective access is rejected.
+
       If you do not set `componentType`, the default Recipe deploys a Redis instance and a
       `pubsub.redis` component that uses it:
       ```bicep
@@ -120,15 +123,21 @@ types:
               description: "(Optional) The Radius Application ID. `myApplication.id` for example."
             componentType:
               type: string
+              minLength: 1
+              pattern: '^pubsub\.\S+$'
               description: "(Optional) The Dapr component type, such as `pubsub.redis` or `pubsub.kafka`. If not set, the Recipe deploys a default Redis pub/sub broker. See https://docs.dapr.io/reference/components-reference/supported-pubsub/ for values."
             version:
               type: string
+              minLength: 1
+              pattern: '^\S+$'
               description: "(Optional) The Dapr component version. Defaults to `v1`."
             metadata:
               type: object
               description: "(Optional) Map of Dapr component metadata names to values. Each entry must set `value` or `secretKeyRef`. Do not put secret material in `value`; use `secretKeyRef`. When the Recipe deploys the default pub/sub broker, these entries override the default metadata."
               additionalProperties:
                 type: object
+                minProperties: 1
+                maxProperties: 1
                 properties:
                   value:
                     type: string
@@ -139,9 +148,13 @@ types:
                     properties:
                       name:
                         type: string
+                        minLength: 1
+                        pattern: '\S'
                         description: "(Required) The secret name in the Dapr secret store."
                       key:
                         type: string
+                        minLength: 1
+                        pattern: '\S'
                         description: "(Required) The key to select in the secret. If the secret value is a string, use the secret name."
                     required: [name, key]
             auth:
@@ -150,12 +163,19 @@ types:
               properties:
                 secretStore:
                   type: string
+                  minLength: 1
+                  pattern: '\S'
                   description: "(Optional) The name of the Dapr secret store component that resolves `secretKeyRef` values. Defaults to the Kubernetes secret store."
             scopes:
               type: array
-              description: "(Optional) The Dapr app IDs that can use this component. Set each value to the `daprSidecar.appId` of a consumer container. A Radius connection does not limit access by itself. If not set, every Dapr app in the namespace can use the component."
+              minItems: 1
+              uniqueItems: true
+              description: "(Optional) The Dapr app IDs that can use this component. Set each value to the `daprSidecar.appId` of a consumer container. If omitted, the Recipe must supply `daprAllowedAppIds`. When that parameter is nonempty, scopes must be a subset. A connection alone does not grant access."
               items:
                 type: string
+                minLength: 1
+                maxLength: 63
+                pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
             componentName:
               type: string
               readOnly: true

@@ -145,6 +145,14 @@ test-azure-secret-inputs: ## Run Azure secret input tests in a temporary directo
 	terraform -chdir="$$test_dir" init -backend=false -input=false; \
 	terraform -chdir="$$test_dir" test -no-color
 
+.PHONY: test-dapr-inputs
+test-dapr-inputs: ## Check all Dapr Kubernetes Recipes with Bicep snapshots and Terraform mock plans
+	@node --test ./.github/scripts/tests/test-dapr-inputs.js
+
+.PHONY: test-dapr-schema
+test-dapr-schema: ## Check Dapr schema rejection cases (requires tests/dapr-schema-requirements.txt)
+	@python ./.github/scripts/tests/test-dapr-schema.py
+
 .PHONY: test-postgresql-settings
 test-postgresql-settings: ## Check PostgreSQL settings, Azure snapshots, and SQL initialization (requires Radius Bicep and Node)
 	@node --test ./.github/scripts/tests/test-postgresql-settings.js
