@@ -1,6 +1,7 @@
 # yaml-language-server: $schema=https://www.schemastore.org/github-workflow.json
 ---
 name: Publish Bicep Recipes
+run-name: ${{ inputs.release_identifier && format('bicep-recipes / {0}', inputs.release_identifier) || github.event.head_commit.message || 'Publish Bicep Recipes' }}
 
 # Publishes the repository's Bicep recipes to GHCR as OCI artifacts.
 #
@@ -27,15 +28,15 @@ name: Publish Bicep Recipes
 #   * edge      -> every push to `main`, and manual runs with no version.
 #                  Floating; `edge` always resolves to the newest recipes on
 #                  `main`, matching the CLI's edge channel.
-#   * <version> -> manual dispatch with `release_version`, run alongside a
-#                  Radius release. Immutable; never republished.
+#   * <version> -> the digest from the published Radius release's frozen
+#                  recipe inventory (legacy releases use the dispatch commit).
 #   * latest    -> promoted by digest after successful stable publication and
 #                  attestation; a newer full-version tag prevents rollback.
 #
-# Namespace release pins (`pin_only`) and `release_version` runs also sign SLSA
-# build provenance for every digest they publish. Signing runs in a separate job,
-# so neither the downloaded CLI nor Bicep can request its OIDC token. Edge
-# pushes are not attested. Verify a recipe Radius pins with:
+# Main pushes, namespace pins and legacy release builds sign SLSA provenance
+# for the complete set of recipe digests in a separate job. A final promotion
+# reuses that provenance; signing again would attribute the old build to the
+# dispatch commit. Verify a recipe Radius pins with:
 #   gh attestation verify oci://ghcr.io/radius-project/kube-recipes/<recipe>:<sha> \
 #     --repo radius-project/resource-types-contrib \
 #     --signer-workflow radius-project/resource-types-contrib/.github/workflows/publish-bicep-recipes.yaml \
@@ -64,6 +65,14 @@ on:
         required: false
         default: ""
         type: string
+      release_identifier:
+        description: "Final handoff: vX.Y.Z-<40-hex Radius release commit>. Supply with release_version and recipe_source_commit."
+        required: false
+        type: string
+      recipe_source_commit:
+        description: "Final handoff: full resource-types-contrib commit frozen in the tagged Radius release plan."
+        required: false
+        type: string
 
 permissions: {}
 
@@ -81,20 +90,54 @@ concurrency:
   queue: max
 
 jobs:
+  verify-release:
+    name: Verify the Radius release and its recipe source
+    if: inputs.release_identifier || inputs.recipe_source_commit || (inputs.release_version && !inputs.pin_only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      attestations: read
+    outputs:
+      source: ${{ steps.release.outputs.source }}
+      subjects: ${{ steps.release.outputs.subjects }}
+    steps:
+      - name: Require trusted main
+        if: github.repository != 'radius-project/resource-types-contrib' || github.ref != 'refs/heads/main'
+        run: |
+          echo 'Release publication requires resource-types-contrib main.' >&2
+          exit 1
+
+      - name: Checkout publisher
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify release and read signed build inventory
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          RELEASE_IDENTIFIER: ${{ inputs.release_identifier }}
+          RECIPE_SOURCE_COMMIT: ${{ inputs.recipe_source_commit }}
+        run: bash .github/scripts/verify-recipe-release.sh >>"$GITHUB_OUTPUT"
+
   publish-bicep-recipes:
     name: Publish Bicep Recipes to GHCR
-    # Direct dispatches and reusable callers must both originate from main;
-    # otherwise a feature branch could move edge/latest or publish release pins.
+    needs: verify-release
     if: >-
+      !cancelled() &&
       github.repository == 'radius-project/resource-types-contrib' &&
-      github.ref == 'refs/heads/main'
+      github.ref == 'refs/heads/main' &&
+      (needs.verify-release.result == 'skipped' ||
+       (needs.verify-release.result == 'success' && needs.verify-release.outputs.source == 'checkout'))
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
       packages: write
     env:
-      ATTEST_RECIPES: ${{ (inputs.pin_only || inputs.release_version) && 'true' || 'false' }}
+      ATTEST_RECIPES: ${{ (github.event_name == 'push' || inputs.pin_only || inputs.release_version) && 'true' || 'false' }}
     outputs:
       subjects: ${{ steps.subjects.outputs.checksums }}
     steps:
@@ -102,19 +145,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      - name: Verify the requested Radius release
-        if: inputs.release_version && !inputs.pin_only
-        env:
-          GH_TOKEN: ${{ github.token }}
-          COMMIT_SHA: ${{ github.sha }}
-          RELEASE_VERSION: ${{ inputs.release_version }}
-        run: |
-          ./.github/scripts/resolve-recipe-tags.sh >/dev/null
-          gh api "repos/radius-project/radius/releases/tags/v${RELEASE_VERSION}" |
-            jq -e --arg tag "v${RELEASE_VERSION}" \
-              '.tag_name == $tag and .draft == false and
-              .prerelease == ($tag | contains("-"))'
 
       - name: Log in to GHCR
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -231,7 +261,9 @@ jobs:
   attest-bicep-recipes:
     name: Attest published Bicep recipes
     needs: publish-bicep-recipes
-    if: inputs.pin_only || inputs.release_version
+    if: >-
+      !cancelled() && needs.publish-bicep-recipes.result == 'success' &&
+      (github.event_name == 'push' || inputs.pin_only || inputs.release_version)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -246,7 +278,12 @@ jobs:
             echo "No published recipe digests were recorded." >&2
             exit 1
           fi
-          printf '%s\n' "$SUBJECTS" >"$RUNNER_TEMP/recipe-subjects.txt"
+          cd "$RUNNER_TEMP"
+          printf '%s\n' "$SUBJECTS" >recipe-subjects.txt
+          # A commit-specific subject locates the entire signed build inventory,
+          # even when many commits produced identical OCI digests.
+          printf '%s\n' "$GITHUB_SHA" >recipe-source.txt
+          sha256sum recipe-source.txt >>recipe-subjects.txt
 
       - name: Attest recipe provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
@@ -255,8 +292,11 @@ jobs:
 
   promote-recipe-aliases:
     name: Promote stable recipe aliases
-    needs: [publish-bicep-recipes, attest-bicep-recipes]
-    if: inputs.release_version && !contains(inputs.release_version, '-') && !inputs.pin_only
+    needs: [verify-release, publish-bicep-recipes, attest-bicep-recipes]
+    if: >-
+      !cancelled() && needs.verify-release.result == 'success' &&
+      inputs.release_version && !contains(inputs.release_version, '-') && !inputs.pin_only &&
+      (needs.verify-release.outputs.source != 'checkout' || needs.attest-bicep-recipes.result == 'success')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -283,7 +323,12 @@ jobs:
       - name: Promote verified recipe digests
         env:
           RELEASE_VERSION: ${{ inputs.release_version }}
-          SUBJECTS: ${{ needs.publish-bicep-recipes.outputs.subjects }}
+          RECIPE_SOURCE_COMMIT: ${{ needs.verify-release.outputs.source }}
+          SUBJECTS: ${{ needs.verify-release.outputs.subjects || needs.publish-bicep-recipes.outputs.subjects }}
         run: |
-          printf '%s\n' "$SUBJECTS" >"$RUNNER_TEMP/recipe-subjects.txt"
-          bash .github/scripts/recipe-oci.sh promote "$RELEASE_VERSION" "$RUNNER_TEMP/recipe-subjects.txt"
+          subjects="$RUNNER_TEMP/recipe-subjects.txt"
+          printf '%s\n' "$SUBJECTS" >"$subjects"
+          if [[ "$RECIPE_SOURCE_COMMIT" != checkout ]]; then
+            bash .github/scripts/recipe-oci.sh tag-version "$RECIPE_SOURCE_COMMIT" "$RELEASE_VERSION" "$subjects"
+          fi
+          bash .github/scripts/recipe-oci.sh promote "$RELEASE_VERSION" "$subjects"
