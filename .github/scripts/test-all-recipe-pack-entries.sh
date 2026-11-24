@@ -31,7 +31,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=.github/scripts/lib-recipe-packs.sh
-source "$SCRIPT_DIR/lib-recipe-packs.sh"
+source "${RTC_RECIPE_PACK_LIBRARY:-$SCRIPT_DIR/lib-recipe-packs.sh}"
 # shellcheck source=.github/scripts/lib-azure-postgres-test.sh
 source "$SCRIPT_DIR/lib-azure-postgres-test.sh"
 # shellcheck source=.github/scripts/lib-recipe-platform-filter.sh

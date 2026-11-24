@@ -120,6 +120,7 @@ test-recipe-pack-entries-unit: ## Run fixture-based unit tests for all Recipe Pa
 	@bash ./.github/scripts/tests/test-azure-lock-inventory.sh
 	@bash ./.github/scripts/tests/test-aci-quota-recovery.sh
 	@bash ./.github/scripts/tests/test-openai-isolation.sh
+	@bash ./.github/scripts/tests/test-openai-cleanup.sh
 	@./.github/scripts/tests/test-test-direct-module-recipe.sh
 	@./.github/scripts/tests/test-test-all-direct-module-recipes.sh
 	@./.github/scripts/tests/test-test-all-recipe-pack-entries.sh
@@ -135,6 +136,7 @@ test-recipe-platform-filter: ## Compare build and discovery platform filters usi
 .PHONY: test-openai-isolation
 test-openai-isolation: ## Check OpenAI test selection and isolated workflows without Azure
 	@bash ./.github/scripts/tests/test-openai-isolation.sh
+	@bash ./.github/scripts/tests/test-openai-cleanup.sh
 
 .PHONY: test-azure-secret-inputs
 test-azure-secret-inputs: ## Run Azure secret input tests in a temporary directory (requires Terraform 1.7+)

@@ -795,6 +795,7 @@ rtc_deploy_with_retry() (
     deploy_log=$(mktemp "${TMPDIR:-/tmp}/rtc-deploy-XXXXXX") || return 1
     trap 'rm -f "$deploy_log"' EXIT
     set -o pipefail
+    if [[ "${RTC_OPENAI_SINGLE_SUBMISSION:-false}" == true ]]; then max_attempts=1; fi
 
     while true; do
         if rad deploy "$@" 2>&1 | tee "$deploy_log"; then
@@ -878,6 +879,8 @@ rtc_collect_test_diagnostics() {
 rtc_deploy_and_assert_test_app_once() {
     local test_file="$1" resource_type="$2" app_name_prefix="$3" environment_path="$4" workspace_name="$5" kubernetes_namespace="$6"
     local app_name started locks_before="" inventory_locks="" deploy_status=0 azure_before="" azure_after=""
+    local openai_deployment_result=unknown
+    local openai_cleanup=false
     local step_remaining="" step_deadline="${RTC_AZURE_TEST_STEP_DEADLINE_EPOCH:-}" step_reserve=360
     local diagnostics_collected=0
     local -a params=() deploy_timeout=() cleanup_timeout=()
@@ -892,6 +895,11 @@ rtc_deploy_and_assert_test_app_once() {
     elif [[ "${RTC_ACI_QUOTA_RECOVERY:-0}" == 1 ]]; then
         # Parallel network deletes can need several 60-second dependency retries.
         step_reserve=660
+    fi
+    if [[ "${RTC_PURGE_OPENAI_ACCOUNTS:-false}" == true && "$resource_type" == Radius.AI/models ]]; then
+        openai_cleanup=true
+        # Preserve recording, diagnostics, and bounded teardown after deployment.
+        step_reserve=600
     fi
 
     if [[ "${RTC_POSTGRES_CAPACITY_RECOVERY:-0}" == 1 ||
@@ -997,6 +1005,23 @@ rtc_deploy_and_assert_test_app_once() {
             'source "$1"; shift; rtc_deploy_with_retry "$@"' \
             bash "${BASH_SOURCE[0]}")
     fi
+    if [[ "$openai_cleanup" == true ]]; then
+        if [[ -n "$step_remaining" ]] && ((step_remaining <= 100)); then
+            echo "Error: Azure test step budget cannot cover OpenAI prepare and cleanup; no request was submitted." >&2
+            return 1
+        fi
+        if ! timeout --kill-after=5s 90s bash "$(dirname "${BASH_SOURCE[0]}")/cleanup-openai-accounts.sh" true prepare; then
+            echo "Error: Could not mark OpenAI deployment outcome unknown before sending the request." >&2
+            return 1
+        fi
+        if [[ -n "$step_remaining" ]]; then
+            step_remaining=$((step_deadline - $(date +%s) - step_reserve))
+            if ((step_remaining <= 0)); then
+                echo "Error: Azure test step deadline elapsed during OpenAI prepare; retaining pending state for review." >&2
+                return 1
+            fi
+        fi
+    fi
     if [[ -n "$step_remaining" ]]; then
         if [[ "$resource_type" == Radius.Compute/containers ]] && ((step_remaining > 900)); then
             step_remaining=900
@@ -1010,9 +1035,11 @@ rtc_deploy_and_assert_test_app_once() {
             'source "$1"; shift; rtc_deploy_with_retry "$@"' \
             bash "${BASH_SOURCE[0]}")
     fi
-    if RTC_TEST_DIAGNOSTIC_APP="$app_name" RTC_TEST_DIAGNOSTIC_STARTED="$started" \
+    if RTC_OPENAI_SINGLE_SUBMISSION="$openai_cleanup" \
+        RTC_TEST_DIAGNOSTIC_APP="$app_name" RTC_TEST_DIAGNOSTIC_STARTED="$started" \
         "${deploy_command[@]}" "$test_file" --application "$app_name" --workspace "$workspace_name" -e "$environment_path" "${params[@]}" "$@"; then
         echo "==> Test deployment successful"
+        openai_deployment_result=completed
 
         local assertion_remaining="" assertion_status=0
         local -a assertion_command=(rtc_assert_recipe_result)
@@ -1081,6 +1108,14 @@ rtc_deploy_and_assert_test_app_once() {
                     echo "Error: Diagnostic collection failed after lock cleanup failure." >&2
             fi
             rtc_cleanup_kubernetes_resources_bounded "$kubernetes_namespace" "$app_name"
+            return 1
+        fi
+    fi
+
+    if [[ "$openai_cleanup" == true ]]; then
+        if ! timeout --kill-after=5s 90s bash "$(dirname "${BASH_SOURCE[0]}")/cleanup-openai-accounts.sh" \
+            true record "$openai_deployment_result"; then
+            echo "Error: OpenAI account identities were not saved; retaining the application for owned cleanup." >&2
             return 1
         fi
     fi

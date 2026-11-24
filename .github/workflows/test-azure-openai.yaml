@@ -38,18 +38,30 @@ jobs:
     permissions:
       id-token: write
       contents: read
+    outputs:
+      cleanup_result: ${{ steps.openai_cleanup.outcome }}
     env:
       RTC_TEST_DIAGNOSTICS_DIR: azure-test-diagnostics
       RTC_AZURE_DIAGNOSTICS_DIR: azure-test-diagnostics
       RTC_TEST_PLATFORM: azure
       RTC_ACI_TEST_SCOPE: exclude
       RTC_OPENAI_TEST_SCOPE: only
+      RTC_PURGE_OPENAI_ACCOUNTS: "true"
       AZURE_RESOURCE_GROUP: rrttest-${{ github.run_id }}-${{ github.run_attempt }}-openai
       AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'westus3' }}
       AZURE_WORKSPACE_NAME: default
       AZURE_ENVIRONMENT_NAME: default
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      RTC_OPENAI_SCRIPTS_DIR: ${{ github.workspace }}/.openai-workflow/.github/scripts
+      RTC_REPO_ROOT: ${{ github.workspace }}
     steps:
+      - name: Require the CI repository before provisioning
+        run: |
+          if [[ "$GITHUB_REPOSITORY" != radius-project/resource-types-contrib ]]; then
+            echo "::error::OpenAI provisioning and purge are restricted to the CI repository."
+            exit 1
+          fi
+
       # The CI caller must pass its trust and exact-head approval gates first.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -57,6 +69,14 @@ jobs:
           ref: ${{ inputs.checkout_ref || github.sha }}
           persist-credentials: false
           allow-unsafe-pr-checkout: true
+
+      - name: Checkout workflow cleanup and test tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .openai-workflow
+          sparse-checkout: .github/scripts
+          persist-credentials: false
 
       - name: Use sources released with Radius
         if: inputs.release_candidate
@@ -113,9 +133,16 @@ jobs:
         timeout-minutes: 5
         run: |
           set -euo pipefail
+          if ! exists="$(az group exists --name "$AZURE_RESOURCE_GROUP" \
+            --subscription "$AZURE_SUBSCRIPTION_ID" --output tsv)" || [[ "$exists" != false ]]; then
+            echo "::error::Refusing to claim an existing or unverified resource group."
+            exit 1
+          fi
           az group create --name "$AZURE_RESOURCE_GROUP" --location "$AZURE_LOCATION" \
             --subscription "$AZURE_SUBSCRIPTION_ID" --output none \
-            --tags "creationTime=$(date +%s)"
+            --tags "creationTime=$(date +%s)" \
+              "rtcRepository=$GITHUB_REPOSITORY" "rtcRunId=$GITHUB_RUN_ID" \
+              "rtcRunAttempt=$GITHUB_RUN_ATTEMPT" "rtcPurpose=azure-openai-test"
 
       - name: Configure Azure Provider
         env:
@@ -134,9 +161,12 @@ jobs:
         if: steps.pack_deploy.outcome == 'success'
         timeout-minutes: 25
         run: |
+          set -euo pipefail
           export RTC_AZURE_TEST_STEP_DEADLINE_EPOCH=$(( $(date +%s) + 25 * 60 ))
-          make test-recipe-pack-entries PLATFORM_GROUP=azure \
-            WORKSPACE="$AZURE_WORKSPACE_NAME" ENVIRONMENT="$AZURE_ENVIRONMENT_NAME"
+          export RTC_RECIPE_PACK_LIBRARY="$RTC_REPO_ROOT/.github/scripts/lib-recipe-packs.sh"
+          bash "$RTC_OPENAI_SCRIPTS_DIR/cleanup-openai-accounts.sh" true begin
+          bash "$RTC_OPENAI_SCRIPTS_DIR/test-all-recipe-pack-entries.sh" \
+            azure "$AZURE_WORKSPACE_NAME" "$AZURE_ENVIRONMENT_NAME"
 
       - name: Collect workflow failure diagnostics
         if: ${{ !cancelled() && failure() }}
@@ -195,26 +225,31 @@ jobs:
           if-no-files-found: warn
 
       - name: Release OpenAI capacity before leaving the slot
+        id: openai_cleanup
         if: always()
-        timeout-minutes: 15
-        run: make cleanup-azure-resources
+        timeout-minutes: 20
+        run: bash "$RTC_OPENAI_SCRIPTS_DIR/cleanup-azure-resources.sh"
 
   cleanup-openai-resources:
     name: Fallback OpenAI resource cleanup
     needs: test-openai
     if: always()
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     permissions:
       id-token: write
       contents: read
     env:
+      RTC_PURGE_OPENAI_ACCOUNTS: "true"
+      RTC_OPENAI_RELEASE_CONFIRMED: ${{ needs.test-openai.outputs.cleanup_result == 'success' && 'true' || 'false' }}
+      AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'westus3' }}
       AZURE_RESOURCE_GROUP: rrttest-${{ github.run_id }}-${{ github.run_attempt }}-openai
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
     steps:
       - name: Checkout trusted cleanup script
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.workflow_sha }}
           persist-credentials: false
 
       - name: Azure Login
@@ -224,6 +259,6 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Confirm resource-group deletion
-        timeout-minutes: 15
+      - name: Confirm OpenAI purge, quota recovery, and resource-group deletion
+        timeout-minutes: 20
         run: bash .github/scripts/cleanup-azure-resources.sh
