@@ -78,6 +78,7 @@ endif
 .PHONY: validate-recipe-packs
 validate-recipe-packs: ## Verify checked-in recipe packs contain only Recipe Pack resources
 	@./.github/scripts/validate-recipe-packs.sh
+	@node --test ./.github/scripts/tests/test-default-kubernetes-pack.js
 	@./.github/scripts/tests/test-validate-recipe-packs.sh
 	@./.github/scripts/tests/test-recipe-pack-lib.sh
 	@./.github/scripts/tests/test-deploy-all-checked-in-recipe-packs.sh
