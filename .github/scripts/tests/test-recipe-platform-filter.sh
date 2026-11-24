@@ -32,7 +32,7 @@ printf 'namespace: Radius.Data\ntypes:\n' >"$EMPTY_TYPE_DIR/emptyResources.yaml"
 cp "$REPO_ROOT/.github/scripts/list-resource-type-folders.sh" "$FIXTURE_ROOT/.github/scripts/"
 chmod +x "$FIXTURE_ROOT/.github/scripts/list-resource-type-folders.sh"
 
-for platform in "${PLATFORMS[@]}"; do
+for platform in "${PLATFORMS[@]}" azure-aca; do
     mkdir -p "$TYPE_DIR/recipes/$platform/bicep" "$TYPE_DIR/recipes/$platform/terraform"
     touch "$TYPE_DIR/recipes/$platform/bicep/main.bicep" \
         "$TYPE_DIR/recipes/$platform/bicep/second.bicep" \
@@ -133,6 +133,9 @@ check_filter "AZURE" azure azure-aks AZURE-ACI
 check_filter "Az" azure azure-aks AZURE-ACI
 check_filter "azure-aks" azure-aks
 check_filter "azure-aci" AZURE-ACI
+check_filter "azure-aca" azure-aca
+check_filter "AZURE-ACA" azure-aca
+check_filter "azure,azure-aca" azure azure-aks AZURE-ACI azure-aca
 check_filter "aws" aws aws-rds
 check_filter "KUBERNETES" Kubernetes
 check_filter " AZURE , aws , " azure azure-aks AZURE-ACI aws aws-rds

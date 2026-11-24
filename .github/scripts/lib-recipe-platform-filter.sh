@@ -35,11 +35,18 @@ rtc_parse_recipe_platform_filter() {
 rtc_matches_recipe_platform() {
     local platform="$1"
     local filter
+    platform="$(printf '%s' "$platform" | tr '[:upper:]' '[:lower:]')"
+    # ACA delegation needs an unreleased runtime; broad/default scans must not opt in.
+    if [[ "$platform" == azure-aca ]]; then
+        for filter in "${RTC_RECIPE_PLATFORM_FILTERS[@]}"; do
+            [[ "$filter" != azure-aca ]] || return 0
+        done
+        return 1
+    fi
     if [[ ${#RTC_RECIPE_PLATFORM_FILTERS[@]} -eq 0 ]]; then
         return 0
     fi
 
-    platform="$(printf '%s' "$platform" | tr '[:upper:]' '[:lower:]')"
     for filter in "${RTC_RECIPE_PLATFORM_FILTERS[@]}"; do
         # Match literal prefixes: azure includes azure, azure-aci, and azure-aks.
         if [[ "$platform" == "$filter"* ]]; then
