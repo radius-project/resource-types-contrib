@@ -483,6 +483,25 @@ Use an isolated Environment/resource group/namespace without an existing `postgr
 
 The ordinary Azure test path does not create Kubernetes database certificates. For manual database deployments outside this test runner, follow [PostgreSQL Kubernetes TLS](../../Data/postgreSqlDatabases/README.md#kubernetes-tls).
 
+The nightly workflow also sets `RTC_POSTGRES_FEATURE_TESTS=1` for the
+generated Recipes and checked-in packs. This enables live extension,
+server-setting, protected-port, and supported SQL initialization checks.
+See [nightly PostgreSQL checks](../../Data/postgreSqlDatabases/README.md#nightly-settings-and-initialization-checks)
+for the assertions and limits. To run these checks manually after building
+the Recipes and attaching the matching pack:
+
+```bash
+RTC_POSTGRES_FEATURE_TESTS=1 .github/scripts/test-recipe.sh Data/postgreSqlDatabases/recipes/kubernetes/bicep
+RTC_TEST_PLATFORM=azure RTC_POSTGRES_FEATURE_TESTS=1 \
+  make test-recipe-pack-entries PLATFORM_GROUP=azure WORKSPACE=default ENVIRONMENT=default
+```
+
+The Azure command uses the existing capacity preflight and needs the Azure
+subscription, resource group, and credentials described below. It runs live
+pack entry tests, not offline checks. The normal application deletion and
+strict Azure inventory checks still apply. The nightly workflow uses
+checkout-built Recipes; it does not require the new public Recipe tag.
+
 Partial and malformed operator material must produce a failed/restarting certificate init container, a certificate-specific diagnostic, and no ready replicas in a fresh deployment. Tests verify the current Deployment generation and ReplicaSet/Pod ownership; a Pending Pod, image-pull error, or timeout is not certificate-failure evidence. Production retains the normal rollout/provider deadlines. The runner observes failures while deployment is in flight, repairs the test Secret, replaces only the failed Pod to reset backoff, and waits for the original operation to settle before cleanup or any recovery redeploy. It does not require `ProgressDeadlineExceeded` or a prompt Terraform CLI failure. Bicep reports resource submission rather than workload readiness, so its CLI success is never the readiness assertion.
 
 The fixture target also requires Python 3 and OpenSSL. It executes the certificate-preparation scripts extracted from both Recipes and checks their parity, generated certificates, RSA/EC operator keys, malformed inputs, and private-key permissions. Release-candidate runs with pinned sources that predate the lifecycle script retain the legacy application test and explicitly report that transport coverage is unavailable.

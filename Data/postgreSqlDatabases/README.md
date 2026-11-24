@@ -117,7 +117,7 @@ The Kubernetes Terraform Recipe does not implement `initSql`.
 
 ### Local settings and initialization checks
 
-Use Node.js, the Radius-bundled Bicep CLI (`~/.rad/bin/bicep`, or set
+Use Node.js, the Radius CLI, its bundled Bicep CLI (`~/.rad/bin/bicep`, or set
 `BICEP_CLI`), and Terraform 1.7 or later. The first run needs access to the
 public AVM and Terraform provider registries.
 
@@ -127,10 +127,42 @@ make test-postgresql-inputs
 bash .github/scripts/tests/test-postgresql-transport.sh
 ```
 
-These commands check compiled output, Azure snapshots, SQL-runner shell
-fixtures, Terraform plans with a mock Kubernetes provider, and existing
-transport regressions. They do not deploy to Azure or Kubernetes. Deployment-specific checks remain
-in [#472](https://github.com/radius-project/resource-types-contrib/issues/472).
+These commands check the test app against the current local schema, compiled
+output, Azure snapshots, SQL-runner shell fixtures, Terraform plans with a mock
+Kubernetes provider, and existing transport regressions. They do not deploy
+to Azure or Kubernetes.
+
+### Nightly settings and initialization checks
+
+The Nightly Recipe and Pack Tests workflow enables `RTC_POSTGRES_FEATURE_TESTS=1`
+for generated Recipes and checked-in Recipe Packs. It extends the existing
+deployment tests, without enabling more live deployments in PR checks:
+
+- Both platforms request `pg_trgm` and `btree_gin`, then query `pg_extension`.
+  Azure also checks the actual extension allow-list.
+- Both platforms request `log_min_duration_statement=1000` and try to change
+  the protected port to `6432`. Queries must report `1000` and port `5432`.
+- Azure and Kubernetes Bicep run [`test/initialize.sql`](test/initialize.sql).
+  The probe queries its schema, table, and seed row. Kubernetes Terraform
+  checks settings and extensions only; it does not support `initSql`.
+- Only Azure also runs [`test/initialize-extensions.sql`](test/initialize-extensions.sql),
+  because its allow-list does not install extensions. The Kubernetes Recipe
+  installs them from `extensions`, so the shared SQL does not create them. A
+  missing Recipe step then fails the extension check.
+
+All feature queries use `sslmode=verify-full`. The Kubernetes client uses the
+public CA already supplied by the transport test. The Azure client uses the
+CA bundle at `/etc/ssl/certs/ca-certificates.crt` in `postgres:16-alpine`.
+A missing bundle or a failed certificate check fails the test. This checks
+the test client's connection, not certificate verification by the Azure SQL
+runner, which still uses `sslmode=require`.
+
+The tests retain the existing deployment budgets, capacity recovery, and
+cleanup checks. A failed feature query fails the test and still runs cleanup.
+Operator configuration precedence, preservation of an existing Azure
+allow-list after an empty application update, Azure SQL rerun/failure cases,
+and runner certificate verification remain follow-up work in
+[#472](https://github.com/radius-project/resource-types-contrib/issues/472).
 
 ## Kubernetes TLS
 

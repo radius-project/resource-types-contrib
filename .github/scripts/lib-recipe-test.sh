@@ -562,7 +562,25 @@ rtc_assert_recipe_result() {
             rtc_assert_containers_result "$app_name" "$workspace_name"
             ;;
         Radius.Data/postgreSqlDatabases)
-            rtc_assert_postgresql_result "$app_name" "$workspace_name"
+            rtc_assert_postgresql_result "$app_name" "$workspace_name" || return 1
+            if [[ "${RTC_POSTGRES_FEATURE_TESTS:-0}" == 1 ]]; then
+                local kubernetes_namespace="${4:-}" client_deployment script_dir
+                script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
+                if [[ "${RTC_TEST_PLATFORM:-}" != azure || -z "$kubernetes_namespace" ]]; then
+                    echo "Error: Azure PostgreSQL feature checks require the environment Kubernetes namespace." >&2
+                    return 1
+                fi
+                local selector="radapp.io/application=$app_name,radapp.io/resource=democontainer"
+                if ! kubectl wait deployment -n "$kubernetes_namespace" -l "$selector" \
+                        --for=condition=Available --timeout=180s ||
+                    ! client_deployment=$(kubectl get deployment -n "$kubernetes_namespace" -l "$selector" -o json |
+                        jq -er '.items | if length == 1 then .[0].metadata.name else error("expected one PostgreSQL client") end'); then
+                    echo "Error: Azure PostgreSQL feature test client is not available." >&2
+                    return 1
+                fi
+                kubectl exec -i -n "$kubernetes_namespace" "deployment/$client_deployment" -- \
+                    sh -s -- azure true <"$script_dir/../../Data/postgreSqlDatabases/test/verify-features.sh"
+            fi
             ;;
         *)
             return 0
@@ -946,6 +964,11 @@ rtc_deploy_and_assert_test_app_once() {
         echo "==> Detected 'password' parameter in test template, auto-generating value"
     fi
     params+=(--parameters "applicationName=$app_name")
+    if [[ "$resource_type" == Radius.Data/postgreSqlDatabases &&
+        "${RTC_TEST_PLATFORM:-}" == azure && "${RTC_POSTGRES_FEATURE_TESTS:-0}" == 1 ]]; then
+        params+=(--parameters verifyFeatures=true --parameters verifyInitialization=true
+            --parameters createExtensionsInInitSql=true)
+    fi
 
     if [[ "${RTC_AZURE_LOCK_GUARD:-0}" == "1" ]]; then
         if ! locks_before=$(rtc_snapshot_azure_management_locks); then
