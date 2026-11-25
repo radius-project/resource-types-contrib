@@ -8,6 +8,9 @@ case "$platform:$check_initialization" in
     *) echo "Error: Invalid PostgreSQL feature probe mode." >&2; exit 1 ;;
 esac
 
+error_file="$(mktemp)"
+trap 'rm -f "$error_file"' EXIT
+
 export PGHOST="$CONNECTION_POSTGRESQL_HOST" PGPORT="$CONNECTION_POSTGRESQL_PORT"
 export PGUSER="$CONNECTION_POSTGRESQL_USERNAME" PGDATABASE="$CONNECTION_POSTGRESQL_DATABASE"
 export PGPASSWORD="$CONNECTION_POSTGRESQL_PASSWORD" PGCONNECT_TIMEOUT=5
@@ -59,13 +62,10 @@ expect "extension count (pg_trgm, btree_gin)" 2 "$extension_count"
 test "$mismatch" = 0 || exit 1
 
 if [ "$platform" = azure ]; then
-    if ! result=$(query "SELECT lower(current_setting('azure.extensions')), current_setting('require_secure_transport')"); then
-        echo "Error: Could not query the Azure PostgreSQL allow-list and transport policy." >&2
+    if ! allow_list=$(query "SELECT lower(current_setting('azure.extensions'))"); then
+        echo "Error: Could not query the Azure PostgreSQL extension allow-list." >&2
         exit 1
     fi
-    IFS='|' read -r allow_list secure_transport <<EOF
-$result
-EOF
     normalized=",$(printf '%s' "$allow_list" | tr -d ' ' | tr -d '\r'),"
     for extension in pg_trgm btree_gin; do
         case "$normalized" in
@@ -73,7 +73,15 @@ EOF
             *) echo "Error: azure.extensions is '$allow_list', missing '$extension'." >&2; mismatch=1 ;;
         esac
     done
-    expect require_secure_transport on "$secure_transport"
+    # Azure exposes require_secure_transport as an ARM server parameter rather
+    # than a PostgreSQL GUC, so verify enforcement by probing plaintext refusal.
+    if PGSSLMODE=disable timeout 10 psql -X -w -At --set=ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null 2>"$error_file"; then
+        echo "Error: Azure PostgreSQL accepted an unencrypted connection." >&2
+        mismatch=1
+    elif ! grep -Eq '(no pg_hba\.conf entry|pg_hba\.conf rejects connection).*no encryption' "$error_file"; then
+        echo "Error: Plaintext connection failed for a reason other than required TLS." >&2
+        mismatch=1
+    fi
     test "$mismatch" = 0 || exit 1
 fi
 if [ "$check_initialization" = true ]; then
