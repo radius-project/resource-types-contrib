@@ -507,8 +507,18 @@ for probe_status in 0 1; do
         run_lib rtc_deploy_and_assert_test_app "$TEST_APP_BICEP" \
             Radius.Data/postgreSqlDatabases rtc-test /envs/myenv myws my-ns >/dev/null 2>&1 || status=$?
     assert_eq "$probe_status" "$status" "nightly feature probe failure propagation"
-    grep -q -- '--parameters verifyFeatures=true --parameters verifyInitialization=true --parameters createExtensionsInInitSql=true' "$CALL_LOG" ||
-        fail "nightly deployment must enable the feature fixture"
+    feature_params_file="$(sed -nE 's/^rad deploy .*--parameters @([^ ]+).*/\1/p' "$CALL_LOG")"
+    [[ -n "$feature_params_file" && -f "$feature_params_file" ]] ||
+        fail "nightly deployment must pass a JSON parameter file for the feature fixture"
+    jq -e '
+        (.parameters.verifyFeatures.value | type == "boolean" and . == true) and
+        (.parameters.verifyInitialization.value | type == "boolean" and . == true) and
+        (.parameters.createExtensionsInInitSql.value | type == "boolean" and . == true)
+    ' "$feature_params_file" >/dev/null ||
+        fail "nightly feature parameter file must pass JSON boolean true values"
+    if grep -qE -- '--parameters (verifyFeatures|verifyInitialization|createExtensionsInInitSql)=' "$CALL_LOG"; then
+        fail "nightly deployment must not pass inline string boolean parameters"
+    fi
     grep -q 'kubectl exec -i -n my-ns deployment/pg-feature-client -- sh -s -- azure true' "$CALL_LOG" ||
         fail "nightly assertions must query the real test client"
     grep -q '^rad app delete' "$CALL_LOG" || fail "feature failure must retain shared application cleanup"
@@ -527,7 +537,7 @@ done
 : >"$CALL_LOG"
 RTC_TEST_PLATFORM=azure run_lib rtc_deploy_and_assert_test_app "$TEST_APP_BICEP" \
     Radius.Data/postgreSqlDatabases rtc-test /envs/myenv myws my-ns >/dev/null
-if grep -q 'verifyFeatures\|kubectl exec' "$CALL_LOG"; then
+if grep -q 'azure-features\.parameters\.json\|verifyFeatures\|kubectl exec' "$CALL_LOG"; then
     fail "ordinary deployments must not enable nightly feature checks"
 fi
 

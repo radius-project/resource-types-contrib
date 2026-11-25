@@ -958,8 +958,14 @@ rtc_deploy_and_assert_test_app_once() {
     params+=(--parameters "applicationName=$app_name")
     if [[ "$resource_type" == Radius.Data/postgreSqlDatabases &&
         "${RTC_TEST_PLATFORM:-}" == azure && "${RTC_POSTGRES_FEATURE_TESTS:-0}" == 1 ]]; then
-        params+=(--parameters verifyFeatures=true --parameters verifyInitialization=true
-            --parameters createExtensionsInInitSql=true)
+        local script_dir feature_params
+        script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
+        feature_params="$script_dir/../../Data/postgreSqlDatabases/test/azure-features.parameters.json"
+        if [[ ! -f "$feature_params" ]]; then
+            echo "Error: Missing Azure PostgreSQL feature parameter file: $feature_params" >&2
+            return 1
+        fi
+        params+=(--parameters "@$feature_params")
     fi
 
     if [[ "${RTC_AZURE_LOCK_GUARD:-0}" == "1" ]]; then
