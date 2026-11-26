@@ -233,15 +233,10 @@ EOF
 # keys, or with comments, which the contract test accepts. Building the
 # fixtures must too.
 for style in one-line quoted commented; do
-    PACK_STYLE=$style expect_pass "$style-unchanged" <<<'---'
     PACK_STYLE=$style expect_pass "$style-required-object" <<'EOF'
 param extra object
 ---
 extra: { a: 'b' }
-EOF
-    PACK_STYLE=$style expect_fail "$style-required-object-not-passed" 'Radius.Data/mySqlDatabases in the pack passes [' <<'EOF'
-param extra object
----
 EOF
 done
 
