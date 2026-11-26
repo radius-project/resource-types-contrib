@@ -25,6 +25,7 @@ The AWS Recipe sources are [`Data/mySqlDatabases/recipes/aws/bicep/aws-rds-mysql
 | --- | --- |
 | `eksClusterName` | Name of the EKS cluster that runs the application. AWS Recipes attach their services to the cluster security group; see [Network access](#network-access) for what the workload needs. |
 | `subnetIds` | Comma-separated subnet IDs for AWS Recipes that need a subnet group, for example `subnet-0abc,subnet-0def`. Use subnets in the cluster VPC that span at least two Availability Zones; private subnets are recommended. A JSON array string is also accepted. |
+| `mySqlAllocatedStorage` | Storage in GiB for every `Radius.Data/mySqlDatabases` DB instance. Optional; defaults to `20`, the minimum. Change it only after storage grows outside Radius, as described in [Requirements and limitations](#requirements-and-limitations). |
 | `routesGatewayName` | Name of the existing Kubernetes Gateway resource that `Radius.Compute/routes` attach to. |
 | `routesGatewayNamespace` | Namespace of the Gateway resource for `Radius.Compute/routes`. Defaults to `default`. |
 | `containerImagesRegistry` | Registry path (e.g. `ghcr.io/my-org`) that `Radius.Compute/containerImages` pushes built images to. |
@@ -35,7 +36,7 @@ The AWS region and account come from the Environment's AWS provider, not from th
 
 ## MySQL on Amazon RDS
 
-The `Radius.Data/mySqlDatabases` Recipe creates a DB subnet group from `subnetIds`, a DB parameter group, and a single-AZ, encrypted, non-public `db.t3.micro` RDS for MySQL instance with 20 GiB of `gp3` storage. It returns `host`, `port` (`3306`), and `database`, the same values as the Kubernetes Recipe, so one application definition works on every platform.
+The `Radius.Data/mySqlDatabases` Recipe creates a DB subnet group from `subnetIds`, a DB parameter group, and a single-AZ, encrypted, non-public `db.t3.micro` RDS for MySQL instance with `gp3` storage. The storage size is `mySqlAllocatedStorage`, 20 GiB by default. It returns `host`, `port` (`3306`), and `database`, the same values as the Kubernetes Recipe, so one application definition works on every platform.
 
 Resource names are `mysql-<hash>`, where the hash covers the EKS cluster name, the Environment's Kubernetes namespace, and the Radius resource ID. Radius resource IDs repeat across installations, so the namespace keeps apps in different namespaces on the same cluster apart. Names stay the same across redeploys, including from a new Radius installation that targets the same namespace. Two Environments that share a cluster, a namespace, and resource IDs share one database, the same way their Kubernetes resources would collide. The parameter group name also ends with the version without the dot, for example `mysql-<hash>-84`, because AWS can't change a parameter group's family. A group left behind by a failed deploy doesn't block a deploy of another version, but Radius doesn't track it ([radius-project/radius#13065](https://github.com/radius-project/radius/issues/13065)), so delete it yourself. To list a resource's parameter groups, run the command below. Any group that the DB instance doesn't use is left over.
 
@@ -74,6 +75,26 @@ The Recipe maps the resource's `tls` property to the parameter group's `require_
   - `password`: 8 to 41 printable ASCII characters, without `/`, `"`, `@`, or spaces.
 - `version` maps to the RDS engine version and the `mysql<version>` parameter group family. Use `8.4`, the default. `5.7` and `8.0` run on [RDS Extended Support](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/extended-support.html), which AWS bills separately.
 - Changing `version` after the database exists is not supported. The deploy fails when RDS updates the DB instance, with `The AllowMajorVersionUpgrade flag must be present when upgrading to a new major version` for a later version, or `Cannot upgrade mysql from <current> to <requested>` for an earlier one. The DB instance doesn't change, but the Recipe has already created a parameter group for the requested version, and it stays in AWS. Change `version` back and deploy again before you delete the app, as described for failed redeploys below, then delete that parameter group yourself. It has the `radapp.io/resource` tag with the Radius resource ID. To use another version, create a new `mySqlDatabases` resource and move the data to it.
+- Every deploy sets the DB instance storage to `mySqlAllocatedStorage`, and RDS can't shrink storage. If storage grows outside Radius, for example with `aws rds modify-db-instance --allocated-storage`, every later deploy of the app fails with `Invalid storage size for engine name mysql and storage type gp3: <value>`. Radius then loses track of the AWS resources, as described for failed redeploys below. To fix it:
+  1. Find the largest storage, in GiB, of the `mysql-<hash>` DB instances of every Environment that uses the pack. For example, run `aws rds describe-db-instances --query 'DBInstances[].[DBInstanceIdentifier,AllocatedStorage]' --output table` in each AWS account and Region that those Environments use.
+  2. Deploy the pack again with `mySqlAllocatedStorage` set to that size. Add the parameter to the command in [Deploying](#deploying) as a JSON file, because `rad deploy` sends `name=value` as a string, which an integer parameter rejects:
+
+     ```bash
+     echo 22 > storage.json
+     rad deploy recipe-packs/aws-eks/aws-eks.bicep \
+       ... \
+       --parameters mySqlAllocatedStorage=@storage.json
+     ```
+
+     Deploying the pack again keeps its Environment association, so you don't need `rad env update`.
+  3. Deploy the app again. Resource names don't change, so the deploy updates the same DB instance and Radius tracks the AWS resources again.
+
+  Before you change the value, check how it applies:
+  - It applies to every `mySqlDatabases` resource in every Environment that uses the pack. A new instance starts with the value. An instance with more storage fails to deploy, as above, so the value must be at least the largest current size.
+  - An instance with less storage grows on its next deploy. RDS [grows MySQL storage by at least 10%](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_ModifyDBInstance.html), so if the value is less than 10% above an instance's storage, that instance grows past the value and its next deploy fails. In that case, use a value at least 10% above the largest current size. After the deploy, check the sizes with the command in step 1.
+  - After a storage change, RDS optimizes the storage, and the DB instance status is [`storage-optimization`](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/accessing-monitoring.html) until it ends. This can take 24 hours or more. A deploy that changes the storage again during that time fails with `You can't currently modify the storage ... being optimized`. Every deploy also updates the DB instance for the password and engine version, as described below, even when the storage doesn't change. Before you deploy again, wait until `aws rds describe-db-instances --db-instance-identifier mysql-<hash> --query 'DBInstances[0].DBInstanceStatus'` returns `available`. RDS allows [at most four storage changes per instance in 24 hours](https://aws.amazon.com/about-aws/whats-new/2026/07/amazon-rds-upto-four-storage-modifications-24-hours/).
+  - A value equal to an instance's storage sends no storage change.
+  - The Recipe doesn't turn on storage autoscaling. If you turn it on outside Radius, raise the value after each time the storage grows.
 - The credentials Radius uses for AWS need permission to manage RDS instances, subnet groups, and parameter groups, and to describe the EKS cluster. Delete also needs `rds:CreateDBSnapshot`, because the AWS Cloud Control API takes a final snapshot before it deletes the instance ([radius-project/radius#13565](https://github.com/radius-project/radius/issues/13565)). Without that permission, `rad app delete` retries for about 41 minutes and then fails, and the instance keeps running.
 - Delete keeps that final snapshot, named `rds-snapshot-<random>`, and AWS bills its storage until you delete it. The snapshot has the instance's `radapp.io/*` tags. To find it, run `aws rds describe-db-snapshots --db-instance-identifier mysql-<hash> --snapshot-type manual`.
 - Redeploying an unchanged app sends updates to AWS. In a live test, they applied the same values and nothing else changed:
@@ -146,7 +167,7 @@ rad env update default \
 
 ## Testing
 
-Every pull request deploys and activates this pack on a local cluster, and checks that the pack passes exactly the parameters the MySQL Recipe declares. It also deploys the MySQL Recipe from the pull request with invalid values and checks that they fail before any AWS call. CI has no AWS account, so the nightly tests don't deploy the AWS Recipes. Pull requests compile the containers Recipe, and check that the pack passes exactly its parameters and that the pods run as the service account of their Pod Identity association.
+Every pull request deploys and activates this pack on a local cluster, and checks that the pack passes exactly the parameters the MySQL Recipe declares, and that `mySqlAllocatedStorage` sets the DB instance storage. It also deploys the MySQL Recipe from the pull request with invalid values and checks that they fail before any AWS call. CI has no AWS account, so the nightly tests don't deploy the AWS Recipes. Pull requests compile the containers Recipe, and check that the pack passes exactly its parameters and that the pods run as the service account of their Pod Identity association.
 
 The containers Recipe was tested by hand on an EKS cluster through a Radius edge build, with deploy credentials limited the way Radius Canvas limits them: create, unchanged redeploy, and delete. Each pod got its own role and could reach only its connected S3 bucket, and a container without connections was denied. An empty or malformed `appPermissionsBoundaryArn` failed before any AWS call, and IAM refused to create roles for a boundary under another repository's path.
 

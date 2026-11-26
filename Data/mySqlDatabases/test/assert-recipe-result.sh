@@ -32,7 +32,8 @@ cp "$AWS_RECIPE_PATH" "$WORK_DIR/recipe.bicep"
 cat >"$WORK_DIR/bicepconfig.json" <<'EOF'
 {
   "extensions": {
-    "aws": "br:biceptypes.azurecr.io/aws:latest"
+    "aws": "br:biceptypes.azurecr.io/aws:latest",
+    "radius": "br:biceptypes.azurecr.io/radius:latest"
   }
 }
 EOF
@@ -80,9 +81,10 @@ PLACEHOLDER_PARAMS="$(jq -r --arg q "'" '
 
 # Check names by evaluating the Recipe for sample inputs, so the checks hold
 # however the Bicep is written. Prints the AWS resources that a deploy would
-# send, keyed by resource type.
+# send, keyed by resource type. An optional fifth argument sets
+# allocatedStorage.
 aws_resources() {
-    local cluster="$1" namespace="$2" resource_id="$3" version="$4"
+    local cluster="$1" namespace="$2" resource_id="$3" version="$4" storage="${5:-}"
     cat >"$WORK_DIR/recipe.bicepparam" <<EOF
 using './recipe.bicep'
 param context = {
@@ -99,6 +101,7 @@ param eksClusterName = '$cluster'
 param subnetIds = 'subnet-0abc,subnet-0def'
 $PLACEHOLDER_PARAMS
 EOF
+    [[ -z "$storage" ]] || echo "param allocatedStorage = $storage" >>"$WORK_DIR/recipe.bicepparam"
     # Command substitutions don't inherit set -e, so return on failure instead
     # of reading the previous sample's snapshot.
     rm -f "$WORK_DIR/recipe.snapshot.json"
@@ -162,5 +165,45 @@ name_80="$(aws_name cluster-a ns-a "$ID" 8.0)"
 source "$REPO_ROOT/.github/scripts/lib-recipe-packs.sh"
 AWS_PACK_TEMPLATE=$(rtc_build_recipe_pack "$AWS_PACK_PATH")
 rtc_check_recipe_pack_params "$AWS_PACK_TEMPLATE" "Radius.Data/mySqlDatabases" "$AWS_TEMPLATE"
+
+# RDS can't shrink storage, so after storage grows outside Radius, operators
+# set the pack's mySqlAllocatedStorage to the current size. Prints the
+# allocatedStorage that the pack passes to the MySQL Recipe, as JSON, for an
+# optional mySqlAllocatedStorage value.
+cp "$AWS_PACK_PATH" "$WORK_DIR/pack.bicep"
+pack_mysql_storage() {
+    local params param value
+    params="$(rtc_recipe_pack_required_params "$AWS_PACK_PATH")" || return 1
+    echo "using './pack.bicep'" >"$WORK_DIR/pack.bicepparam"
+    while IFS= read -r param; do
+        [[ -z "$param" ]] && continue
+        value="$(rtc_recipe_pack_param_value "$param")" || return 1
+        echo "param $param = '$value'" >>"$WORK_DIR/pack.bicepparam"
+    done <<<"$params"
+    [[ -z "${1:-}" ]] || echo "param mySqlAllocatedStorage = $1" >>"$WORK_DIR/pack.bicepparam"
+    rm -f "$WORK_DIR/pack.snapshot.json"
+    "$BICEP" snapshot "$WORK_DIR/pack.bicepparam" --mode Overwrite >/dev/null || return 1
+    jq -c '[.predictedResources[] | select(.type | startswith("Radius.Core/recipePacks@"))
+      | .properties.properties.recipes."Radius.Data/mySqlDatabases".parameters.allocatedStorage] | .[0]' \
+        "$WORK_DIR/pack.snapshot.json"
+}
+
+# Existing pack deployments set no value and must keep the Recipe's 20 GiB.
+storage="$(pack_mysql_storage)" || exit 1
+[[ "$storage" == 20 ]] ||
+    { echo "The aws-eks pack must pass allocatedStorage 20 to the MySQL Recipe by default, not $storage" >&2; exit 1; }
+
+storage="$(pack_mysql_storage 22)" || exit 1
+[[ "$storage" == 22 ]] ||
+    { echo "The aws-eks pack must pass mySqlAllocatedStorage to the MySQL Recipe as allocatedStorage, not $storage" >&2; exit 1; }
+# The Recipe rejects less than 20 GiB on every MySQL deploy, so the pack must
+# reject it when it is deployed.
+if pack_mysql_storage 19 >/dev/null 2>&1; then
+    echo "The aws-eks pack must reject mySqlAllocatedStorage below 20" >&2
+    exit 1
+fi
+resources="$(aws_resources cluster-a ns-a "$ID" 8.4 "$storage")" || exit 1
+jq -e '."AWS.RDS/DBInstance".properties.AllocatedStorage == "22"' <<<"$resources" >/dev/null ||
+    { echo "AWS MySQL Recipe must send allocatedStorage as the DB instance AllocatedStorage" >&2; exit 1; }
 
 echo "AWS MySQL Recipe result and pack parameter contract test passed"
