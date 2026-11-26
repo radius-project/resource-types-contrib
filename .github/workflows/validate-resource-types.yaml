@@ -94,6 +94,26 @@ jobs:
       - name: Test Recipe Pack entry test scripts
         run: make test-recipe-pack-entries-unit
 
+  # Runs the MySQL contract test many times, so it gets its own job instead of
+  # adding minutes to the Recipe validation job.
+  test-mysql-recipe-contract:
+    name: Test MySQL Recipe contract test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Radius CLI
+        run: make install-radius-cli RAD_VERSION="${{ inputs.version || 'edge' }}"
+
+      - name: Test MySQL Recipe contract test
+        run: .github/scripts/tests/test-mysql-recipe-contract.sh
+
   validate-resource-types:
     name: Validate Resource Types and Recipes
     runs-on: ubuntu-24.04
@@ -130,10 +150,6 @@ jobs:
       - name: Validate MySQL Recipe result contract
         if: matrix.recipe == 'bicep'
         run: Data/mySqlDatabases/test/assert-recipe-result.sh
-
-      - name: Test MySQL Recipe contract test
-        if: matrix.recipe == 'bicep'
-        run: .github/scripts/tests/test-mysql-recipe-contract.sh
 
       - name: Test PostgreSQL settings
         if: matrix.recipe == 'bicep'
